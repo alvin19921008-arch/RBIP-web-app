@@ -1,0 +1,238 @@
+---
+description: Rules for preventing database type mismatches in this RBIP duty list project
+globs: ["**/*.ts", "**/*.tsx"]
+alwaysApply: true
+---
+
+# Database Type Safety Rules
+
+This project has experienced issues with type mismatches between TypeScript application code and the PostgreSQL database schema. Follow these rules to prevent save failures and data corruption.
+
+## Critical: Use lib/db/types.ts
+
+Always import and use the conversion utilities from `lib/db/types.ts`:
+
+```typescript
+import {
+  toDbLeaveType,
+  fromDbLeaveType,
+  assertValidSpecialProgramIds,
+  prepareTherapistAllocationForDb,
+  preparePCAAllocationForDb,
+  programNamesToIds,
+  normalizeFTE,
+} from '@/lib/db/types'
+```
+
+## special_program_ids Column
+
+**Database type:** `UUID[]` (array of UUIDs)
+
+**Common mistake:** Passing program NAMES like `["Robotic", "DRM"]` instead of UUIDs.
+
+### CORRECT Pattern:
+```typescript
+// Convert program names to UUIDs before saving
+const programIds = programNamesToIds(staff.special_program, specialPrograms)
+assertValidSpecialProgramIds(programIds, 'therapist allocation')
+
+await supabase.from('schedule_therapist_allocations').upsert({
+  special_program_ids: programIds,  // UUIDs like ["a1b2c3d4-..."]
+})
+```
+
+### WRONG Pattern:
+```typescript
+// NEVER do this - will fail with "invalid UUID" error
+await supabase.from('schedule_therapist_allocations').upsert({
+  special_program_ids: staff.special_program,  // Names like ["Robotic"]
+})
+```
+
+## leave_type Column
+
+**Database enum:** `'VL' | 'SL' | 'TIL' | 'study leave' | 'conference'`
+
+**TypeScript type:** `'VL' | 'half day VL' | 'TIL' | 'SDO' | 'sick leave' | 'study leave' | 'medical follow-up' | 'others' | string | null`
+
+The database enum is NARROWER than the TypeScript type. Always convert before saving.
+
+### CORRECT Pattern:
+```typescript
+import { toDbLeaveType, isCustomLeaveType } from '@/lib/db/types'
+
+const dbLeaveType = toDbLeaveType(staffEdit.leaveType)
+const manualNote = isCustomLeaveType(staffEdit.leaveType) ? staffEdit.leaveType : null
+
+await supabase.from('schedule_therapist_allocations').upsert({
+  leave_type: dbLeaveType,  // 'VL', 'SL', 'TIL', 'study leave', 'conference', or null
+  manual_override_note: manualNote,  // Store custom types like 'medical follow-up' here
+})
+```
+
+### WRONG Pattern:
+```typescript
+// NEVER do this - 'sick leave' and 'half day VL' are not in DB enum
+await supabase.from('schedule_therapist_allocations').upsert({
+  leave_type: staffEdit.leaveType,  // May contain 'sick leave' which DB rejects
+})
+```
+
+### Leave Type Mapping Table:
+| TypeScript Type | Database Value | Notes |
+|----------------|----------------|-------|
+| 'VL' | 'VL' | Direct mapping |
+| 'half day VL' | 'VL' | Half-day info stored via fte_remaining = 0.5 |
+| 'SDO' | 'VL' | Maps to vacation leave |
+| 'sick leave' | 'SL' | Database uses 'SL' abbreviation |
+| 'TIL' | 'TIL' | Direct mapping |
+| 'study leave' | 'study leave' | Direct mapping |
+| 'conference' | 'conference' | Direct mapping |
+| 'medical follow-up' | null | Store in manual_override_note |
+| 'others' | null | Store in manual_override_note |
+| Custom string | null | Store in manual_override_note |
+
+## DECIMAL Column Precision
+
+PostgreSQL DECIMAL columns can have floating point precision issues when receiving JavaScript numbers.
+
+### CORRECT Pattern:
+```typescript
+import { normalizeFTE } from '@/lib/db/types'
+
+await supabase.from('schedule_pca_allocations').upsert({
+  fte_pca: normalizeFTE(allocation.fte_pca),  // Rounded to 2 decimal places
+  fte_remaining: normalizeFTE(allocation.fte_remaining),
+  fte_assigned: normalizeFTE(allocation.fte_assigned),
+})
+```
+
+### WRONG Pattern:
+```typescript
+// NEVER do this - may result in values like 0.7500000001
+await supabase.from('schedule_pca_allocations').upsert({
+  fte_pca: allocation.fte_pca,  // Unrounded floating point
+})
+```
+
+## Use Preparation Functions for Complete Conversion
+
+For comprehensive type safety, use the preparation functions that handle all conversions:
+
+```typescript
+import { prepareTherapistAllocationForDb, preparePCAAllocationForDb } from '@/lib/db/types'
+
+// Therapist allocation
+const dbData = prepareTherapistAllocationForDb({
+  allocation: therapistAlloc,
+  specialPrograms: specialPrograms,
+})
+await supabase.from('schedule_therapist_allocations').upsert(dbData)
+
+// PCA allocation
+const dbData = preparePCAAllocationForDb({
+  allocation: pcaAlloc,
+  specialPrograms: specialPrograms,
+})
+await supabase.from('schedule_pca_allocations').upsert(dbData)
+```
+
+## Validation Before Save
+
+Always validate data before saving to catch issues early:
+
+```typescript
+import { assertValidSpecialProgramIds } from '@/lib/db/types'
+
+// This will throw an error with a helpful message if IDs are invalid
+assertValidSpecialProgramIds(allocation.special_program_ids, 'saveStepLeaveAndFTE')
+```
+
+## Supabase Query Builder Types
+
+Supabase's query builder methods (`.upsert()`, `.insert()`, `.update()`) return `PostgrestFilterBuilder`, not `Promise`. This causes TypeScript errors when used with `Promise.all()`.
+
+### WRONG Pattern:
+```typescript
+// Error: Type 'PostgrestFilterBuilder<...>' is not assignable to type 'Promise<any>'
+const promises: Promise<any>[] = []
+promises.push(supabase.from('schedule_pca_allocations').upsert(data))
+await Promise.all(promises)
+```
+
+### CORRECT Patterns:
+
+**Option 1: Use PromiseLike (simplest)**
+```typescript
+const promises: PromiseLike<any>[] = []
+promises.push(supabase.from('schedule_pca_allocations').upsert(data))
+await Promise.all(promises)
+```
+
+**Option 2: Convert to Promise with .then() (adds error handling)**
+```typescript
+const promises: PromiseLike<any>[] = []
+promises.push(
+  supabase.from('schedule_pca_allocations').upsert(data).then(result => {
+    if (result.error) console.error('Error saving PCA:', result.error)
+    return result
+  })
+)
+await Promise.all(promises)
+```
+
+**Option 3: Await individually (when order matters)**
+```typescript
+for (const data of allocations) {
+  const { error } = await supabase.from('schedule_pca_allocations').upsert(data)
+  if (error) throw error
+}
+```
+
+## When Loading Data
+
+When loading from database, convert types back to TypeScript types:
+
+```typescript
+import { fromDbLeaveType } from '@/lib/db/types'
+
+const leaveType = fromDbLeaveType(
+  dbAllocation.leave_type,
+  dbAllocation.fte_remaining,
+  dbAllocation.manual_override_note
+)
+```
+
+## Database Schema Reference
+
+Key tables and their type-sensitive columns:
+
+### schedule_therapist_allocations
+- `special_program_ids`: UUID[] (not TEXT[])
+- `leave_type`: leave_type enum ('VL', 'SL', 'TIL', 'study leave', 'conference')
+- `team`, `slot1-4`: team enum
+- `fte_*`: DECIMAL
+
+### schedule_pca_allocations
+- `special_program_ids`: UUID[] (not TEXT[])
+- `leave_type`: leave_type enum
+- `team`, `slot1-4`: team enum
+- `fte_*`: DECIMAL
+- `leave_mode`: TEXT ('leave' or 'come_back')
+
+### staff
+- `special_program`: TEXT[] (this is program NAMES, not UUIDs!)
+- `floor_pca`: TEXT[] (array of floor types: 'upper', 'lower', or both - direct mapping, no conversion needed)
+- `team`: team enum
+- `rank`: staff_rank enum
+
+### special_programs
+- `id`: UUID (use this for special_program_ids)
+- `name`: TEXT (this is the human-readable name)
+
+### pca_preferences
+- `floor_pca_selection`: TEXT ('upper', 'lower', or NULL - team's floor preference)
+- `gym_schedule`: INTEGER (slot number 1-4)
+- `preferred_pca_ids`: UUID[] (not TEXT[])
+- `preferred_slots`: INTEGER[] (max 1 slot)
+- `team`: team enum (UNIQUE constraint)

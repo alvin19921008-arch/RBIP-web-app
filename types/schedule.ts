@@ -1,0 +1,81 @@
+import { Team, LeaveType, SpecialProgram } from './staff'
+
+export interface DailySchedule {
+  id: string
+  date: string
+  is_tentative: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface TherapistAllocation {
+  id: string
+  schedule_id: string
+  staff_id: string
+  team: Team
+  fte_therapist: number
+  fte_remaining: number
+  slot_whole: number | null
+  slot1: Team | null
+  slot2: Team | null
+  slot3: Team | null
+  slot4: Team | null
+  leave_type: LeaveType
+  special_program_ids: string[] | null
+  is_substitute_team_head: boolean
+  spt_slot_display: 'AM' | 'PM' | null
+  is_manual_override: boolean
+  manual_override_note: string | null
+}
+
+export interface PCAAllocation {
+  id: string
+  schedule_id: string
+  staff_id: string
+  team: Team
+  fte_pca: number
+  fte_remaining: number
+  slot_assigned: number // RENAMED from fte_assigned: tracks which slots are assigned (0.25 per slot), not FTE
+  slot_whole: number | null
+  slot1: Team | null
+  slot2: Team | null
+  slot3: Team | null
+  slot4: Team | null
+  leave_type: LeaveType
+  special_program_ids: string[] | null
+  invalid_slot?: number // Slot (1-4) that is leave/come back, assigned but not counted
+  leave_comeback_time?: string // Time in HH:MM format
+  leave_mode?: string // 'leave' or 'come_back'
+  fte_subtraction?: number // NEW: FTE subtraction from leave (excluding special program subtraction). Used to calculate base_FTE_remaining = 1.0 - fte_subtraction for display
+}
+
+export interface BedAllocation {
+  id: string
+  schedule_id: string
+  from_team: Team
+  to_team: Team
+  ward: string
+  num_beds: number
+  slot: number | null
+}
+
+export interface ScheduleCalculations {
+  id: string
+  schedule_id: string
+  team: Team
+  designated_wards: string[]
+  total_beds_designated: number
+  total_beds: number
+  total_pt_on_duty: number
+  beds_per_pt: number
+  pt_per_team: number
+  beds_for_relieving: number
+  pca_on_duty: number
+  total_pt_per_pca: number
+  total_pt_per_team: number
+  average_pca_per_team: number
+  base_average_pca_per_team?: number // Base avg PCA/team for DRO (without DRM +0.4 add-on)
+  expected_beds_per_team?: number // (3) Expected beds for team = (total beds / total PT) * (PT per team)
+  required_pca_per_team?: number // (4) Required PCA per team = (3) / (total beds / total PCA)
+}
+
