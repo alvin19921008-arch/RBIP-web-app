@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, Fragment, useCallback } from 'react'
 import { DndContext, DragOverlay, DragEndEvent, DragStartEvent, DragMoveEvent, Active } from '@dnd-kit/core'
 import { Team, Weekday, LeaveType } from '@/types/staff'
-import { TherapistAllocation, PCAAllocation, BedAllocation, ScheduleCalculations } from '@/types/schedule'
+import { TherapistAllocation, PCAAllocation, BedAllocation, ScheduleCalculations, AllocationTracker } from '@/types/schedule'
 import { Staff } from '@/types/staff'
 import { TeamColumn } from '@/components/allocation/TeamColumn'
 import { StaffPool } from '@/components/allocation/StaffPool'
@@ -25,7 +25,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { CalendarGrid } from '@/components/ui/calendar-grid'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { allocateTherapists, StaffData, AllocationContext } from '@/lib/algorithms/therapistAllocation'
-import { allocatePCA, PCAAllocationContext, PCAData } from '@/lib/algorithms/pcaAllocation'
+import { allocatePCA, PCAAllocationContext, PCAData, FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
 import { allocateBeds, BedAllocationContext } from '@/lib/algorithms/bedAllocation'
 import { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
@@ -156,6 +156,7 @@ export default function SchedulePage() {
   const [pcaAllocationErrors, setPcaAllocationErrors] = useState<{
     missingSlotSubstitution?: string
     specialProgramAllocation?: string
+    preferredSlotUnassigned?: string  // Step 3.4: preferred slots that couldn't be assigned
   }>({})
   // Dropdown menu state for dev/testing options
   const [showDevMenu, setShowDevMenu] = useState(false)
@@ -166,6 +167,7 @@ export default function SchedulePage() {
   const [floatingPCAConfigOpen, setFloatingPCAConfigOpen] = useState(false)
   const [adjustedPendingFTE, setAdjustedPendingFTE] = useState<Record<Team, number> | null>(null)
   const [teamAllocationOrder, setTeamAllocationOrder] = useState<Team[] | null>(null)
+  const [allocationTracker, setAllocationTracker] = useState<AllocationTracker | null>(null)
   
   // Warning popover for floating PCA slot transfer before step 3
   const [slotTransferWarningPopover, setSlotTransferWarningPopover] = useState<{
@@ -586,8 +588,15 @@ export default function SchedulePage() {
     pcaAllocs?.forEach(alloc => {
       if (alloc.leave_type !== null || alloc.fte_pca !== 1) {
         if (!overrides[alloc.staff_id]) {
-          // For PCA: use actual fte_pca value (no longer rounded down)
-          const fte = parseFloat(alloc.fte_pca.toString())
+          // For PCA: determine the correct FTE to use
+          // If PCA is on leave (leave_type !== null), use fte_pca
+          // If PCA is NOT on leave but is special program PCA, use 1.0 (base FTE)
+          // This fixes a bug where special program PCAs had fte_pca set to their assigned slots FTE (e.g., 0.25) instead of base FTE
+          const isOnLeave = alloc.leave_type !== null
+          const isSpecialProgramPCA = alloc.special_program_ids && alloc.special_program_ids.length > 0
+          const fte = isOnLeave 
+            ? parseFloat(alloc.fte_pca.toString())  // On leave: use stored FTE
+            : (isSpecialProgramPCA ? 1.0 : parseFloat(alloc.fte_pca.toString()))  // Special program: use base FTE 1.0
           // Use centralized type conversion from lib/db/types.ts
           const override: { leaveType: LeaveType | null; fteRemaining: number; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean } = {
             leaveType: fromDbLeaveType(alloc.leave_type as any, fte, null),
@@ -604,10 +613,9 @@ export default function SchedulePage() {
           if (alloc.leave_mode) {
             override.isLeave = alloc.leave_mode === 'leave'
           }
-          // Load fte_subtraction for base_FTE_remaining calculation
-          if ((alloc as any).fte_subtraction !== null && (alloc as any).fte_subtraction !== undefined) {
-            override.fteSubtraction = parseFloat((alloc as any).fte_subtraction.toString())
-          }
+          // Note: fte_subtraction is not stored in database - it's calculated from staffOverrides when needed
+          // If the column exists in future migrations, we can load it here
+          // For now, fteSubtraction is calculated from fte_pca and other fields when needed
           
           // Reconstruct available slots from slot assignments (exclude invalid slot)
           const invalidSlot = (alloc as any).invalid_slot
@@ -696,12 +704,16 @@ export default function SchedulePage() {
     const therapistByTeam = therapistAllocations
     
     // Reuse the calculation logic from useSavedAllocations
+    // CRITICAL: Use staffOverrides for current FTE values (not stale alloc.fte_therapist)
     const totalBedsAllTeams = wards.reduce((sum, ward) => sum + ward.total_beds, 0)
     const totalPTOnDutyAllTeams = TEAMS.reduce((sum, team) => {
       return sum + therapistByTeam[team].reduce((teamSum, alloc) => {
         const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-        const hasFTE = (alloc.fte_therapist || 0) > 0
-        return teamSum + (isTherapist && hasFTE ? (alloc.fte_therapist || 0) : 0)
+        // Use staffOverrides for current FTE, fallback to alloc.fte_therapist
+        const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
+        const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_therapist || 0)
+        const hasFTE = currentFTE > 0
+        return teamSum + (isTherapist && hasFTE ? currentFTE : 0)
       }, 0)
     }, 0)
     
@@ -714,8 +726,11 @@ export default function SchedulePage() {
     TEAMS.forEach(team => {
       const ptPerTeam = therapistByTeam[team].reduce((sum, alloc) => {
         const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-        const hasFTE = (alloc.fte_therapist || 0) > 0
-        return sum + (isTherapist && hasFTE ? (alloc.fte_therapist || 0) : 0)
+        // Use staffOverrides for current FTE, fallback to alloc.fte_therapist
+        const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
+        const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_therapist || 0)
+        const hasFTE = currentFTE > 0
+        return sum + (isTherapist && hasFTE ? currentFTE : 0)
       }, 0)
       
       const teamWards = wards.filter(w => w.team_assignments[team] && w.team_assignments[team] > 0)
@@ -744,15 +759,30 @@ export default function SchedulePage() {
       return ward.name
     }
     
-    // Calculate totals for PCA formulas using CURRENT staffOverrides state
+    // Calculate totals for PCA formulas using ALL on-duty PCAs from staff database
+    // This ensures the requirement (Avg PCA/team) is CONSISTENT regardless of allocation state
+    const totalPCAOnDuty = staff
+      .filter(s => s.rank === 'PCA')
+      .reduce((sum, s) => {
+        const overrideFTE = staffOverrides[s.id]?.fteRemaining
+        // Use override FTE if set, otherwise default to 1.0 (full day) unless on leave
+        const isOnLeave = staffOverrides[s.id]?.leaveType && staffOverrides[s.id]?.fteRemaining === 0
+        const currentFTE = overrideFTE !== undefined ? overrideFTE : (isOnLeave ? 0 : 1)
+        return sum + currentFTE
+      }, 0)
+    // Keep the old calculation for comparison in logs
+    const seenPCAIds = new Set<string>()
     const totalPCAFromAllocations = TEAMS.reduce((sum, team) => {
       return sum + pcaByTeam[team].reduce((teamSum, alloc) => {
+        if (seenPCAIds.has(alloc.staff_id)) return teamSum
+        seenPCAIds.add(alloc.staff_id)
         const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
         const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_pca || 0)
         return teamSum + currentFTE
       }, 0)
     }, 0)
-    const bedsPerPCA = totalPCAFromAllocations > 0 ? totalBedsAllTeams / totalPCAFromAllocations : 0
+    // Use totalPCAOnDuty (from staff DB) for consistent requirements
+    const bedsPerPCA = totalPCAOnDuty > 0 ? totalBedsAllTeams / totalPCAOnDuty : 0
     
     const scheduleCalcs: Record<Team, ScheduleCalculations | null> = {
       FO: null, SMM: null, SFM: null, CPPC: null, MC: null, GMC: null, NSM: null, DRO: null
@@ -767,8 +797,11 @@ export default function SchedulePage() {
       const teamTherapists = therapistByTeam[team]
       const ptPerTeam = teamTherapists.reduce((sum, alloc) => {
         const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-        const hasFTE = (alloc.fte_therapist || 0) > 0
-        return sum + (isTherapist && hasFTE ? (alloc.fte_therapist || 0) : 0)
+        // Use staffOverrides for current FTE, fallback to alloc.fte_therapist
+        const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
+        const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_therapist || 0)
+        const hasFTE = currentFTE > 0
+        return sum + (isTherapist && hasFTE ? currentFTE : 0)
       }, 0)
       
       const bedsPerPT = ptPerTeam > 0 ? totalBedsDesignated / ptPerTeam : 0
@@ -781,9 +814,10 @@ export default function SchedulePage() {
       }, 0)
       const totalPTPerPCA = pcaOnDuty > 0 ? ptPerTeam / pcaOnDuty : 0
       
+      // Use totalPCAOnDuty for consistent requirement calculation
       const averagePCAPerTeam = totalPTOnDutyAllTeams > 0
-        ? (ptPerTeam * totalPCAFromAllocations) / totalPTOnDutyAllTeams
-        : (totalPCAFromAllocations / TEAMS.length)
+        ? (ptPerTeam * totalPCAOnDuty) / totalPTOnDutyAllTeams
+        : (totalPCAOnDuty / TEAMS.length)
       
       const expectedBedsPerTeam = totalPTOnDutyAllTeams > 0 
         ? (totalBedsAllTeams / totalPTOnDutyAllTeams) * ptPerTeam 
@@ -825,7 +859,15 @@ export default function SchedulePage() {
     })
     
     setCalculations(scheduleCalcs)
-  }, [pcaAllocations, therapistAllocations, staffOverrides, wards, editableBeds, selectedDate, specialPrograms])
+  }, [pcaAllocations, therapistAllocations, staffOverrides, wards, editableBeds, selectedDate, specialPrograms, staff])
+
+  // Auto-recalculate when allocations change (e.g., after Step 2 algo)
+  useEffect(() => {
+    const hasAllocations = Object.keys(pcaAllocations).some(team => pcaAllocations[team as Team]?.length > 0)
+    if (hasAllocations) {
+      recalculateScheduleCalculations()
+    }
+  }, [therapistAllocations, pcaAllocations, recalculateScheduleCalculations])
 
   // ============================================================================
   // CENTRALIZED ALLOCATION SYNC
@@ -999,16 +1041,27 @@ export default function SchedulePage() {
     }
     
     // Calculate totals for PCA formulas
-    // Use fte_pca (Base_FTE_remaining) for calculating averagePCAPerTeam, not slot_assigned
-    // IMPORTANT: Use staffOverrides if available to get the current FTE (user may have edited leave)
+    // CRITICAL: Use totalPCAOnDuty (from staff DB) for STABLE requirement calculation
+    // This ensures avg PCA/team doesn't fluctuate as floating PCAs get assigned/unassigned
+    const totalPCAOnDuty = staff
+      .filter(s => s.rank === 'PCA')
+      .reduce((sum, s) => {
+        const overrideFTE = staffOverrides[s.id]?.fteRemaining
+        const isOnLeave = staffOverrides[s.id]?.leaveType && staffOverrides[s.id]?.fteRemaining === 0
+        return sum + (isOnLeave ? 0 : (overrideFTE !== undefined ? overrideFTE : 1))
+      }, 0)
+    
+    // Also calculate totalPCAFromAllocations for reference/debugging
     const totalPCAFromAllocations = TEAMS.reduce((sum, team) => {
       return sum + pcaByTeam[team].reduce((teamSum, alloc) => {
         const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
         const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_pca || 0)
         return teamSum + currentFTE
-      }, 0)
     }, 0)
-    const bedsPerPCA = totalPCAFromAllocations > 0 ? totalBedsAllTeams / totalPCAFromAllocations : 0
+    }, 0)
+    
+    // Use totalPCAOnDuty (stable) for bedsPerPCA calculation
+    const bedsPerPCA = totalPCAOnDuty > 0 ? totalBedsAllTeams / totalPCAOnDuty : 0
     
     TEAMS.forEach(team => {
       const teamWards = wards.filter(w => w.team_assignments[team] && w.team_assignments[team] > 0)
@@ -1034,11 +1087,11 @@ export default function SchedulePage() {
       }, 0)
       const totalPTPerPCA = pcaOnDuty > 0 ? ptPerTeam / pcaOnDuty : 0
       
-      // Calculate averagePCAPerTeam using the same formula as in generateAllocationsWithOverrides:
-      // (ptPerTeam * totalPCAFromAllocations) / totalPTOnDutyAllTeams
+      // Calculate averagePCAPerTeam using totalPCAOnDuty (from staff DB) for STABLE value
+      // This ensures avg PCA/team doesn't fluctuate during step transitions
       const averagePCAPerTeam = totalPTOnDutyAllTeams > 0
-        ? (ptPerTeam * totalPCAFromAllocations) / totalPTOnDutyAllTeams
-        : (totalPCAFromAllocations / TEAMS.length) // Fallback to equal distribution
+        ? (ptPerTeam * totalPCAOnDuty) / totalPTOnDutyAllTeams
+        : (totalPCAOnDuty / TEAMS.length) // Fallback to equal distribution
       
       const expectedBedsPerTeam = totalPTOnDutyAllTeams > 0 
         ? (totalBedsAllTeams / totalPTOnDutyAllTeams) * ptPerTeam 
@@ -1494,9 +1547,17 @@ export default function SchedulePage() {
         return ward.name
       }
       
-      // Calculate totalPCAFromAllocations = sum of all fte_pca values (Base_FTE_remaining) from all PCA allocations
-      // This is different from totalPCA (calculated before allocation) - this uses actual allocated values
-      // IMPORTANT: Use overrides (from function parameter) if available to get the current FTE
+      // CRITICAL: Use totalPCAOnDuty (from staff DB) for STABLE requirement calculation
+      // This ensures avg PCA/team doesn't fluctuate as floating PCAs get assigned/unassigned
+      const totalPCAOnDuty = staff
+        .filter(s => s.rank === 'PCA')
+        .reduce((sum, s) => {
+          const overrideFTE = overrides[s.id]?.fteRemaining
+          const isOnLeave = overrides[s.id]?.leaveType && overrides[s.id]?.fteRemaining === 0
+          return sum + (isOnLeave ? 0 : (overrideFTE !== undefined ? overrideFTE : 1))
+        }, 0)
+      
+      // Also calculate totalPCAFromAllocations for reference (allocated PCAs only)
       const totalPCAFromAllocations = TEAMS.reduce((sum, team) => {
         return sum + pcaByTeam[team].reduce((teamSum, alloc) => {
           const overrideFTE = overrides[alloc.staff_id]?.fteRemaining
@@ -1532,17 +1593,18 @@ export default function SchedulePage() {
         }, 0)
         const totalPTPerPCA = pcaOnDuty > 0 ? ptPerTeam / pcaOnDuty : 0
         
-        // Calculate averagePCAPerTeam using the same formula as in allocation: (ptPerTeam * totalPCAFromAllocations) / totalPTOnDutyAllTeams
+        // Calculate averagePCAPerTeam using totalPCAOnDuty (from staff DB) for STABLE value
+        // This ensures avg PCA/team doesn't fluctuate during step transitions
         const averagePCAPerTeam = totalPTOnDutyAllTeams > 0
-          ? (ptPerTeam * totalPCAFromAllocations) / totalPTOnDutyAllTeams
-          : (totalPCAFromAllocations / TEAMS.length) // Fallback to equal distribution
+          ? (ptPerTeam * totalPCAOnDuty) / totalPTOnDutyAllTeams
+          : (totalPCAOnDuty / TEAMS.length) // Fallback to equal distribution
 
         // Calculate (3) Expected beds for team = (total beds / total PT) * (PT per team)
         const expectedBedsPerTeam = overallBedsPerPT * ptPerTeam
         
-        // Calculate (4) Required PCA per team = (3) / (total beds / total PCAFromAllocations)
-        // Where total beds / total PCAFromAllocations = beds per PCA
-        const bedsPerPCA = totalPCAFromAllocations > 0 ? totalBedsAllTeams / totalPCAFromAllocations : 0
+        // Calculate (4) Required PCA per team = (3) / (total beds / total PCAOnDuty)
+        // Where total beds / total PCAOnDuty = beds per PCA
+        const bedsPerPCA = totalPCAOnDuty > 0 ? totalBedsAllTeams / totalPCAOnDuty : 0
         const requiredPCAPerTeam = bedsPerPCA > 0 ? expectedBedsPerTeam / bedsPerPCA : 0
 
         // For DRO: store base avg PCA/team (without +0.4) separately
@@ -1886,9 +1948,8 @@ export default function SchedulePage() {
         rawAveragePCAPerTeam,
       })
 
-      // NOTE: Do NOT update calculations.average_pca_per_team here
-      // The target from Step 1 (using staffOverrides) should persist through Steps 2-4
-      // The algorithm's rawAveragePCAPerTeam is used internally for allocation, not for display
+      // NOTE: recalculateScheduleCalculations will be called automatically via useEffect
+      // when therapistAllocations or pcaAllocations change (see useEffect above)
 
       // Update step status (don't auto-advance)
       setStepStatus(prev => ({ ...prev, 'therapist-pca': 'completed' }))
@@ -2138,96 +2199,104 @@ export default function SchedulePage() {
   }
   
   /**
-   * Handle save from FloatingPCAConfigDialog (Step 3.1 + 3.2)
-   * Applies slot assignments from Step 3.2, then runs Step 3 algorithm
+   * Handle save from FloatingPCAConfigDialog (Steps 3.1 + 3.2 + 3.3 + 3.4)
+   * The dialog now runs the full floating PCA algorithm v2 internally
    */
   const handleFloatingPCAConfigSave = async (
-    adjustedFTE: Record<Team, number>,
-    order: Team[],
-    slotAssignments: SlotAssignment[]
+    result: FloatingPCAAllocationResultV2,
+    teamOrder: Team[],
+    step32Assignments: SlotAssignment[],
+    step33Assignments: SlotAssignment[]
   ) => {
-    // Store the adjusted values for use in the floating PCA algorithm
-    setAdjustedPendingFTE(adjustedFTE)
-    setTeamAllocationOrder(order)
+    // Store the team order for reference
+    setTeamAllocationOrder(teamOrder)
     
     // Close the dialog
     setFloatingPCAConfigOpen(false)
     
-    // If there are slot assignments from Step 3.2, apply them first
-    let pendingFTEForAlgo = adjustedFTE
-    let existingAllocationsForAlgo = recalculateFromCurrentState().existingAllocations
+    // Store the allocation tracker
+    setAllocationTracker(result.tracker)
     
-    if (slotAssignments.length > 0) {
-      const floatingPCAs = buildPCADataFromCurrentState().filter(p => p.floating)
-      
-      // Execute the slot assignments
-      const result = executeSlotAssignments(
-        slotAssignments,
-        adjustedFTE,
-        existingAllocationsForAlgo,
-        floatingPCAs
-      )
-      
-      // Update pending FTE for the algorithm
-      pendingFTEForAlgo = result.updatedPendingFTE
-      existingAllocationsForAlgo = result.updatedAllocations
-      
-      // Update staffOverrides for assigned PCAs
-      const newOverrides = { ...staffOverrides }
-      for (const assignment of slotAssignments) {
-        const pca = floatingPCAs.find(p => p.id === assignment.pcaId)
-        if (pca) {
-          const existingOverride = newOverrides[assignment.pcaId] || {
-            leaveType: pca.leave_type as LeaveType | null,
-            fteRemaining: pca.fte_pca,
-          }
-          // Decrement FTE by 0.25 for the assigned slot
-          newOverrides[assignment.pcaId] = {
-            ...existingOverride,
-            fteRemaining: Math.max(0, (existingOverride.fteRemaining || pca.fte_pca) - 0.25),
-          }
+    // Update pending FTE state with final values from algorithm
+    setPendingPCAFTEPerTeam(result.pendingPCAFTEPerTeam)
+    setAdjustedPendingFTE(result.pendingPCAFTEPerTeam)
+    
+    // Update staffOverrides for all assigned PCAs (from 3.2, 3.3, and 3.4)
+    const floatingPCAs = buildPCADataFromCurrentState().filter(p => p.floating)
+    const allAssignments = [...step32Assignments, ...step33Assignments]
+    
+    const newOverrides = { ...staffOverrides }
+    for (const assignment of allAssignments) {
+      const pca = floatingPCAs.find(p => p.id === assignment.pcaId)
+      if (pca) {
+        const existingOverride = newOverrides[assignment.pcaId] || {
+          leaveType: pca.leave_type as LeaveType | null,
+          fteRemaining: pca.fte_pca,
+        }
+        // Decrement FTE by 0.25 for the assigned slot
+        newOverrides[assignment.pcaId] = {
+          ...existingOverride,
+          fteRemaining: Math.max(0, (existingOverride.fteRemaining || pca.fte_pca) - 0.25),
         }
       }
-      setStaffOverrides(newOverrides)
-      
-      // Update PCA allocations state with new slot assignments
-      const updatedPcaAllocations = { ...pcaAllocations }
-      for (const alloc of result.updatedAllocations) {
-        // Find the staff member for this allocation
-        const staffMember = staff.find(s => s.id === alloc.staff_id)
-        if (!staffMember) continue
-        
-        // Create allocation with staff property
-        const allocWithStaff = { ...alloc, staff: staffMember }
-        
-        // Find which team(s) this PCA is now assigned to
-        const teamsWithSlots: Team[] = []
-        if (alloc.slot1) teamsWithSlots.push(alloc.slot1)
-        if (alloc.slot2) teamsWithSlots.push(alloc.slot2)
-        if (alloc.slot3) teamsWithSlots.push(alloc.slot3)
-        if (alloc.slot4) teamsWithSlots.push(alloc.slot4)
-        
-        // Add allocation to each team that has a slot
-        for (const team of new Set(teamsWithSlots)) {
-          const teamAllocs = updatedPcaAllocations[team] || []
-          // Check if already exists
-          const existingIdx = teamAllocs.findIndex(a => a.staff_id === alloc.staff_id)
-          if (existingIdx >= 0) {
-            teamAllocs[existingIdx] = allocWithStaff
-          } else {
-            teamAllocs.push(allocWithStaff)
-          }
-          updatedPcaAllocations[team] = teamAllocs
-        }
-      }
-      setPcaAllocations(updatedPcaAllocations)
-      
-      // Update pending FTE state
-      setPendingPCAFTEPerTeam(pendingFTEForAlgo)
     }
     
-    // Proceed to run the floating PCA algorithm with updated state
-    await generateStep3_FloatingPCA(pendingFTEForAlgo, order)
+    // Also update FTE for PCAs assigned in Step 3.4 (from result.allocations)
+    // NOTE: Use fte_pca (on-duty FTE), NOT fte_remaining (unassigned slots FTE)
+    // fte_remaining = 0 means all slots assigned, but PCA is still ON DUTY
+    for (const alloc of result.allocations) {
+      const pca = floatingPCAs.find(p => p.id === alloc.staff_id)
+      if (pca) {
+        newOverrides[alloc.staff_id] = {
+          ...newOverrides[alloc.staff_id],
+          leaveType: pca.leave_type as LeaveType | null,
+          fteRemaining: alloc.fte_pca,  // Use fte_pca (on-duty FTE), not fte_remaining
+        }
+      }
+    }
+    setStaffOverrides(newOverrides)
+    
+    // Update PCA allocations state with all new slot assignments
+    const updatedPcaAllocations = { ...pcaAllocations }
+    for (const alloc of result.allocations) {
+      // Find the staff member for this allocation
+      const staffMember = staff.find(s => s.id === alloc.staff_id)
+      if (!staffMember) continue
+      
+      // Create allocation with staff property
+      const allocWithStaff = { ...alloc, staff: staffMember }
+      
+      // Find which team(s) this PCA is now assigned to
+      const teamsWithSlots: Team[] = []
+      if (alloc.slot1) teamsWithSlots.push(alloc.slot1)
+      if (alloc.slot2) teamsWithSlots.push(alloc.slot2)
+      if (alloc.slot3) teamsWithSlots.push(alloc.slot3)
+      if (alloc.slot4) teamsWithSlots.push(alloc.slot4)
+      
+      // Add allocation to each team that has a slot
+      for (const team of new Set(teamsWithSlots)) {
+        const teamAllocs = updatedPcaAllocations[team] || []
+        // Check if already exists
+        const existingIdx = teamAllocs.findIndex(a => a.staff_id === alloc.staff_id)
+        if (existingIdx >= 0) {
+          teamAllocs[existingIdx] = allocWithStaff
+        } else {
+          teamAllocs.push(allocWithStaff)
+        }
+        updatedPcaAllocations[team] = teamAllocs
+      }
+    }
+    setPcaAllocations(updatedPcaAllocations)
+    
+    // Handle any errors from the algorithm
+    if (result.errors?.preferredSlotUnassigned && result.errors.preferredSlotUnassigned.length > 0) {
+      setPcaAllocationErrors(prev => ({
+        ...prev,
+        preferredSlotUnassigned: result.errors!.preferredSlotUnassigned!.join('; ')
+      }))
+    }
+    
+    // Mark Step 3 as initialized
     setInitializedSteps(prev => new Set(prev).add('floating-pca'))
   }
   
@@ -2498,8 +2567,9 @@ export default function SchedulePage() {
           const dbLeaveType = toDbLeaveType(item.leaveType)
           
           // Use actual fte_pca value (no longer rounded down) and calculate fte_remaining/slot_assigned
+          // Handle both slot_assigned (new) and fte_assigned (old) during migration transition
           const baseFTEPCA = alloc?.fte_pca ?? item.fteRemaining
-          const slotAssigned = alloc?.slot_assigned ?? 0
+          const slotAssigned = (alloc as any).slot_assigned ?? (alloc as any).fte_assigned ?? 0
           const fteRemaining = alloc?.fte_remaining ?? Math.max(0, baseFTEPCA - slotAssigned)
           
           // Convert special program names to UUIDs if needed
@@ -2524,7 +2594,7 @@ export default function SchedulePage() {
             team: item.team,
             fte_pca: normalizeFTE(baseFTEPCA), // Normalized to 2 decimal places
             fte_remaining: normalizeFTE(fteRemaining),
-            slot_assigned: normalizeFTE(slotAssigned), // RENAMED from fte_assigned
+            slot_assigned: normalizeFTE(slotAssigned), // Renamed from fte_assigned - use batch migration to update DB
             leave_type: dbLeaveType,
             slot1: alloc?.slot1 || item.team,
             slot2: alloc?.slot2 || item.team,
@@ -2537,7 +2607,7 @@ export default function SchedulePage() {
             leave_mode: item.isLeave !== undefined 
               ? (item.isLeave ? 'leave' : 'come_back')
               : (alloc?.leave_mode ?? null),
-            fte_subtraction: item.fteSubtraction ? normalizeFTE(item.fteSubtraction) : (override?.fteSubtraction ? normalizeFTE(override.fteSubtraction) : null), // NEW: Save fteSubtraction for base_FTE_remaining calculation
+            // Note: fte_subtraction is not stored in database - it's calculated from staffOverrides when needed
           }
 
           // Check if exists
@@ -3657,6 +3727,7 @@ export default function SchedulePage() {
                           step2Initialized={initializedSteps.has('therapist-pca')}
                           weekday={getWeekday(selectedDate)}
                           externalHover={popoverDragHoverTeam === team}
+                          allocationLog={allocationTracker?.[team]}
                       />
                       </Fragment>
                     ))}
@@ -3838,18 +3909,28 @@ export default function SchedulePage() {
           let currentIsLeave = override?.isLeave
 
           // Calculate special program FTE subtraction for this staff on current weekday
+          // Also collect program names for display
           let specialProgramFTESubtraction = 0
+          const specialProgramFTEInfo: { name: string; fteSubtraction: number }[] = []
+          const addedProgramIds = new Set<string>() // Track added programs to prevent duplicates
           if (currentWeekday && specialPrograms.length > 0) {
             // Check therapist allocations for special programs
             for (const team of TEAMS) {
               const alloc = therapistAllocations[team].find(a => a.staff_id === editingStaffId)
               if (alloc && alloc.special_program_ids && alloc.special_program_ids.length > 0) {
                 alloc.special_program_ids.forEach(programId => {
+                  // Skip if we've already processed this program
+                  if (addedProgramIds.has(programId)) return
+                  
                   const program = specialPrograms.find(p => p.id === programId)
                   if (program && program.weekdays.includes(currentWeekday)) {
                     const staffFTE = program.fte_subtraction[editingStaffId]
                     const subtraction = staffFTE?.[currentWeekday] || 0
-                    specialProgramFTESubtraction += subtraction
+                    if (subtraction > 0) {
+                      specialProgramFTESubtraction += subtraction
+                      specialProgramFTEInfo.push({ name: program.name, fteSubtraction: subtraction })
+                      addedProgramIds.add(programId) // Mark as added
+                    }
                   }
                 })
                 break
@@ -3882,19 +3963,13 @@ export default function SchedulePage() {
                 
                 // For PCA: Calculate base_FTE_remaining = 1.0 - fteSubtraction for display
                 const allocation = allPcaAllocations[0]
-                // Load fte_subtraction from allocation if available
-                if ((allocation as any).fte_subtraction !== null && (allocation as any).fte_subtraction !== undefined) {
-                  currentFTESubtraction = parseFloat((allocation as any).fte_subtraction.toString())
-                  // Calculate base_FTE_remaining = 1.0 - fteSubtraction (for display only)
-                  currentFTERemaining = 1.0 - currentFTESubtraction
-                } else {
-                  // Fallback: use fte_pca value (which should be base_FTE_remaining)
-                  currentFTERemaining = allocation.fte_pca || ((allocation.fte_remaining ?? 0) + (allocation.slot_assigned ?? 0))
-                  // Calculate fteSubtraction from fte_pca if not available
-                  if (currentFTESubtraction === undefined) {
-                    currentFTESubtraction = 1.0 - currentFTERemaining
-                  }
-                }
+                // Note: fte_subtraction is not stored in database - calculate from fte_pca
+                // fte_pca represents base_FTE_remaining = 1.0 - fteSubtraction
+                // Handle both slot_assigned (new) and fte_assigned (old) during migration transition
+                const slotAssigned = (allocation as any).slot_assigned ?? (allocation as any).fte_assigned ?? 0
+                currentFTERemaining = allocation.fte_pca || ((allocation.fte_remaining ?? 0) + slotAssigned)
+                // Calculate fteSubtraction from fte_pca
+                currentFTESubtraction = 1.0 - currentFTERemaining
                 
                 // Load invalid slot fields from allocation if not in override
                 if ((allocation as any).invalid_slot !== undefined && (allocation as any).invalid_slot !== null) {
@@ -3930,6 +4005,7 @@ export default function SchedulePage() {
               currentLeaveType={currentLeaveType}
               currentFTERemaining={currentFTERemaining}
               specialProgramFTESubtraction={specialProgramFTESubtraction}
+              specialProgramFTEInfo={specialProgramFTEInfo}
               currentFTESubtraction={currentFTESubtraction}
               currentAvailableSlots={currentAvailableSlots}
               currentInvalidSlot={currentInvalidSlot}

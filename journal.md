@@ -131,6 +131,25 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - SPT allocation (including RBIP supervisor logic) only runs in Step 2 when user clicks "Initialize Algo"
   - Step 1 only registers leave types and FTE remaining, no SPT allocations
 
+### Phase 5: Allocation Stability & SPT Preservation Fixes (Latest)
+- ✅ **Avg PCA/Team Stability Fix**
+  - Fixed bug where `avg PCA/team` was fluctuating during step transitions
+  - Root cause: Calculation was using `totalPCAFromAllocations` (unstable, changes with allocations) instead of `totalPCAOnDuty` (stable, from staff database)
+  - Solution: Use `totalPCAOnDuty` (sum of all on-duty PCAs from staff DB) for requirement calculation
+  - Added `useEffect` to auto-recalculate `scheduleCalculations` when `therapistAllocations` or `pcaAllocations` change
+  - Ensures displayed `avg PCA/team` updates immediately after Step 2 algo adds SPTs to teams
+- ✅ **SPT Allocation Preservation Fix**
+  - Fixed bug where SPT allocations disappeared when transitioning from Step 2 to Step 3
+  - Root cause: `useAllocationSync` was regenerating therapist allocations without preserving SPT allocations
+  - Solution: Modified `syncTherapistAllocations()` to preserve existing SPT allocations when `includeSPTAllocation: false`
+  - Added optimization to skip full therapist regeneration during Step 2+ → Step 3+ transitions (only updates FTE/leave from `staffOverrides`)
+- ✅ **SPT Duplicate Bug Fix**
+  - Fixed bug where dragging SPT to another team caused it to appear in both old and new teams
+  - Root cause: Preserve logic checked only within the same team, re-adding old allocation to old team
+  - Solution: Updated preserve logic to check across ALL teams before preserving SPT allocations
+  - Now correctly moves SPTs between teams without creating duplicates
+  - Old team's PT/team count no longer includes moved SPTs
+
 ### Technical Achievements
 - ✅ **Type Safety**: Comprehensive database type conversion utilities
 - ✅ **State Management**: Three-layer architecture (Saved → Algorithm → Override)
@@ -227,6 +246,38 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - `required_pca_per_team`: DECIMAL
   - `pca_on_duty`: DECIMAL
   - Various bed/PT ratios
+
+### PCA Total Values (Critical Distinction)
+
+The system uses three different PCA total values for different purposes. Understanding the distinction is critical for stability:
+
+#### `totalPCA` (Step 2 Algorithm Only)
+- **Location**: Calculated in `generateStep2_TherapistAndNonFloatingPCA()`
+- **Source**: Sum of `fte_pca` from all available PCAs in `pcaData` array
+- **Calculation**: `pcaData.filter(p => p.is_available).reduce((sum, p) => sum + p.fte_pca, 0)`
+- **Purpose**: Used only in Step 2 to calculate `rawAveragePCAPerTeam` for the algorithm's internal calculations
+- **Stability**: Stable during Step 2 execution
+- **Note**: `fte_pca` = Base FTE remaining = `1.0 - fteSubtraction` (excludes special program subtraction)
+
+#### `totalPCAOnDuty` (Stable Requirement Calculation)
+- **Location**: Calculated in `recalculateScheduleCalculations()`
+- **Source**: Sum of FTE from all on-duty PCAs in `staff` database + `staffOverrides`
+- **Calculation**: `staff.filter(s => s.rank === 'PCA').reduce((sum, s) => sum + currentFTE, 0)`
+  - Uses `staffOverrides[s.id]?.fteRemaining` if set, otherwise defaults to 1.0 (or 0 if on leave)
+- **Purpose**: Used for displayed `avg PCA/team` requirement calculation and `bedsPerPCA`
+- **Stability**: **STABLE** - does not change as allocations are assigned/unassigned
+- **Formula**: `averagePCAPerTeam = (ptPerTeam * totalPCAOnDuty) / totalPTOnDutyAllTeams`
+- **Why Stable**: Derived from staff database (source of truth), not from current allocation state
+
+#### `totalPCAFromAllocations` (Reference/Debugging Only)
+- **Location**: Calculated in `recalculateScheduleCalculations()`
+- **Source**: Sum of FTE from PCAs currently in `pcaAllocations` state
+- **Calculation**: Sums FTE from `pcaAllocations`, using `Set` to avoid double-counting if PCA assigned to multiple teams
+- **Purpose**: **Reference/debugging only** - NOT used in any calculations
+- **Stability**: **UNSTABLE** - changes as floating PCAs are assigned/unassigned
+- **Note**: Kept for comparison/logging purposes only
+
+**Key Rule**: Always use `totalPCAOnDuty` for requirement calculations to ensure stability. Never use `totalPCAFromAllocations` for calculations as it fluctuates with allocation state.
 
 ### Type System
 
@@ -739,6 +790,45 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 - Set to `false` in `generateAllocationsWithOverrides` (Step 1) and `useAllocationSync` hook
 - Set to `true` only in `generateStep2_TherapistAndNonFloatingPCA` (Step 2 initialization)
 - SPT allocations now only appear when Step 2 "Initialize Algo" button is clicked
+
+### Pitfall 11: Avg PCA/Team Fluctuation During Step Transitions
+**Problem**: `avg PCA/team` was fluctuating during step transitions (e.g., Step 2 → Step 3)  
+**Root Cause**: 
+- `recalculateScheduleCalculations()` was using `totalPCAFromAllocations` (unstable, changes with allocations)
+- This caused the requirement to change as floating PCAs were assigned/unassigned
+- Also, `recalculateScheduleCalculations()` wasn't being called automatically when allocations changed  
+**Solution**: 
+- Use `totalPCAOnDuty` (stable, from staff database) instead of `totalPCAFromAllocations` for requirement calculation
+- Added `useEffect` to auto-recalculate `scheduleCalculations` when `therapistAllocations` or `pcaAllocations` change
+- Formula: `averagePCAPerTeam = (ptPerTeam * totalPCAOnDuty) / totalPTOnDutyAllTeams`
+- Ensures displayed requirement is stable regardless of allocation state
+
+### Pitfall 12: SPT Allocations Disappearing on Step Transition
+**Problem**: SPT allocations created in Step 2 disappeared when transitioning to Step 3  
+**Root Cause**: 
+- `useAllocationSync` was regenerating therapist allocations without preserving SPT allocations
+- `syncTherapistAllocations()` with `includeSPTAllocation: false` didn't preserve existing SPT allocations  
+**Solution**: 
+- Modified `syncTherapistAllocations()` to preserve existing SPT allocations from `therapistAllocations` state
+- Added optimization to skip full therapist regeneration during Step 2+ → Step 3+ transitions
+- When skipping regeneration, only updates FTE/leave from `staffOverrides` on existing allocations
+- Preserves Step 2's SPT team assignments while allowing FTE/leave updates
+
+### Pitfall 13: SPT Duplicate When Dragging Between Teams
+**Problem**: Dragging SPT to another team caused it to appear in both old and new teams  
+**Root Cause**: 
+- Preserve logic in `syncTherapistAllocations()` checked only within the same team
+- When SPT moved from Team A to Team B:
+  - New allocation created in Team B (correct)
+  - Preserve logic found old allocation in Team A
+  - Checked if SPT exists in Team A's new result (it didn't, because new one is in Team B)
+  - Re-added old allocation to Team A (bug!)  
+**Solution**: 
+- Updated preserve logic to check across ALL teams before preserving SPT allocations
+- Collect all existing SPT allocations from all teams first
+- Check if SPT exists in ANY team in the new result before preserving
+- If not found, preserve it but update team from `staffOverrides.team` or original team
+- Prevents duplicates when SPTs are moved between teams
 
 ---
 

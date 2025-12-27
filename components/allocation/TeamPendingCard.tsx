@@ -49,9 +49,15 @@ export function TeamPendingCard({
     disabled: !isTied, // Only enable drag for tied teams
   })
 
+  const isBeingDragged = isDragging || isSortableDragging
+  
+  // Force horizontal-only drag by zeroing out Y-axis
+  const horizontalTransform = transform ? { ...transform, y: 0 } : null
+  
+  // Only apply transition when not dragging to prevent visual artifacts
   const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
+    transform: CSS.Transform.toString(horizontalTransform),
+    transition: isBeingDragged ? 'none' : transition,
   }
 
   // Get color scheme based on tie group index
@@ -70,20 +76,18 @@ export function TeamPendingCard({
     onValueChange(team, newValue)
   }
 
-  const isBeingDragged = isDragging || isSortableDragging
-
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={cn(
-        'touch-none',
+        'touch-none flex-shrink-0',
         isBeingDragged && 'opacity-50 z-50'
       )}
     >
       <Card
         className={cn(
-          'w-20 transition-all duration-200',
+          'w-20',
           colorScheme ? `${colorScheme.border} ${colorScheme.bg} border-2` : 'border',
           isBeingDragged && 'shadow-lg ring-2 ring-primary'
         )}

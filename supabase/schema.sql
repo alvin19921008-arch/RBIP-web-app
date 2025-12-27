@@ -80,7 +80,6 @@ CREATE TABLE pca_preferences (
   team team NOT NULL UNIQUE,
   preferred_pca_ids UUID[] DEFAULT '{}',
   preferred_slots INTEGER[] DEFAULT '{}',
-  preferred_not_pca_ids UUID[] DEFAULT '{}',
   avoid_gym_schedule BOOLEAN DEFAULT false,
   gym_schedule INTEGER,
   floor_pca_selection TEXT,
@@ -137,7 +136,7 @@ CREATE TABLE schedule_pca_allocations (
   team team NOT NULL,
   fte_pca DECIMAL NOT NULL,
   fte_remaining DECIMAL NOT NULL,
-  fte_assigned DECIMAL NOT NULL DEFAULT 0,
+  slot_assigned DECIMAL NOT NULL DEFAULT 0,  -- Renamed from fte_assigned - tracks assigned slots (0.25 per slot)
   slot_whole INTEGER,
   slot1 team,
   slot2 team,

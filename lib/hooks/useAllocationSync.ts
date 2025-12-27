@@ -201,6 +201,42 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
       }
     })
 
+    // CRITICAL: Preserve existing SPT allocations since includeSPTAllocation is false
+    // SPT allocations are only created in Step 2 "Initialize Algo" and must persist
+    // BUT: Check across ALL teams to avoid duplicates when SPT is moved to a different team
+    const allExistingSPTAllocations: (TherapistAllocation & { staff: Staff })[] = []
+    TEAMS.forEach(team => {
+      const existingSPTAllocations = therapistAllocations[team].filter(
+        alloc => alloc.staff?.rank === 'SPT'
+      )
+      allExistingSPTAllocations.push(...existingSPTAllocations)
+    })
+    
+    // Check if each existing SPT is already in the new result (across all teams)
+    // If not, preserve it but update team/FTE from staffOverrides
+    allExistingSPTAllocations.forEach(sptAlloc => {
+      // Check if SPT exists in ANY team in the new result
+      const alreadyExists = TEAMS.some(team => 
+        therapistByTeam[team].some(a => a.staff_id === sptAlloc.staff_id)
+      )
+      
+      if (!alreadyExists) {
+        // Update team and FTE from staffOverrides if available
+        const override = staffOverrides[sptAlloc.staff_id]
+        const targetTeam = override?.team ?? sptAlloc.team
+        
+        // Create updated allocation with new team
+        const updatedAlloc = {
+          ...sptAlloc,
+          team: targetTeam,
+          fte_therapist: override?.fteRemaining ?? sptAlloc.fte_therapist,
+          leave_type: override?.leaveType ?? sptAlloc.leave_type,
+        }
+        
+        therapistByTeam[targetTeam].push(updatedAlloc)
+      }
+    })
+
     // Sort therapist allocations: APPT first, then others
     TEAMS.forEach(team => {
       therapistByTeam[team].sort((a, b) => {
@@ -213,7 +249,7 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
     })
 
     setTherapistAllocations(therapistByTeam)
-  }, [staff, staffOverrides, selectedDate, specialPrograms, sptAllocations, setTherapistAllocations])
+  }, [staff, staffOverrides, selectedDate, specialPrograms, sptAllocations, setTherapistAllocations, therapistAllocations])
 
   /**
    * Step-aware sync dispatcher.
@@ -268,6 +304,9 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
   /**
    * TRIGGER 2: Sync on step transition (populate "before algo" state)
    * Ensures the new step starts with allocations reflecting latest staffOverrides
+   * 
+   * IMPORTANT: Skip therapist regeneration when transitioning FROM Step 2 onwards
+   * to preserve the allocations created by Step 2's "Initialize Algo"
    */
   useEffect(() => {
     // Skip if step hasn't changed
@@ -276,13 +315,31 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
     // Skip if no staff loaded yet
     if (staff.length === 0) return
 
-    // Step changed - sync allocations from latest staffOverrides
-    console.log(`[AllocationSync] Step transition: ${prevStepRef.current} -> ${currentStep}`)
-    syncAllocations()
+    const prevStep = prevStepRef.current
+    
+    // Check if we're transitioning FROM Step 2 or later TO a subsequent step
+    // In this case, we should NOT regenerate therapist allocations to preserve
+    // the team assignments from Step 2's "Initialize Algo"
+    const step2OrLater = ['therapist-pca', 'floating-pca', 'bed-relieving', 'review']
+    const isFromStep2OrLater = step2OrLater.includes(prevStep)
+    const isToStep3OrLater = ['floating-pca', 'bed-relieving', 'review'].includes(currentStep)
+    
+    // Check if therapist allocations already have data (from Step 2's algo)
+    const hasExistingTherapistData = TEAMS.some(team => therapistAllocations[team]?.length > 0)
+    
+    // Skip full sync if moving from Step 2+ to Step 3+ with existing data
+    // Only recalculate, don't regenerate therapist allocations
+    if (isFromStep2OrLater && isToStep3OrLater && hasExistingTherapistData) {
+      console.log(`[AllocationSync] Step transition ${prevStep} -> ${currentStep}: Skipping regeneration, only recalculating`)
+      recalculateScheduleCalculations()
+    } else {
+      console.log(`[AllocationSync] Step transition: ${prevStep} -> ${currentStep}`)
+      syncAllocations()
+    }
 
     // Update ref
     prevStepRef.current = currentStep
-  }, [currentStep, staff.length, syncAllocations])
+  }, [currentStep, staff.length, syncAllocations, therapistAllocations, recalculateScheduleCalculations])
 
   return {
     syncAllocations,

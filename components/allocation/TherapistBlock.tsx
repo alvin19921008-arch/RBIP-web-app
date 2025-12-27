@@ -93,14 +93,22 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
             // The allocationFTE already represents FTE remaining after all deductions
             const allocationFTE = allocation.fte_therapist || originalFTE
             
-            // Display FTE remaining (excluding special program FTE subtraction)
-            // This is the FTE that's actually available for duty after leave
-            let displayFTE: number | undefined = allocationFTE
+            // Check if there's a leave type (leave FTE subtraction)
+            const hasLeave = allocation.leave_type !== null && allocation.leave_type !== undefined
             
-            // Only show FTE if it's not 1.0 and not 0
-            if (displayFTE === 1.0 || displayFTE === 0) {
-              displayFTE = undefined
+            // Display FTE remaining logic:
+            // - If FTE subtraction is ONLY from special program (no leave), don't show FTE value
+            // - If FTE subtraction is from BOTH special program + leave, show the final FTE (after both subtractions)
+            let displayFTE: number | undefined = undefined
+            if (hasLeave) {
+              // There is leave - show the FTE (which includes both leave and special program deductions)
+              displayFTE = allocationFTE
+              // Only show FTE if it's not 1.0 and not 0
+              if (displayFTE === 1.0 || displayFTE === 0) {
+                displayFTE = undefined
+              }
             }
+            // If no leave but special program FTE subtraction exists, don't show FTE (displayFTE remains undefined)
             
             return (
               <StaffCard

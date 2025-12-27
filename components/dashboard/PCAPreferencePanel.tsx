@@ -151,14 +151,6 @@ export function PCAPreferencePanel() {
                           Avoid gym schedule: {pref.avoid_gym_schedule ? 'Yes' : 'No'}
                         </p>
                       )}
-                      {pref.preferred_not_pca_ids && pref.preferred_not_pca_ids.length > 0 && (
-                        <p className="text-sm text-black">
-                          Preferred NOT to have: {pref.preferred_not_pca_ids.map(id => {
-                            const pca = staff.find(s => s.id === id)
-                            return pca ? pca.name : id
-                          }).join(', ')}
-                        </p>
-                      )}
                     </div>
                   ) : (
                     <p className="text-sm text-black">No preferences set</p>
@@ -208,7 +200,6 @@ function PCAPreferenceForm({
 }) {
   const [preferredPCA, setPreferredPCA] = useState<string[]>(preference.preferred_pca_ids || [])
   const [preferredSlots, setPreferredSlots] = useState<number[]>(preference.preferred_slots || [])
-  const [preferredNotPCA, setPreferredNotPCA] = useState<string[]>(preference.preferred_not_pca_ids || [])
   const [gymSchedule, setGymSchedule] = useState<number | null>(preference.gym_schedule ?? null)
   const [avoidGymSchedule, setAvoidGymSchedule] = useState<boolean>(preference.avoid_gym_schedule ?? true)
   const [floorPCASelection, setFloorPCASelection] = useState<'upper' | 'lower' | null>(preference.floor_pca_selection ?? null)
@@ -228,31 +219,24 @@ function PCAPreferenceForm({
       team: preference.team,
       preferred_pca_ids: preferredPCA,
       preferred_slots: preferredSlots,
-      preferred_not_pca_ids: preferredNotPCA,
       gym_schedule: gymSchedule,
       avoid_gym_schedule: avoidGymSchedule,
       floor_pca_selection: floorPCASelection,
     })
   }
 
-  const togglePCA = (pcaId: string, list: 'preferred' | 'not') => {
-    if (list === 'preferred') {
-      setPreferredPCA(prev => {
-        if (prev.includes(pcaId)) {
-          return prev.filter(id => id !== pcaId)
-        } else {
-          // Max 2 preferred PCAs
-          if (prev.length >= 2) {
-            return prev
-          }
-          return [...prev, pcaId]
+  const togglePCA = (pcaId: string) => {
+    setPreferredPCA(prev => {
+      if (prev.includes(pcaId)) {
+        return prev.filter(id => id !== pcaId)
+      } else {
+        // Max 2 preferred PCAs
+        if (prev.length >= 2) {
+          return prev
         }
-      })
-    } else {
-      setPreferredNotPCA(prev =>
-        prev.includes(pcaId) ? prev.filter(id => id !== pcaId) : [...prev, pcaId]
-      )
-    }
+        return [...prev, pcaId]
+      }
+    })
   }
 
   const handleSlotChange = (slot: number) => {
@@ -298,7 +282,7 @@ function PCAPreferenceForm({
                 type="checkbox"
                 checked={preferredPCA.includes(s.id)}
                 disabled={!preferredPCA.includes(s.id) && preferredPCA.length >= 2}
-                onChange={(e) => togglePCA(s.id, 'preferred')}
+                onChange={(e) => togglePCA(s.id)}
               />
               <span className={!preferredPCA.includes(s.id) && preferredPCA.length >= 2 ? 'text-muted-foreground' : ''}>
                 {s.name}
@@ -362,23 +346,6 @@ function PCAPreferenceForm({
             : 'Floating PCA can be assigned to this team\'s gym schedule slot'}
         </p>
       </div>
-
-      <div>
-        <label className="block text-sm font-medium mb-1">Preferred NOT to Have (PCA to avoid)</label>
-        <div className="max-h-40 overflow-y-auto border rounded p-2">
-          {staff.filter(s => s.floating).map((s) => (
-            <label key={s.id} className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                checked={preferredNotPCA.includes(s.id)}
-                onChange={(e) => togglePCA(s.id, 'not')}
-              />
-              <span>{s.name}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-
 
       <div className="flex space-x-2">
         <Button type="submit">Save</Button>

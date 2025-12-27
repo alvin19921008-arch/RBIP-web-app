@@ -46,7 +46,7 @@ export interface PCAAllocation {
   invalid_slot?: number // Slot (1-4) that is leave/come back, assigned but not counted
   leave_comeback_time?: string // Time in HH:MM format
   leave_mode?: string // 'leave' or 'come_back'
-  fte_subtraction?: number // NEW: FTE subtraction from leave (excluding special program subtraction). Used to calculate base_FTE_remaining = 1.0 - fte_subtraction for display
+  fte_subtraction?: number // FTE subtraction from leave (excluding special program subtraction). Used to calculate base_FTE_remaining = 1.0 - fte_subtraction. NOT stored in database - calculated from staffOverrides when needed
 }
 
 export interface BedAllocation {
@@ -78,4 +78,61 @@ export interface ScheduleCalculations {
   expected_beds_per_team?: number // (3) Expected beds for team = (total beds / total PT) * (PT per team)
   required_pca_per_team?: number // (4) Required PCA per team = (3) / (total beds / total PCA)
 }
+
+// ============================================================================
+// Allocation Tracking System (Step 3.4)
+// ============================================================================
+
+/**
+ * Tracks how a specific slot was assigned to a team.
+ * Used for tooltip display and debugging.
+ */
+export interface SlotAssignmentLog {
+  slot: number                    // 1, 2, 3, or 4
+  pcaId: string                   // Which PCA was assigned
+  pcaName: string                 // PCA name for display
+  assignedIn: 'step32' | 'step33' | 'step34'  // Which step made this assignment
+  
+  // Step 3.4 specific tracking
+  cycle?: 1 | 2 | 3              // Which cycle (only for step34)
+  condition?: 'A' | 'B' | 'C' | 'D'  // Which condition (only for step34 cycle 1)
+  
+  // Decision factors
+  wasPreferredSlot?: boolean      // Was this the team's preferred slot?
+  wasPreferredPCA?: boolean       // Was this the team's preferred PCA?
+  wasFloorPCA?: boolean           // Was this a floor-matched PCA?
+  wasExcludedInCycle1?: boolean   // Did this PCA become available only in Cycle 2?
+  
+  // Constraint handling
+  amPmBalanceAchieved?: boolean   // Was AM/PM balance achieved?
+  gymSlotAvoided?: boolean        // Was gym slot avoided (if applicable)?
+  overlapSlot?: boolean           // Was this slot already assigned to another PCA?
+}
+
+/**
+ * Aggregated tracking info per team for tooltip display.
+ */
+export interface TeamAllocationLog {
+  team: Team
+  assignments: SlotAssignmentLog[]
+  summary: {
+    totalSlotsAssigned: number
+    fromStep32: number
+    fromStep33: number
+    fromStep34Cycle1: number
+    fromStep34Cycle2: number
+    fromStep34Cycle3: number
+    preferredSlotFilled: boolean
+    preferredPCAsUsed: number
+    floorPCAsUsed: number
+    nonFloorPCAsUsed: number
+    amPmBalanced: boolean
+    gymSlotUsed: boolean  // true if gym slot was assigned despite avoidance
+  }
+}
+
+/**
+ * Allocation tracker for all teams
+ */
+export type AllocationTracker = Record<Team, TeamAllocationLog>
 

@@ -81,6 +81,12 @@ pendingPCA-FTE/team = avgPCAPerTeam - (non-floating PCA FTE already allocated to
 3. Preserves existing PCA allocations (only modified by their respective algo)
 4. Updates `scheduleCalculations` so next step has accurate PT/team and avgPCA/team
 
+**Optimization:** When transitioning from Step 2+ to Step 3+ with existing therapist allocations:
+- Skips full therapist regeneration to preserve Step 2's SPT allocations
+- Only updates FTE/leave values from `staffOverrides` on existing allocations
+- This prevents unnecessary regeneration when no `staffOverrides` changes occurred
+- If `staffOverrides` changes, TRIGGER 1 will regenerate anyway (correct behavior)
+
 ## Using the useAllocationSync Hook
 
 ```typescript
@@ -102,9 +108,18 @@ useAllocationSync({
 ```
 
 The hook automatically:
-- Syncs therapist allocations when `staffOverrides` changes
-- Syncs on step transitions
+- Syncs therapist allocations when `staffOverrides` changes (TRIGGER 1)
+- Syncs on step transitions (TRIGGER 2)
 - Recalculates schedule calculations after each sync
+- Preserves existing SPT allocations when `includeSPTAllocation: false` (prevents SPT loss on sync)
+
+**SPT Preservation Logic:**
+- When `syncTherapistAllocations()` runs with `includeSPTAllocation: false`:
+  1. Regenerates all therapist allocations (APPT, RPT, SPT) based on `staffOverrides` or default teams
+  2. Collects all existing SPT allocations from ALL teams (not just current team)
+  3. Checks if each SPT exists in ANY team in the new result
+  4. If not found, preserves it but updates team/FTE from `staffOverrides`
+  5. Prevents duplicates when SPTs are moved between teams
 
 ## Critical Data Structures
 
@@ -155,6 +170,22 @@ Record<string, {
 **Purpose:** Current allocation state that reflects all steps completed so far.
 
 **Rule:** When recalculating data for a subsequent step, always read from the current allocation state, not from stale snapshots.
+
+### Schedule Calculations: `calculations`
+
+**Purpose:** Calculated metrics per team, including `average_pca_per_team` (target requirement).
+
+**Critical Stability Rule:** 
+- `average_pca_per_team` must be **STABLE** regardless of allocation state
+- Use `totalPCAOnDuty` (from staff database) for requirement calculation, NOT `totalPCAFromAllocations`
+- Formula: `averagePCAPerTeam = (ptPerTeam * totalPCAOnDuty) / totalPTOnDutyAllTeams`
+- `totalPCAOnDuty`: Sum of FTE from all on-duty PCAs in `staff` DB + `staffOverrides` (stable)
+- `totalPCAFromAllocations`: Sum of FTE from currently allocated PCAs (unstable, for reference only)
+
+**Auto-Recalculation:**
+- `recalculateScheduleCalculations()` is automatically called when `therapistAllocations` or `pcaAllocations` change
+- Ensures displayed `avg PCA/team` updates immediately after Step 2 algo adds SPTs to teams
+- Uses `staffOverrides` for current FTE values (not stale `alloc.fte_therapist`)
 
 ## Data Passing Rules
 
@@ -313,3 +344,6 @@ The workflow enforces step-specific restrictions on certain actions:
 - [ ] Is `useAllocationSync` used for real-time sync (not scattered useEffects)?
 - [ ] Does step transition correctly populate "before algo" state?
 - [ ] Are step-based validations enforced for manual override actions?
+- [ ] Are calculations using `totalPCAOnDuty` (stable) instead of `totalPCAFromAllocations` (unstable)?
+- [ ] Are SPT allocations preserved correctly when `includeSPTAllocation: false`?
+- [ ] Does the preserve logic check across ALL teams to prevent duplicates when SPTs are moved?

@@ -40,7 +40,7 @@ function LeaveItem({ staff, onEditStaff }: LeaveItemProps) {
               onClick={(e) => {
                 e.stopPropagation()
                 e.preventDefault()
-                onEditStaff?.(staff.id, e)
+                onEditStaff?.(staff.id)
               }}
               onMouseDown={(e) => {
                 e.stopPropagation()

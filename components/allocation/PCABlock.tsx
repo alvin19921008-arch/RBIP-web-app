@@ -1,7 +1,7 @@
 'use client'
 
 import { Team } from '@/types/staff'
-import { PCAAllocation } from '@/types/schedule'
+import { PCAAllocation, TeamAllocationLog } from '@/types/schedule'
 import { Staff } from '@/types/staff'
 import { SpecialProgram } from '@/types/allocation'
 import { StaffCard } from './StaffCard'
@@ -25,9 +25,10 @@ interface PCABlockProps {
   step2Initialized?: boolean // Whether Step 2 algorithm has been run
   weekday?: 'mon' | 'tue' | 'wed' | 'thu' | 'fri' // Weekday for checking if DRM is active
   externalHover?: boolean // External hover state (e.g., from popover drag)
+  allocationLog?: TeamAllocationLog // Allocation tracking log for this team (from Step 3.4)
 }
 
-export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averagePCAPerTeam, baseAveragePCAPerTeam, specialPrograms = [], allPCAAllocations = [], staffOverrides = {}, allPCAStaff = [], currentStep = 'leave-fte', step2Initialized = false, weekday, externalHover = false }: PCABlockProps) {
+export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averagePCAPerTeam, baseAveragePCAPerTeam, specialPrograms = [], allPCAAllocations = [], staffOverrides = {}, allPCAStaff = [], currentStep = 'leave-fte', step2Initialized = false, weekday, externalHover = false, allocationLog }: PCABlockProps) {
   // Only show substitution styling AFTER Step 2 algorithm has run (not just when navigating to Step 2)
   const showSubstitutionStyling = currentStep !== 'leave-fte' && step2Initialized
   
@@ -889,20 +890,64 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                 Final PCA/team: {averagePCAPerTeam.toFixed(2)}
               </div>
             )}
-            {/* Assigned PCA-FTE per team (rounded, excluding special program slots) with tooltip */}
+            {/* Assigned PCA-FTE per team (rounded, excluding special program slots) with allocation tracking tooltip */}
             {assignedPcaFteRounded > 0 && (
               <div className="relative group mt-0.5">
                 <div className="text-xs text-black/60 cursor-help">
                   Assigned: {assignedPcaFteRounded.toFixed(2)}
                 </div>
-                {/* Tooltip on hover */}
-                <div className="absolute left-0 bottom-full mb-2 w-64 p-2 bg-gray-900 text-white text-xs rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity z-50 pointer-events-none">
-                  <div className="space-y-1">
-                    <div>Original calculated PCA: {originalCalculatedPCA.toFixed(2)}</div>
-                    <div>Expected to assign PCA: {originalCalculatedPCA.toFixed(2)} → {roundingDetails.rounded.toFixed(2)}</div>
-                    <div>in interval of {roundingDetails.lower.toFixed(2)} - ({roundingDetails.midpoint.toFixed(3)}) - {roundingDetails.upper.toFixed(2)} (rounded to nearest 0.25)</div>
-                    <div>Finally assigned with a/v PCA: {assignedPcaFteRounded.toFixed(2)}</div>
-                  </div>
+                {/* Allocation Tracking Tooltip on hover */}
+                <div className="absolute left-0 bottom-full mb-2 w-80 p-3 bg-gray-900 text-white text-xs rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity z-50 pointer-events-none">
+                  {allocationLog && allocationLog.assignments.length > 0 ? (
+                    <div className="space-y-2">
+                      {/* Summary Header */}
+                      <div className="font-semibold border-b border-gray-700 pb-1">
+                        Allocation Tracking - {team}
+                      </div>
+                      
+                      {/* Summary Stats */}
+                      <div className="grid grid-cols-2 gap-1 text-[10px]">
+                        <div>Total slots: {allocationLog.summary.totalSlotsAssigned}</div>
+                        <div>From 3.2: {allocationLog.summary.fromStep32}</div>
+                        <div>From 3.3: {allocationLog.summary.fromStep33}</div>
+                        <div>From 3.4: {allocationLog.summary.fromStep34Cycle1 + allocationLog.summary.fromStep34Cycle2 + allocationLog.summary.fromStep34Cycle3}</div>
+                      </div>
+                      
+                      {/* Per-Slot Details */}
+                      <div className="space-y-1 border-t border-gray-700 pt-1 max-h-32 overflow-y-auto">
+                        {allocationLog.assignments.map((a, i) => (
+                          <div key={i} className="text-[10px] flex flex-wrap items-center gap-1">
+                            <span className="font-mono">Slot {a.slot}:</span>
+                            <span>{a.pcaName}</span>
+                            <span className="text-gray-400">
+                              ({a.assignedIn === 'step34' 
+                                ? `C${a.cycle}${a.condition ? `-${a.condition}` : ''}` 
+                                : a.assignedIn})
+                            </span>
+                            {a.wasPreferredPCA && <span className="text-green-400">★PCA</span>}
+                            {a.wasPreferredSlot && <span className="text-blue-400">★Slot</span>}
+                            {a.wasFloorPCA && <span className="text-yellow-400">Floor</span>}
+                            {a.wasExcludedInCycle1 && <span className="text-orange-400">C2-unlocked</span>}
+                          </div>
+                        ))}
+                      </div>
+                      
+                      {/* Constraint Status */}
+                      <div className="text-[10px] border-t border-gray-700 pt-1 text-gray-400">
+                        AM/PM: {allocationLog.summary.amPmBalanced ? '✓ Balanced' : '○ Not balanced'}
+                        {' | '}
+                        Gym: {allocationLog.summary.gymSlotUsed ? '⚠ Used' : '✓ Avoided'}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <div>Original calculated PCA: {originalCalculatedPCA.toFixed(2)}</div>
+                      <div>Expected to assign PCA: {originalCalculatedPCA.toFixed(2)} → {roundingDetails.rounded.toFixed(2)}</div>
+                      <div>in interval of {roundingDetails.lower.toFixed(2)} - ({roundingDetails.midpoint.toFixed(3)}) - {roundingDetails.upper.toFixed(2)} (rounded to nearest 0.25)</div>
+                      <div>Finally assigned with a/v PCA: {assignedPcaFteRounded.toFixed(2)}</div>
+                      <div className="text-gray-400 mt-2 text-[10px]">Run Step 3 algorithm to see detailed tracking.</div>
+                    </div>
+                  )}
                   {/* Arrow pointing down */}
                   <div className="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
                 </div>

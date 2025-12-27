@@ -7,6 +7,11 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 
+interface SpecialProgramFTEInfo {
+  name: string
+  fteSubtraction: number
+}
+
 interface StaffEditDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -15,7 +20,8 @@ interface StaffEditDialogProps {
   staffRank?: string // Staff rank to determine if slot fields should be shown
   currentLeaveType: LeaveType | null
   currentFTERemaining: number
-  specialProgramFTESubtraction?: number // FTE subtracted due to special programs
+  specialProgramFTESubtraction?: number // FTE subtracted due to special programs (deprecated, use specialProgramFTEInfo)
+  specialProgramFTEInfo?: SpecialProgramFTEInfo[] // Special programs causing FTE subtraction with program names
   currentFTESubtraction?: number
   currentAvailableSlots?: number[]
   currentInvalidSlot?: number
@@ -46,6 +52,7 @@ export function StaffEditDialog({
   currentLeaveType,
   currentFTERemaining,
   specialProgramFTESubtraction = 0,
+  specialProgramFTEInfo = [],
   currentFTESubtraction,
   currentAvailableSlots,
   currentInvalidSlot,
@@ -53,12 +60,17 @@ export function StaffEditDialog({
   currentIsLeave,
   onSave,
 }: StaffEditDialogProps) {
+  // Calculate total special program FTE subtraction (use specialProgramFTEInfo if available, fallback to specialProgramFTESubtraction)
+  const totalSpecialProgramFTE = specialProgramFTEInfo.length > 0
+    ? specialProgramFTEInfo.reduce((sum, info) => sum + info.fteSubtraction, 0)
+    : specialProgramFTESubtraction
+  
   const [leaveType, setLeaveType] = useState<LeaveType | null>(currentLeaveType)
   const [customLeaveType, setCustomLeaveType] = useState<string>('')
   const [fteRemaining, setFteRemaining] = useState<number>(currentFTERemaining)
-  const [fteSubtraction, setFteSubtraction] = useState<number>(currentFTESubtraction ?? (1.0 - currentFTERemaining - specialProgramFTESubtraction))
+  const [fteSubtraction, setFteSubtraction] = useState<number>(currentFTESubtraction ?? (1.0 - currentFTERemaining - totalSpecialProgramFTE))
   const [fteRemainingInput, setFteRemainingInput] = useState<string>(currentFTERemaining.toFixed(2))
-  const [fteSubtractionInput, setFteSubtractionInput] = useState<string>((currentFTESubtraction ?? (1.0 - currentFTERemaining - specialProgramFTESubtraction)).toFixed(2))
+  const [fteSubtractionInput, setFteSubtractionInput] = useState<string>((currentFTESubtraction ?? (1.0 - currentFTERemaining - totalSpecialProgramFTE)).toFixed(2))
   const [availableSlots, setAvailableSlots] = useState<number[]>(currentAvailableSlots ?? [])
   const [invalidSlot, setInvalidSlot] = useState<number | undefined>(currentInvalidSlot)
   const [leaveComebackTime, setLeaveComebackTime] = useState<string>(currentLeaveComebackTime || '')
@@ -71,7 +83,7 @@ export function StaffEditDialog({
     if (open) {
       setLeaveType(currentLeaveType)
       setFteRemaining(roundTo2Decimals(currentFTERemaining))
-      const calculatedSubtraction = currentFTESubtraction ?? (1.0 - currentFTERemaining - specialProgramFTESubtraction)
+      const calculatedSubtraction = currentFTESubtraction ?? (1.0 - currentFTERemaining - totalSpecialProgramFTE)
       setFteSubtraction(roundTo2Decimals(Math.max(0, calculatedSubtraction)))
       setFteRemainingInput(roundTo2Decimals(currentFTERemaining).toFixed(2))
       setFteSubtractionInput(roundTo2Decimals(Math.max(0, calculatedSubtraction)).toFixed(2))
@@ -109,9 +121,9 @@ export function StaffEditDialog({
       setShowCustomInput(currentLeaveType === 'others')
       setCustomLeaveType('')
     }
-  }, [open, currentLeaveType, currentFTERemaining, currentFTESubtraction, currentAvailableSlots, currentInvalidSlot, currentLeaveComebackTime, currentIsLeave, specialProgramFTESubtraction])
+  }, [open, currentLeaveType, currentFTERemaining, currentFTESubtraction, currentAvailableSlots, currentInvalidSlot, currentLeaveComebackTime, currentIsLeave, totalSpecialProgramFTE])
 
-  const maxFTE = 1.0 - specialProgramFTESubtraction
+  const maxFTE = 1.0 - totalSpecialProgramFTE
   const fteIsMultipleOfQuarter = isMultipleOfQuarter(fteRemaining)
   // Hide slot-related fields for therapist ranks (RPT, APPT, SPT)
   const isTherapistRank = staffRank && ['RPT', 'APPT', 'SPT'].includes(staffRank)
@@ -458,15 +470,19 @@ export function StaffEditDialog({
             </div>
             {!isValid && (
               <p className="text-sm text-red-500">
-                {specialProgramFTESubtraction > 0 
-                  ? `FTE must be between 0 and ${maxFTE.toFixed(2)} (1.0 - ${specialProgramFTESubtraction.toFixed(2)} special program FTE)`
+                {totalSpecialProgramFTE > 0 
+                  ? `FTE must be between 0 and ${maxFTE.toFixed(2)} (1.0 - ${totalSpecialProgramFTE.toFixed(2)} special program FTE)`
                   : 'FTE must be between 0 and 1'}
               </p>
             )}
-            {specialProgramFTESubtraction > 0 && (
-              <p className="text-xs text-muted-foreground">
-                Special program FTE subtraction: {specialProgramFTESubtraction.toFixed(2)}. Max FTE remaining: {maxFTE.toFixed(2)}
-              </p>
+            {specialProgramFTEInfo.length > 0 && (
+              <div className="space-y-1">
+                {specialProgramFTEInfo.map((info, index) => (
+                  <p key={index} className="text-sm text-foreground">
+                    There is an FTE cost {info.fteSubtraction.toFixed(2)} due to {info.name} for this staff.
+                  </p>
+                ))}
+              </div>
             )}
             {leaveType && leaveType !== 'others' && LEAVE_TYPE_FTE_MAP[leaveType as Exclude<LeaveType, null | 'others' | 'medical follow-up'>] !== undefined && (
               <p className="text-xs text-muted-foreground">

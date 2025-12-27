@@ -31,7 +31,6 @@ export interface PCAPreference {
   team: Team
   preferred_pca_ids: string[]  // Max 2 enforced in UI
   preferred_slots: number[]    // Max 1 enforced in UI (radio behavior)
-  preferred_not_pca_ids: string[]
   avoid_gym_schedule?: boolean
   gym_schedule?: number | null  // Gym slot (1-4) for this team
   floor_pca_selection?: 'upper' | 'lower' | null  // Team's floor preference for filtering compatible PCAs
