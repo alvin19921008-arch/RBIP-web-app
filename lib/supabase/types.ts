@@ -17,6 +17,8 @@ export interface Database {
           special_program: string[] | null
           team: 'FO' | 'SMM' | 'SFM' | 'CPPC' | 'MC' | 'GMC' | 'NSM' | 'DRO' | null
           floating: boolean
+          floor_pca: string[] | null
+          active: boolean
           created_at: string
           updated_at: string
         }
@@ -27,6 +29,8 @@ export interface Database {
           special_program?: string[] | null
           team?: 'FO' | 'SMM' | 'SFM' | 'CPPC' | 'MC' | 'GMC' | 'NSM' | 'DRO' | null
           floating?: boolean
+          floor_pca?: string[] | null
+          active?: boolean
           created_at?: string
           updated_at?: string
         }
@@ -37,6 +41,8 @@ export interface Database {
           special_program?: string[] | null
           team?: 'FO' | 'SMM' | 'SFM' | 'CPPC' | 'MC' | 'GMC' | 'NSM' | 'DRO' | null
           floating?: boolean
+          floor_pca?: string[] | null
+          active?: boolean
           created_at?: string
           updated_at?: string
         }

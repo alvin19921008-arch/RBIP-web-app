@@ -79,8 +79,6 @@ flowchart TD
     L --> O
 ```
 
-
-
 ## Reservation Data Structure
 
 ```typescript
@@ -106,8 +104,6 @@ interface SlotAssignment {
   pcaId: string
 }
 ```
-
-
 
 ## UI Design
 
@@ -142,8 +138,6 @@ Convert `FloatingPCAConfigDialog` to a wizard with internal steps:
 
 ```
 
-
-
 ### Card Component for 3.2
 
 Each team card shows:
@@ -158,7 +152,7 @@ Each team card shows:
 
 ## Key Files to Modify/Create
 
-| File | Action | Description ||------|--------|-------------|| [`components/allocation/FloatingPCAConfigDialog.tsx`](components/allocation/FloatingPCAConfigDialog.tsx) | MODIFY | Convert to wizard with currentMiniStep state (3.1, 3.2) || [`components/allocation/TeamReservationCard.tsx`](components/allocation/TeamReservationCard.tsx) | CREATE | New card for Step 3.2 showing reserved slots with checkboxes || [`lib/utils/reservationLogic.ts`](lib/utils/reservationLogic.ts) | CREATE | Pure functions for computing reservations || [`app/(dashboard)/schedule/page.tsx`](app/\\\\\(dashboard)/schedule/page.tsx) | MODIFY | Pass additional data (existingAllocations, staff) to dialog |
+| File | Action | Description ||------|--------|-------------|| [`components/allocation/FloatingPCAConfigDialog.tsx`](components/allocation/FloatingPCAConfigDialog.tsx) | MODIFY | Convert to wizard with currentMiniStep state (3.1, 3.2) || [`components/allocation/TeamReservationCard.tsx`](components/allocation/TeamReservationCard.tsx) | CREATE | New card for Step 3.2 showing reserved slots with checkboxes || [`lib/utils/reservationLogic.ts`](lib/utils/reservationLogic.ts) | CREATE | Pure functions for computing reservations || [`app/(dashboard)/schedule/page.tsx`](app/\\\\\\(dashboard)/schedule/page.tsx) | MODIFY | Pass additional data (existingAllocations, staff) to dialog |
 
 ## Reservation Logic (Action 1)
 
@@ -194,8 +188,6 @@ function computeReservations(
       addReservation(team, preferredSlot, pcaId)
 }
 ```
-
-
 
 ## Assignment Logic (Action 2)
 

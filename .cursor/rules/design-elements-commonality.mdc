@@ -1,0 +1,193 @@
+---
+description: Design element commonality rules for consistent UI/UX across the application
+alwaysApply: false
+---
+# Design Elements Commonality
+
+Design standards for consistent UI/UX. Apply intelligently when creating new UI components.
+
+## Icons
+
+**Rule**: Use lucide-react icons instead of emoji icons for small icons.
+
+### CORRECT Pattern:
+```tsx
+import { Info, Edit2, Trash2, Plus } from 'lucide-react'
+
+// Use lucide icons
+<Info className="h-4 w-4" />
+<Edit2 className="h-4 w-4" />
+```
+
+### WRONG Pattern:
+```tsx
+// Don't use emoji icons
+<p>ℹ️ Information text</p>
+<button>✏️ Edit</button>
+```
+
+---
+
+## Button Colors
+
+**Rule**: Selection buttons (teams, weekdays, slots, etc.) use blue color. Exceptions: Save, Cancel, Add Entry, and Delete buttons use their default/semantic colors.
+
+### CORRECT Patterns:
+
+**Selection Buttons (Blue)**:
+```tsx
+// Team selection, weekday selection, slot selection, etc.
+<Button className={cn(
+  isSelected ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
+)}>
+  {team}
+</Button>
+```
+
+**Action Buttons (Default/Semantic Colors)**:
+```tsx
+// Save button - use primary/default
+<Button type="submit">Save</Button>
+
+// Cancel button - use outline variant
+<Button variant="outline" onClick={onCancel}>Cancel</Button>
+
+// Add entry button - use default
+<Button onClick={handleAdd}>
+  <Plus className="h-4 w-4 mr-2" />
+  Add New Entry
+</Button>
+
+// Delete button - use destructive variant
+<Button variant="destructive" onClick={handleDelete}>
+  <Trash2 className="h-4 w-4" />
+</Button>
+```
+
+### WRONG Pattern:
+```tsx
+// Don't use black/primary for selection buttons
+<Button className={cn(isSelected ? 'bg-primary text-primary-foreground' : '')}>
+  {option}
+</Button>
+```
+
+---
+
+## Toggle Buttons
+
+**Rule**: Toggle buttons must include:
+- A circular thumb that moves between positions
+- Text inside the track (not outside)
+- Width matches the longest word length of the binary option text
+- Minimum side padding between text and thumb/track border
+
+### CORRECT Pattern:
+```tsx
+<button
+  className={cn(
+    "relative h-6 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 grid grid-cols-[1fr_22px] items-center",
+    isActive
+      ? "bg-green-500 focus:ring-green-500"
+      : "bg-gray-400 focus:ring-gray-400",
+    "w-[76px]" // Width matches longest word ("Inactive" in this case) + thumb + padding
+  )}
+  type="button"
+>
+  <span className={cn(
+    "text-[11px] leading-none font-medium text-white z-10 relative text-center",
+    isActive ? "col-start-1" : "col-start-2"
+  )}>
+    {isActive ? 'Active' : 'Inactive'}
+  </span>
+  <span
+    className={cn(
+      "absolute top-0.5 h-5 w-5 bg-white rounded-full transition-transform shadow-md",
+      isActive ? "right-0.5" : "left-0.5"
+    )}
+  />
+</button>
+```
+
+**Key Points**:
+- Use `grid` layout with `grid-cols-[1fr_22px]` to position text and thumb
+- Text spans the full width (`col-start-1` or `col-start-2` based on state)
+- Thumb is absolutely positioned with `right-0.5` or `left-0.5`
+- Width class (`w-[...]`) should match longest text + thumb width (22px) + minimal padding
+- Background colors: green for active/positive state, gray for inactive/negative state
+
+---
+
+## Dialog Width
+
+**Rule**: Dialog width should match content appropriately. Consider instruction text length, but allow text wrapping to multiple lines. Dialogs should not be unnecessarily wide.
+
+### CORRECT Patterns:
+
+**Narrow Dialog (for simple forms with short text)**:
+```tsx
+<DialogContent className="max-w-lg">
+  {/* Content */}
+</DialogContent>
+```
+
+**Medium Dialog (for forms with longer instruction text that can wrap)**:
+```tsx
+<DialogContent className="max-w-lg">
+  <p className="text-xs text-muted-foreground">
+    This is a longer instruction text that wraps to multiple lines
+    but the dialog doesn't need to be very wide.
+  </p>
+</DialogContent>
+```
+
+**Wide Dialog (only when necessary for wide content like tables/large forms)**:
+```tsx
+<DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+  {/* Wide content like tables */}
+</DialogContent>
+```
+
+**Guidelines**:
+- Default to `max-w-lg` (512px) for most dialogs
+- Allow instruction text to wrap naturally instead of making dialog wider
+- Only use `max-w-2xl` or larger for content that genuinely needs more width (tables, multi-column forms)
+- Use `max-h-[90vh] overflow-y-auto` for dialogs with scrollable content
+
+### WRONG Pattern:
+```tsx
+// Don't make dialogs unnecessarily wide for short text
+<DialogContent className="max-w-4xl">
+  <p>Short instruction text</p>
+  {/* Simple form */}
+</DialogContent>
+```
+
+---
+
+## Tooltip Background Color
+
+**Rule**: Tooltip background color should be white.
+
+### CORRECT Pattern:
+```tsx
+// In tooltip component or when styling tooltips
+<div className="px-2 py-1 text-xs text-popover-foreground bg-white border border-border rounded-md shadow-md">
+  {tooltipContent}
+</div>
+```
+
+**Note**: If using a Tooltip component from the UI library, ensure it uses `bg-white` or `bg-popover` (if popover background is white) instead of dark backgrounds.
+
+---
+
+## Summary Checklist
+
+When creating new UI components, ensure:
+
+- [ ] Small icons use lucide-react icons (not emojis)
+- [ ] Selection buttons use blue color (`bg-blue-600 text-white` when selected)
+- [ ] Action buttons (Save, Cancel, Add, Delete) use appropriate semantic variants
+- [ ] Toggle buttons have circular thumb, text inside track, appropriate width
+- [ ] Dialog width matches content (default to `max-w-lg`, allow text wrapping)
+- [ ] Tooltips use white background

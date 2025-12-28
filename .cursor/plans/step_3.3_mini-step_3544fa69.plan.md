@@ -1,34 +1,3 @@
----
-name: Implement Step 3.3 Mini-step
-overview: Add Step 3.3 to the floating PCA configuration dialog, which identifies adjacent slots from special program PCA assignments and allows users to optionally assign them to the same team.
-todos:
-  - id: add-adjacent-logic
-    content: Add computeAdjacentSlotReservations() function to reservationLogic.ts
-    status: completed
-  - id: update-dialog-types
-    content: Update MiniStep type and add new state variables for 3.3 in FloatingPCAConfigDialog
-    status: completed
-  - id: create-adjacent-card
-    content: Create TeamAdjacentSlotCard.tsx component for Step 3.3 UI
-    status: completed
-    dependencies:
-      - add-adjacent-logic
-  - id: implement-step33-ui
-    content: Implement renderStep33() and step transition logic in FloatingPCAConfigDialog
-    status: completed
-    dependencies:
-      - update-dialog-types
-      - create-adjacent-card
-  - id: update-final-save
-    content: Update handleFinalSave to combine all assignments from 3.2 and 3.3
-    status: completed
-  - id: verify-build
-    content: Run npm run build to verify no type errors
-    status: completed
-    dependencies:
-      - implement-step33-ui
----
-
 # Implement Step 3.3: Adjacent Slot Assignment from Special Program PCAs
 
 ## Summary
@@ -44,8 +13,6 @@ flowchart TD
     Step33["3.3: Adjacent Slots"] --> |"all assignments, finalPendingFTE, finalAllocations"| FinalAlgo
     FinalAlgo["3.4: Final Floating PCA Algo"]
 ```
-
-
 
 ### Key Data Structures
 

@@ -101,6 +101,7 @@ export default function SchedulePage() {
     FO: null, SMM: null, SFM: null, CPPC: null, MC: null, GMC: null, NSM: null, DRO: null
   })
   const [staff, setStaff] = useState<Staff[]>([])
+  const [inactiveStaff, setInactiveStaff] = useState<Staff[]>([])
   const [specialPrograms, setSpecialPrograms] = useState<SpecialProgram[]>([])
   const [sptAllocations, setSptAllocations] = useState<SPTAllocation[]>([])
   const [wards, setWards] = useState<{ name: string; total_beds: number; team_assignments: Record<Team, number> }[]>([])
@@ -440,14 +441,27 @@ export default function SchedulePage() {
   }
 
   const loadStaff = async () => {
-    const { data, error } = await supabase
-      .from('staff')
-      .select('*')
-      .order('rank', { ascending: true })
-      .order('name', { ascending: true })
+    const [activeRes, inactiveRes] = await Promise.all([
+      supabase
+        .from('staff')
+        .select('*')
+        .eq('active', true)  // Only load active staff for allocations
+        .order('rank', { ascending: true })
+        .order('name', { ascending: true }),
+      supabase
+        .from('staff')
+        .select('*')
+        .eq('active', false)  // Load inactive staff for inactive pool
+        .order('rank', { ascending: true })
+        .order('name', { ascending: true })
+    ])
 
-    if (data) {
-      setStaff(data)
+    if (activeRes.data) {
+      setStaff(activeRes.data)
+    }
+    
+    if (inactiveRes.data) {
+      setInactiveStaff(inactiveRes.data)
     }
   }
 
@@ -3674,6 +3688,7 @@ export default function SchedulePage() {
           <StaffPool
             therapists={therapists}
             pcas={pcas}
+            inactiveStaff={inactiveStaff}
             onEditStaff={handleEditStaff}
           />
 

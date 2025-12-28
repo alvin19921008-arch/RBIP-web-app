@@ -10,7 +10,7 @@ export function getSlotTime(slot: number): string {
 }
 
 export function getSlotLabel(slot: number): string {
-  return getSlotTime(slot)
+  return formatTimeRange(getSlotTime(slot))
 }
 
 // Helper to format time range for display (e.g., "1030-1200")

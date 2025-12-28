@@ -306,7 +306,7 @@ function PCAPreferenceForm({
               type="button"
               onClick={() => handleSlotChange(slot)}
               className={`px-3 py-1 rounded ${
-                preferredSlots.includes(slot) ? 'bg-primary text-primary-foreground' : 'bg-secondary'
+                preferredSlots.includes(slot) ? 'bg-blue-600 text-white' : 'bg-secondary'
               }`}
             >
               {getSlotLabel(slot)}
@@ -330,15 +330,30 @@ function PCAPreferenceForm({
               </option>
             ))}
           </select>
-          <Button
-            type="button"
-            variant={avoidGymSchedule ? "outline" : "default"}
-            size="sm"
-            onClick={() => setAvoidGymSchedule(!avoidGymSchedule)}
-            className="whitespace-nowrap"
-          >
-            {avoidGymSchedule ? 'Avoid gym slot' : 'Not to avoid gym slot'}
-          </Button>
+          <div className="inline-flex rounded-md border border-input overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setAvoidGymSchedule(true)}
+              className={`px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
+                avoidGymSchedule
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              Avoid
+            </button>
+            <button
+              type="button"
+              onClick={() => setAvoidGymSchedule(false)}
+              className={`px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap border-l border-input ${
+                !avoidGymSchedule
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              Not to avoid
+            </button>
+          </div>
         </div>
         <p className="text-xs text-muted-foreground mt-1">
           {avoidGymSchedule 

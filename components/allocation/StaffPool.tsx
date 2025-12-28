@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Staff } from '@/types/staff'
 import { StaffCard } from './StaffCard'
+import { InactiveStaffPool } from './InactiveStaffPool'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { ChevronRight, ChevronDown, ChevronLeft } from 'lucide-react'
@@ -10,10 +11,11 @@ import { ChevronRight, ChevronDown, ChevronLeft } from 'lucide-react'
 interface StaffPoolProps {
   therapists: Staff[]
   pcas: Staff[]
+  inactiveStaff?: Staff[]
   onEditStaff?: (staffId: string, event?: React.MouseEvent) => void
 }
 
-export function StaffPool({ therapists, pcas, onEditStaff }: StaffPoolProps) {
+export function StaffPool({ therapists, pcas, inactiveStaff = [], onEditStaff }: StaffPoolProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [expandedRanks, setExpandedRanks] = useState<Record<string, boolean>>({
     SPT: false,
@@ -145,6 +147,10 @@ export function StaffPool({ therapists, pcas, onEditStaff }: StaffPoolProps) {
           )}
         </CardContent>
       </Card>
+
+      {inactiveStaff.length > 0 && (
+        <InactiveStaffPool inactiveStaff={inactiveStaff} onEditStaff={onEditStaff} />
+      )}
     </div>
   )
 }

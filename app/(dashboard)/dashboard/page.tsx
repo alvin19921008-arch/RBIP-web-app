@@ -5,72 +5,80 @@ import { SpecialProgramPanel } from '@/components/dashboard/SpecialProgramPanel'
 import { SPTAllocationPanel } from '@/components/dashboard/SPTAllocationPanel'
 import { PCAPreferencePanel } from '@/components/dashboard/PCAPreferencePanel'
 import { UnmetPCANeedsCard } from '@/components/dashboard/UnmetPCANeedsCard'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { StaffProfilePanel } from '@/components/dashboard/StaffProfilePanel'
+import { WardConfigPanel } from '@/components/dashboard/WardConfigPanel'
+import { DashboardSidebar, type CategoryId } from '@/components/dashboard/DashboardSidebar'
 
-type PanelType = 'special-programs' | 'spt-allocations' | 'pca-preferences' | null
+type PanelType = 'special-programs' | 'spt-allocations' | 'pca-preferences' | 'pca-unmet-needs' | 'staff-profile' | 'ward-config' | null
+
+const categoryLabels: Record<PanelType, string> = {
+  'special-programs': 'Special Programs',
+  'spt-allocations': 'SPT Allocations',
+  'pca-preferences': 'PCA Preferences',
+  'pca-unmet-needs': 'PCA Unmet Needs Tracking',
+  'staff-profile': 'Staff Profile',
+  'ward-config': 'Ward Config and Bed Stat',
+  null: 'Dashboard',
+}
+
+const categoryDescriptions: Record<PanelType, string> = {
+  'special-programs': 'Manage special program configurations',
+  'spt-allocations': 'Configure SPT allocation settings',
+  'pca-preferences': 'Manage PCA preference settings',
+  'pca-unmet-needs': 'Track and view unmet PCA needs',
+  'staff-profile': 'Manage staff records and configurations',
+  'ward-config': 'Manage ward names and bed counts',
+  null: 'Configure system settings and preferences',
+}
 
 export default function DashboardPage() {
   const [activePanel, setActivePanel] = useState<PanelType>(null)
-  const [unmetNeedsExpanded, setUnmetNeedsExpanded] = useState(false)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
 
-  const panels = [
-    { id: 'special-programs' as PanelType, label: 'Special Programs', component: SpecialProgramPanel },
-    { id: 'spt-allocations' as PanelType, label: 'SPT Allocations', component: SPTAllocationPanel },
-    { id: 'pca-preferences' as PanelType, label: 'PCA Preferences', component: PCAPreferencePanel },
-  ]
+  const handleCategoryChange = (category: CategoryId) => {
+    setActivePanel(category)
+  }
 
   return (
-    <div className="container mx-auto p-4">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
-        <p className="text-muted-foreground">Configure system settings and preferences</p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        {panels.map((panel) => {
-          const Component = panel.component
-          return (
-            <Card
-              key={panel.id}
-              className={`cursor-pointer hover:border-primary ${
-                activePanel === panel.id ? 'border-primary' : ''
-              }`}
-              onClick={() => setActivePanel(activePanel === panel.id ? null : panel.id)}
-            >
-              <CardHeader>
-                <CardTitle className="text-lg">{panel.label}</CardTitle>
-              </CardHeader>
-            </Card>
-          )
-        })}
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <Card
-          className={`cursor-pointer hover:border-primary ${
-            unmetNeedsExpanded ? 'border-primary lg:col-span-4' : ''
-          }`}
-          onClick={() => setUnmetNeedsExpanded(!unmetNeedsExpanded)}
-        >
-          <CardHeader>
-            <CardTitle className="text-lg">PCA Unmet Needs Tracking</CardTitle>
-          </CardHeader>
-          {unmetNeedsExpanded && (
-            <CardContent>
-              <UnmetPCANeedsCard />
-            </CardContent>
-          )}
-        </Card>
-      </div>
-
-      {activePanel && (
-        <div className="mt-6">
-          {activePanel === 'special-programs' && <SpecialProgramPanel />}
-          {activePanel === 'spt-allocations' && <SPTAllocationPanel />}
-          {activePanel === 'pca-preferences' && <PCAPreferencePanel />}
+    <div className="flex h-[calc(100vh-4rem)]">
+      <DashboardSidebar
+        activeCategory={activePanel}
+        onCategoryChange={handleCategoryChange}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+      />
+      <div className="flex-1 overflow-auto p-6" style={{ scrollBehavior: 'smooth' as const }}>
+        {/* Header section - dynamic based on selection */}
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold mb-2">
+            {categoryLabels[activePanel]}
+          </h1>
+          <p className="text-muted-foreground">
+            {categoryDescriptions[activePanel]}
+          </p>
         </div>
-      )}
+
+        {/* Content area with smooth scroll - panels handle their own loading states */}
+        {activePanel && (
+          <div>
+            {activePanel === 'special-programs' && <SpecialProgramPanel />}
+            {activePanel === 'spt-allocations' && <SPTAllocationPanel />}
+            {activePanel === 'pca-preferences' && <PCAPreferencePanel />}
+            {activePanel === 'pca-unmet-needs' && (
+              <div>
+                <UnmetPCANeedsCard />
+              </div>
+            )}
+            {activePanel === 'staff-profile' && <StaffProfilePanel />}
+            {activePanel === 'ward-config' && <WardConfigPanel />}
+          </div>
+        )}
+        {!activePanel && (
+          <div className="text-center text-muted-foreground py-12">
+            Select a category from the sidebar to begin
+          </div>
+        )}
+      </div>
     </div>
   )
 }

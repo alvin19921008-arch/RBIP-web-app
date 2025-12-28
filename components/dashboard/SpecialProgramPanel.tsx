@@ -631,7 +631,7 @@ export function SpecialProgramPanel() {
                                                 setEditingStaffProgram({ ...editingStaffProgram, configs: newConfigs })
                                               }}
                                               className={`px-3 py-1 rounded text-sm ${
-                                                isEnabled ? 'bg-primary text-primary-foreground' : 'bg-secondary'
+                                                isEnabled ? 'bg-blue-600 text-white' : 'bg-secondary'
                                               }`}
                                             >
                                               {day}
@@ -693,7 +693,7 @@ export function SpecialProgramPanel() {
                                                         }}
                                                         className={`px-2 py-1 rounded text-xs min-w-[2.5rem] ${
                                                           config.weekdayConfigs[day].slots.includes(slot)
-                                                            ? 'bg-primary text-primary-foreground'
+                                                            ? 'bg-blue-600 text-white'
                                                             : 'bg-secondary hover:bg-secondary/80'
                                                         }`}
                                                       >
@@ -955,16 +955,55 @@ export function SpecialProgramPanel() {
                         </div>
                         <div className="mt-2">
                           <p className="text-sm font-medium mb-1">Assigned Staff:</p>
-                          <div className="flex flex-wrap gap-1 mb-2">
-                            {sp.staff.map((s) => (
-                              <span
-                                key={s.id}
-                                className="text-xs px-2 py-1 bg-secondary rounded"
-                              >
-                                {s.name} ({s.rank})
-                              </span>
-                            ))}
-                          </div>
+                          {(() => {
+                            // Separate therapists and PCAs
+                            const therapists = sp.staff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
+                            const pcas = sp.staff.filter(s => s.rank === 'PCA')
+                            
+                            // Sort therapists: SPT -> APPT -> RPT
+                            const rankOrder = ['SPT', 'APPT', 'RPT']
+                            const sortedTherapists = therapists.sort((a, b) => {
+                              const aIndex = rankOrder.indexOf(a.rank)
+                              const bIndex = rankOrder.indexOf(b.rank)
+                              return aIndex - bIndex
+                            })
+                            
+                            return (
+                              <>
+                                {/* Therapists on first line */}
+                                {sortedTherapists.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mb-1">
+                                    {sortedTherapists.map((s) => (
+                                      <span
+                                        key={s.id}
+                                        className="text-xs px-2 py-1 bg-secondary rounded"
+                                      >
+                                        {s.name} ({s.rank})
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                                {/* PCAs on second line */}
+                                {pcas.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mb-2">
+                                    {pcas.map((s) => (
+                                      <span
+                                        key={s.id}
+                                        className="text-xs px-2 py-1 bg-secondary rounded"
+                                      >
+                                        {s.name} ({s.rank})
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                                {sortedTherapists.length === 0 && pcas.length === 0 && (
+                                  <div className="mb-2">
+                                    <span className="text-xs text-muted-foreground">No staff assigned</span>
+                                  </div>
+                                )}
+                              </>
+                            )
+                          })()}
                           {existingProgram && (
                             <p className="text-xs text-muted-foreground">
                               Configured with {existingProgram.weekdays?.length || 0} weekdays
@@ -1219,7 +1258,7 @@ function SpecialProgramForm({
               type="button"
               onClick={() => toggleWeekday(day)}
               className={`px-3 py-1 rounded ${
-                weekdays.includes(day) ? 'bg-primary text-primary-foreground' : 'bg-secondary'
+                weekdays.includes(day) ? 'bg-blue-600 text-white' : 'bg-secondary'
               }`}
             >
               {day}
@@ -1241,7 +1280,7 @@ function SpecialProgramForm({
                     type="button"
                     onClick={() => toggleSlot(day, slot)}
                     className={`px-2 py-1 rounded text-xs ${
-                      slots[day]?.includes(slot) ? 'bg-primary text-primary-foreground' : 'bg-secondary'
+                      slots[day]?.includes(slot) ? 'bg-blue-600 text-white' : 'bg-secondary'
                     }`}
                   >
                     {getSlotLabel(slot)}

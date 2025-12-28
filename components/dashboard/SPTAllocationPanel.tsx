@@ -298,15 +298,15 @@ function SPTAllocationForm({
       </div>
 
       <div>
-        <label className="block text-sm font-medium mb-1">Teams</label>
+        <label className="block text-sm font-medium mb-2">Teams</label>
         <div className="flex flex-wrap gap-2">
           {allTeams.map((team) => (
             <button
               key={team}
               type="button"
               onClick={() => toggleTeam(team)}
-              className={`px-3 py-1 rounded ${
-                teams.includes(team) ? 'bg-primary text-primary-foreground' : 'bg-secondary'
+              className={`px-3 py-1 rounded text-sm ${
+                teams.includes(team) ? 'bg-blue-600 text-white' : 'bg-secondary'
               }`}
             >
               {team}
@@ -316,15 +316,15 @@ function SPTAllocationForm({
       </div>
 
       <div>
-        <label className="block text-sm font-medium mb-1">Weekdays</label>
+        <label className="block text-sm font-medium mb-2">Weekdays</label>
         <div className="flex space-x-2">
           {(['mon', 'tue', 'wed', 'thu', 'fri'] as Weekday[]).map((day) => (
             <button
               key={day}
               type="button"
               onClick={() => toggleWeekday(day)}
-              className={`px-3 py-1 rounded ${
-                weekdays.includes(day) ? 'bg-primary text-primary-foreground' : 'bg-secondary'
+              className={`px-3 py-1 rounded text-sm ${
+                weekdays.includes(day) ? 'bg-blue-600 text-white' : 'bg-secondary'
               }`}
             >
               {day}
@@ -348,77 +348,137 @@ function SPTAllocationForm({
                 <div className="flex items-center space-x-2 mt-1">
                   {/* AM Group: Slots 1-2 */}
                   <div className="flex items-center space-x-1">
-                    {[1, 2].map((slot) => (
-                      <button
-                        key={slot}
-                        type="button"
-                        onClick={() => toggleSlot(day, slot)}
-                        className={`px-2 py-1 rounded text-xs ${
-                          selectedSlots.includes(slot) ? 'bg-primary text-primary-foreground' : 'bg-secondary'
-                        }`}
-                      >
-                        {getSlotLabel(slot)}
-                      </button>
-                    ))}
+                    <button
+                      type="button"
+                      onClick={() => toggleSlot(day, 1)}
+                      className={`px-2 py-1 rounded text-xs ${
+                        selectedSlots.includes(1) ? 'bg-blue-600 text-white' : 'bg-secondary'
+                      }`}
+                    >
+                      {getSlotLabel(1)}
+                    </button>
                     {amSlots.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSlotModes(prev => ({
-                            ...prev,
-                            [day]: {
-                              ...prev[day],
-                              am: prev[day].am === 'AND' ? 'OR' : 'AND'
-                            }
-                          }))
-                        }}
-                        className={`px-2 py-1 rounded text-xs ${
-                          dayModes.am === 'OR' ? 'bg-primary text-primary-foreground' : 'bg-secondary'
-                        }`}
-                        title={dayModes.am === 'OR' ? 'OR: One of slots 1-2' : 'AND: Both slots 1-2'}
-                      >
-                        {dayModes.am}
-                      </button>
+                      <div className="inline-flex rounded border border-input overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSlotModes(prev => ({
+                              ...prev,
+                              [day]: {
+                                ...prev[day],
+                                am: 'AND'
+                              }
+                            }))
+                          }}
+                          className={`px-2 py-1 text-xs font-medium transition-colors ${
+                            dayModes.am === 'AND'
+                              ? 'bg-green-600 text-white'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}
+                          title="AND: Both slots 1-2"
+                        >
+                          AND
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSlotModes(prev => ({
+                              ...prev,
+                              [day]: {
+                                ...prev[day],
+                                am: 'OR'
+                              }
+                            }))
+                          }}
+                          className={`px-2 py-1 text-xs font-medium transition-colors border-l border-input ${
+                            dayModes.am === 'OR'
+                              ? 'bg-green-600 text-white'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}
+                          title="OR: One of slots 1-2"
+                        >
+                          OR
+                        </button>
+                      </div>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => toggleSlot(day, 2)}
+                      className={`px-2 py-1 rounded text-xs ${
+                        selectedSlots.includes(2) ? 'bg-blue-600 text-white' : 'bg-secondary'
+                      }`}
+                    >
+                      {getSlotLabel(2)}
+                    </button>
                   </div>
                   
                   {/* Divider */}
-                  <span className="text-muted-foreground mx-1">|</span>
+                  <span className="text-muted-foreground mx-2">|</span>
                   
                   {/* PM Group: Slots 3-4 */}
                   <div className="flex items-center space-x-1">
-                    {[3, 4].map((slot) => (
-                      <button
-                        key={slot}
-                        type="button"
-                        onClick={() => toggleSlot(day, slot)}
-                        className={`px-2 py-1 rounded text-xs ${
-                          selectedSlots.includes(slot) ? 'bg-primary text-primary-foreground' : 'bg-secondary'
-                        }`}
-                      >
-                        {getSlotLabel(slot)}
-                      </button>
-                    ))}
+                    <button
+                      type="button"
+                      onClick={() => toggleSlot(day, 3)}
+                      className={`px-2 py-1 rounded text-xs ${
+                        selectedSlots.includes(3) ? 'bg-blue-600 text-white' : 'bg-secondary'
+                      }`}
+                    >
+                      {getSlotLabel(3)}
+                    </button>
                     {pmSlots.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSlotModes(prev => ({
-                            ...prev,
-                            [day]: {
-                              ...prev[day],
-                              pm: prev[day].pm === 'AND' ? 'OR' : 'AND'
-                            }
-                          }))
-                        }}
-                        className={`px-2 py-1 rounded text-xs ${
-                          dayModes.pm === 'OR' ? 'bg-primary text-primary-foreground' : 'bg-secondary'
-                        }`}
-                        title={dayModes.pm === 'OR' ? 'OR: One of slots 3-4' : 'AND: Both slots 3-4'}
-                      >
-                        {dayModes.pm}
-                      </button>
+                      <div className="inline-flex rounded border border-input overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSlotModes(prev => ({
+                              ...prev,
+                              [day]: {
+                                ...prev[day],
+                                pm: 'AND'
+                              }
+                            }))
+                          }}
+                          className={`px-2 py-1 text-xs font-medium transition-colors ${
+                            dayModes.pm === 'AND'
+                              ? 'bg-green-600 text-white'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}
+                          title="AND: Both slots 3-4"
+                        >
+                          AND
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSlotModes(prev => ({
+                              ...prev,
+                              [day]: {
+                                ...prev[day],
+                                pm: 'OR'
+                              }
+                            }))
+                          }}
+                          className={`px-2 py-1 text-xs font-medium transition-colors border-l border-input ${
+                            dayModes.pm === 'OR'
+                              ? 'bg-green-600 text-white'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}
+                          title="OR: One of slots 3-4"
+                        >
+                          OR
+                        </button>
+                      </div>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => toggleSlot(day, 4)}
+                      className={`px-2 py-1 rounded text-xs ${
+                        selectedSlots.includes(4) ? 'bg-blue-600 text-white' : 'bg-secondary'
+                      }`}
+                    >
+                      {getSlotLabel(4)}
+                    </button>
                   </div>
                 </div>
                 {(amSlots.length > 1 || pmSlots.length > 1) && (
@@ -454,12 +514,17 @@ function SPTAllocationForm({
 
       <div>
         <label className="block text-sm font-medium mb-1">Specialty (Optional)</label>
-        <input
-          type="text"
-          value={specialty}
-          onChange={(e) => setSpecialty(e.target.value)}
+        <select
+          value={specialty || 'nil'}
+          onChange={(e) => setSpecialty(e.target.value === 'nil' ? '' : e.target.value)}
           className="w-full px-3 py-2 border rounded-md"
-        />
+        >
+          <option value="nil">-- None --</option>
+          <option value="MSK/Ortho">MSK/Ortho</option>
+          <option value="Cardiac">Cardiac</option>
+          <option value="Neuro">Neuro</option>
+          <option value="Cancer">Cancer</option>
+        </select>
       </div>
 
       <div className="flex items-center space-x-2">

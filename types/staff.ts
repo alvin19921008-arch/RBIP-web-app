@@ -23,6 +23,7 @@ export interface Staff {
   team: Team | null
   floating: boolean
   floor_pca: ('upper' | 'lower')[] | null  // Floor PCA property: upper, lower, or both
+  active?: boolean  // If false, staff doesn't appear in team allocations
   created_at: string
   updated_at: string
 }
