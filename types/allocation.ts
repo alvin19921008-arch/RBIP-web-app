@@ -41,6 +41,7 @@ export interface Ward {
   name: string
   total_beds: number
   team_assignments: Record<Team, number>
+  team_assignment_portions?: Record<Team, string>  // Optional fraction labels (e.g., "1/3", "2/3")
 }
 
 export interface TeamHeadSubstitution {

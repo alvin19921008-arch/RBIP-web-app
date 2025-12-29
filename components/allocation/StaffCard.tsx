@@ -20,9 +20,15 @@ interface StaffCardProps {
   nameColor?: string // Optional: custom color class for name (e.g., 'text-red-600')
   borderColor?: string // Optional: custom border color class (e.g., 'border-green-700')
   dragTeam?: string // Optional: team context for drag-and-drop (used for PCA slot transfers)
+  baseFTE?: number // For battery outer border (Base_FTE-remaining)
+  trueFTE?: number // For battery green fill (True-FTE-remaining)
+  isFloatingPCA?: boolean // Enable battery display
+  showFTE?: boolean // Show FTE next to name
+  currentStep?: string // For slot transfer validation
+  initializedSteps?: Set<string> // For slot transfer validation
 }
 
-export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDisplay, onEdit, draggable = true, nameColor, borderColor, dragTeam }: StaffCardProps) {
+export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDisplay, onEdit, draggable = true, nameColor, borderColor, dragTeam, baseFTE, trueFTE, isFloatingPCA, showFTE, currentStep, initializedSteps }: StaffCardProps) {
   // Use composite ID to ensure each team's instance has a unique draggable id
   // This prevents drag styling from applying to the same staff card in other teams
   // Use '::' as separator (unlikely to appear in UUIDs)
@@ -46,13 +52,19 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
       }
     : undefined
 
-  // Only show FTE number when FTE ≠ 1 and ≠ 0
-  // Show only the number, not "FTE remaining: xxx"
+  // Display name (FTE will be shown separately on the right)
   const displayName = sptDisplay 
     ? `${staff.name} ${sptDisplay}`
-    : fteRemaining !== undefined && fteRemaining !== 1.0 && fteRemaining !== 0
-    ? `${staff.name} ${formatFTE(fteRemaining)}`
     : staff.name
+  
+  // FTE value to display on the right (for staff pool)
+  const fteDisplay = showFTE && fteRemaining !== undefined
+    ? fteRemaining === 0
+      ? '0'
+      : formatFTE(fteRemaining)
+    : fteRemaining !== undefined && fteRemaining !== 1.0 && fteRemaining !== 0
+    ? formatFTE(fteRemaining)
+    : undefined
 
   const [isHoveringCard, setIsHoveringCard] = useState(false)
   const [isHoveringEdit, setIsHoveringEdit] = useState(false)
@@ -66,6 +78,9 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
     ? 'border-[#d38e25]' 
     : 'border-border'
 
+  // Battery display for floating PCA in staff pool
+  const showBattery = isFloatingPCA && baseFTE !== undefined && trueFTE !== undefined
+
   return (
     <div
       ref={setNodeRef || undefined}
@@ -75,7 +90,8 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
         "relative p-1 border-2 rounded-md bg-card hover:bg-accent transition-colors",
         borderColorClass,
         draggable && !isHoveringEdit && "cursor-move",
-        isDragging && "opacity-50"
+        isDragging && "opacity-50",
+        showBattery && "overflow-hidden"
       )}
       onMouseEnter={() => setIsHoveringCard(true)}
       onMouseLeave={() => {
@@ -83,9 +99,29 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
         setIsHoveringEdit(false)
       }}
     >
-      <div className="flex flex-col">
-        <div className="flex items-center justify-between">
+      {showBattery ? (
+        // Battery display: outer border + green background + text overlay
+        <div className="relative w-full">
+          {/* Outer border container (based on Base_FTE) - using TeamReservationCard colors (border-blue-300, bg-blue-50) */}
+          <div 
+            className="absolute top-0 left-0 h-full border border-blue-300 dark:border-blue-400 rounded-sm"
+            style={{ width: `${baseFTE * 100}%` }}
+          >
+            {/* Background fill (based on True-FTE, relative to outer border) - using TeamReservationCard colors */}
+            {trueFTE > 0 && (
+              <div
+                className="absolute top-0 left-0 h-full bg-blue-50 dark:bg-blue-950/30 rounded-sm"
+                style={{ width: baseFTE > 0 ? `${(trueFTE / baseFTE) * 100}%` : '0%' }}
+              />
+            )}
+          </div>
+          {/* Text content overlay */}
+          <div className="relative z-10 flex flex-col">
+            <div className="flex items-center justify-between gap-1">
           <span className={cn("text-sm font-medium flex-1", nameColor === 'underline' ? 'underline' : nameColor || "")}>{displayName}</span>
+              {fteDisplay && (
+                <span className="text-sm font-medium text-muted-foreground flex-shrink-0">{fteDisplay}</span>
+              )}
           {onEdit && isHoveringCard && (
             <Button
               variant="ghost"
@@ -113,6 +149,43 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
           </div>
         )}
       </div>
+        </div>
+      ) : (
+        // Normal display (no battery)
+        <div className="flex flex-col">
+          <div className="flex items-center justify-between gap-1">
+            <span className={cn("text-sm font-medium flex-1", nameColor === 'underline' ? 'underline' : nameColor || "")}>{displayName}</span>
+            {fteDisplay && (
+              <span className="text-sm font-medium text-muted-foreground flex-shrink-0">{fteDisplay}</span>
+            )}
+            {onEdit && isHoveringCard && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 flex-shrink-0 ml-1"
+                onMouseEnter={() => setIsHoveringEdit(true)}
+                onMouseLeave={() => setIsHoveringEdit(false)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  e.preventDefault()
+                  onEdit?.(e)
+                }}
+                onMouseDown={(e) => {
+                  e.stopPropagation()
+                  e.preventDefault()
+                }}
+              >
+                <Pencil className="h-3 w-3" />
+              </Button>
+            )}
+          </div>
+          {slotDisplay && (
+            <div className="text-xs mt-0.5 ml-0">
+              {slotDisplay}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

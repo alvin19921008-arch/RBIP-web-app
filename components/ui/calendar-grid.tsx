@@ -3,14 +3,16 @@
 import { useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 
 interface CalendarGridProps {
   selectedDate: Date
   onDateSelect: (date: Date) => void
-  onClose: () => void
+  datesWithData?: Set<string> // Set of date strings in YYYY-MM-DD format
+  holidays?: Map<string, string> // Map of date strings to holiday names
 }
 
-export function CalendarGrid({ selectedDate, onDateSelect, onClose }: CalendarGridProps) {
+export function CalendarGrid({ selectedDate, onDateSelect, datesWithData = new Set(), holidays = new Map() }: CalendarGridProps) {
   const [currentMonth, setCurrentMonth] = useState(selectedDate.getMonth())
   const [currentYear, setCurrentYear] = useState(selectedDate.getFullYear())
 
@@ -76,14 +78,37 @@ export function CalendarGrid({ selectedDate, onDateSelect, onClose }: CalendarGr
 
   const isToday = (date: Date) => {
     const today = new Date()
-    return date.getDate() === today.getDate() &&
-           date.getMonth() === today.getMonth() &&
-           date.getFullYear() === today.getFullYear()
+    today.setHours(0, 0, 0, 0)
+    const checkDate = new Date(date)
+    checkDate.setHours(0, 0, 0, 0)
+    return checkDate.getTime() === today.getTime()
+  }
+
+  const isPast = (date: Date) => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const checkDate = new Date(date)
+    checkDate.setHours(0, 0, 0, 0)
+    return checkDate.getTime() < today.getTime()
+  }
+
+  const isFuture = (date: Date) => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const checkDate = new Date(date)
+    checkDate.setHours(0, 0, 0, 0)
+    return checkDate.getTime() > today.getTime()
+  }
+
+  const formatDateString = (date: Date): string => {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
   }
 
   const handleDateClick = (date: Date) => {
     onDateSelect(date)
-    onClose()
   }
 
   return (
@@ -122,20 +147,71 @@ export function CalendarGrid({ selectedDate, onDateSelect, onClose }: CalendarGr
         {days.map(({ day, isCurrentMonth, date }, index) => {
           const selected = isSelectedDate(date)
           const today = isToday(date)
+          const past = isPast(date)
+          const future = isFuture(date)
+          const dateStr = formatDateString(date)
+          const hasData = datesWithData.has(dateStr)
+          const holidayName = holidays.get(dateStr)
+          const isHoliday = !!holidayName
+          
+          // Build className for the button
+          let buttonClasses = 'h-10 w-10 rounded-md text-sm transition-colors flex flex-col items-center justify-center'
+          
+          // Past/future styling
+          if (past && !selected) {
+            buttonClasses += ' opacity-60 text-muted-foreground/70'
+          } else if (future && !selected) {
+            buttonClasses += ' font-semibold text-foreground'
+          }
+          
+          // Holiday styling (red text)
+          if (isHoliday && !selected) {
+            buttonClasses += ' text-red-600 dark:text-red-400 font-semibold'
+          }
+          
+          // Current month styling
+          if (!isCurrentMonth) {
+            buttonClasses += ' text-muted-foreground/50'
+          }
+          
+          // Selected date styling
+          if (selected) {
+            buttonClasses += ' bg-primary text-primary-foreground font-semibold'
+          } else if (today && !selected) {
+            buttonClasses += ' bg-accent font-semibold'
+          } else if (isCurrentMonth && !selected) {
+            buttonClasses += ' hover:bg-accent'
+          }
+          
+          // Wrap in Tooltip if it's a holiday
+          if (isHoliday) {
+            return (
+              <div key={index} className="flex items-center justify-center">
+                <Tooltip content={holidayName} side="top">
+                  <button
+                    onClick={() => handleDateClick(date)}
+                    className={buttonClasses}
+                  >
+                    <span>{day}</span>
+                    {hasData && (
+                      <span className="text-[8px] leading-none mt-0.5 text-primary">•</span>
+                    )}
+                  </button>
+                </Tooltip>
+              </div>
+            )
+          }
           
           return (
             <button
               key={index}
               onClick={() => handleDateClick(date)}
-              className={`
-                h-10 w-10 rounded-md text-sm transition-colors
-                ${!isCurrentMonth ? 'text-muted-foreground/50' : ''}
-                ${selected ? 'bg-primary text-primary-foreground font-semibold' : ''}
-                ${!selected && today ? 'bg-accent font-semibold' : ''}
-                ${!selected && !today && isCurrentMonth ? 'hover:bg-accent' : ''}
-              `}
+              className={buttonClasses}
             >
-              {day}
+              <span>{day}</span>
+              {hasData && (
+                <span className="text-[8px] leading-none mt-0.5 text-primary">•</span>
+              )}
             </button>
           )
         })}

@@ -327,7 +327,7 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
                         className="h-4 w-4"
                       />
                       <Label htmlFor="isRbipSupervisor" className="font-normal cursor-pointer">
-                        RBIP Overall Supervisor (can substitute for team heads when needed)
+                        RBIP Supervisor (can substitute team heads when needed)
                       </Label>
                     </div>
                   </>

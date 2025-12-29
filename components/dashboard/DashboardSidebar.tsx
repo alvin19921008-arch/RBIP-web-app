@@ -1,17 +1,19 @@
 'use client'
 
-import { LayoutList, Users, Settings, AlertCircle, Menu, ChevronLeft, UserCircle, Building2 } from 'lucide-react'
+import { LayoutList, Users, Settings, AlertCircle, Menu, ChevronLeft, UserCircle, Building2, Users2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { LucideIcon } from 'lucide-react'
+import { UserGearIcon } from '@/components/icons/UserGear'
+import React from 'react'
 
-export type CategoryId = 'special-programs' | 'spt-allocations' | 'pca-preferences' | 'pca-unmet-needs' | 'staff-profile' | 'ward-config' | null
+export type CategoryId = 'special-programs' | 'spt-allocations' | 'pca-preferences' | 'pca-unmet-needs' | 'staff-profile' | 'ward-config' | 'team-configuration' | null
 
 interface Category {
   id: CategoryId
   label: string
-  icon: LucideIcon
+  icon: LucideIcon | React.ComponentType<{ className?: string }>
 }
 
 interface DashboardSidebarProps {
@@ -30,7 +32,7 @@ const categories: Category[] = [
   {
     id: 'spt-allocations',
     label: 'SPT Allocations',
-    icon: Users,
+    icon: UserGearIcon,
   },
   {
     id: 'pca-preferences',
@@ -51,6 +53,11 @@ const categories: Category[] = [
     id: 'ward-config',
     label: 'Ward Config and Bed Stat',
     icon: Building2,
+  },
+  {
+    id: 'team-configuration',
+    label: 'Team Configuration',
+    icon: Users2,
   },
 ]
 

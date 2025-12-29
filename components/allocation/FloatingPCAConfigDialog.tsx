@@ -184,13 +184,6 @@ export function FloatingPCAConfigDialog({
   // Initialize state when dialog opens
   useEffect(() => {
     if (open) {
-      // #region agent log
-      const junId = '8598c9c5-6fc1-407f-85e1-ebdba6754d8d';
-      const junInPool = floatingPCAs.find(p => p.id === junId);
-      const junAlloc = existingAllocations.find(a => a.staff_id === junId);
-      fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'FloatingPCAConfigDialog.tsx:useEffect:open',message:'Dialog opened - 君 FTE trace',data:{junInFloatingPCAs:junInPool?{id:junInPool.id,name:junInPool.name,fte_pca:junInPool.fte_pca,floating:junInPool.floating}:'NOT_IN_POOL',junInExistingAlloc:junAlloc?{staff_id:junAlloc.staff_id,team:junAlloc.team,fte_pca:junAlloc.fte_pca,fte_remaining:junAlloc.fte_remaining,slot1:junAlloc.slot1,slot2:junAlloc.slot2,slot3:junAlloc.slot3,slot4:junAlloc.slot4,spt_ids:junAlloc.special_program_ids}:'NO_ALLOC',floatingPCAsCount:floatingPCAs.length,existingAllocationsCount:existingAllocations.length},timestamp:Date.now(),sessionId:'debug-session',runId:'jun-fte-trace',hypothesisId:'H-JunFTE-Input'})}).catch(()=>{});
-      // #endregion
-      
       // Reset to step 3.1
       setCurrentMiniStep('3.1')
       setSlotSelections([])
@@ -359,9 +352,6 @@ export function FloatingPCAConfigDialog({
   
   // Handle proceeding from Step 3.2 to Step 3.3
   const handleProceedToStep33 = () => {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'FloatingPCAConfigDialog:handleProceedToStep33:entry',message:'3.2 -> 3.3 transition START',data:{currentPendingFTE,slotSelectionsCount:slotSelections.length,updatedAllocationsCount:updatedAllocations.length},timestamp:Date.now(),sessionId:'debug-session',runId:'step-transition',hypothesisId:'H-32to33'})}).catch(()=>{});
-    // #endregion
     // Save 3.2 assignments
     setStep32Assignments([...slotSelections])
     
@@ -387,10 +377,6 @@ export function FloatingPCAConfigDialog({
     
     setAdjacentReservations(adjacentResult.adjacentReservations)
     setStep33Selections([])
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'FloatingPCAConfigDialog:handleProceedToStep33:end',message:'3.2 -> 3.3 transition END',data:{updatedPendingFTE:result.updatedPendingFTE,updatedAllocationsCount:result.updatedAllocations.length,hasAnyAdjacentReservations:adjacentResult.hasAnyAdjacentReservations},timestamp:Date.now(),sessionId:'debug-session',runId:'step-transition',hypothesisId:'H-32to33'})}).catch(()=>{});
-    // #endregion
     
     // Skip 3.3 if no adjacent slots available
     if (!adjacentResult.hasAnyAdjacentReservations) {
@@ -428,9 +414,6 @@ export function FloatingPCAConfigDialog({
   
   // Handle final save (runs the full floating PCA algorithm v2)
   const handleFinalSave = async () => {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'FloatingPCAConfigDialog.tsx:handleFinalSave:entry',message:'handleFinalSave called',data:{step32Count:step32Assignments.length,step33Count:step33Selections.length,floatingPCAsCount:floatingPCAs.length,floatingPCAsFTE:floatingPCAs.map(p=>({id:p.id,name:p.name,fte:p.fte_pca}))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3,H4'})}).catch(()=>{});
-    // #endregion
     setIsRunningAlgorithm(true)
     
     try {
@@ -449,13 +432,6 @@ export function FloatingPCAConfigDialog({
         finalAllocations = result.updatedAllocations
       }
       
-      // #region agent log
-      const junId = '8598c9c5-6fc1-407f-85e1-ebdba6754d8d';
-      const junAlloc = finalAllocations.find(a => a.staff_id === junId);
-      const junInPool = floatingPCAs.find(p => p.id === junId);
-      fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'FloatingPCAConfigDialog.tsx:handleFinalSave:beforeAlgo',message:'Before algo - 君 details',data:{finalAllocationsCount:finalAllocations.length,pendingFTE:finalPendingFTE,junAllocInFinal:junAlloc?{staff_id:junAlloc.staff_id,team:junAlloc.team,fte_pca:junAlloc.fte_pca,fte_remaining:junAlloc.fte_remaining,slot1:junAlloc.slot1,slot2:junAlloc.slot2,slot3:junAlloc.slot3,slot4:junAlloc.slot4,spt_ids:junAlloc.special_program_ids}:'NOT_FOUND',junInPool:junInPool?{id:junInPool.id,name:junInPool.name,fte_pca:junInPool.fte_pca}:'NOT_IN_POOL'},timestamp:Date.now(),sessionId:'debug-session',runId:'bug1-trace',hypothesisId:'H-JunBeforeAlgo'})}).catch(()=>{});
-      // #endregion
-      
       // Run the full floating PCA algorithm v2
       const algorithmResult = await allocateFloatingPCA_v2({
         teamOrder: teamOrder,
@@ -466,17 +442,10 @@ export function FloatingPCAConfigDialog({
         specialPrograms: specialPrograms,
       })
       
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'FloatingPCAConfigDialog.tsx:handleFinalSave:afterAlgo',message:'Algorithm completed',data:{allocationsCount:algorithmResult.allocations.length,allocationsPreview:algorithmResult.allocations.slice(0,3).map(a=>({staff_id:a.staff_id,fte_remaining:a.fte_remaining,slot1:a.slot1,slot2:a.slot2,slot3:a.slot3,slot4:a.slot4})),pendingFTE:algorithmResult.pendingPCAFTEPerTeam,errors:algorithmResult.errors},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1,H5'})}).catch(()=>{});
-      // #endregion
-      
       // Pass the full result to the parent
       onSave(algorithmResult, teamOrder, step32Assignments, step33Selections)
     } catch (error) {
       console.error('Error running floating PCA algorithm:', error)
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'FloatingPCAConfigDialog.tsx:handleFinalSave:error',message:'Algorithm error',data:{error:String(error)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
     } finally {
       setIsRunningAlgorithm(false)
     }

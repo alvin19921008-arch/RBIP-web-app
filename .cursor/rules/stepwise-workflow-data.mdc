@@ -43,10 +43,16 @@ Step 4: Bed Relieving
 
 | Step | PCA Types Handled | Sync Behavior |
 |------|-------------------|---------------|
-| Step 1 | None | Sync therapist allocations only |
+| Step 1 | None | Sync therapist allocations only; **recalculate schedule calculations immediately on staffOverrides change** |
 | Step 2 | Non-floating, Substitution, Special Program | Sync therapist; PCA algo runs on button click |
 | Step 3 | Floating (tie-breaker) | Sync therapist; preserve Step 2 PCA allocations |
 | Step 4 | None | Sync therapist; bed algo uses PT/team from calculations |
+
+**Step 1 Critical Rules:**
+- **Schedule calculations must run even without allocations**: `recalculateScheduleCalculations()` builds therapist allocations from raw staff data when no allocations exist
+- **Immediate recalculation**: When `staffOverrides` changes in Step 1, PT/team, avg PCA/team, and bed/team must update immediately
+- **Special program FTE subtraction**: Do NOT subtract special program FTE in Step 1 (only in Step 2+). Floating PCA battery bars should show full FTE in Step 1
+- **Stable avg PCA/team**: Use `totalPCAOnDuty` (from staff DB + staffOverrides) consistently, never `totalPCAFromAllocations`
 
 ### What Each Algo Reads
 
@@ -184,8 +190,33 @@ Record<string, {
 
 **Auto-Recalculation:**
 - `recalculateScheduleCalculations()` is automatically called when `therapistAllocations` or `pcaAllocations` change
+- **Step 1 behavior**: Runs even without allocations, building therapist allocations from staff data for accurate calculations
 - Ensures displayed `avg PCA/team` updates immediately after Step 2 algo adds SPTs to teams
 - Uses `staffOverrides` for current FTE values (not stale `alloc.fte_therapist`)
+- **Critical**: In Step 1, must recalculate immediately when `staffOverrides` changes to update PT/team, avg PCA/team, and bed/team
+
+## Step 1 Specific Rules
+
+### Rule 0: Step 1 Calculation Behavior
+
+**Problem (FIXED):** Schedule calculations (PT/team, avg PCA/team, bed/team) were not updating in Step 1 when staff leave/FTE was edited.
+
+**Solution:**
+- `recalculateScheduleCalculations()` must run in Step 1 even without existing allocations
+- When no allocations exist, build minimal therapist allocation objects from staff data for calculation purposes
+- Use `staffOverrides` for current FTE values (not database defaults)
+- Recalculate immediately when `staffOverrides` changes in Step 1
+
+**Special Program FTE Subtraction:**
+- **Step 1**: Do NOT subtract special program FTE from floating PCA's `getTrueFTERemaining`
+- **Step 2+**: Subtract special program FTE (special programs are assigned in Step 2)
+- This ensures floating PCA battery bars show correct FTE in Step 1 (not prematurely reduced)
+
+**Avg PCA/Team Stability:**
+- Always use `totalPCAOnDuty` (sum from staff DB + staffOverrides) for requirement calculation
+- Never use `totalPCAFromAllocations` (unstable, changes with allocation state)
+- Formula: `averagePCAPerTeam = (ptPerTeam * totalPCAOnDuty) / totalPTOnDutyAllTeams`
+- This ensures `avg PCA/team` remains stable across step transitions
 
 ## Data Passing Rules
 
@@ -347,3 +378,6 @@ The workflow enforces step-specific restrictions on certain actions:
 - [ ] Are calculations using `totalPCAOnDuty` (stable) instead of `totalPCAFromAllocations` (unstable)?
 - [ ] Are SPT allocations preserved correctly when `includeSPTAllocation: false`?
 - [ ] Does the preserve logic check across ALL teams to prevent duplicates when SPTs are moved?
+- [ ] Does `recalculateScheduleCalculations()` run in Step 1 even without allocations?
+- [ ] Are schedule calculations (PT/team, avg PCA/team, bed/team) updated immediately when `staffOverrides` changes in Step 1?
+- [ ] Is special program FTE subtraction skipped in Step 1 (only subtracts in Step 2+)?

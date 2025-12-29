@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { SpecialProgram } from '@/types/allocation'
 import { Staff, Team } from '@/types/staff'
@@ -515,11 +515,7 @@ export function SpecialProgramPanel() {
   return (
     <>
       <Card>
-        <CardHeader>
-          <CardTitle>Special Programs</CardTitle>
-          <CardDescription>Configure special programs (CRP, DRM, Robotic, etc.)</CardDescription>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
         {loading ? (
           <p>Loading...</p>
         ) : (

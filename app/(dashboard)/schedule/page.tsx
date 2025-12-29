@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, Fragment, useCallback } from 'react'
+import { useState, useEffect, useRef, Fragment, useCallback, Suspense } from 'react'
 import { DndContext, DragOverlay, DragEndEvent, DragStartEvent, DragMoveEvent, Active } from '@dnd-kit/core'
 import { Team, Weekday, LeaveType } from '@/types/staff'
 import { TherapistAllocation, PCAAllocation, BedAllocation, ScheduleCalculations, AllocationTracker } from '@/types/schedule'
@@ -20,10 +20,12 @@ import { TieBreakDialog } from '@/components/allocation/TieBreakDialog'
 import { StepIndicator } from '@/components/allocation/StepIndicator'
 import { FloatingPCAConfigDialog } from '@/components/allocation/FloatingPCAConfigDialog'
 import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopover'
-import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X } from 'lucide-react'
+import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X, ArrowLeft } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { CalendarGrid } from '@/components/ui/calendar-grid'
+import { getHongKongHolidays } from '@/lib/utils/hongKongHolidays'
 import { createClientComponentClient } from '@/lib/supabase/client'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { allocateTherapists, StaffData, AllocationContext } from '@/lib/algorithms/therapistAllocation'
 import { allocatePCA, PCAAllocationContext, PCAData, FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
 import { allocateBeds, BedAllocationContext } from '@/lib/algorithms/bedAllocation'
@@ -88,8 +90,11 @@ function parseDateFromInput(dateStr: string): Date {
   return new Date(year, month - 1, day)
 }
 
-export default function SchedulePage() {
+function SchedulePageContent() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const [selectedDate, setSelectedDate] = useState<Date>(DEFAULT_DATE)
+  const [showBackButton, setShowBackButton] = useState(false)
   const [therapistAllocations, setTherapistAllocations] = useState<Record<Team, (TherapistAllocation & { staff: Staff })[]>>({
     FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
   })
@@ -104,7 +109,7 @@ export default function SchedulePage() {
   const [inactiveStaff, setInactiveStaff] = useState<Staff[]>([])
   const [specialPrograms, setSpecialPrograms] = useState<SpecialProgram[]>([])
   const [sptAllocations, setSptAllocations] = useState<SPTAllocation[]>([])
-  const [wards, setWards] = useState<{ name: string; total_beds: number; team_assignments: Record<Team, number> }[]>([])
+  const [wards, setWards] = useState<{ name: string; total_beds: number; team_assignments: Record<Team, number>; team_assignment_portions?: Record<Team, string> }[]>([])
   const [pcaPreferences, setPcaPreferences] = useState<PCAPreference[]>([])
   const [loading, setLoading] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
@@ -134,6 +139,10 @@ export default function SchedulePage() {
     FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
   })
   const [calendarOpen, setCalendarOpen] = useState(false)
+  const [datesWithData, setDatesWithData] = useState<Set<string>>(new Set())
+  const [holidays, setHolidays] = useState<Map<string, string>>(new Map())
+  const calendarButtonRef = useRef<HTMLButtonElement>(null)
+  const calendarPopoverRef = useRef<HTMLDivElement>(null)
   const [savedEditableBeds, setSavedEditableBeds] = useState<Record<Team, number>>({
     FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
   })
@@ -343,7 +352,16 @@ export default function SchedulePage() {
 
   useEffect(() => {
     loadAllData()
+    loadDatesWithData()
   }, [])
+  // Check for return path from history page
+  useEffect(() => {
+    if (typeof sessionStorage !== 'undefined') {
+      const returnPath = sessionStorage.getItem('scheduleReturnPath')
+      setShowBackButton(!!returnPath)
+    }
+  }, [])
+
 
   // Load schedule when date changes OR when staff becomes available (initial load)
   useEffect(() => {
@@ -423,6 +441,76 @@ export default function SchedulePage() {
   }, [staff, specialPrograms, sptAllocations, wards, pcaPreferences, scheduleLoadedForDate, hasSavedAllocations])
   // NOTE: staffOverrides intentionally removed from dependencies - step-wise workflow controls regeneration
 
+  // Load dates that have schedule data
+  const loadDatesWithData = async () => {
+    try {
+      // Query all schedules
+      const { data: scheduleData, error: scheduleError } = await supabase
+        .from('daily_schedules')
+        .select('id, date')
+        .order('date', { ascending: false })
+
+      if (scheduleError) {
+        console.error('Error loading schedules:', scheduleError)
+        return
+      }
+
+      if (!scheduleData || scheduleData.length === 0) {
+        setDatesWithData(new Set())
+        return
+      }
+
+      // For each schedule, check which allocation tables have data
+      const scheduleIds = scheduleData.map(s => s.id)
+      
+      const [therapistData, pcaData, bedData] = await Promise.all([
+        supabase
+          .from('schedule_therapist_allocations')
+          .select('schedule_id')
+          .in('schedule_id', scheduleIds),
+        supabase
+          .from('schedule_pca_allocations')
+          .select('schedule_id')
+          .in('schedule_id', scheduleIds),
+        supabase
+          .from('schedule_bed_allocations')
+          .select('schedule_id')
+          .in('schedule_id', scheduleIds)
+      ])
+
+      // Create sets of schedule IDs that have each type of allocation
+      const hasTherapist = new Set(therapistData.data?.map(a => a.schedule_id) || [])
+      const hasPCA = new Set(pcaData.data?.map(a => a.schedule_id) || [])
+      const hasBed = new Set(bedData.data?.map(a => a.schedule_id) || [])
+
+      // Filter schedules to only those with at least one type of allocation
+      const schedulesWithData = scheduleData.filter(s => 
+        hasTherapist.has(s.id) || hasPCA.has(s.id) || hasBed.has(s.id)
+      )
+
+      // Build Set of date strings
+      const dateSet = new Set<string>(schedulesWithData.map(s => s.date))
+      setDatesWithData(dateSet)
+    } catch (error) {
+      console.error('Error loading dates with data:', error)
+    }
+  }
+
+  // Load holidays when calendar opens
+  useEffect(() => {
+    if (calendarOpen) {
+      loadDatesWithData()
+      // Generate holidays for current year and next year
+      const currentYear = new Date().getFullYear()
+      const holidaysMap = new Map<string, string>()
+      const currentYearHolidays = getHongKongHolidays(currentYear)
+      const nextYearHolidays = getHongKongHolidays(currentYear + 1)
+      currentYearHolidays.forEach((value, key) => holidaysMap.set(key, value))
+      nextYearHolidays.forEach((value, key) => holidaysMap.set(key, value))
+      setHolidays(holidaysMap)
+    }
+  }, [calendarOpen])
+
   const loadAllData = async () => {
     setLoading(true)
     try {
@@ -490,6 +578,7 @@ export default function SchedulePage() {
         name: ward.name,
         total_beds: ward.total_beds,
         team_assignments: ward.team_assignments || {},
+        team_assignment_portions: ward.team_assignment_portions || {},
       })))
     }
   }
@@ -708,14 +797,58 @@ export default function SchedulePage() {
 
   // Helper function to recalculate schedule calculations using current staffOverrides
   const recalculateScheduleCalculations = useCallback(() => {
+    // In step 1, we need to recalculate even without allocations to show updated PT/team, avg PCA/team, bed/team
+    // In other steps, we still need allocations to exist
     const hasAllocations = Object.keys(pcaAllocations).some(team => pcaAllocations[team as Team]?.length > 0)
-    if (!hasAllocations) return
+    if (!hasAllocations && currentStep !== 'leave-fte') {
+      return
+    }
     
     // Build PCA allocations by team (reuse existing pcaAllocations state)
     const pcaByTeam = pcaAllocations
     
-    // Build therapist allocations by team (reuse existing therapistAllocations state)
-    const therapistByTeam = therapistAllocations
+    // Build therapist allocations by team
+    // In step 1 with no allocations, build from staff data
+    let therapistByTeam: Record<Team, (TherapistAllocation & { staff: Staff })[]>
+    if (!hasAllocations && currentStep === 'leave-fte') {
+      // Build therapist allocations from staff data for step 1
+      therapistByTeam = {
+        FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
+      }
+      staff.forEach(s => {
+        if (['SPT', 'APPT', 'RPT'].includes(s.rank)) {
+          const override = staffOverrides[s.id]
+          const fte = override?.fteRemaining ?? 1.0
+          if (fte > 0 && s.team) {
+            // Create a minimal allocation object for calculation purposes
+            const alloc: TherapistAllocation & { staff: Staff } = {
+              id: '',
+              schedule_id: '',
+              staff_id: s.id,
+              team: s.team,
+              fte_therapist: fte,
+              fte_remaining: 1.0 - fte,
+              slot_whole: null,
+              slot1: null,
+              slot2: null,
+              slot3: null,
+              slot4: null,
+              leave_type: override?.leaveType ?? null,
+              special_program_ids: null,
+              is_substitute_team_head: false,
+              spt_slot_display: null,
+              is_manual_override: false,
+              manual_override_note: null,
+              staff: s
+            }
+            therapistByTeam[s.team].push(alloc)
+          }
+        }
+      })
+    } else {
+      // Reuse existing therapistAllocations state
+      therapistByTeam = therapistAllocations
+    }
     
     // Reuse the calculation logic from useSavedAllocations
     // CRITICAL: Use staffOverrides for current FTE values (not stale alloc.fte_therapist)
@@ -754,7 +887,14 @@ export default function SchedulePage() {
       bedsForRelieving[team] = expectedBeds - totalBedsDesignated
     })
     
-    const formatWardName = (ward: { name: string; total_beds: number; team_assignments: Record<Team, number> }, team: Team): string => {
+    const formatWardName = (ward: { name: string; total_beds: number; team_assignments: Record<Team, number>; team_assignment_portions?: Record<Team, string> }, team: Team): string => {
+      // Prefer stored portion text if available
+      const storedPortion = ward.team_assignment_portions?.[team]
+      if (storedPortion) {
+        return `${storedPortion} ${ward.name}`
+      }
+      
+      // Fallback to computed fraction from numeric values
       const teamBeds = ward.team_assignments[team] || 0
       const totalBeds = ward.total_beds
       if (teamBeds === totalBeds) return ward.name
@@ -873,7 +1013,7 @@ export default function SchedulePage() {
     })
     
     setCalculations(scheduleCalcs)
-  }, [pcaAllocations, therapistAllocations, staffOverrides, wards, editableBeds, selectedDate, specialPrograms, staff])
+  }, [pcaAllocations, therapistAllocations, staffOverrides, wards, editableBeds, selectedDate, specialPrograms, staff, currentStep])
 
   // Auto-recalculate when allocations change (e.g., after Step 2 algo)
   useEffect(() => {
@@ -1035,7 +1175,14 @@ export default function SchedulePage() {
       FO: null, SMM: null, SFM: null, CPPC: null, MC: null, GMC: null, NSM: null, DRO: null
     }
     
-    const formatWardName = (ward: { name: string; total_beds: number; team_assignments: Record<Team, number> }, team: Team): string => {
+    const formatWardName = (ward: { name: string; total_beds: number; team_assignments: Record<Team, number>; team_assignment_portions?: Record<Team, string> }, team: Team): string => {
+      // Prefer stored portion text if available
+      const storedPortion = ward.team_assignment_portions?.[team]
+      if (storedPortion) {
+        return `${storedPortion} ${ward.name}`
+      }
+      
+      // Fallback to computed fraction from numeric values
       const teamBeds = ward.team_assignments[team] || 0
       const totalBeds = ward.total_beds
       if (teamBeds === totalBeds) return ward.name
@@ -1152,8 +1299,7 @@ export default function SchedulePage() {
   }
 
   const handleSaveStaffEdit = async (staffId: string, leaveType: LeaveType | null, fteRemaining: number, fteSubtraction?: number, availableSlots?: number[], invalidSlot?: number, leaveComebackTime?: string, isLeave?: boolean) => {
-    // Store the override for this staff member - NO auto-regeneration
-    // User must click "Next Step" to generate allocations
+    // Store the override for this staff member
     const newOverrides = {
       ...staffOverrides,
       [staffId]: { leaveType, fteRemaining, fteSubtraction, availableSlots, invalidSlot, leaveComebackTime, isLeave }
@@ -1182,8 +1328,144 @@ export default function SchedulePage() {
       setCurrentStep('leave-fte')
     }
     
-    // NOTE: We no longer auto-regenerate here
-    // await generateAllocationsWithOverrides(newOverrides)
+    // Trigger internal updates: recalculate schedule calculations and update allocations
+    // This updates therapist-FTE/team, avg PCA/team, True-FTE remaining, slot_assigned, 
+    // Pending PCA-FTE/team, daily bed load internally and updates in staff overrides
+    // Treat the edit as an allocation so user can proceed to step 2
+    try {
+      // Check if we have existing allocations (loaded data)
+      const hasExistingAllocations = Object.values(pcaAllocations).some(teamAllocs => teamAllocs.length > 0)
+      
+      // First, recalculate schedule calculations (therapist-FTE/team, avg PCA/team, daily bed load)
+      recalculateScheduleCalculations()
+      
+      // In step 1, we should NOT run the full allocation algorithm (which triggers tie-breakers)
+      // We only recalculate schedule calculations (PT/team, avg PCA/team, daily bed load)
+      // If we have existing allocations, preserve them and only update FTE values
+      // If we don't have existing allocations, we still shouldn't run allocation - wait until step 2
+      if (currentStep === 'leave-fte') {
+        if (hasExistingAllocations) {
+        
+        // Update FTE values in existing allocations without redistributing
+        // First, create updated allocations map
+        const updatedAllocations: Record<Team, (PCAAllocation & { staff: Staff })[]> = {
+          FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
+        }
+        
+        Object.keys(pcaAllocations).forEach(team => {
+          updatedAllocations[team as Team] = pcaAllocations[team as Team].map(alloc => {
+            if (alloc.staff_id === staffId) {
+              // Update FTE values for the edited staff
+              const override = newOverrides[staffId]
+              const baseFTE = override?.fteSubtraction !== undefined
+                ? 1.0 - override.fteSubtraction
+                : (override?.fteRemaining ?? alloc.fte_pca)
+              
+              // Recalculate fte_remaining based on slot_assigned
+              const slotCount = [alloc.slot1, alloc.slot2, alloc.slot3, alloc.slot4].filter(s => s !== null).length
+              const slotAssigned = slotCount * 0.25
+              const fteRemaining = Math.max(0, baseFTE - slotAssigned)
+              
+              return {
+                ...alloc,
+                fte_pca: baseFTE,
+                fte_remaining: fteRemaining,
+                slot_assigned: slotAssigned,
+                leave_type: override?.leaveType ?? alloc.leave_type,
+              }
+            }
+            return alloc
+          })
+        })
+        
+        setPcaAllocations(updatedAllocations)
+        
+        // Recalculate pending PCA FTE per team using updated allocations
+        const updatedPendingFTE: Record<Team, number> = {
+          FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
+        }
+        
+        // Calculate total PCA available (sum of base FTE)
+        const totalPCA = staff
+          .filter(s => s.rank === 'PCA')
+          .reduce((sum, s) => {
+            const override = newOverrides[s.id]
+            const baseFTE = override?.fteSubtraction !== undefined
+              ? 1.0 - override.fteSubtraction
+              : (override?.fteRemaining ?? 1)
+            const isOnLeave = override?.leaveType && override.fteRemaining === 0
+            return sum + (isOnLeave ? 0 : baseFTE)
+          }, 0)
+        
+        // Calculate total PT on duty from therapist allocations
+        const totalPTOnDuty = TEAMS.reduce((sum, team) => {
+          return sum + therapistAllocations[team].reduce((teamSum, alloc) => {
+            const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
+            const override = newOverrides[alloc.staff_id]
+            const fte = override ? override.fteRemaining : (alloc.fte_therapist || 0)
+            const hasFTE = fte > 0
+            return teamSum + (isTherapist && hasFTE ? fte : 0)
+          }, 0)
+        }, 0)
+        
+        // Calculate required PCA per team
+        const requiredPCA: Record<Team, number> = {
+          FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
+        }
+        
+        TEAMS.forEach(team => {
+          const ptPerTeam = therapistAllocations[team].reduce((sum, alloc) => {
+            const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
+            const override = newOverrides[alloc.staff_id]
+            const fte = override ? override.fteRemaining : (alloc.fte_therapist || 0)
+            const hasFTE = fte > 0
+            return sum + (isTherapist && hasFTE ? fte : 0)
+          }, 0)
+          
+          if (totalPTOnDuty > 0) {
+            requiredPCA[team] = (ptPerTeam * totalPCA) / totalPTOnDuty
+          } else {
+            requiredPCA[team] = totalPCA / 8
+          }
+          
+          // Add DRM add-on for DRO if applicable
+          const weekday = getWeekday(selectedDate)
+          const drmProgram = specialPrograms.find(p => p.name === 'DRM')
+          if (team === 'DRO' && drmProgram && drmProgram.weekdays.includes(weekday)) {
+            requiredPCA[team] += 0.4
+          }
+        })
+        
+        // Calculate assigned PCA per team from updated allocations
+        const assignedPCA: Record<Team, number> = {
+          FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
+        }
+        
+        TEAMS.forEach(team => {
+          assignedPCA[team] = updatedAllocations[team].reduce((sum, alloc) => {
+            return sum + (alloc.slot_assigned || 0)
+          }, 0)
+        })
+        
+        // Calculate pending FTE and apply rounding
+        TEAMS.forEach(team => {
+          const pending = Math.max(0, requiredPCA[team] - assignedPCA[team])
+          updatedPendingFTE[team] = roundToNearestQuarterWithMidpoint(pending)
+        })
+        
+        setPendingPCAFTEPerTeam(updatedPendingFTE)
+        } else {
+          // Fresh data in step 1 - don't run allocation algorithm yet
+          // Just recalculate schedule calculations (already done above)
+          // Allocation will happen in step 2 when user clicks "Initialize Algo"
+        }
+      } else {
+        // Not in step 1 - run full allocation
+        await generateAllocationsWithOverrides(newOverrides)
+      }
+    } catch (error) {
+      console.error('Error updating allocations after staff edit:', error)
+    }
   }
 
   const generateAllocationsWithOverrides = async (overrides: Record<string, { leaveType: LeaveType | null; fteRemaining: number; team?: Team; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean }>) => {
@@ -1191,6 +1473,8 @@ export default function SchedulePage() {
 
     setLoading(true)
     try {
+      // Check if we have existing allocations (loaded data) - if so, we're just recalculating, not doing fresh allocation
+      const hasExistingAllocations = Object.values(pcaAllocations).some(teamAllocs => teamAllocs.length > 0)
       // Transform staff data for algorithms, applying overrides if they exist
       const staffData: StaffData[] = staff.map(s => {
         const override = overrides[s.id]
@@ -1287,10 +1571,18 @@ export default function SchedulePage() {
       // Calculate average PCA per team based on PT FTE distribution (not equal distribution)
       // Formula: requiredPCAPerTeam = ptPerTeam[team] * totalPCA / totalPT
       // This ensures teams with more PT-FTE get proportionally more PCA
-      // totalPCA = sum of all fte_pca values (Base_FTE_remaining), not count of PCAs
-      const totalPCA = pcaData
-        .filter(p => p.is_available)
-        .reduce((sum, p) => sum + p.fte_pca, 0)  // Sum of fte_pca values
+      // CRITICAL: Use the same calculation as step 1 (recalculateScheduleCalculations) for consistency
+      // Use fteRemaining from staffOverrides (same as step 1), not fte_pca from pcaData
+      // This ensures avg PCA/team doesn't fluctuate between step 1 and step 2
+      const totalPCA = staff
+        .filter(s => s.rank === 'PCA')
+        .reduce((sum, s) => {
+          const overrideFTE = overrides[s.id]?.fteRemaining
+          // Use override FTE if set, otherwise default to 1.0 (full day) unless on leave
+          const isOnLeave = overrides[s.id]?.leaveType && overrides[s.id]?.fteRemaining === 0
+          const currentFTE = overrideFTE !== undefined ? overrideFTE : (isOnLeave ? 0 : 1)
+          return sum + currentFTE
+        }, 0)
       
       // Calculate total PT on duty and PT per team from therapist allocations
       const ptPerTeamFromResult: Record<Team, number> = {
@@ -1351,6 +1643,15 @@ export default function SchedulePage() {
         // Check if we have a stored decision for this tie-breaker
         if (tieBreakDecisions[tieBreakKey]) {
           return tieBreakDecisions[tieBreakKey]
+        }
+        
+        // In step 1, we should NOT prompt for tie-breakers
+        // - With loaded data: allocations are already done, just recalculating values
+        // - With fresh data: allocation shouldn't run yet (wait until step 2)
+        // If no stored decision exists, use alphabetical order to avoid prompting user
+        if (currentStep === 'leave-fte') {
+          // Return first team alphabetically to avoid prompting
+          return sortedTeams.split(',')[0] as Team
         }
         
         // No stored decision - ask the user
@@ -1519,7 +1820,14 @@ export default function SchedulePage() {
       // Note: weekday, drmProgram, and drmPcaFteAddon are already defined earlier in this function (around line 1060)
 
       // Helper function to format ward name with fraction if applicable
-      const formatWardName = (ward: { name: string; total_beds: number; team_assignments: Record<Team, number> }, team: Team): string => {
+      const formatWardName = (ward: { name: string; total_beds: number; team_assignments: Record<Team, number>; team_assignment_portions?: Record<Team, string> }, team: Team): string => {
+      // Prefer stored portion text if available
+      const storedPortion = ward.team_assignment_portions?.[team]
+      if (storedPortion) {
+        return `${storedPortion} ${ward.name}`
+      }
+      
+      // Fallback to computed fraction from numeric values
         const teamBeds = ward.team_assignments[team] || 0
         const totalBeds = ward.total_beds
         
@@ -1863,10 +2171,18 @@ export default function SchedulePage() {
         })
 
       // Calculate average PCA per team
-      // totalPCA = sum of all fte_pca values (Base_FTE_remaining), not count of PCAs
-      const totalPCA = pcaData
-        .filter(p => p.is_available)
-        .reduce((sum, p) => sum + p.fte_pca, 0)  // Sum of fte_pca values
+      // CRITICAL: Use the same calculation as step 1 (recalculateScheduleCalculations) for consistency
+      // Use fteRemaining from staffOverrides (same as step 1), not fte_pca from pcaData
+      // This ensures avg PCA/team doesn't fluctuate between step 1 and step 2
+      const totalPCA = staff
+        .filter(s => s.rank === 'PCA')
+        .reduce((sum, s) => {
+          const overrideFTE = overrides[s.id]?.fteRemaining
+          // Use override FTE if set, otherwise default to 1.0 (full day) unless on leave
+          const isOnLeave = overrides[s.id]?.leaveType && overrides[s.id]?.fteRemaining === 0
+          const currentFTE = overrideFTE !== undefined ? overrideFTE : (isOnLeave ? 0 : 1)
+          return sum + currentFTE
+        }, 0)
       const ptPerTeamFromResult: Record<Team, number> = {
         FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
       }
@@ -2014,7 +2330,7 @@ export default function SchedulePage() {
             return orderedTeam
           }
         }
-        
+
         const sortedTeams = [...teams].sort().join(',')
         const tieBreakKey = `${sortedTeams}:${pendingFTE.toFixed(4)}`
 
@@ -2109,8 +2425,9 @@ export default function SchedulePage() {
       // NOTE: Do NOT update calculations.average_pca_per_team here
       // The target from Step 1 (using staffOverrides) should persist through Steps 2-4
 
-      // Update step status (don't auto-advance)
+      // Update step status and mark as initialized (don't auto-advance)
       setStepStatus(prev => ({ ...prev, 'floating-pca': 'completed' }))
+      setInitializedSteps(prev => new Set(prev).add('floating-pca'))
 
     } catch (error) {
       console.error('Error in Step 3:', error)
@@ -2310,8 +2627,9 @@ export default function SchedulePage() {
       }))
     }
     
-    // Mark Step 3 as initialized
+    // Mark Step 3 as initialized and completed
     setInitializedSteps(prev => new Set(prev).add('floating-pca'))
+    setStepStatus(prev => ({ ...prev, 'floating-pca': 'completed' }))
   }
   
   /**
@@ -2872,6 +3190,110 @@ export default function SchedulePage() {
     // Check if floating PCA
     if (!staffMember.floating) {
       // Non-floating PCA - will snap back
+      return
+    }
+    
+    // Check if this drag is from StaffPool (no team context in ID)
+    const isFromStaffPool = !activeId.includes('::')
+    
+    // Validate slot transfer for floating PCA from StaffPool
+    if (isFromStaffPool) {
+      // Only allow slot transfer when:
+      // 1. Step 3 algorithm has run (initializedSteps.has('floating-pca'))
+      // 2. Current step is 'floating-pca' (Step 3), 'bed-relieving' (Step 4), or 'review' (Step 5)
+      const isStep3OrLater = currentStep === 'floating-pca' || currentStep === 'bed-relieving' || currentStep === 'review'
+      if (!initializedSteps.has('floating-pca') || !isStep3OrLater) {
+        // Show warning popover - find the dragged element
+        const activeRect = active.rect.current.initial
+        const cardRect = activeRect || active.rect.current.translated
+        
+        const popoverWidth = 200
+        const padding = 10
+        
+        let popoverX: number
+        let popoverY: number
+        
+        if (cardRect) {
+          popoverY = cardRect.top
+          
+          // Position to the left if it would be cut off on the right
+          const rightEdge = cardRect.left + cardRect.width + padding + popoverWidth
+          const windowWidth = window.innerWidth
+          
+          if (rightEdge > windowWidth - 20) {
+            popoverX = cardRect.left - popoverWidth - padding
+          } else {
+            popoverX = cardRect.left + cardRect.width + padding
+          }
+        } else {
+          popoverX = 100
+          popoverY = 100
+        }
+        
+        setSlotTransferWarningPopover({
+          show: true,
+          position: { x: popoverX, y: popoverY },
+        })
+        
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+          setSlotTransferWarningPopover(prev => ({ ...prev, show: false }))
+        }, 5000)
+        
+        // Cancel the drag by not setting pcaDragState
+        return
+      }
+      
+      // Find source team from existing allocations for StaffPool drag
+      let sourceTeam: Team | null = null
+      for (const [team, allocs] of Object.entries(pcaAllocations)) {
+        if (allocs.some(a => a.staff_id === staffId)) {
+          sourceTeam = team as Team
+          break
+        }
+      }
+      
+      if (!sourceTeam) {
+        // PCA not yet allocated - can't do slot transfer
+        return
+      }
+      
+      // Find the PCA allocation for this staff
+      const allocsForTeam = pcaAllocations[sourceTeam] || []
+      const pcaAllocation = allocsForTeam.find(a => a.staff_id === staffId)
+      
+      if (!pcaAllocation) return
+      
+      // Get slots for the source team, EXCLUDING special program slots
+      const allSlotsInTeam = getSlotsForTeam(pcaAllocation, sourceTeam)
+      const specialProgramSlots = getSpecialProgramSlotsForTeam(pcaAllocation, sourceTeam)
+      const availableSlots = allSlotsInTeam.filter(slot => !specialProgramSlots.includes(slot))
+      
+      // If no available slots (all are special program), snap back
+      if (availableSlots.length === 0) {
+        return
+      }
+      
+      // Get the position of the dragged element for popover positioning
+      const activeRect = active.rect.current.initial
+      const popoverPosition = activeRect ? {
+        x: activeRect.left + activeRect.width + 10, // Position to the right of the card
+        y: activeRect.top,
+      } : null
+      
+      // Set up drag state for StaffPool drag
+      setPcaDragState({
+        isActive: true,
+        isDraggingFromPopover: false,
+        staffId: staffId,
+        staffName: staffMember.name,
+        sourceTeam: sourceTeam,
+        availableSlots: availableSlots,
+        selectedSlots: availableSlots.length === 1 ? availableSlots : [], // Auto-select if only one slot
+        showSlotSelection: false,
+        popoverPosition: popoverPosition,
+      })
+      
       return
     }
     
@@ -3560,12 +3982,32 @@ export default function SchedulePage() {
       <DragOverlay />
       
       <div className="container mx-auto p-4">
+        {showBackButton && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const returnPath = sessionStorage.getItem('scheduleReturnPath')
+              if (returnPath) {
+                sessionStorage.removeItem('scheduleReturnPath')
+                router.push(returnPath)
+              } else {
+                router.push('/history')
+              }
+            }}
+            className="mb-4"
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to History
+          </Button>
+        )}
         <div className="flex justify-between items-center mb-4">
           <div className="flex items-center space-x-4">
             <h1 className="text-2xl font-bold">Schedule Allocation</h1>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 relative">
               <button
-                onClick={() => setCalendarOpen(true)}
+                ref={calendarButtonRef}
+                onClick={() => setCalendarOpen(!calendarOpen)}
                 className="cursor-pointer flex items-center"
                 type="button"
               >
@@ -3690,6 +4132,38 @@ export default function SchedulePage() {
             pcas={pcas}
             inactiveStaff={inactiveStaff}
             onEditStaff={handleEditStaff}
+            staffOverrides={staffOverrides}
+            specialPrograms={specialPrograms}
+            pcaAllocations={pcaAllocations}
+            currentStep={currentStep}
+            initializedSteps={initializedSteps}
+            weekday={selectedDate ? getWeekday(selectedDate) : undefined}
+            onSlotTransfer={(staffId: string, targetTeam: string, slots: number[]) => {
+              // Find source team from allocations
+              let sourceTeam: Team | null = null
+              for (const [team, allocs] of Object.entries(pcaAllocations)) {
+                if (allocs.some(a => a.staff_id === staffId)) {
+                  sourceTeam = team as Team
+                  break
+                }
+              }
+              if (sourceTeam) {
+                // Update drag state and perform transfer
+                const staffMember = staff.find(s => s.id === staffId)
+                setPcaDragState({
+                  isActive: true,
+                  isDraggingFromPopover: false,
+                  staffId,
+                  staffName: staffMember?.name || null,
+                  sourceTeam,
+                  availableSlots: staffOverrides[staffId]?.availableSlots || [1, 2, 3, 4],
+                  selectedSlots: slots,
+                  showSlotSelection: false,
+                  popoverPosition: null,
+                })
+                performSlotTransfer(targetTeam as Team)
+              }
+            }}
           />
 
           <div className="flex-1 overflow-x-auto">
@@ -4058,23 +4532,54 @@ export default function SchedulePage() {
           onCancel={handleFloatingPCAConfigCancel}
         />
 
-        <Dialog open={calendarOpen} onOpenChange={setCalendarOpen}>
-          <DialogContent className="max-w-sm">
-            <DialogHeader>
-              <DialogTitle>Select Schedule Date</DialogTitle>
-            </DialogHeader>
-            <CalendarGrid
-              selectedDate={selectedDate}
-              onDateSelect={(date) => {
-                setSelectedDate(date)
-                setCalendarOpen(false)
-              }}
-              onClose={() => setCalendarOpen(false)}
+        {/* Calendar Popover */}
+        {calendarOpen && (
+          <>
+            {/* Backdrop to close on click outside */}
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setCalendarOpen(false)}
             />
-          </DialogContent>
-        </Dialog>
+            {/* Calendar popover */}
+            <div
+              ref={calendarPopoverRef}
+              className="fixed z-50 bg-background border border-border rounded-lg shadow-lg"
+              style={{
+                top: calendarButtonRef.current
+                  ? calendarButtonRef.current.getBoundingClientRect().bottom + 8
+                  : 0,
+                left: calendarButtonRef.current
+                  ? Math.max(
+                      8,
+                      Math.min(
+                        calendarButtonRef.current.getBoundingClientRect().left,
+                        window.innerWidth - 320
+                      )
+                    )
+                  : 0,
+              }}
+            >
+              <CalendarGrid
+                selectedDate={selectedDate}
+                onDateSelect={(date) => {
+                  setSelectedDate(date)
+                  setCalendarOpen(false)
+                }}
+                datesWithData={datesWithData}
+                holidays={holidays}
+              />
+            </div>
+          </>
+        )}
       </div>
     </DndContext>
   )
 }
 
+export default function SchedulePage() {
+  return (
+    <Suspense fallback={<div className="container mx-auto p-4">Loading...</div>}>
+      <SchedulePageContent />
+    </Suspense>
+  )
+}

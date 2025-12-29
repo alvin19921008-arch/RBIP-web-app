@@ -7,9 +7,10 @@ import { PCAPreferencePanel } from '@/components/dashboard/PCAPreferencePanel'
 import { UnmetPCANeedsCard } from '@/components/dashboard/UnmetPCANeedsCard'
 import { StaffProfilePanel } from '@/components/dashboard/StaffProfilePanel'
 import { WardConfigPanel } from '@/components/dashboard/WardConfigPanel'
+import { TeamConfigurationPanel } from '@/components/dashboard/TeamConfigurationPanel'
 import { DashboardSidebar, type CategoryId } from '@/components/dashboard/DashboardSidebar'
 
-type PanelType = 'special-programs' | 'spt-allocations' | 'pca-preferences' | 'pca-unmet-needs' | 'staff-profile' | 'ward-config' | null
+type PanelType = 'special-programs' | 'spt-allocations' | 'pca-preferences' | 'pca-unmet-needs' | 'staff-profile' | 'ward-config' | 'team-configuration' | null
 
 const categoryLabels: Record<PanelType, string> = {
   'special-programs': 'Special Programs',
@@ -18,6 +19,7 @@ const categoryLabels: Record<PanelType, string> = {
   'pca-unmet-needs': 'PCA Unmet Needs Tracking',
   'staff-profile': 'Staff Profile',
   'ward-config': 'Ward Config and Bed Stat',
+  'team-configuration': 'Team Configuration',
   null: 'Dashboard',
 }
 
@@ -28,6 +30,7 @@ const categoryDescriptions: Record<PanelType, string> = {
   'pca-unmet-needs': 'Track and view unmet PCA needs',
   'staff-profile': 'Manage staff records and configurations',
   'ward-config': 'Manage ward names and bed counts',
+  'team-configuration': 'Manage team staffing and ward responsibilities',
   null: 'Configure system settings and preferences',
 }
 
@@ -71,6 +74,7 @@ export default function DashboardPage() {
             )}
             {activePanel === 'staff-profile' && <StaffProfilePanel />}
             {activePanel === 'ward-config' && <WardConfigPanel />}
+            {activePanel === 'team-configuration' && <TeamConfigurationPanel />}
           </div>
         )}
         {!activePanel && (

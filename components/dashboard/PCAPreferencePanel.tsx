@@ -71,11 +71,7 @@ export function PCAPreferencePanel() {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>PCA Preferences</CardTitle>
-        <CardDescription>Configure team-specific PCA preferences</CardDescription>
-      </CardHeader>
-      <CardContent>
+      <CardContent className="pt-6">
         {loading ? (
           <p>Loading...</p>
         ) : (

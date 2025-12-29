@@ -150,6 +150,82 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Now correctly moves SPTs between teams without creating duplicates
   - Old team's PT/team count no longer includes moved SPTs
 
+### Phase 6: Dashboard Management Panels (Latest)
+- ✅ **Ward Config and Bed Stat Dashboard**
+  - Ward cards arranged in 5 rows by floor (R7-R11)
+  - Edit dialog for ward name and bed number with instructional text
+  - Add new wards functionality (automatically placed in respective floor rows)
+  - Delete wards with confirmation (only newly added wards can be deleted, initial wards are protected)
+  - Database integration with `wards` table
+  - Visual layout: Grid-based card display organized by floor level
+- ✅ **Team Configuration Dashboard**
+  - Team cards with expandable edit mode (similar to PCA preference dashboard)
+  - Edit dialog features:
+    - Team display name (customizable, e.g., "CPPC+NSM")
+    - Team head (APPT) selection with "Current" and "Available to assign" sections
+    - Team's RPT selection with separate current/unassigned staff lists
+    - Team's non-floating PCA selection with separate current/unassigned staff lists
+    - Designated ward & responsible bed number:
+      - Checkbox menu to select wards
+      - Portion support: "Set portion" / "Edit portion" popover dialog
+      - Portion input (e.g., "1/3", "2/3", "3/4") with validation
+      - Actual bed number auto-calculated from portion, allows manual override
+      - Validation: actual beds cannot exceed ward total beds
+      - Display shows portion label (e.g., "1/3 R7A") in team card preview
+  - Database integration:
+    - `team_settings` table for custom team display names
+    - `wards.team_assignment_portions` JSONB column for portion labels
+    - `staff.team` updates for staff assignments
+  - Inactive staff filtering: Only active staff shown in selection lists and previews
+  - Staff assignment logic: Separate tracking for removed vs newly assigned staff
+  - Schedule page integration: Block 5 displays portion labels from `team_assignment_portions`
+- ✅ **Staff Profile Dashboard**
+  - Comprehensive staff management interface
+  - Filtering by rank, special program, floor PCA, and active status
+  - Sorting by rank, team, floating status, floor PCA, and special program
+  - Inline name editing with save/cancel
+  - Staff edit dialog for detailed editing
+  - Active/inactive status toggle with batch operations
+  - **Critical**: When staff set to inactive, `team` property is automatically nullified
+  - Batch toggle active/inactive for multiple selected staff
+  - Headcount display by rank (SPT, APPT, RPT, PCA, Workman)
+  - Visual layout: Table-based display with filtering and sorting controls
+
+### Phase 7: History Page & UI Enhancements (Latest)
+- ✅ **Schedule History Page**
+  - Displays all schedules with any allocation data (even partially completed)
+  - Grouped by month with latest schedules first within each month
+  - Month boundary handling (Dec 2025 → Jan 2026 sorting)
+  - Each schedule entry shows: date, weekday name, completion status badge
+  - Completion status indicators: 'Step 1', 'Step 2', 'Step 3.2', 'Complete'
+  - Individual schedule navigation to schedule page with return path
+  - Batch delete functionality with "Select All" per month
+  - Individual delete with confirmation dialog
+  - Scrollable month sections (max 7 entries visible, scroll for more)
+  - Database integration: Queries `daily_schedules` and checks `schedule_therapist_allocations`, `schedule_pca_allocations`, `schedule_bed_allocations` for data presence
+  - Session storage integration: Stores `scheduleReturnPath` for back navigation
+- ✅ **Staff Pool Enhancements**
+  - Filter button renamed from "FTE ≠ 1" to "On leave" for clarity
+  - Auto-expand relevant ranks when "On leave" filter is activated
+  - "Retract All" button in Therapist Pool header to collapse all therapist ranks
+  - Non-floating PCA staff cards use green border (`border-green-700`) matching schedule page styling
+  - Default behavior: Staff pool retracted by default, clicking ">Staff Pool" expands all ranks except inactive staff pool
+  - Fixed `getTrueFTERemaining` to skip special program FTE subtraction in Step 1 (only subtracts in Step 2+)
+- ✅ **Date Picker Optimization**
+  - Non-modal popover positioned near calendar icon (replaces centered modal dialog)
+  - Data indicators: Dot (•) displayed below day number for dates with schedule data
+  - Past/future date styling: Past dates use `opacity-60` and muted colors, future dates use `font-semibold`
+  - Hong Kong public holiday highlighting: Holidays and Sundays displayed in red (`text-red-600 dark:text-red-400`)
+  - Holiday tooltips: Hover tooltips show holiday names for public holidays
+  - Uses `date-holidays` library for accurate Hong Kong holiday dates
+  - Click-outside handler to close popover
+  - Dynamic positioning with edge case handling (viewport boundaries)
+- ✅ **Checkbox Selection Bug Fix**
+  - Fixed checkbox selection issue in history page
+  - Root cause: `onClick` prop was overriding Checkbox component's internal `onCheckedChange` handler
+  - Solution: Destructured `onClick` from props and merged handlers to call both `onCheckedChange` and prop's `onClick`
+  - Excluded `onClick` from spread props using `Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'>`
+
 ### Technical Achievements
 - ✅ **Type Safety**: Comprehensive database type conversion utilities
 - ✅ **State Management**: Three-layer architecture (Saved → Algorithm → Override)
@@ -246,6 +322,27 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - `required_pca_per_team`: DECIMAL
   - `pca_on_duty`: DECIMAL
   - Various bed/PT ratios
+
+#### Wards
+- **Table**: `wards`
+- **Key Fields**:
+  - `id`: UUID (primary key)
+  - `name`: TEXT (ward name, e.g., "R7A", "R8B")
+  - `total_beds`: INTEGER (total bed count for the ward)
+  - `team_assignments`: JSONB (Record<Team, number> - beds assigned per team)
+  - `team_assignment_portions`: JSONB (Record<Team, string> - optional portion labels like "1/3", "2/3")
+- **Usage**: Used in bed allocation calculations and displayed in Schedule page Block 5
+- **Portion Labels**: Stored in `team_assignment_portions` for user-defined fraction labels (e.g., "1/3 R7A")
+
+#### Team Settings
+- **Table**: `team_settings`
+- **Key Fields**:
+  - `team`: `team` enum (primary key)
+  - `display_name`: TEXT (custom team display name, e.g., "CPPC+NSM")
+  - `created_at`: TIMESTAMP WITH TIME ZONE
+  - `updated_at`: TIMESTAMP WITH TIME ZONE
+- **Usage**: Allows custom team names for display while maintaining canonical team enum in database
+- **Default**: If no custom name set, uses team enum value as display name
 
 ### PCA Total Values (Critical Distinction)
 
@@ -836,6 +933,7 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 
 ### Core Files
 - `app/(dashboard)/schedule/page.tsx` - Main schedule page (2828 lines)
+- `app/(dashboard)/history/page.tsx` - Schedule history page with batch operations
 - `lib/algorithms/pcaAllocation.ts` - PCA allocation algorithm (2084 lines)
 - `lib/algorithms/therapistAllocation.ts` - Therapist allocation algorithm
 - `lib/algorithms/bedAllocation.ts` - Bed allocation algorithm
@@ -853,6 +951,18 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 - `components/allocation/TeamPendingCard.tsx` - Team card for Step 3.1 (pending FTE adjustment)
 - `components/allocation/TeamReservationCard.tsx` - Team card for Step 3.2 (preferred slot reservation)
 - `components/allocation/TeamAdjacentSlotCard.tsx` - Team card for Step 3.3 (adjacent slot assignment)
+- `components/history/ScheduleHistoryList.tsx` - Individual schedule entry in history page
+- `components/history/MonthSection.tsx` - Month grouping section in history page
+- `components/history/DeleteConfirmDialog.tsx` - Confirmation dialog for schedule deletion
+
+### Dashboard Component Files
+- `components/dashboard/TeamConfigurationPanel.tsx` - Team configuration management (staff assignments, ward responsibilities, portion settings)
+- `components/dashboard/WardConfigPanel.tsx` - Ward configuration and bed statistics management
+- `components/dashboard/StaffProfilePanel.tsx` - Staff profile management with filtering, sorting, and batch operations
+- `components/dashboard/DashboardSidebar.tsx` - Dashboard navigation sidebar with collapsible categories
+- `components/dashboard/PortionPopover.tsx` - Portion editing dialog for ward bed assignments
+- `components/dashboard/WardEditDialog.tsx` - Ward editing dialog
+- `components/dashboard/StaffEditDialog.tsx` - Staff editing dialog (dashboard version)
 
 ### Utility Files
 - `lib/utils/rounding.ts` - FTE rounding utilities
@@ -860,6 +970,8 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 - `lib/utils/slotHelpers.ts` - Slot assignment utilities
 - `lib/utils/reservationLogic.ts` - Step 3.2/3.3 reservation logic (preferred slots, adjacent slots)
 - `lib/utils/types.ts` - TypeScript type utilities (Record initialization helpers)
+- `lib/utils/scheduleHistory.ts` - Schedule history utilities (grouping, formatting, completion status)
+- `lib/utils/hongKongHolidays.ts` - Hong Kong public holiday utilities using `date-holidays` library
 
 ---
 
@@ -880,6 +992,9 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 13. **Manual Slot Transfers**: Stored in `staffOverrides.slotOverrides`, update `assigned_PCA-FTE/team` and `pendingPCA-FTE/team`, special program slots are non-draggable
 14. **Step-Based Validation**: Enforce step restrictions for slot transfers, therapist transfers, and leave editing with warning popovers
 15. **SPT Allocation Timing**: SPT allocation only runs in Step 2 when "Initialize Algo" is clicked, not in Step 1
+16. **History Page**: Queries schedules with any allocation data, groups by month, supports batch delete and navigation
+17. **Date Picker**: Non-modal popover with data indicators, holiday highlighting, and past/future date styling
+18. **Checkbox Component**: Always destructure `onClick` from props and merge with internal `onCheckedChange` handler to prevent override issues
 
 ---
 
@@ -889,6 +1004,9 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 - ✅ **Completed**: Tie-breaker adjustment (Step 3.1)
 - ✅ **Completed**: Preference approval (Step 3.2)
 - ✅ **Completed**: Adjacent slot assignment (Step 3.3)
+- ✅ **Completed**: Schedule history page with batch operations
+- ✅ **Completed**: Staff pool UI enhancements and filtering
+- ✅ **Completed**: Date picker optimization with holiday support
 - Potential enhancements:
   - Additional visualization for allocation patterns
   - Export/import functionality for schedules

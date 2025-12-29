@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Ward } from '@/types/allocation'
 import { Team } from '@/types/staff'
@@ -215,11 +215,7 @@ export function WardConfigPanel() {
   return (
     <>
       <Card>
-        <CardHeader>
-          <CardTitle>Ward Config and Bed Stat</CardTitle>
-          <CardDescription>Manage ward names and bed counts</CardDescription>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           {loading ? (
             <p>Loading...</p>
           ) : (

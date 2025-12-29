@@ -25,6 +25,7 @@ type StaffSortConfig =
 export function StaffProfilePanel() {
   const [staff, setStaff] = useState<Staff[]>([])
   const [specialPrograms, setSpecialPrograms] = useState<SpecialProgram[]>([])
+  const [rbipSupervisorIds, setRbipSupervisorIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [editingStaff, setEditingStaff] = useState<Staff | null>(null)
   const [selectedStaffIds, setSelectedStaffIds] = useState<Set<string>>(new Set())
@@ -62,9 +63,10 @@ export function StaffProfilePanel() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [staffRes, programsRes] = await Promise.all([
+      const [staffRes, programsRes, sptAllocationsRes] = await Promise.all([
         supabase.from('staff').select('*').order('rank').order('name'),
         supabase.from('special_programs').select('*').order('name'),
+        supabase.from('spt_allocations').select('staff_id, is_rbip_supervisor').eq('is_rbip_supervisor', true),
       ])
 
       if (staffRes.data) {
@@ -72,6 +74,14 @@ export function StaffProfilePanel() {
       }
       if (programsRes.data) {
         setSpecialPrograms(programsRes.data as SpecialProgram[])
+      }
+      if (sptAllocationsRes.data) {
+        const supervisorIds = new Set(
+          sptAllocationsRes.data
+            .filter((alloc: any) => alloc.is_rbip_supervisor)
+            .map((alloc: any) => alloc.staff_id)
+        )
+        setRbipSupervisorIds(supervisorIds)
       }
     } catch (err) {
       console.error('Error loading data:', err)
@@ -101,14 +111,21 @@ export function StaffProfilePanel() {
 
   // Apply sorting
   const filteredAndSortedStaff = [...filteredStaff].sort((a, b) => {
-    // Primary sort: active status (active first) - always applied
+    // Primary sort: RBIP supervisors first - always applied
+    const aIsSupervisor = rbipSupervisorIds.has(a.id)
+    const bIsSupervisor = rbipSupervisorIds.has(b.id)
+    if (aIsSupervisor !== bIsSupervisor) {
+      return aIsSupervisor ? -1 : 1
+    }
+
+    // Secondary sort: active status (active first) - always applied
     const aActive = a.active !== false
     const bActive = b.active !== false
     if (aActive !== bActive) {
       return aActive ? -1 : 1
     }
 
-    // Secondary sort: "cycle/pin-to-top" sorting
+    // Tertiary sort: "cycle/pin-to-top" sorting
     if (sortConfig.column) {
       switch (sortConfig.column) {
         case 'rank': {
@@ -158,14 +175,14 @@ export function StaffProfilePanel() {
       }
     }
 
-    // Tertiary sort: default rank order (for non-sorted columns)
+    // Quaternary sort: default rank order (for non-sorted columns)
     const aRankIndex = RANK_ORDER.indexOf(a.rank)
     const bRankIndex = RANK_ORDER.indexOf(b.rank)
     if (aRankIndex !== bRankIndex) {
       return aRankIndex - bRankIndex
     }
 
-    // Quaternary sort: name
+    // Quinary sort: name
     return a.name.localeCompare(b.name)
   })
 
@@ -235,9 +252,12 @@ export function StaffProfilePanel() {
     }
     
     try {
+      // If setting to inactive, also set team to null
+      const updateData = newActive ? { active: newActive } : { active: newActive, team: null }
+
       const { error } = await supabase
         .from('staff')
-        .update({ active: newActive })
+        .update(updateData)
         .eq('id', staffId)
 
       if (error) {
@@ -245,7 +265,7 @@ export function StaffProfilePanel() {
         alert('Failed to update status. Please try again.')
       } else {
         // Update local state
-        setStaff((prev) => prev.map((s) => (s.id === staffId ? { ...s, active: newActive } : s)))
+        setStaff((prev) => prev.map((s) => (s.id === staffId ? { ...s, active: newActive, team: newActive ? s.team : null } : s)))
         
         // Show popover if toggled to inactive
         if (!newActive && staffMember) {
@@ -263,9 +283,12 @@ export function StaffProfilePanel() {
     if (selectedStaffIds.size === 0) return
 
     try {
+      // If setting to inactive, also set team to null
+      const updateData = active ? { active } : { active, team: null }
+
       const { error } = await supabase
         .from('staff')
-        .update({ active })
+        .update(updateData)
         .in('id', Array.from(selectedStaffIds))
 
       if (error) {
@@ -274,7 +297,7 @@ export function StaffProfilePanel() {
       } else {
         // Update local state
         setStaff((prev) =>
-          prev.map((s) => (selectedStaffIds.has(s.id) ? { ...s, active } : s))
+          prev.map((s) => (selectedStaffIds.has(s.id) ? { ...s, active, team: active ? s.team : null } : s))
         )
         setSelectedStaffIds(new Set())
       }
@@ -315,6 +338,11 @@ export function StaffProfilePanel() {
     try {
       const { isRbipSupervisor, specialty, ...staffFields } = staffData
       const staffId = editingStaff?.id
+
+      // If setting to inactive, also set team to null
+      if (staffFields.active === false) {
+        staffFields.team = null
+      }
 
       if (staffId) {
         // Update existing staff
@@ -552,6 +580,9 @@ export function StaffProfilePanel() {
               className="text-left hover:underline cursor-pointer text-sm font-medium"
             >
               {staffMember.name}
+              {rbipSupervisorIds.has(staffMember.id) && (
+                <span className="ml-1 text-yellow-500" title="RBIP Supervisor">★</span>
+              )}
             </button>
           )}
         </td>
@@ -631,10 +662,8 @@ export function StaffProfilePanel() {
   return (
     <>
       <Card>
-        <CardHeader>
-          <CardTitle>Staff Profile</CardTitle>
-          <CardDescription>Manage staff records and configurations</CardDescription>
-          <div className="mt-2 pt-2 border-t">
+        <CardContent className="pt-6">
+          <div className="mb-4 pb-4 border-b">
             <div className="flex flex-wrap gap-4 text-sm" style={{ color: 'black' }}>
               <span>
                 <span className="font-semibold">SPT:</span> {headcountByRank.SPT}
@@ -658,8 +687,6 @@ export function StaffProfilePanel() {
               </span>
             </div>
           </div>
-        </CardHeader>
-        <CardContent>
           {loading ? (
             <p>Loading...</p>
           ) : (

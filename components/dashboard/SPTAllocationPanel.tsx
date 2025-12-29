@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { SPTAllocation } from '@/types/allocation'
 import { Staff, Team, Weekday } from '@/types/staff'
@@ -77,11 +77,7 @@ export function SPTAllocationPanel() {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>SPT Allocations</CardTitle>
-        <CardDescription>Configure senior therapist (SPT) team assignments</CardDescription>
-      </CardHeader>
-      <CardContent>
+      <CardContent className="pt-6">
         {loading ? (
           <p>Loading...</p>
         ) : (

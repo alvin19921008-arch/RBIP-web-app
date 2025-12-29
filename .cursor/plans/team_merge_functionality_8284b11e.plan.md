@@ -146,7 +146,7 @@ function getTeamDisplayName(team: Team, displayNames: Record<Team, string>): str
 
 ### Apply Merge in Schedule Page
 
-Modify `[app/(dashboard)/schedule/page.tsx](app/\\(dashboard)/schedule/page.tsx)`:
+Modify `[app/(dashboard)/schedule/page.tsx](app/\\\(dashboard)/schedule/page.tsx)`:
 
 #### 1) Load Merge Config
 
@@ -247,7 +247,7 @@ const displayName = (team: Team) => getTeamDisplayName(team, mergeConfig.display
 ## Files to Modify
 
 1. [`components/dashboard/TeamConfigurationPanel.tsx`](components/dashboard/TeamConfigurationPanel.tsx) - Add merge button and dialog integration
-2. `[app/(dashboard)/schedule/page.tsx](app/\\(dashboard)/schedule/page.tsx)` - Apply merge config throughout (staff grouping, ward aggregation, column rendering, saving snapshots)
+2. `[app/(dashboard)/schedule/page.tsx](app/\\\(dashboard)/schedule/page.tsx)` - Apply merge config throughout (staff grouping, ward aggregation, column rendering, saving snapshots)
 3. [`hooks/useScheduleState.ts`](hooks/useScheduleState.ts) - May need merge-aware state handling
 4. [`lib/algorithms/bedAllocation.ts`](lib/algorithms/bedAllocation.ts) - Accept canonical-summed ward assignments
 5. [`lib/algorithms/therapistAllocation.ts`](lib/algorithms/therapistAllocation.ts) - May need canonical team awareness
