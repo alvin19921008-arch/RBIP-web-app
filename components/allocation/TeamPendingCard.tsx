@@ -25,6 +25,18 @@ interface TeamPendingCardProps {
   isTied: boolean               // Whether this team is in a tie-breaker group (enables drag)
   onValueChange: (team: Team, newValue: number) => void
   isDragging?: boolean
+  assignedFTE?: number  // Optional: FTE assigned from buffer floating PCA (for display)
+  orderPosition?: number  // Optional: position in the order (1-based) for displaying ordinal number
+}
+
+// Helper function to get ordinal suffix (1st, 2nd, 3rd, 4th, etc.)
+function getOrdinalSuffix(n: number): string {
+  const j = n % 10
+  const k = n % 100
+  if (j === 1 && k !== 11) return 'st'
+  if (j === 2 && k !== 12) return 'nd'
+  if (j === 3 && k !== 13) return 'rd'
+  return 'th'
 }
 
 export function TeamPendingCard({
@@ -36,6 +48,8 @@ export function TeamPendingCard({
   isTied,
   onValueChange,
   isDragging = false,
+  assignedFTE,
+  orderPosition,
 }: TeamPendingCardProps) {
   const {
     attributes,
@@ -93,6 +107,13 @@ export function TeamPendingCard({
         )}
       >
         <CardContent className="p-1.5 flex flex-col items-center gap-0.5">
+          {/* Order Position (ordinal number) */}
+          {orderPosition !== undefined && (
+            <div className="text-[9px] text-muted-foreground leading-tight">
+              {orderPosition}{getOrdinalSuffix(orderPosition)}
+            </div>
+          )}
+          
           {/* Team Name */}
           <div className={cn(
             'text-xs font-bold leading-tight',
@@ -106,10 +127,17 @@ export function TeamPendingCard({
             {pendingFTE.toFixed(2)}
           </div>
           
-          {/* Original Value (in brackets) */}
+          {/* Unadjusted Value */}
           <div className="text-[10px] text-muted-foreground leading-tight whitespace-nowrap">
-            (original {originalPendingFTE.toFixed(2)})
+            Unadjusted {originalPendingFTE.toFixed(2)}
           </div>
+          
+          {/* Assigned Value (if buffer PCA assigned) */}
+          {assignedFTE !== undefined && assignedFTE > 0 && (
+            <div className="text-[10px] text-muted-foreground leading-tight whitespace-nowrap">
+              Assigned: {assignedFTE.toFixed(2)}
+            </div>
+          )}
 
           {/* Increment/Decrement Buttons */}
           <div className="flex items-center gap-0.5">

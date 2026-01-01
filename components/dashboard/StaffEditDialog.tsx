@@ -6,10 +6,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Staff, StaffRank, Team } from '@/types/staff'
+import { Staff, StaffRank, Team, StaffStatus } from '@/types/staff'
 import { SpecialProgram } from '@/types/allocation'
 import { TEAMS } from '@/lib/utils/types'
-import { X } from 'lucide-react'
+import { X, Info } from 'lucide-react'
 
 const RANKS: StaffRank[] = ['SPT', 'APPT', 'RPT', 'PCA', 'workman']
 const SPECIALTY_OPTIONS = ['MSK/Ortho', 'Cardiac', 'Neuro', 'Cancer', 'nil']
@@ -39,7 +39,7 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
   })
   const [specialty, setSpecialty] = useState<string | null>(null)
   const [isRbipSupervisor, setIsRbipSupervisor] = useState(false)
-  const [active, setActive] = useState(staff.active ?? true)
+  const [status, setStatus] = useState<StaffStatus>((staff.status ?? 'active') as StaffStatus)
   const [loadingSPTData, setLoadingSPTData] = useState(false)
 
   // Load SPT allocation data if editing existing SPT staff
@@ -124,7 +124,7 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
       special_program: specialProgram.length > 0 ? specialProgram : null,
       floating: rank === 'PCA' ? floating : false,
       floor_pca: floorPCAArray,
-      active,
+      status,
     }
 
     if (rank === 'SPT') {
@@ -220,9 +220,10 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
           {/* Special Program */}
           <div>
             <Label>Special Program</Label>
-            <p className="text-xs text-muted-foreground mb-2">
-              ℹ️ Go to Special Programs dashboard for detailed configuration.
-            </p>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
+              <Info className="h-3.5 w-3.5" />
+              <span>Go to Special Programs dashboard for detailed configuration.</span>
+            </div>
             <div className="space-y-2 mt-2 border rounded-md p-3 max-h-40 overflow-y-auto">
               {availableProgramNames.length > 0 ? (
                 availableProgramNames.map((prog) => (
@@ -292,9 +293,10 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
             <>
               <div>
                 <Label>SPT basic configure</Label>
-                <p className="text-xs text-muted-foreground mb-2">
-                  ℹ️ Go to SPT allocation dashboard for detailed configuration.
-                </p>
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
+                  <Info className="h-3.5 w-3.5" />
+                  <span>Go to SPT allocation dashboard for detailed configuration.</span>
+                </div>
               </div>
               <div className="space-y-4 border p-4 rounded-md">
                 {loadingSPTData ? (
@@ -336,18 +338,26 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
             </>
           )}
 
-          {/* Active */}
-          <div className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              id="active"
-              checked={active}
-              onChange={(e) => setActive(e.target.checked)}
-              className="h-4 w-4"
-            />
-            <Label htmlFor="active" className="font-normal cursor-pointer">
-              Active (staff will appear in team allocations and schedule page)
-            </Label>
+          {/* Status */}
+          <div>
+            <Label htmlFor="status">Status</Label>
+            <select
+              id="status"
+              value={status}
+              onChange={(e) => setStatus(e.target.value as StaffStatus)}
+              className="w-full h-10 px-3 py-2 rounded-md border border-input bg-background text-sm mt-1"
+            >
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+              <option value="buffer">Buffer</option>
+            </select>
+            <p className="text-xs text-muted-foreground mt-1">
+              Active: staff will appear in team allocations and schedule page
+              <br />
+              Inactive: staff will not appear in allocations
+              <br />
+              Buffer: temporary staff with custom FTE values
+            </p>
           </div>
 
           <DialogFooter>

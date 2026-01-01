@@ -2169,21 +2169,9 @@ export async function allocateFloatingPCA_v2(
     pcaPreferences,
   } = context
 
-  // #region agent log
-  const junId = '8598c9c5-6fc1-407f-85e1-ebdba6754d8d';
-  const junAlloc = existingAllocations.find(a => a.staff_id === junId);
-  const junInPool = pcaPool.find(p => p.id === junId);
-  fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:allocateFloatingPCA_v2:entry',message:'POST-FIX: 君 FTE values',data:{junInputAlloc:junAlloc?{fte_pca:junAlloc.fte_pca,fte_remaining:junAlloc.fte_remaining,slot1:junAlloc.slot1,slot2:junAlloc.slot2,slot3:junAlloc.slot3,slot4:junAlloc.slot4,spt_ids:junAlloc.special_program_ids}:'NOT_FOUND',junInPCAPool:junInPool?{fte_pca:junInPool.fte_pca}:'NOT_IN_POOL',expected:{fte_pca:'should be ~1.0 (base on-duty FTE)',fte_remaining:'should be ~0.75 (after CRP slot 2)'}},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fte-fix',hypothesisId:'H-FTE-FIX'})}).catch(()=>{});
-  // #endregion
-
   // Clone allocations and pending FTE to avoid mutating originals
   const allocations = existingAllocations.map(a => ({ ...a }))
   const pendingFTE = { ...initialPendingFTE }
-  
-  // #region agent log
-  const junCloned = allocations.find(a => a.staff_id === junId);
-  fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:allocateFloatingPCA_v2:afterClone',message:'After cloning - 君 allocation',data:{junClonedAlloc:junCloned?{staff_id:junCloned.staff_id,team:junCloned.team,fte_pca:junCloned.fte_pca,fte_remaining:junCloned.fte_remaining,slot1:junCloned.slot1,slot2:junCloned.slot2,slot3:junCloned.slot3,slot4:junCloned.slot4,spt_ids:junCloned.special_program_ids}:'NOT_FOUND'},timestamp:Date.now(),sessionId:'debug-session',runId:'bug1-trace',hypothesisId:'H-JunClone'})}).catch(()=>{});
-  // #endregion
   
   // Initialize tracker
   const tracker = createEmptyTracker()
@@ -2230,6 +2218,7 @@ export async function allocateFloatingPCA_v2(
     
     const pref = teamPrefs[team]
     
+    
     // Process based on condition
     switch (pref.condition) {
       case 'A':
@@ -2249,6 +2238,7 @@ export async function allocateFloatingPCA_v2(
         await processConditionD(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, preferredPCAMap, tracker)
         break
     }
+    
   }
   
   // ========================================================================
@@ -2293,10 +2283,6 @@ export async function allocateFloatingPCA_v2(
   // Finalize tracker summary
   finalizeTrackerSummary(tracker)
   
-  // #region agent log
-  const junFinal = allocations.find(a => a.staff_id === junId);
-  fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:allocateFloatingPCA_v2:return',message:'POST-FIX: 君 final values',data:{junFinalAlloc:junFinal?{fte_pca:junFinal.fte_pca,fte_remaining:junFinal.fte_remaining,slot1:junFinal.slot1,slot2:junFinal.slot2,slot3:junFinal.slot3,slot4:junFinal.slot4}:'NOT_FOUND',expected:{fte_pca:'should be ~1.0 (unchanged)',fte_remaining:'should be 0 if all slots assigned'},allocationsCount:allocations.length,finalPendingFTE:pendingFTE},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fte-fix',hypothesisId:'H-FTE-FIX'})}).catch(()=>{});
-  // #endregion
   
   return {
     allocations,
@@ -2352,7 +2338,10 @@ async function processConditionA(
     
     if (result.slotsAssigned.includes(preferredSlot)) {
       preferredSlotAssigned = true
-      pendingFTE[team] = Math.max(0, pendingFTE[team] - 0.25)
+      // BUG FIX: Use result.newPendingFTE (which is 0 when pendingFTE=0.25 and 1 slot assigned)
+      // Then adjust by the difference: we passed 0.25 but pendingFTE[team] might be larger
+      const fteUsedForPreferredSlot = 0.25
+      pendingFTE[team] = Math.max(0, pendingFTE[team] - fteUsedForPreferredSlot)
       
       recordAssignment(tracker, team, {
         slot: preferredSlot,
@@ -2404,7 +2393,10 @@ async function processConditionA(
       
       if (result.slotsAssigned.includes(preferredSlot)) {
         preferredSlotAssigned = true
-        pendingFTE[team] = Math.max(0, pendingFTE[team] - 0.25)
+        // BUG FIX: Use result.newPendingFTE (which is 0 when pendingFTE=0.25 and 1 slot assigned)
+        // Then adjust by the difference: we passed 0.25 but pendingFTE[team] might be larger
+        const fteUsedForPreferredSlot = 0.25
+        pendingFTE[team] = Math.max(0, pendingFTE[team] - fteUsedForPreferredSlot)
         
         recordAssignment(tracker, team, {
           slot: preferredSlot,
@@ -2457,7 +2449,10 @@ async function processConditionA(
       
       if (result.slotsAssigned.includes(preferredSlot)) {
         preferredSlotAssigned = true
-        pendingFTE[team] = Math.max(0, pendingFTE[team] - 0.25)
+        // BUG FIX: Use result.newPendingFTE (which is 0 when pendingFTE=0.25 and 1 slot assigned)
+        // Then adjust by the difference: we passed 0.25 but pendingFTE[team] might be larger
+        const fteUsedForPreferredSlot = 0.25
+        pendingFTE[team] = Math.max(0, pendingFTE[team] - fteUsedForPreferredSlot)
         
         recordAssignment(tracker, team, {
           slot: preferredSlot,
@@ -2585,7 +2580,9 @@ async function processConditionB(
     
     if (result.slotsAssigned.includes(preferredSlot)) {
       preferredSlotAssigned = true
-      pendingFTE[team] = Math.max(0, pendingFTE[team] - 0.25)
+      // BUG FIX: Use result.newPendingFTE instead of manually subtracting 0.25
+      // The result.newPendingFTE already accounts for the slots assigned (should be 0 when pendingFTE=0.25 and 1 slot assigned)
+      pendingFTE[team] = result.newPendingFTE
       lastUsedPCA = pca
       
       recordAssignment(tracker, team, {
@@ -2669,7 +2666,10 @@ async function processConditionB(
       
       if (result.slotsAssigned.includes(preferredSlot)) {
         preferredSlotAssigned = true
-        pendingFTE[team] = Math.max(0, pendingFTE[team] - 0.25)
+        // BUG FIX: Use result.newPendingFTE (which is 0 when pendingFTE=0.25 and 1 slot assigned)
+        // Then adjust by the difference: we passed 0.25 but pendingFTE[team] might be larger
+        const fteUsedForPreferredSlot = 0.25
+        pendingFTE[team] = Math.max(0, pendingFTE[team] - fteUsedForPreferredSlot)
         lastUsedPCA = pca
         
         recordAssignment(tracker, team, {
@@ -2979,17 +2979,17 @@ async function processCycle3Cleanup(
     // Re-sort teams by pendingFTE each iteration
     const sortedTeams = [...TEAMS].sort((a, b) => pendingFTE[b] - pendingFTE[a])
     
-    for (const team of sortedTeams) {
+  for (const team of sortedTeams) {
       if (pendingFTE[team] <= 0) continue
-      
+
       const allocation = getOrCreateAllocation(pca.id, pca.name, pca.fte_pca, pca.leave_type, team, allocations)
       if (allocation.fte_remaining <= 0) break  // This PCA is exhausted
-      
+
       const pref = teamPrefs[team]
       const { teamFloor, gymSlot, avoidGym } = pref
       
       const existingSlots = getTeamExistingSlots(team, allocations)
-      
+
       // Assign one slot at a time in Cycle 3
       const result = assignSlotsToTeam({
         pca,
@@ -3019,7 +3019,7 @@ async function processCycle3Cleanup(
         
         pendingFTE[team] = result.newPendingFTE
       }
-      
+
       // After assigning, check if PCA is exhausted
       if (allocation.fte_remaining <= 0) break
     }

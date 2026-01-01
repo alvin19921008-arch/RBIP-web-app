@@ -5,7 +5,7 @@ import { TherapistAllocation } from '@/types/schedule'
 import { Staff } from '@/types/staff'
 import { StaffCard } from './StaffCard'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { useDroppable } from '@dnd-kit/core'
+import { useDroppable, useDndContext } from '@dnd-kit/core'
 import { SpecialProgram } from '@/types/allocation'
 import { formatFTE } from '@/lib/utils/rounding'
 
@@ -17,11 +17,20 @@ interface TherapistBlockProps {
   onEditStaff?: (staffId: string, event?: React.MouseEvent) => void
 }
 
-export function TherapistBlock({ team, allocations, specialPrograms = [], weekday, onEditStaff }: TherapistBlockProps) {
+export function TherapistBlock({ team, allocations, specialPrograms = [], weekday, onEditStaff, currentStep }: TherapistBlockProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: `therapist-${team}`,
     data: { type: 'therapist', team },
   })
+  
+  const { active } = useDndContext()
+  
+  // Only show drag zone border if a therapist is being dragged
+  const isTherapistDragging = active?.data?.current?.staff 
+    ? ['SPT', 'APPT', 'RPT'].includes(active.data.current.staff.rank)
+    : false
+  
+  const showDragZone = isOver && isTherapistDragging
 
   // Filter out PCA staff - only show therapists (SPT, APPT, RPT)
   // Also filter out staff with FTE = 0 (they should only appear in leave block)
@@ -64,7 +73,7 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
   }
 
   return (
-    <Card ref={setNodeRef} className={isOver ? 'border-primary' : ''}>
+    <Card ref={setNodeRef} className={showDragZone ? 'border-2 border-slate-900 dark:border-slate-100' : ''}>
       <CardContent className="p-2 pt-1 flex flex-col min-h-full">
         <div className="space-y-1 flex-1">
           {therapistAllocations.map((allocation) => {
@@ -73,7 +82,12 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
               : undefined
             
             // Calculate FTE for display
-            const originalFTE = allocation.fte_therapist || 1.0
+            // For buffer staff, use buffer_fte if available, otherwise default to 1.0
+            const isBufferStaff = allocation.staff.status === 'buffer'
+            const baseFTE = isBufferStaff && allocation.staff.buffer_fte !== undefined 
+              ? allocation.staff.buffer_fte 
+              : 1.0
+            const originalFTE = allocation.fte_therapist || baseFTE
             const hasSpecialProgram = allocation.special_program_ids && allocation.special_program_ids.length > 0
             
             // Calculate special program FTE subtraction
@@ -110,6 +124,15 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
             }
             // If no leave but special program FTE subtraction exists, don't show FTE (displayFTE remains undefined)
             
+            // Buffer therapist: transferrable in Step 1 & 2 only (not >= Step 3)
+            // Regular therapist: transferrable in Step 1 & 2 only
+            // Reuse isBufferStaff from above
+            const isTherapistRank = ['SPT', 'APPT', 'RPT'].includes(allocation.staff.rank)
+            // For buffer therapist, allow dragging in Step 1 & 2 only
+            // For regular therapist, dragging is handled by schedule page validation
+            const canDragBufferTherapist = isBufferStaff && (currentStep === 'leave-fte' || currentStep === 'therapist-pca')
+            const draggable = !isBufferStaff || canDragBufferTherapist
+            
             return (
               <StaffCard
                 key={allocation.id}
@@ -118,6 +141,8 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
                 fteRemaining={displayFTE}
                 sptDisplay={sptDisplay}
                 onEdit={(e) => onEditStaff?.(allocation.staff_id, e)}
+                draggable={draggable}
+                dragTeam={team}
               />
             )
           })}

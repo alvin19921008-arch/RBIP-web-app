@@ -4,10 +4,10 @@ import { useState, useEffect, useRef } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Staff, StaffRank, Team } from '@/types/staff'
+import { Staff, StaffRank, Team, StaffStatus } from '@/types/staff'
 import { TEAMS } from '@/lib/utils/types'
 import { SpecialProgram } from '@/types/allocation'
-import { Edit2, Trash2, Plus, X, Loader2, ArrowUpDown } from 'lucide-react'
+import { Edit2, Trash2, Plus, X, Loader2, ArrowUpDown, ChevronDown } from 'lucide-react'
 import { StaffEditDialog } from './StaffEditDialog'
 import { cn } from '@/lib/utils'
 
@@ -33,13 +33,15 @@ export function StaffProfilePanel() {
     rank: null as StaffRank[] | null,
     specialProgram: null as string[] | null,
     floorPCA: null as 'upper' | 'lower' | 'both' | null,
-    active: null as boolean | null,
+    status: null as 'active' | 'inactive' | 'buffer' | null,
   })
   const [sortConfig, setSortConfig] = useState<StaffSortConfig>({ column: null, value: null })
   const [editingNameId, setEditingNameId] = useState<string | null>(null)
   const [editingNameValue, setEditingNameValue] = useState<string>('')
   const [savingNameId, setSavingNameId] = useState<string | null>(null)
   const [inactiveTogglePopover, setInactiveTogglePopover] = useState<{ staffId: string; name: string; position: { x: number; y: number } } | null>(null)
+  const [showBufferSlotDialog, setShowBufferSlotDialog] = useState(false)
+  const [pcaStaffForBuffer, setPcaStaffForBuffer] = useState<Staff | null>(null)
   const supabase = createClientComponentClient()
 
   useEffect(() => {
@@ -93,7 +95,10 @@ export function StaffProfilePanel() {
   // Filter staff
   const filteredStaff = staff.filter((s) => {
     if (filters.rank && !filters.rank.includes(s.rank)) return false
-    if (filters.active !== null && (s.active ?? true) !== filters.active) return false
+    if (filters.status !== null) {
+      const staffStatus = s.status ?? 'active'
+      if (staffStatus !== filters.status) return false
+    }
     if (filters.specialProgram && filters.specialProgram.length > 0) {
       const hasProgram = s.special_program?.some((prog) => filters.specialProgram!.includes(prog))
       if (!hasProgram) return false
@@ -118,11 +123,14 @@ export function StaffProfilePanel() {
       return aIsSupervisor ? -1 : 1
     }
 
-    // Secondary sort: active status (active first) - always applied
-    const aActive = a.active !== false
-    const bActive = b.active !== false
-    if (aActive !== bActive) {
-      return aActive ? -1 : 1
+    // Secondary sort: status order (active → buffer → inactive) - always applied
+    const statusOrder: Record<string, number> = { active: 0, buffer: 1, inactive: 2 }
+    const aStatus = a.status ?? 'active'
+    const bStatus = b.status ?? 'active'
+    const aStatusOrder = statusOrder[aStatus] ?? 999
+    const bStatusOrder = statusOrder[bStatus] ?? 999
+    if (aStatusOrder !== bStatusOrder) {
+      return aStatusOrder - bStatusOrder
     }
 
     // Tertiary sort: "cycle/pin-to-top" sorting
@@ -186,9 +194,10 @@ export function StaffProfilePanel() {
     return a.name.localeCompare(b.name)
   })
 
-  // Split into active and inactive
-  const activeStaff = filteredAndSortedStaff.filter((s) => s.active !== false)
-  const inactiveStaff = filteredAndSortedStaff.filter((s) => s.active === false)
+  // Split into active, buffer, and inactive
+  const activeStaff = filteredAndSortedStaff.filter((s) => (s.status ?? 'active') === 'active')
+  const bufferStaff = filteredAndSortedStaff.filter((s) => s.status === 'buffer')
+  const inactiveStaff = filteredAndSortedStaff.filter((s) => s.status === 'inactive')
 
   const handleInlineNameEdit = (staff: Staff) => {
     setEditingNameId(staff.id)
@@ -234,57 +243,79 @@ export function StaffProfilePanel() {
     setEditingNameValue('')
   }
 
-  const handleToggleActive = async (staffId: string, currentActive: boolean, event?: React.MouseEvent) => {
-    const newActive = !currentActive
+  const handleStatusChange = async (staffId: string, newStatus: 'active' | 'inactive' | 'buffer') => {
     const staffMember = staff.find((s) => s.id === staffId)
+    if (!staffMember) return
     
-    // Get click position for popover
-    let popoverPosition = { x: 0, y: 0 }
-    if (event) {
-      popoverPosition = { x: event.clientX, y: event.clientY }
-      
-      // Adjust position if near bottom of viewport
-      const viewportHeight = window.innerHeight
-      const popoverHeight = 80 // Estimated popover height
-      if (event.clientY > viewportHeight - popoverHeight - 20) {
-        popoverPosition.y = event.clientY - popoverHeight - 10
-      }
+    // For PCA staff converting to buffer, show slot selection dialog first
+    if (newStatus === 'buffer' && staffMember.rank === 'PCA') {
+      setPcaStaffForBuffer(staffMember)
+      setShowBufferSlotDialog(true)
+      return
     }
     
+    // For non-PCA or other status changes, update directly
+    await updateStaffStatus(staffId, newStatus, staffMember)
+  }
+  
+  const updateStaffStatus = async (staffId: string, newStatus: 'active' | 'inactive' | 'buffer', staffMember: Staff, bufferFTE?: number) => {
     try {
-      // If setting to inactive, also set team to null
-      const updateData = newActive ? { active: newActive } : { active: newActive, team: null }
-
+      // If setting to inactive or buffer, also set team to null
+      const updateData: { status: 'active' | 'inactive' | 'buffer'; team?: Team | null; buffer_fte?: number | null } = {
+        status: newStatus,
+      }
+      
+      if (newStatus === 'inactive' || newStatus === 'buffer') {
+        updateData.team = null
+      }
+      
+      // For buffer staff, set buffer_fte if provided
+      if (newStatus === 'buffer' && bufferFTE !== undefined) {
+        updateData.buffer_fte = bufferFTE
+      }
+      
       const { error } = await supabase
         .from('staff')
         .update(updateData)
         .eq('id', staffId)
 
       if (error) {
-        console.error('Error toggling active:', error)
+        console.error('Error updating status:', error)
         alert('Failed to update status. Please try again.')
       } else {
         // Update local state
-        setStaff((prev) => prev.map((s) => (s.id === staffId ? { ...s, active: newActive, team: newActive ? s.team : null } : s)))
-        
-        // Show popover if toggled to inactive
-        if (!newActive && staffMember) {
-          setInactiveTogglePopover({ staffId, name: staffMember.name, position: popoverPosition })
-          setTimeout(() => setInactiveTogglePopover(null), 5000) // Auto-dismiss after 5 seconds
-        }
+        setStaff((prev) => prev.map((s) => 
+          s.id === staffId 
+            ? { ...s, status: newStatus, team: (newStatus === 'inactive' || newStatus === 'buffer') ? null : s.team, buffer_fte: newStatus === 'buffer' && bufferFTE !== undefined ? bufferFTE : s.buffer_fte } 
+            : s
+        ))
       }
     } catch (err) {
-      console.error('Error toggling active:', err)
+      console.error('Error updating status:', err)
       alert('Failed to update status. Please try again.')
     }
   }
+  
+  const handleBufferSlotSelectionConfirm = async (slots: number[], bufferFTE: number) => {
+    if (!pcaStaffForBuffer) return
+    
+    await updateStaffStatus(pcaStaffForBuffer.id, 'buffer', pcaStaffForBuffer, bufferFTE)
+    setShowBufferSlotDialog(false)
+    setPcaStaffForBuffer(null)
+  }
 
-  const handleBatchToggleActive = async (active: boolean) => {
+  const handleBatchStatusChange = async (status: 'active' | 'inactive' | 'buffer') => {
     if (selectedStaffIds.size === 0) return
 
     try {
-      // If setting to inactive, also set team to null
-      const updateData = active ? { active } : { active, team: null }
+      // If setting to inactive or buffer, also set team to null
+      const updateData: { status: 'active' | 'inactive' | 'buffer'; team?: Team | null } = {
+        status,
+      }
+      
+      if (status === 'inactive' || status === 'buffer') {
+        updateData.team = null
+      }
 
       const { error } = await supabase
         .from('staff')
@@ -292,17 +323,21 @@ export function StaffProfilePanel() {
         .in('id', Array.from(selectedStaffIds))
 
       if (error) {
-        console.error('Error batch toggling active:', error)
+        console.error('Error batch updating status:', error)
         alert('Failed to update status. Please try again.')
       } else {
         // Update local state
         setStaff((prev) =>
-          prev.map((s) => (selectedStaffIds.has(s.id) ? { ...s, active, team: active ? s.team : null } : s))
+          prev.map((s) => 
+            selectedStaffIds.has(s.id) 
+              ? { ...s, status, team: (status === 'inactive' || status === 'buffer') ? null : s.team } 
+              : s
+          )
         )
         setSelectedStaffIds(new Set())
       }
     } catch (err) {
-      console.error('Error batch toggling active:', err)
+      console.error('Error batch updating status:', err)
       alert('Failed to update status. Please try again.')
     }
   }
@@ -339,8 +374,8 @@ export function StaffProfilePanel() {
       const { isRbipSupervisor, specialty, ...staffFields } = staffData
       const staffId = editingStaff?.id
 
-      // If setting to inactive, also set team to null
-      if (staffFields.active === false) {
+      // If setting to inactive or buffer, also set team to null
+      if (staffFields.status === 'inactive' || staffFields.status === 'buffer') {
         staffFields.team = null
       }
 
@@ -381,7 +416,7 @@ export function StaffProfilePanel() {
               slots: {},
               fte_addon: 0,
               substitute_team_head: false,
-              active: true,
+              status: 'active' as StaffStatus,
             })
           }
         }
@@ -391,7 +426,7 @@ export function StaffProfilePanel() {
           .from('staff')
           .insert({
             ...staffFields,
-            active: staffFields.active ?? true,
+            status: staffFields.status ?? 'active',
           })
           .select()
           .single()
@@ -409,7 +444,7 @@ export function StaffProfilePanel() {
             slots: {},
             fte_addon: 0,
             substitute_team_head: false,
-            active: true,
+            status: 'active' as StaffStatus,
           })
         }
       }
@@ -543,7 +578,7 @@ export function StaffProfilePanel() {
     const isSavingName = savingNameId === staffMember.id
 
     return (
-      <tr key={staffMember.id} className={cn('border-b hover:bg-accent/50', !(staffMember.active ?? true) && 'opacity-60')}>
+      <tr key={staffMember.id} className={cn('border-b hover:bg-accent/50', (staffMember.status ?? 'active') === 'inactive' && 'opacity-60')}>
         <td className="p-2">
           <input
             type="checkbox"
@@ -593,36 +628,38 @@ export function StaffProfilePanel() {
         <td className="p-2 text-sm">{getSpecialProgramDisplay(staffMember)}</td>
         <td className="p-2">
           {(() => {
-            const isActive = staffMember.active ?? true
+            const currentStatus = staffMember.status ?? 'active'
+            const getStatusColor = (status: 'active' | 'inactive' | 'buffer') => {
+              switch (status) {
+                case 'active':
+                  return 'bg-green-500 hover:bg-green-600'
+                case 'inactive':
+                  return 'bg-gray-400 hover:bg-gray-500'
+                case 'buffer':
+                  return 'bg-[#a4b1ed] hover:bg-[#8b9ae8]'
+                default:
+                  return 'bg-gray-400 hover:bg-gray-500'
+              }
+            }
+            
             return (
-              <button
-                onClick={(e) => handleToggleActive(staffMember.id, isActive, e)}
-                className={cn(
-                  // Width tuned to be as compact as possible while still fitting "Inactive"
-                  // (with text-[11px] and px-0.5 padding) + the thumb.
-                  'h-6 w-[76px] rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 grid items-center',
-                  isActive
-                    ? 'bg-green-500 focus:ring-green-500 grid-cols-[1fr_22px]'
-                    : 'bg-gray-400 focus:ring-gray-400 grid-cols-[22px_1fr]'
-                )}
-                type="button"
-              >
-                {isActive ? (
-                  <>
-                    <span className="text-[11px] leading-none font-medium text-white text-center px-0.5 select-none">
-                      Active
-                    </span>
-                    <span className="h-5 w-5 bg-white rounded-full shadow-md justify-self-end mr-0.5" />
-                  </>
-                ) : (
-                  <>
-                    <span className="h-5 w-5 bg-white rounded-full shadow-md justify-self-start ml-0.5" />
-                    <span className="text-[11px] leading-none font-medium text-white text-center px-0.5 select-none">
-                      Inactive
-                    </span>
-                  </>
-                )}
-              </button>
+              <div className="relative inline-block">
+                <select
+                  value={currentStatus}
+                  onChange={(e) => handleStatusChange(staffMember.id, e.target.value as 'active' | 'inactive' | 'buffer')}
+                  className={cn(
+                    'h-6 px-2 pr-7 text-[11px] font-medium text-white rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 appearance-none cursor-pointer relative z-0',
+                    getStatusColor(currentStatus),
+                    currentStatus === 'active' ? 'focus:ring-green-500' : currentStatus === 'inactive' ? 'focus:ring-gray-400' : 'focus:ring-[#a4b1ed]'
+                  )}
+                  style={{ minWidth: '76px' }}
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="buffer">Buffer</option>
+                </select>
+                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-white pointer-events-none z-[1]" style={{ transform: 'translateY(-50%)' }} />
+              </div>
             )
           })()}
         </td>
@@ -648,8 +685,8 @@ export function StaffProfilePanel() {
     )
   ).sort()
 
-  // Calculate headcount by rank (excluding inactive staff)
-  const activeStaffOnly = staff.filter((s) => s.active !== false)
+  // Calculate headcount by rank (excluding inactive and buffer staff)
+  const activeStaffOnly = staff.filter((s) => (s.status ?? 'active') === 'active')
   const headcountByRank = {
     SPT: activeStaffOnly.filter((s) => s.rank === 'SPT').length,
     APPT: activeStaffOnly.filter((s) => s.rank === 'APPT').length,
@@ -760,12 +797,12 @@ export function StaffProfilePanel() {
                 <div>
                   <label className="block text-sm font-medium mb-1">Status</label>
                   <select
-                    value={filters.active === null ? 'all' : filters.active ? 'active' : 'inactive'}
+                    value={filters.status === null ? 'all' : filters.status}
                     onChange={(e) => {
                       const value = e.target.value
                       setFilters((prev) => ({
                         ...prev,
-                        active: value === 'all' ? null : value === 'active',
+                        status: value === 'all' ? null : (value as 'active' | 'inactive' | 'buffer'),
                       }))
                     }}
                     className="w-full px-3 py-2 border rounded-md text-sm"
@@ -773,6 +810,7 @@ export function StaffProfilePanel() {
                     <option value="all">All</option>
                     <option value="active">Active</option>
                     <option value="inactive">Inactive</option>
+                    <option value="buffer">Buffer</option>
                   </select>
                 </div>
               </div>
@@ -784,58 +822,30 @@ export function StaffProfilePanel() {
                     <Plus className="h-4 w-4 mr-2" />
                     Add New Staff
                   </Button>
-                  {selectedStaffIds.size > 0 && (() => {
-                    // Determine which buttons to show based on selection
-                    const selectedStaff = filteredAndSortedStaff.filter((s) => selectedStaffIds.has(s.id))
-                    const allActive = selectedStaff.every((s) => s.active !== false)
-                    const allInactive = selectedStaff.every((s) => s.active === false)
-                    const isMixed = !allActive && !allInactive
-                    
-                    return (
-                      <>
-                        {allActive && (
-                          <Button
-                            variant="outline"
-                            onClick={() => handleBatchToggleActive(false)}
-                          >
-                            Set Inactive ({selectedStaffIds.size})
-                          </Button>
-                        )}
-                        {allInactive && (
-                          <Button
-                            variant="outline"
-                            onClick={() => handleBatchToggleActive(true)}
-                          >
-                            Set Active ({selectedStaffIds.size})
-                          </Button>
-                        )}
-                        {isMixed && (
-                          <>
-                            <Button
-                              variant="outline"
-                              onClick={() => handleBatchToggleActive(true)}
-                              disabled
-                              title="Cannot set mixed selection. Please select only active or only inactive staff."
-                            >
-                              Set Active ({selectedStaffIds.size})
-                            </Button>
-                            <Button
-                              variant="outline"
-                              onClick={() => handleBatchToggleActive(false)}
-                              disabled
-                              title="Cannot set mixed selection. Please select only active or only inactive staff."
-                            >
-                              Set Inactive ({selectedStaffIds.size})
-                            </Button>
-                          </>
-                        )}
-                        <Button variant="destructive" onClick={handleDelete}>
-                          <Trash2 className="h-4 w-4 mr-2" />
-                          Delete Selected ({selectedStaffIds.size})
-                        </Button>
-                      </>
-                    )
-                  })()}
+                  {selectedStaffIds.size > 0 && (
+                    <>
+                      <div className="flex gap-2">
+                        <select
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              handleBatchStatusChange(e.target.value as 'active' | 'inactive' | 'buffer')
+                            }
+                          }}
+                          className="h-9 px-3 py-2 border rounded-md text-sm"
+                          defaultValue=""
+                        >
+                          <option value="" disabled>Set Status...</option>
+                          <option value="active">Set Active ({selectedStaffIds.size})</option>
+                          <option value="inactive">Set Inactive ({selectedStaffIds.size})</option>
+                          <option value="buffer">Set Buffer ({selectedStaffIds.size})</option>
+                        </select>
+                      </div>
+                      <Button variant="destructive" onClick={handleDelete}>
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete Selected ({selectedStaffIds.size})
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -913,6 +923,14 @@ export function StaffProfilePanel() {
                       </tr>
                     )}
                     {inactiveStaff.map(renderStaffRow)}
+                    {bufferStaff.length > 0 && (activeStaff.length > 0 || inactiveStaff.length > 0) && (
+                      <tr>
+                        <td colSpan={9} className="p-2 border-t-2 border-b">
+                          <div className="h-px bg-border"></div>
+                        </td>
+                      </tr>
+                    )}
+                    {bufferStaff.map(renderStaffRow)}
                     </tbody>
                   </table>
                   {filteredAndSortedStaff.length === 0 && (
@@ -933,6 +951,20 @@ export function StaffProfilePanel() {
           specialPrograms={specialPrograms}
           onSave={handleSaveStaff}
           onCancel={() => setEditingStaff(null)}
+        />
+      )}
+
+      {showBufferSlotDialog && pcaStaffForBuffer && (
+        <BufferSlotSelectionDialog
+          open={showBufferSlotDialog}
+          onOpenChange={(open) => {
+            if (!open) {
+              setShowBufferSlotDialog(false)
+              setPcaStaffForBuffer(null)
+            }
+          }}
+          staff={pcaStaffForBuffer}
+          onConfirm={handleBufferSlotSelectionConfirm}
         />
       )}
 

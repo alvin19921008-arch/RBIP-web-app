@@ -26,11 +26,21 @@ Step 1: Leave & FTE
     ↓ staffOverrides (leave types, FTE remaining, team changes)
 Step 2: Therapist & Non-Floating PCA
     ↓ staffOverrides + step2Result (non-floating allocations, teamPCAAssigned)
-Step 3: Floating PCA
+Step 3: Floating PCA (Interactive Wizard: 3.0 → 3.1 → 3.2 → 3.3 → 3.4)
     ↓ staffOverrides + Step 2 allocations + pendingPCA-FTE/team
+    ↓ Step 3.1: Adjust pending FTE & team order
+    ↓ Step 3.2: Preferred slot assignments
+    ↓ Step 3.3: Adjacent slot assignments
+    ↓ Step 3.4: Final floating PCA algorithm
 Step 4: Bed Relieving
     ↓ staffOverrides + all allocations + scheduleCalculations.ptPerTeam
 ```
+
+**Buffer Staff Integration:**
+- Buffer therapists: Assignable in Step 1 & 2 only
+- Buffer floating PCA: Assignable in Step 3 onwards
+- Buffer FTE (`buffer_fte`) used instead of default 1.0 FTE
+- Independent dragging instances per team assignment
 
 ## Allocation Sync Architecture
 
@@ -58,8 +68,8 @@ Step 4: Bed Relieving
 
 | Step | Algo | Data Sources |
 |------|------|--------------|
-| Step 2 | `generateAllocationsWithOverrides()` | `staffOverrides`: team, fteRemaining, leaveType, availableSlots |
-| Step 3 | `allocatePCA(phase='floating')` | 1. `existingAllocations` from Step 2; 2. `staffOverrides`: remaining FTE; 3. `pendingPCA-FTE/team` |
+| Step 2 | `generateAllocationsWithOverrides()` | `staffOverrides`: team, fteRemaining, leaveType, availableSlots; buffer staff with `buffer_fte` |
+| Step 3 | `allocatePCA(phase='floating')` | 1. `existingAllocations` from Step 2; 2. `staffOverrides`: remaining FTE; 3. `pendingPCA-FTE/team` (adjusted from 3.1); 4. `teamOrder` (from 3.1); 5. Buffer floating PCA with `buffer_fte` |
 | Step 4 | `allocateBeds()` | `scheduleCalculations.ptPerTeam` (derived from therapist allocations) |
 
 ### pendingPCA-FTE/team Calculation for Step 3
@@ -72,6 +82,12 @@ pendingPCA-FTE/team = avgPCAPerTeam - (non-floating PCA FTE already allocated to
 - **Non-floating PCA** allocations from Step 2 → **REDUCE** pendingPCA-FTE/team
 - **Floating PCA substituting non-floating** → **REDUCE** pendingPCA-FTE/team
 - **Special program PCA** allocations → do **NOT** reduce pendingPCA-FTE/team
+
+**Step 3.1 Adjustment:**
+- Users can adjust pending FTE values per team (with upper limit constraint)
+- Adjusted values become targets for Steps 3.2, 3.3, and 3.4
+- **Critical**: Actual allocation in Step 3.4 is still limited by available floating PCA pool capacity
+- Over-adjustment (exceeding available capacity) will result in partial fulfillment by algorithm
 
 ### Step Transition Data Flow
 
@@ -156,6 +172,13 @@ Record<string, {
 **Rule:** Any function that processes staff data MUST check `staffOverrides` first before using default values from the database.
 
 **Slot Overrides:** Manual slot transfers (drag-and-drop) for floating PCA staff cards are stored in `slotOverrides`. These override the slot assignments from algorithm-generated allocations and persist through step transitions.
+
+**Buffer Staff:**
+- Buffer staff have `status: 'buffer'` and `buffer_fte` field in database
+- Buffer therapists (SPT, APPT, RPT): Assignable in Step 1 & 2 only
+- Buffer floating PCA: Assignable in Step 3 onwards
+- Use `buffer_fte` instead of default 1.0 FTE for calculations
+- Independent dragging instances per team assignment (similar to floating PCA)
 
 ### `step2Result`
 
@@ -381,3 +404,8 @@ The workflow enforces step-specific restrictions on certain actions:
 - [ ] Does `recalculateScheduleCalculations()` run in Step 1 even without allocations?
 - [ ] Are schedule calculations (PT/team, avg PCA/team, bed/team) updated immediately when `staffOverrides` changes in Step 1?
 - [ ] Is special program FTE subtraction skipped in Step 1 (only subtracts in Step 2+)?
+- [ ] Are buffer staff handled correctly with `buffer_fte` instead of default 1.0 FTE?
+- [ ] Are buffer therapist assignments restricted to Step 1 & 2 only?
+- [ ] Are buffer floating PCA assignments restricted to Step 3 onwards?
+- [ ] Does Step 3.1 adjustment respect upper limit constraints and available floating PCA capacity?
+- [ ] Are Step 3.2/3.3 assignments properly counted toward total allocated FTE before Step 3.4 algorithm runs?

@@ -2,7 +2,7 @@
 
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
-**Last Updated**: 2025-01-12  
+**Last Updated**: 2025-01-15  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -36,13 +36,16 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
 - **Step-wise allocation workflow** (5 main steps with sub-steps)
   - Step 1: Leave & FTE management
   - Step 2: Therapist & Non-Floating PCA allocation
-  - Step 3: Floating PCA allocation with interactive wizard (3.1, 3.2, 3.3)
+  - Step 3: Floating PCA allocation with interactive wizard (3.0 → 3.1 → 3.2 → 3.3 → 3.4)
   - Step 4: Bed relieving calculation
   - Step 5: Review and finalization
 - **Interactive Step 3 Wizard** for floating PCA allocation:
+  - **Step 3.0**: Wizard entry point with workflow overview
   - **Step 3.1**: Adjust pending FTE per team and set team priority order
   - **Step 3.2**: Preferred slot reservation and assignment
   - **Step 3.3**: Adjacent slot assignment from special program PCAs
+  - **Step 3.4**: Final floating PCA algorithm execution
+- **Buffer Staff System**: Temporary staff with configurable FTE for flexible team assignments
 - Manual override capabilities at each step
 - Special program support (CRP, DRM, Robotic, etc.)
 - Preference-based allocation (PCA preferences, team preferences)
@@ -93,7 +96,10 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
 - ✅ Slot-based assignment tracking
 - ✅ Leave/come-back time handling
 
-### Phase 3: Interactive Step 3 Wizard (Latest)
+### Phase 3: Interactive Step 3 Wizard
+- ✅ **Step 3.0**: Initial wizard entry point with instructional overview
+  - Entry point before sub-steps (3.1, 3.2, 3.3)
+  - Shows summary of floating PCA allocation workflow
 - ✅ **Step 3.1**: Pending FTE adjustment and team priority ordering
   - Compact team cards with adjustable FTE sliders
   - Drag-and-drop reordering within tie-breaker groups
@@ -109,6 +115,9 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Special program info display
   - Visual distinction (green borders, dark grey borders)
   - Card shrinking for teams with no options
+- ✅ **Step 3.4**: Final floating PCA algorithm execution
+  - Uses adjusted pending FTE and team order from 3.1-3.3
+  - Respects all pre-assignments made in 3.2 and 3.3
 - ✅ Data flow architecture ensuring smooth transitions between steps
 - ✅ Type safety improvements (TypeScript strict mode compliance)
 - ✅ Comprehensive error handling and validation
@@ -191,7 +200,27 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Headcount display by rank (SPT, APPT, RPT, PCA, Workman)
   - Visual layout: Table-based display with filtering and sorting controls
 
-### Phase 7: History Page & UI Enhancements (Latest)
+### Phase 7: Buffer Staff System (Latest)
+- ✅ **Buffer Staff Feature**
+  - Buffer staff with `status: 'buffer'` and `buffer_fte` field
+  - Buffer therapists (SPT, APPT, RPT): Draggable in Step 1 & 2 only
+  - Buffer floating PCA: Draggable in Step 3 onwards
+  - Buffer staff pool with separate display from regular staff
+  - Buffer staff creation dialog with rank, team, FTE, and special program configuration
+  - Tooltip validation: Buffer therapists show "Dragging is only allowed in Step 1 and 2" in Step 3+
+  - Step 2 indicator shows buffer therapist assignment status ("detected and assigned" / "detected and not yet assigned")
+- ✅ **Algorithm Integration**
+  - Buffer staff included in allocation algorithms
+  - Buffer therapists can be assigned to teams in Step 1 & 2
+  - Buffer floating PCA can be assigned in Step 3
+  - Buffer FTE (`buffer_fte`) used instead of default 1.0 FTE
+  - Independent dragging: Buffer staff cards maintain separate draggable instances per team assignment
+- ✅ **Backend Data Bug Fixes**
+  - Fixed type conversion issues for buffer staff data
+  - Proper handling of `buffer_fte` DECIMAL precision
+  - Status field integration with existing staff management system
+
+### Phase 8: History Page & UI Enhancements (Latest)
 - ✅ **Schedule History Page**
   - Displays all schedules with any allocation data (even partially completed)
   - Grouped by month with latest schedules first within each month
@@ -249,6 +278,8 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - `team`: `team` enum (nullable - default team assignment)
   - `floating`: BOOLEAN (for PCA - indicates floating vs non-floating)
   - `special_program`: TEXT[] (program NAMES, not UUIDs - see below)
+  - `status`: TEXT enum ('active', 'inactive', 'buffer') - buffer staff for temporary assignments
+  - `buffer_fte`: DECIMAL (nullable - FTE value for buffer staff, used instead of default 1.0)
 
 #### Teams
 - **Type**: `Team` enum
@@ -607,8 +638,13 @@ The schedule page uses a three-layer state management pattern:
 
 ### Step 3: Floating PCA (Multi-Step Wizard)
 - **Purpose**: Distribute floating PCAs to teams based on pending FTE with proactive user adjustments
-- **Structure**: Three sub-steps (3.1, 3.2, 3.3) before final algorithm execution (3.4)
+- **Structure**: Entry point (3.0) → Three sub-steps (3.1, 3.2, 3.3) → Final algorithm execution (3.4)
 - **Component**: `FloatingPCAConfigDialog` - Interactive wizard dialog
+
+#### Step 3.0: Wizard Entry Point
+- **Purpose**: Initial overview and workflow introduction
+- **Features**: Instructional dialog explaining the Step 3 workflow
+- **User Actions**: Navigate to Step 3.1 to begin adjustments
 
 #### Step 3.1: Adjust Pending FTE & Team Order
 - **Purpose**: Allow users to adjust pending PCA-FTE values per team and set team priority order
@@ -660,6 +696,7 @@ The schedule page uses a three-layer state management pattern:
   - Respects `average_pca_per_team` target from Step 1
   - Does NOT assign to slots already covered by Step 2 substitutions or Step 3.2/3.3 assignments
   - Handles tie-breaker dialogs (if still needed after adjustments)
+  - **Critical**: Actual allocation is limited by available floating PCA pool capacity (cannot over-allocate)
 - **Key Function**: `allocatePCA()` with `phase: 'floating'`
 - **State Updates**: Updates `pcaAllocations`, `pendingPCAFTEPerTeam`
 
@@ -927,6 +964,17 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 - If not found, preserve it but update team from `staffOverrides.team` or original team
 - Prevents duplicates when SPTs are moved between teams
 
+### Pitfall 14: Over-Fill Team Pending PCA/Team Issue
+**Problem**: Users could adjust pending FTE values in Step 3.1 to exceed available floating PCA capacity, causing over-allocation  
+**Root Cause**: 
+- Step 3.1 allowed manual FTE adjustments without validation against total available floating PCA FTE
+- Upper limit constraint only prevented exceeding original pre-adjusted value, not total system capacity
+**Solution**: 
+- Upper limit constraint in Step 3.1 prevents adjustments beyond original pre-adjusted pending FTE
+- Final algorithm (Step 3.4) respects total floating PCA capacity and assigns based on available FTE
+- Step 3.2/3.3 assignments reduce available capacity for final algorithm, preventing over-allocation
+- **Critical**: Adjusted FTE values are targets, but actual allocation is limited by available floating PCA pool
+
 ---
 
 ## File Reference Guide
@@ -995,6 +1043,9 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 16. **History Page**: Queries schedules with any allocation data, groups by month, supports batch delete and navigation
 17. **Date Picker**: Non-modal popover with data indicators, holiday highlighting, and past/future date styling
 18. **Checkbox Component**: Always destructure `onClick` from props and merge with internal `onCheckedChange` handler to prevent override issues
+19. **Buffer Staff**: Use `buffer_fte` instead of default 1.0 FTE; buffer therapists assignable in Step 1 & 2 only; buffer floating PCA assignable in Step 3 onwards
+20. **Step 3.0**: Entry point to Step 3 wizard before sub-steps 3.1-3.4
+21. **Over-Fill Prevention**: Step 3.1 adjustments have upper limits; Step 3.4 algorithm respects available floating PCA capacity to prevent over-allocation
 
 ---
 

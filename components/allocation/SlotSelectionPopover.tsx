@@ -13,6 +13,7 @@ interface SlotSelectionPopoverProps {
   onClose: () => void
   onStartDrag: () => void // Called when user starts dragging a selected slot
   position: { x: number; y: number }
+  isDiscardMode?: boolean // True when discarding slots (opposite of transfer)
 }
 
 export function SlotSelectionPopover({
@@ -23,6 +24,7 @@ export function SlotSelectionPopover({
   onClose,
   onStartDrag,
   position,
+  isDiscardMode = false,
 }: SlotSelectionPopoverProps) {
   // Track if mouse moved enough to be considered a drag vs click
   const dragStartRef = useRef<{ x: number; y: number } | null>(null)
@@ -103,7 +105,10 @@ export function SlotSelectionPopover({
       
       {/* Header */}
       <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-1.5 font-medium pr-4">
-        {hasSelectedSlots ? 'Drag selected slots:' : 'Select slots to move:'}
+        {isDiscardMode 
+          ? (hasSelectedSlots ? 'Click to discard selected slots:' : 'Select slots to discard:')
+          : (hasSelectedSlots ? 'Drag selected slots:' : 'Select slots to move:')
+        }
       </div>
       
       {/* Staff name */}
@@ -154,7 +159,10 @@ export function SlotSelectionPopover({
             {selectedSlots.length} slot{selectedSlots.length !== 1 ? 's' : ''} selected ({(selectedSlots.length * 0.25).toFixed(2)} FTE)
           </div>
           <div className="text-[9px] text-slate-400 dark:text-slate-500 mt-0.5 italic">
-            Drag any selected slot to move
+            {isDiscardMode 
+              ? 'Click to discard selected slots'
+              : 'Drag any selected slot to move'
+            }
           </div>
         </div>
       )}
@@ -162,7 +170,10 @@ export function SlotSelectionPopover({
       {/* Instruction when no slots selected */}
       {!hasSelectedSlots && (
         <div className="mt-1.5 pt-1.5 border-t border-slate-200 dark:border-slate-600 text-[10px] text-slate-400 dark:text-slate-500 italic leading-tight">
-          Click slots to select,<br/>then drag to move
+          {isDiscardMode 
+            ? 'Click slots to select,<br/>then click to discard'
+            : 'Click slots to select,<br/>then drag to move'
+          }
         </div>
       )}
     </div>

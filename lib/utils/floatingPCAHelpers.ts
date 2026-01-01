@@ -279,7 +279,10 @@ export function assignSlotsToTeam(options: AssignSlotsOptions): AssignSlotsResul
   }
   
   // Calculate how many slots to assign (based on pendingFTE)
-  const slotsNeeded = Math.ceil(pendingFTE / 0.25)
+  // pendingFTE already accounts for buffer floating PCA slots assigned, so we just need to convert to slots
+  // Round pendingFTE to nearest 0.25 to avoid floating point precision issues (e.g., 0.7500000001 / 0.25 = 4 instead of 3)
+  const roundedPendingFTE = Math.round(pendingFTE * 4) / 4
+  const slotsNeeded = Math.ceil(roundedPendingFTE / 0.25)
   const slotsToAssign = Math.min(slotsNeeded, availableSlots.length, Math.ceil(allocation.fte_remaining / 0.25))
   
   if (slotsToAssign <= 0) {

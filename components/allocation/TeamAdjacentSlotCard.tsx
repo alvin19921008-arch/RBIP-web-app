@@ -14,6 +14,16 @@ const SLOT_TIMES: Record<number, string> = {
   4: '1500-1630',
 }
 
+// Helper function to get ordinal suffix (1st, 2nd, 3rd, 4th, etc.)
+function getOrdinalSuffix(n: number): string {
+  const j = n % 10
+  const k = n % 100
+  if (j === 1 && k !== 11) return 'st'
+  if (j === 2 && k !== 12) return 'nd'
+  if (j === 3 && k !== 13) return 'rd'
+  return 'th'
+}
+
 interface TeamAdjacentSlotCardProps {
   team: Team
   expectedFTE: number           // Constant from 3.1 (for display reference)
@@ -22,6 +32,7 @@ interface TeamAdjacentSlotCardProps {
   adjacentSlots: AdjacentSlotInfo[]    // Adjacent slots available for 3.3
   selections: SlotAssignment[]         // Current 3.3 selections across all teams
   onSelectionChange: (team: Team, slot: number, pcaId: string, pcaName: string, selected: boolean) => void
+  orderPosition?: number  // Optional: position in the order (1-based) for displaying ordinal number
 }
 
 export function TeamAdjacentSlotCard({
@@ -32,6 +43,7 @@ export function TeamAdjacentSlotCard({
   adjacentSlots,
   selections,
   onSelectionChange,
+  orderPosition,
 }: TeamAdjacentSlotCardProps) {
   // Calculate assigned FTE from both 3.2 and current 3.3 selections
   const assignedFromStep32 = step32Assignments.length * 0.25
@@ -89,6 +101,16 @@ export function TeamAdjacentSlotCard({
         'flex flex-col items-center gap-0.5',
         shouldShrink ? 'p-1' : 'p-1.5'  // Less padding when shrunk
       )}>
+        {/* Order Position (ordinal number) */}
+        {orderPosition !== undefined && (
+          <div className={cn(
+            'text-muted-foreground leading-tight',
+            shouldShrink ? 'text-[8px]' : 'text-[9px]'  // Match size to team name
+          )}>
+            {orderPosition}{getOrdinalSuffix(orderPosition)}
+          </div>
+        )}
+        
         {/* Team Name */}
         <div className={cn(
           'font-bold leading-tight',

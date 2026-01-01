@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Staff } from '@/types/staff'
 import { StaffCard } from './StaffCard'
 import { InactiveStaffPool } from './InactiveStaffPool'
+import { BufferStaffPool } from './BufferStaffPool'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { ChevronRight, ChevronDown, ChevronLeft, ChevronUp } from 'lucide-react'
@@ -12,6 +13,7 @@ interface StaffPoolProps {
   therapists: Staff[]
   pcas: Staff[]
   inactiveStaff?: Staff[]
+  bufferStaff?: Staff[]
   onEditStaff?: (staffId: string, event?: React.MouseEvent) => void
   staffOverrides?: Record<string, { leaveType?: any; fteRemaining?: number; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean }>
   specialPrograms?: any[]
@@ -20,9 +22,10 @@ interface StaffPoolProps {
   initializedSteps?: Set<string>
   weekday?: 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
   onSlotTransfer?: (staffId: string, targetTeam: string, slots: number[]) => void
+  onBufferStaffCreated?: () => void
 }
 
-export function StaffPool({ therapists, pcas, inactiveStaff = [], onEditStaff, staffOverrides = {}, specialPrograms = [], pcaAllocations = {}, currentStep, initializedSteps, weekday, onSlotTransfer }: StaffPoolProps) {
+export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = [], onEditStaff, staffOverrides = {}, specialPrograms = [], pcaAllocations = {}, currentStep, initializedSteps, weekday, onSlotTransfer, onBufferStaffCreated }: StaffPoolProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [expandedRanks, setExpandedRanks] = useState<Record<string, boolean>>({
     SPT: false,
@@ -33,7 +36,16 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], onEditStaff, s
   const [showFTEFilter, setShowFTEFilter] = useState(false)
 
   // Helper function to calculate Base_FTE-remaining (after leave, excluding special program)
-  const getBaseFTERemaining = (staffId: string): number => {
+  const getBaseFTERemaining = (staffId: string, staff?: Staff): number => {
+    // For buffer staff, use buffer_fte as base
+    if (staff?.status === 'buffer' && staff.buffer_fte !== undefined) {
+      const override = staffOverrides[staffId]
+      if (override?.fteSubtraction !== undefined) {
+        return Math.max(0, staff.buffer_fte - override.fteSubtraction)
+      }
+      return staff.buffer_fte
+    }
+    // For regular staff
     const override = staffOverrides[staffId]
     if (override?.fteSubtraction !== undefined) {
       return Math.max(0, 1.0 - override.fteSubtraction)
@@ -49,10 +61,26 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], onEditStaff, s
 
   // Helper function to calculate True-FTE-remaining for floating PCA
   const getTrueFTERemaining = (staffId: string, staff: Staff): number => {
-    if (staff.rank !== 'PCA' || !staff.floating) return 1.0
+    if (staff.rank !== 'PCA' || !staff.floating) {
+      // For buffer therapist, return buffer_fte if available
+      if (staff.status === 'buffer' && staff.buffer_fte !== undefined) {
+        return staff.buffer_fte
+      }
+      return 1.0
+    }
     
     const override = staffOverrides[staffId]
-    const availableSlots = override?.availableSlots || [1, 2, 3, 4]
+    // For buffer PCA, use buffer_fte to determine available slots if not overridden
+    let availableSlots = override?.availableSlots
+    if (!availableSlots) {
+      if (staff.status === 'buffer' && staff.buffer_fte !== undefined) {
+        // Calculate slots from buffer_fte (e.g., 0.5 FTE = 2 slots)
+        const numSlots = Math.round(staff.buffer_fte / 0.25)
+        availableSlots = [1, 2, 3, 4].slice(0, numSlots)
+      } else {
+        availableSlots = [1, 2, 3, 4]
+      }
+    }
     
     // Initial True-FTE = available slots * 0.25
     let trueFTE = availableSlots.length * 0.25
@@ -267,15 +295,17 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], onEditStaff, s
               {expandedRanks[rank] && (
                 <div className="space-y-1 ml-4">
                   {staffList.map((staff) => {
-                    const baseFTE = getBaseFTERemaining(staff.id)
+                    const baseFTE = getBaseFTERemaining(staff.id, staff)
                     const showFTE = staff.rank !== 'SPT' && (baseFTE > 0 && baseFTE < 1 || baseFTE === 0)
+                    // For buffer staff, always show FTE if it's not 1.0
+                    const shouldShowFTE = showFTE || (staff.status === 'buffer' && staff.buffer_fte !== undefined && staff.buffer_fte !== 1.0)
                     return (
                     <StaffCard
                       key={staff.id}
                       staff={staff}
                       onEdit={(e) => onEditStaff?.(staff.id, e)}
-                        fteRemaining={showFTE ? baseFTE : undefined}
-                        showFTE={showFTE}
+                        fteRemaining={shouldShowFTE ? baseFTE : undefined}
+                        showFTE={shouldShowFTE}
                     />
                     )
                   })}
@@ -288,37 +318,44 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], onEditStaff, s
 
       <Card>
         <CardHeader className="pb-1 pt-2">
-          <CardTitle className="text-sm">PCA Pool</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm">PCA Pool</CardTitle>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => toggleRank('PCA')}
+              className="h-5 w-5 p-0"
+              title={expandedRanks.PCA ? "Retract PCA" : "Expand PCA"}
+            >
+              {expandedRanks.PCA ? (
+                <ChevronUp className="h-3 w-3" />
+              ) : (
+                <ChevronDown className="h-3 w-3" />
+              )}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-1 p-1">
-          <button
-            onClick={() => toggleRank('PCA')}
-            className="flex items-center gap-1 text-xs font-semibold mb-1 hover:text-primary transition-colors"
-          >
-            {expandedRanks.PCA ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
-            PCA
-          </button>
           {expandedRanks.PCA && (
             <div className="space-y-1 ml-4">
               {filteredPCAs.map((pca) => {
-                const baseFTE = getBaseFTERemaining(pca.id)
+                const baseFTE = getBaseFTERemaining(pca.id, pca)
                 const trueFTE = getTrueFTERemaining(pca.id, pca)
                 const showFTE = baseFTE > 0 && baseFTE < 1 || baseFTE === 0
+                // For buffer PCA, always show FTE if buffer_fte is set
+                const shouldShowFTE = showFTE || (pca.status === 'buffer' && pca.buffer_fte !== undefined && pca.buffer_fte !== 1.0)
                 const isFloatingPCA = pca.floating === true
                 // Enable drag for floating PCA (slot transfer will be validated in handleDragStart)
                 // Apply border-green-700 to non-floating PCA (same as schedule page)
-                const borderColor = !isFloatingPCA ? 'border-green-700' : undefined
+                // For buffer floating PCA, also show green border
+                const borderColor = !isFloatingPCA ? 'border-green-700' : (pca.status === 'buffer' ? 'border-green-700' : undefined)
                 return (
                 <StaffCard
                   key={pca.id}
                   staff={pca}
                   onEdit={() => onEditStaff?.(pca.id)}
-                    fteRemaining={showFTE ? baseFTE : undefined}
-                    showFTE={showFTE}
+                    fteRemaining={shouldShowFTE ? baseFTE : undefined}
+                    showFTE={shouldShowFTE}
                     baseFTE={isFloatingPCA ? baseFTE : undefined}
                     trueFTE={isFloatingPCA ? trueFTE : undefined}
                     isFloatingPCA={isFloatingPCA}
@@ -333,6 +370,20 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], onEditStaff, s
           )}
         </CardContent>
       </Card>
+
+      <BufferStaffPool
+        inactiveStaff={inactiveStaff.filter(s => (s.status ?? 'active') === 'inactive')}
+        bufferStaff={bufferStaff}
+        onBufferStaffCreated={onBufferStaffCreated || (() => {
+          // Fallback: reload page if no callback provided
+          window.location.reload()
+        })}
+        specialPrograms={specialPrograms}
+        currentStep={currentStep}
+        pcaAllocations={pcaAllocations}
+        staffOverrides={staffOverrides}
+        weekday={weekday}
+      />
 
       {inactiveStaff.length > 0 && (
         <InactiveStaffPool 

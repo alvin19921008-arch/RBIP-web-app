@@ -18,7 +18,8 @@ export interface Database {
           team: 'FO' | 'SMM' | 'SFM' | 'CPPC' | 'MC' | 'GMC' | 'NSM' | 'DRO' | null
           floating: boolean
           floor_pca: string[] | null
-          active: boolean
+          status: 'active' | 'inactive' | 'buffer'
+          buffer_fte: number | null
           created_at: string
           updated_at: string
         }
@@ -30,7 +31,8 @@ export interface Database {
           team?: 'FO' | 'SMM' | 'SFM' | 'CPPC' | 'MC' | 'GMC' | 'NSM' | 'DRO' | null
           floating?: boolean
           floor_pca?: string[] | null
-          active?: boolean
+          status?: 'active' | 'inactive' | 'buffer'
+          buffer_fte?: number | null
           created_at?: string
           updated_at?: string
         }
@@ -42,7 +44,8 @@ export interface Database {
           team?: 'FO' | 'SMM' | 'SFM' | 'CPPC' | 'MC' | 'GMC' | 'NSM' | 'DRO' | null
           floating?: boolean
           floor_pca?: string[] | null
-          active?: boolean
+          status?: 'active' | 'inactive' | 'buffer'
+          buffer_fte?: number | null
           created_at?: string
           updated_at?: string
         }

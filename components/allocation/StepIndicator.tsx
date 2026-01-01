@@ -26,6 +26,7 @@ interface StepIndicatorProps {
   isInitialized?: boolean
   isLoading?: boolean
   errorMessage?: string // Optional error message to display in center area
+  bufferTherapistStatus?: string // Optional buffer therapist status message (for step 2)
 }
 
 export function StepIndicator({
@@ -43,6 +44,7 @@ export function StepIndicator({
   isInitialized = false,
   isLoading = false,
   errorMessage,
+  bufferTherapistStatus,
 }: StepIndicatorProps) {
   const currentStepIndex = steps.findIndex(s => s.id === currentStep)
 
@@ -160,9 +162,16 @@ export function StepIndicator({
                 </p>
               </div>
             ) : (
-            <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-              {steps[currentStepIndex]?.description}
-            </p>
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                {steps[currentStepIndex]?.description}
+              </p>
+              {bufferTherapistStatus && (
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  {bufferTherapistStatus}
+                </p>
+              )}
+            </div>
             )}
           </div>
 

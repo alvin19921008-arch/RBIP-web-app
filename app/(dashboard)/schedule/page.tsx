@@ -107,6 +107,7 @@ function SchedulePageContent() {
   })
   const [staff, setStaff] = useState<Staff[]>([])
   const [inactiveStaff, setInactiveStaff] = useState<Staff[]>([])
+  const [bufferStaff, setBufferStaff] = useState<Staff[]>([])
   const [specialPrograms, setSpecialPrograms] = useState<SpecialProgram[]>([])
   const [sptAllocations, setSptAllocations] = useState<SPTAllocation[]>([])
   const [wards, setWards] = useState<{ name: string; total_beds: number; team_assignments: Record<Team, number>; team_assignment_portions?: Record<Team, string> }[]>([])
@@ -228,6 +229,8 @@ function SchedulePageContent() {
     selectedSlots: number[]   // Slots user has selected to move
     showSlotSelection: boolean // Whether to show slot selection popover
     popoverPosition: { x: number; y: number } | null // Fixed position near source team
+    isDiscardMode?: boolean // True when discarding slots (opposite of transfer)
+    isBufferStaff?: boolean // True if the dragged PCA is buffer staff
   }>({
     isActive: false,
     isDraggingFromPopover: false,
@@ -238,6 +241,8 @@ function SchedulePageContent() {
     selectedSlots: [],
     showSlotSelection: false,
     popoverPosition: null,
+    isDiscardMode: false,
+    isBufferStaff: false,
   })
   
   // Ref to track mouse position for popover drag
@@ -529,27 +534,89 @@ function SchedulePageContent() {
   }
 
   const loadStaff = async () => {
-    const [activeRes, inactiveRes] = await Promise.all([
+    const [activeRes, inactiveRes, bufferRes] = await Promise.all([
       supabase
         .from('staff')
         .select('*')
-        .eq('active', true)  // Only load active staff for allocations
+        .eq('status', 'active')  // Load active staff for allocations
         .order('rank', { ascending: true })
         .order('name', { ascending: true }),
       supabase
         .from('staff')
         .select('*')
-        .eq('active', false)  // Load inactive staff for inactive pool
+        .eq('status', 'inactive')  // Load inactive staff for inactive pool
+        .order('rank', { ascending: true })
+        .order('name', { ascending: true }),
+      supabase
+        .from('staff')
+        .select('*')
+        .eq('status', 'buffer')  // Load buffer staff
         .order('rank', { ascending: true })
         .order('name', { ascending: true })
     ])
 
-    if (activeRes.data) {
+    if (activeRes.error) {
+      console.error('Error loading active staff:', activeRes.error)
+      
+      // Fallback: try loading with old 'active' column if status column doesn't exist
+      if (activeRes.error.message?.includes('column') || activeRes.error.code === 'PGRST116') {
+        const fallbackRes = await supabase
+          .from('staff')
+          .select('*')
+          .eq('active', true)
+          .order('rank', { ascending: true })
+          .order('name', { ascending: true })
+        
+        if (fallbackRes.data) {
+          // Map active boolean to status
+          const mappedData = fallbackRes.data.map(s => ({
+            ...s,
+            status: s.active ? 'active' : 'inactive'
+          }))
+          setStaff(mappedData)
+        }
+      }
+    } else if (activeRes.data) {
       setStaff(activeRes.data)
     }
     
-    if (inactiveRes.data) {
+    if (inactiveRes.error) {
+      console.error('Error loading inactive staff:', inactiveRes.error)
+      
+      // Fallback for inactive
+      if (inactiveRes.error.message?.includes('column') || inactiveRes.error.code === 'PGRST116') {
+        const fallbackRes = await supabase
+          .from('staff')
+          .select('*')
+          .eq('active', false)
+          .order('rank', { ascending: true })
+          .order('name', { ascending: true })
+        
+        if (fallbackRes.data) {
+          const mappedData = fallbackRes.data.map(s => ({
+            ...s,
+            status: 'inactive'
+          }))
+          setInactiveStaff(mappedData)
+        }
+      }
+    } else if (inactiveRes.data) {
       setInactiveStaff(inactiveRes.data)
+    }
+
+    if (bufferRes.error) {
+      console.error('Error loading buffer staff:', bufferRes.error)
+      // Buffer staff is new, so no fallback needed
+      setBufferStaff([])
+    } else if (bufferRes.data) {
+      setBufferStaff(bufferRes.data)
+      // Include buffer staff in main staff array for allocation algorithms
+      setStaff(prev => [...(activeRes.data || []), ...(bufferRes.data || [])])
+    } else {
+      // If no buffer staff, just set active staff
+      if (activeRes.data) {
+        setStaff(activeRes.data)
+      }
     }
   }
 
@@ -919,9 +986,12 @@ function SchedulePageContent() {
       .filter(s => s.rank === 'PCA')
       .reduce((sum, s) => {
         const overrideFTE = staffOverrides[s.id]?.fteRemaining
-        // Use override FTE if set, otherwise default to 1.0 (full day) unless on leave
+        // For buffer staff, use buffer_fte as base
+        const isBufferStaff = s.status === 'buffer'
+        const baseFTE = isBufferStaff && s.buffer_fte !== undefined ? s.buffer_fte : 1.0
+        // Use override FTE if set, otherwise default to baseFTE (or 0 if on leave)
         const isOnLeave = staffOverrides[s.id]?.leaveType && staffOverrides[s.id]?.fteRemaining === 0
-        const currentFTE = overrideFTE !== undefined ? overrideFTE : (isOnLeave ? 0 : 1)
+        const currentFTE = overrideFTE !== undefined ? overrideFTE : (isOnLeave ? 0 : baseFTE)
         return sum + currentFTE
       }, 0)
     // Keep the old calculation for comparison in logs
@@ -1208,8 +1278,11 @@ function SchedulePageContent() {
       .filter(s => s.rank === 'PCA')
       .reduce((sum, s) => {
         const overrideFTE = staffOverrides[s.id]?.fteRemaining
+        // For buffer staff, use buffer_fte as base
+        const isBufferStaff = s.status === 'buffer'
+        const baseFTE = isBufferStaff && s.buffer_fte !== undefined ? s.buffer_fte : 1.0
         const isOnLeave = staffOverrides[s.id]?.leaveType && staffOverrides[s.id]?.fteRemaining === 0
-        return sum + (isOnLeave ? 0 : (overrideFTE !== undefined ? overrideFTE : 1))
+        return sum + (isOnLeave ? 0 : (overrideFTE !== undefined ? overrideFTE : baseFTE))
       }, 0)
     
     // Also calculate totalPCAFromAllocations for reference/debugging
@@ -1542,22 +1615,26 @@ function SchedulePageContent() {
 
       // Generate PCA allocations, applying overrides if they exist
       // For PCA: fte_pca = Base_FTE_remaining = 1.0 - fteSubtraction (for display and team requirement calculation)
+      // For buffer PCA: use buffer_fte as base
       // True-FTE remaining for allocation = (availableSlots.length * 0.25) - specialProgramFTESubtraction (calculated during allocation)
       const pcaData: PCAData[] = staff
         .filter(s => s.rank === 'PCA')
         .map(s => {
           const override = overrides[s.id]
-          // Calculate base_FTE_remaining = 1.0 - fteSubtraction (excluding special program subtraction)
+          // For buffer staff, use buffer_fte as base
+          const isBufferStaff = s.status === 'buffer'
+          const baseFTE = isBufferStaff && s.buffer_fte !== undefined ? s.buffer_fte : 1.0
+          // Calculate base_FTE_remaining = baseFTE - fteSubtraction (excluding special program subtraction)
           // This is used for calculating averagePCAPerTeam and for display
           const baseFTERemaining = override && override.fteSubtraction !== undefined
-            ? 1.0 - override.fteSubtraction
-            : (override ? override.fteRemaining : 1) // Fallback to fteRemaining if fteSubtraction not available
+            ? Math.max(0, baseFTE - override.fteSubtraction)
+            : (override ? override.fteRemaining : baseFTE) // Fallback to fteRemaining if fteSubtraction not available
           return {
             id: s.id,
             name: s.name,
             floating: s.floating || false,
             special_program: s.special_program,
-            fte_pca: baseFTERemaining, // Base_FTE_remaining = 1.0 - fteSubtraction (for display and team requirements)
+            fte_pca: baseFTERemaining, // Base_FTE_remaining = baseFTE - fteSubtraction (for display and team requirements)
             leave_type: override ? override.leaveType : null,
             is_available: override ? (override.fteRemaining > 0) : true, // Use fteRemaining (includes special program) for availability check
             team: s.team,
@@ -2046,9 +2123,12 @@ function SchedulePageContent() {
       .filter(s => s.rank === 'PCA')
       .map(s => {
         const override = staffOverrides[s.id]
+        // For buffer staff, use buffer_fte as base
+        const isBufferStaff = s.status === 'buffer'
+        const baseFTE = isBufferStaff && s.buffer_fte !== undefined ? s.buffer_fte : 1.0
         const baseFTERemaining = override && override.fteSubtraction !== undefined
-          ? 1.0 - override.fteSubtraction
-          : (override ? override.fteRemaining : 1)
+          ? Math.max(0, baseFTE - override.fteSubtraction)
+          : (override ? override.fteRemaining : baseFTE)
         return {
           id: s.id,
           name: s.name,
@@ -2084,13 +2164,16 @@ function SchedulePageContent() {
       // Transform staff data for algorithms
       const staffData: StaffData[] = staff.map(s => {
         const override = overrides[s.id]
+        // For buffer staff, use buffer_fte as base FTE
+        const isBufferStaff = s.status === 'buffer'
+        const baseFTE = isBufferStaff && s.buffer_fte !== undefined ? s.buffer_fte : 1.0
         return {
           id: s.id,
           name: s.name,
           rank: s.rank,
           team: override?.team ?? s.team, // Use team from override if present
           special_program: s.special_program,
-          fte_therapist: override ? override.fteRemaining : 1,
+          fte_therapist: override ? override.fteRemaining : baseFTE,
           leave_type: override ? override.leaveType : null,
           is_available: override ? (override.fteRemaining > 0) : true,
           availableSlots: override?.availableSlots,
@@ -2146,20 +2229,24 @@ function SchedulePageContent() {
 
       // Prepare PCA data
       // For PCA: fte_pca = Base_FTE_remaining = 1.0 - fteSubtraction (for display and team requirement calculation)
+      // For buffer PCA: use buffer_fte as base
       const pcaData: PCAData[] = staff
         .filter(s => s.rank === 'PCA')
         .map(s => {
           const override = overrides[s.id]
-          // Calculate base_FTE_remaining = 1.0 - fteSubtraction (excluding special program subtraction)
+          // For buffer staff, use buffer_fte as base
+          const isBufferStaff = s.status === 'buffer'
+          const baseFTE = isBufferStaff && s.buffer_fte !== undefined ? s.buffer_fte : 1.0
+          // Calculate base_FTE_remaining = baseFTE - fteSubtraction (excluding special program subtraction)
           const baseFTERemaining = override && override.fteSubtraction !== undefined
-            ? 1.0 - override.fteSubtraction
-            : (override ? override.fteRemaining : 1) // Fallback to fteRemaining if fteSubtraction not available
+            ? Math.max(0, baseFTE - override.fteSubtraction)
+            : (override ? override.fteRemaining : baseFTE) // Fallback to fteRemaining if fteSubtraction not available
           return {
             id: s.id,
             name: s.name,
             floating: s.floating || false,
             special_program: s.special_program,
-            fte_pca: baseFTERemaining, // Base_FTE_remaining = 1.0 - fteSubtraction (for display and team requirements)
+            fte_pca: baseFTERemaining, // Base_FTE_remaining = baseFTE - fteSubtraction (for display and team requirements)
             leave_type: override ? override.leaveType : null,
             is_available: override ? (override.fteRemaining > 0) : true, // Use fteRemaining (includes special program) for availability check
             team: s.team,
@@ -2494,6 +2581,9 @@ function SchedulePageContent() {
         setCurrentStep('therapist-pca')
         break
       case 'therapist-pca':
+        // No validation needed - buffer therapists in the pool don't need to be assigned
+        // Only buffer therapists that have been dragged to teams are in allocations
+        // Buffer therapists that haven't been assigned remain in the pool and don't need validation
         setCurrentStep('floating-pca')
         break
       case 'floating-pca':
@@ -2513,10 +2603,73 @@ function SchedulePageContent() {
   const handleInitializeAlgorithm = async () => {
     switch (currentStep) {
       case 'therapist-pca':
+        // Only validate non-floating buffer PCA before Step 2 algo
+        // Floating PCA buffer can be assigned in Step 3
+        const bufferPCAs = bufferStaff.filter(s => s.rank === 'PCA' && s.status === 'buffer' && !s.floating)
+        const unassignedBufferPCAs = bufferPCAs.filter(s => !s.team)
+        
+        if (unassignedBufferPCAs.length > 0) {
+          const names = unassignedBufferPCAs.map(s => s.name).join(', ')
+          alert(`Non-floating PCA buffer staff (${names}*) must be assigned to a team before proceeding. Please assign them in Step 2.`)
+          return
+        }
+        
         await generateStep2_TherapistAndNonFloatingPCA()
         setInitializedSteps(prev => new Set(prev).add('therapist-pca'))
         break
       case 'floating-pca':
+        // Step 3.1: Recalculate pending FTE with proper rounding timing
+        // For teams with buffer floating PCA: round avg FIRST, then subtract assignments
+        // For teams without buffer floating PCA: round avg, then subtract non-floating only
+        if (!step2Result) {
+          alert('Step 2 must be completed before Step 3')
+          return
+        }
+        
+        const recalculatedPendingFTE: Record<Team, number> = {
+          FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
+        }
+        
+        // Calculate buffer floating PCA slots assigned per team
+        const bufferFloatingPCAFTEPerTeam: Record<Team, number> = {
+          FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
+        }
+        
+        Object.entries(pcaAllocations).forEach(([team, allocs]) => {
+          allocs.forEach(alloc => {
+            const staffMember = staff.find(s => s.id === alloc.staff_id)
+            if (staffMember && staffMember.status === 'buffer' && staffMember.floating) {
+              // Count buffer floating PCA slots assigned to this team
+              let bufferSlots = 0
+              if (alloc.slot1 === team) bufferSlots++
+              if (alloc.slot2 === team) bufferSlots++
+              if (alloc.slot3 === team) bufferSlots++
+              if (alloc.slot4 === team) bufferSlots++
+              bufferFloatingPCAFTEPerTeam[team as Team] += bufferSlots * 0.25
+            }
+          })
+        })
+        
+        TEAMS.forEach(team => {
+          // Use raw avg PCA/team from step2Result (unrounded)
+          const rawAvgPCA = step2Result.rawAveragePCAPerTeam[team] || 0
+          // Round FIRST
+          const roundedAvgPCA = roundToNearestQuarterWithMidpoint(rawAvgPCA)
+          
+          // Get non-floating PCA assigned from step2Result (from Step 2 algorithm)
+          const nonFloatingPCAAssigned = step2Result.teamPCAAssigned[team] || 0
+          
+          // Get buffer floating PCA slots assigned (manually assigned in Step 3)
+          const bufferFloatingFTE = bufferFloatingPCAFTEPerTeam[team] || 0
+          
+          // Calculate pending: roundedAvg - nonFloating - bufferFloating
+          const pending = Math.max(0, roundedAvgPCA - nonFloatingPCAAssigned - bufferFloatingFTE)
+          
+          // The pending value is already based on rounded avg, so we keep it as is (no additional rounding needed)
+          recalculatedPendingFTE[team] = pending
+        })
+        
+        setPendingPCAFTEPerTeam(recalculatedPendingFTE)
         // Step 3.1: Open the configuration dialog instead of running algo directly
         setFloatingPCAConfigOpen(true)
         break
@@ -3083,8 +3236,38 @@ function SchedulePageContent() {
   const currentWeekday = getWeekday(selectedDate)
   const weekdayName = WEEKDAY_NAMES[WEEKDAYS.indexOf(currentWeekday)]
 
-  const therapists = staff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
-  const pcas = staff.filter(s => s.rank === 'PCA')
+  // Filter out buffer staff from regular pools (they appear in Buffer Staff Pool)
+  const therapists = staff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank) && s.status !== 'buffer')
+  const pcas = staff.filter(s => s.rank === 'PCA' && s.status !== 'buffer')
+
+  // Helper function to calculate popover position with viewport boundary detection
+  const calculatePopoverPosition = (cardRect: { left: number; top: number; width: number; height: number }, popoverWidth: number) => {
+    const padding = 10
+    const estimatedPopoverHeight = 250 // Estimate based on max slots (4) + header + padding
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+    
+    // Calculate X position - prefer right side, but flip to left if it would be truncated
+    let popoverX: number
+    const rightEdge = cardRect.left + cardRect.width + padding + popoverWidth
+    if (rightEdge > viewportWidth - 20) {
+      // Position to the LEFT of the card to avoid right truncation
+      popoverX = Math.max(10, cardRect.left - popoverWidth - padding)
+    } else {
+      // Position to the RIGHT of the card (default)
+      popoverX = cardRect.left + cardRect.width + padding
+    }
+    
+    // Calculate Y position - ensure it's not truncated at bottom
+    let popoverY = cardRect.top
+    const bottomEdge = popoverY + estimatedPopoverHeight
+    if (bottomEdge > viewportHeight - 10) {
+      // Adjust upward to fit in viewport
+      popoverY = Math.max(10, viewportHeight - estimatedPopoverHeight - 10)
+    }
+    
+    return { x: popoverX, y: popoverY }
+  }
 
   // Helper function to get slots assigned to a specific team for a PCA
   const getSlotsForTeam = (allocation: PCAAllocation, team: Team): number[] => {
@@ -3159,8 +3342,8 @@ function SchedulePageContent() {
     const staffMember = staff.find(s => s.id === staffId)
     if (!staffMember) return
     
-    // Track therapist drag state for validation
-    if (['RPT', 'SPT'].includes(staffMember.rank)) {
+    // Track therapist drag state for validation (including buffer therapists)
+    if (['RPT', 'SPT', 'APPT'].includes(staffMember.rank)) {
       // Find the current team from allocations
       let currentTeam: Team | undefined
       for (const [team, allocs] of Object.entries(therapistAllocations)) {
@@ -3170,12 +3353,20 @@ function SchedulePageContent() {
         }
       }
       
-      // If no current team found, check staffOverrides
+      // If no current team found, check staffOverrides or staff.team
       if (!currentTeam) {
         currentTeam = staffOverrides[staffId]?.team ?? staffMember.team ?? undefined
       }
       
-      if (currentTeam) {
+      // For buffer therapists without a team, allow dragging from StaffPool
+      if (!currentTeam && staffMember.status === 'buffer') {
+        // Buffer therapist not yet assigned - will be assigned on drop
+        setTherapistDragState({
+          isActive: true,
+          staffId: staffId,
+          sourceTeam: null, // No source team yet
+        })
+      } else if (currentTeam) {
         setTherapistDragState({
           isActive: true,
           staffId: staffId,
@@ -3196,13 +3387,29 @@ function SchedulePageContent() {
     // Check if this drag is from StaffPool (no team context in ID)
     const isFromStaffPool = !activeId.includes('::')
     
-    // Validate slot transfer for floating PCA from StaffPool
-    if (isFromStaffPool) {
-      // Only allow slot transfer when:
-      // 1. Step 3 algorithm has run (initializedSteps.has('floating-pca'))
-      // 2. Current step is 'floating-pca' (Step 3), 'bed-relieving' (Step 4), or 'review' (Step 5)
-      const isStep3OrLater = currentStep === 'floating-pca' || currentStep === 'bed-relieving' || currentStep === 'review'
-      if (!initializedSteps.has('floating-pca') || !isStep3OrLater) {
+      // Validate slot transfer for floating PCA from StaffPool
+      if (isFromStaffPool) {
+        const isBufferStaff = staffMember.status === 'buffer'
+        // Only allow slot transfer when:
+        // 1. Step 3 algorithm has run (initializedSteps.has('floating-pca')) OR
+        //    current step is 'floating-pca' (for buffer PCA assignment before algo)
+        // 2. Current step is 'floating-pca' (Step 3), 'bed-relieving' (Step 4), or 'review' (Step 5)
+        const isStep3OrLater = currentStep === 'floating-pca' || currentStep === 'bed-relieving' || currentStep === 'review'
+        const algoHasRun = initializedSteps.has('floating-pca')
+        // For buffer PCA: allow in Step 3 before algo (for pre-assignment) AND after algo (Step 3.4+)
+        // For regular PCA: allow in Step 3 onwards (before or after algo)
+        const canTransfer = isStep3OrLater && (
+          (isBufferStaff && currentStep === 'floating-pca') || // Buffer PCA: Step 3 (before and after algo)
+          (!isBufferStaff && (algoHasRun || currentStep === 'floating-pca')) // Regular PCA: Step 3 onwards
+        )
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'schedule/page.tsx:3320',message:'PCA drag validation from StaffPool',data:{staffId,staffName:staffMember.name,isBufferStaff,isFromStaffPool,currentStep,isStep3OrLater,algoHasRun,canTransfer},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        
+        // Store buffer staff flag in drag state for later use
+        setPcaDragState(prev => ({ ...prev, isBufferStaff }))
+        if (!canTransfer) {
         // Show warning popover - find the dragged element
         const activeRect = active.rect.current.initial
         const cardRect = activeRect || active.rect.current.translated
@@ -3253,33 +3460,70 @@ function SchedulePageContent() {
         }
       }
       
-      if (!sourceTeam) {
-        // PCA not yet allocated - can't do slot transfer
+      // For buffer PCA, allow dragging even if not yet allocated (will create new allocation on drop)
+      // Reuse isBufferStaff from above
+      if (!sourceTeam && !isBufferStaff) {
+        // PCA not yet allocated and not buffer staff - can't do slot transfer
         return
       }
       
-      // Find the PCA allocation for this staff
-      const allocsForTeam = pcaAllocations[sourceTeam] || []
-      const pcaAllocation = allocsForTeam.find(a => a.staff_id === staffId)
+      // Calculate available slots based on staff type
+      let availableSlots: number[] = []
       
-      if (!pcaAllocation) return
-      
-      // Get slots for the source team, EXCLUDING special program slots
-      const allSlotsInTeam = getSlotsForTeam(pcaAllocation, sourceTeam)
-      const specialProgramSlots = getSpecialProgramSlotsForTeam(pcaAllocation, sourceTeam)
-      const availableSlots = allSlotsInTeam.filter(slot => !specialProgramSlots.includes(slot))
-      
-      // If no available slots (all are special program), snap back
-      if (availableSlots.length === 0) {
+      if (isBufferStaff && staffMember.buffer_fte !== undefined) {
+        // For buffer floating PCA: calculate remaining unassigned slots
+        // Calculate all slots from buffer_fte (e.g., 0.5 FTE = 2 slots)
+        const numSlots = Math.round(staffMember.buffer_fte / 0.25)
+        const allBufferSlots = [1, 2, 3, 4].slice(0, numSlots)
+        
+        // Find all already assigned slots across ALL teams
+        const assignedSlots = new Set<number>()
+        Object.values(pcaAllocations).forEach((teamAllocs) => {
+          teamAllocs.forEach((alloc) => {
+            if (alloc.staff_id === staffId) {
+              // Count all slots assigned to any team
+              if (alloc.slot1) assignedSlots.add(1)
+              if (alloc.slot2) assignedSlots.add(2)
+              if (alloc.slot3) assignedSlots.add(3)
+              if (alloc.slot4) assignedSlots.add(4)
+            }
+          })
+        })
+        
+        // Available slots = all buffer slots minus already assigned slots
+        availableSlots = allBufferSlots.filter(slot => !assignedSlots.has(slot))
+        
+        // If no available slots, can't drag
+        if (availableSlots.length === 0) {
+          return
+        }
+        
+        // For buffer PCA, sourceTeam can be null (first assignment) or the first team found
+        // But we want to allow dragging to assign remaining slots, so keep sourceTeam as found or null
+      } else if (sourceTeam) {
+        // For regular floating PCA: get slots from the source team's allocation
+        const allocsForTeam = pcaAllocations[sourceTeam] || []
+        const pcaAllocation = allocsForTeam.find(a => a.staff_id === staffId)
+        
+        if (!pcaAllocation) return
+        
+        // Get slots for the source team, EXCLUDING special program slots
+        const allSlotsInTeam = getSlotsForTeam(pcaAllocation, sourceTeam)
+        const specialProgramSlots = getSpecialProgramSlotsForTeam(pcaAllocation, sourceTeam)
+        availableSlots = allSlotsInTeam.filter(slot => !specialProgramSlots.includes(slot))
+        
+        // If no available slots (all are special program), snap back
+        if (availableSlots.length === 0) {
+          return
+        }
+      } else {
+        // Non-buffer PCA without sourceTeam - can't drag
         return
       }
       
       // Get the position of the dragged element for popover positioning
       const activeRect = active.rect.current.initial
-      const popoverPosition = activeRect ? {
-        x: activeRect.left + activeRect.width + 10, // Position to the right of the card
-        y: activeRect.top,
-      } : null
+      const popoverPosition = activeRect ? calculatePopoverPosition(activeRect, 150) : null
       
       // Set up drag state for StaffPool drag
       setPcaDragState({
@@ -3292,6 +3536,7 @@ function SchedulePageContent() {
         selectedSlots: availableSlots.length === 1 ? availableSlots : [], // Auto-select if only one slot
         showSlotSelection: false,
         popoverPosition: popoverPosition,
+        isBufferStaff: isBufferStaff,
       })
       
       return
@@ -3333,12 +3578,10 @@ function SchedulePageContent() {
     
     // Get the position of the dragged element for popover positioning
     const activeRect = active.rect.current.initial
-    const popoverPosition = activeRect ? {
-      x: activeRect.left + activeRect.width + 10, // Position to the right of the card
-      y: activeRect.top,
-    } : null
+    const popoverPosition = activeRect ? calculatePopoverPosition(activeRect, 150) : null
     
     // Initialize PCA drag state
+    const isBufferStaff = staffMember.status === 'buffer'
     setPcaDragState({
       isActive: true,
       isDraggingFromPopover: false,
@@ -3349,6 +3592,7 @@ function SchedulePageContent() {
       selectedSlots: availableSlots.length === 1 ? availableSlots : [], // Auto-select if single slot
       showSlotSelection: false, // Will be shown when leaving team zone
       popoverPosition: popoverPosition,
+      isBufferStaff: isBufferStaff,
     })
   }
 
@@ -3470,6 +3714,8 @@ function SchedulePageContent() {
         selectedSlots: [],
         showSlotSelection: false,
         popoverPosition: null,
+        isDiscardMode: false,
+        isBufferStaff: false,
       })
       
       return
@@ -3483,34 +3729,8 @@ function SchedulePageContent() {
       const translatedRect = active.rect.current.translated
       const cardRect = activeRect || translatedRect
       
-      const popoverWidth = 150 // Match the popover width
-      const padding = 10 // Padding from card edge
+      const popoverPos = cardRect ? calculatePopoverPosition(cardRect, 150) : { x: 100, y: 100 }
       
-      let popoverX: number
-      let popoverY: number
-      
-      if (cardRect) {
-        popoverY = cardRect.top
-        
-        // Check if popover would be truncated on the right
-        // Position to the LEFT of the card if it would be cut off
-        const rightEdge = cardRect.left + cardRect.width + padding + popoverWidth
-        const windowWidth = window.innerWidth
-        
-        if (rightEdge > windowWidth - 20) {
-          // Position to the LEFT of the card to avoid truncation
-          popoverX = cardRect.left - popoverWidth - padding
-        } else {
-          // Position to the RIGHT of the card (default)
-          popoverX = cardRect.left + cardRect.width + padding
-        }
-      } else {
-        // Fallback position
-        popoverX = 100
-        popoverY = 100
-      }
-      
-      const popoverPos = { x: popoverX, y: popoverY }
       setPcaDragState(prev => ({
         ...prev,
         showSlotSelection: true,
@@ -3544,12 +3764,38 @@ function SchedulePageContent() {
       selectedSlots: [],
       showSlotSelection: false,
       popoverPosition: null,
+      isDiscardMode: false,
+      isBufferStaff: false,
     })
   }
   
-  // Start drag from the popover preview card
+  // Reset PCA drag state completely
+  const resetPcaDragState = () => {
+    setPcaDragState({
+      isActive: false,
+      isDraggingFromPopover: false,
+      staffId: null,
+      staffName: null,
+      sourceTeam: null,
+      availableSlots: [],
+      selectedSlots: [],
+      showSlotSelection: false,
+      popoverPosition: null,
+      isDiscardMode: false,
+      isBufferStaff: false,
+    })
+  }
+  
+  // Start drag from the popover preview card (or perform discard if in discard mode)
   const handleStartDragFromPopover = () => {
     if (pcaDragState.selectedSlots.length === 0) return
+    
+    // If in discard mode, perform discard immediately (no need to drag)
+    if (pcaDragState.isDiscardMode && pcaDragState.sourceTeam && pcaDragState.staffId) {
+      performSlotDiscard(pcaDragState.staffId, pcaDragState.sourceTeam, pcaDragState.selectedSlots)
+      resetPcaDragState()
+      return
+    }
     
     setPcaDragState(prev => ({
       ...prev,
@@ -3559,13 +3805,110 @@ function SchedulePageContent() {
     }))
   }
   
+  // Perform slot discard (opposite of slot transfer)
+  const performSlotDiscard = (staffId: string, sourceTeam: Team, slotsToDiscard: number[]) => {
+    if (slotsToDiscard.length === 0) return
+    
+    const currentAllocation = Object.values(pcaAllocations).flat()
+      .find(a => a.staff_id === staffId)
+    
+    if (!currentAllocation) return
+    
+    const staffMember = staff.find(s => s.id === staffId)
+    const isBufferStaff = staffMember?.status === 'buffer'
+    const bufferFTE = staffMember?.buffer_fte
+    
+    // Calculate FTE to discard
+    const fteDiscarded = slotsToDiscard.length * 0.25
+    
+    // Update pcaAllocations: remove selected slots from sourceTeam (set to null)
+    setPcaAllocations(prev => {
+      const newAllocations = { ...prev }
+      
+      // Remove old allocation from all teams first
+      for (const team of TEAMS) {
+        newAllocations[team] = (newAllocations[team] || []).filter(a => a.staff_id !== staffId)
+      }
+      
+      // Create updated allocation with slots removed
+      const updatedAllocation = { ...currentAllocation }
+      
+      // Remove selected slots (set to null)
+      for (const slot of slotsToDiscard) {
+        if (slot === 1) updatedAllocation.slot1 = null
+        if (slot === 2) updatedAllocation.slot2 = null
+        if (slot === 3) updatedAllocation.slot3 = null
+        if (slot === 4) updatedAllocation.slot4 = null
+      }
+      
+      // Update slot_assigned
+      const remainingSlots = [
+        updatedAllocation.slot1,
+        updatedAllocation.slot2,
+        updatedAllocation.slot3,
+        updatedAllocation.slot4,
+      ].filter(s => s !== null).length
+      updatedAllocation.slot_assigned = remainingSlots * 0.25
+      
+      // Determine which teams this PCA now has slots in
+      const teamsWithSlots = new Set<Team>()
+      if (updatedAllocation.slot1) teamsWithSlots.add(updatedAllocation.slot1)
+      if (updatedAllocation.slot2) teamsWithSlots.add(updatedAllocation.slot2)
+      if (updatedAllocation.slot3) teamsWithSlots.add(updatedAllocation.slot3)
+      if (updatedAllocation.slot4) teamsWithSlots.add(updatedAllocation.slot4)
+      
+      // Add the updated allocation to each team that has remaining slots
+      for (const team of teamsWithSlots) {
+        const teamAllocation = { ...updatedAllocation, team: team }
+        newAllocations[team] = [...(newAllocations[team] || []), teamAllocation]
+      }
+      
+      return newAllocations
+    })
+    
+    // Update pending FTE per team (increase source team's pending by discarded FTE)
+    const effectiveFTE = isBufferStaff && bufferFTE !== undefined ? bufferFTE : fteDiscarded
+    setPendingPCAFTEPerTeam(prev => ({
+      ...prev,
+      [sourceTeam]: (prev[sourceTeam] || 0) + effectiveFTE,
+    }))
+    
+    // Update staffOverrides to remove discarded slots
+    setStaffOverrides(prev => {
+      const current = prev[staffId] || {}
+      const slotOverrides = current.slotOverrides || {}
+      
+      // Get current slot assignments from allocation
+      const currentSlot1 = currentAllocation.slot1
+      const currentSlot2 = currentAllocation.slot2
+      const currentSlot3 = currentAllocation.slot3
+      const currentSlot4 = currentAllocation.slot4
+      
+      // Remove discarded slots (set to null)
+      const updatedSlotOverrides = {
+        slot1: slotsToDiscard.includes(1) ? null : (slotOverrides.slot1 ?? currentSlot1),
+        slot2: slotsToDiscard.includes(2) ? null : (slotOverrides.slot2 ?? currentSlot2),
+        slot3: slotsToDiscard.includes(3) ? null : (slotOverrides.slot3 ?? currentSlot3),
+        slot4: slotsToDiscard.includes(4) ? null : (slotOverrides.slot4 ?? currentSlot4),
+      }
+      
+      return {
+        ...prev,
+        [staffId]: {
+          ...current,
+          slotOverrides: updatedSlotOverrides,
+        },
+      }
+    })
+  }
+  
   // Perform the actual slot transfer
   const performSlotTransfer = (targetTeam: Team) => {
     const staffId = pcaDragState.staffId
     const sourceTeam = pcaDragState.sourceTeam
     const selectedSlots = pcaDragState.selectedSlots
     
-    if (!staffId || !sourceTeam || selectedSlots.length === 0) {
+    if (!staffId || selectedSlots.length === 0) {
       handleCloseSlotSelection()
       return
     }
@@ -3574,10 +3917,75 @@ function SchedulePageContent() {
     const currentAllocation = Object.values(pcaAllocations).flat()
       .find(a => a.staff_id === staffId)
     
+    // For buffer PCA that hasn't been assigned yet, create a new allocation
+    const staffMember = staff.find(s => s.id === staffId)
+    const isBufferStaff = staffMember?.status === 'buffer'
+    const bufferFTE = staffMember?.buffer_fte
+    
+    // If no existing allocation and this is a buffer PCA being assigned for the first time
+    if (!currentAllocation && isBufferStaff && bufferFTE !== undefined) {
+      // Create new allocation for buffer PCA
+      const newAllocation: PCAAllocation & { staff: Staff } = {
+        id: `temp-${staffId}-${Date.now()}`,
+        schedule_id: currentScheduleId || '',
+        staff_id: staffId,
+        team: targetTeam,
+        fte_pca: bufferFTE,
+        fte_remaining: bufferFTE,
+        slot_assigned: selectedSlots.length * 0.25,
+        slot1: selectedSlots.includes(1) ? targetTeam : null,
+        slot2: selectedSlots.includes(2) ? targetTeam : null,
+        slot3: selectedSlots.includes(3) ? targetTeam : null,
+        slot4: selectedSlots.includes(4) ? targetTeam : null,
+        leave_type: null,
+        special_program_ids: null,
+        invalid_slot: null,
+        leave_comeback_time: null,
+        leave_mode: null,
+        fte_subtraction: 0,
+        staff: staffMember,
+      }
+      
+      // Add to target team
+      setPcaAllocations(prev => ({
+        ...prev,
+        [targetTeam]: [...(prev[targetTeam] || []), newAllocation],
+      }))
+      
+      // Update staffOverrides
+      setStaffOverrides(prev => ({
+        ...prev,
+        [staffId]: {
+          ...prev[staffId],
+          slotOverrides: {
+            slot1: selectedSlots.includes(1) ? targetTeam : null,
+            slot2: selectedSlots.includes(2) ? targetTeam : null,
+            slot3: selectedSlots.includes(3) ? targetTeam : null,
+            slot4: selectedSlots.includes(4) ? targetTeam : null,
+          },
+          fteRemaining: bufferFTE,
+        },
+      }))
+      
+      // Update pending FTE per team (reduce target team's pending by buffer PCA FTE)
+      const fteTransferred = bufferFTE
+      setPendingPCAFTEPerTeam(prev => ({
+        ...prev,
+        [targetTeam]: Math.max(0, (prev[targetTeam] || 0) - fteTransferred),
+      }))
+      
+      handleCloseSlotSelection()
+      return
+    }
+    
+    // If no existing allocation and not buffer staff, can't proceed
     if (!currentAllocation) {
       handleCloseSlotSelection()
       return
     }
+    
+    // If sourceTeam is null but we have an allocation, use the allocation's team as source
+    const effectiveSourceTeam = sourceTeam || currentAllocation.team
     
     // Note: No validation needed here - special program slots are already filtered out in handleDragStart
     // (they're excluded from availableSlots), so selectedSlots will never contain special program slots.
@@ -3657,10 +4065,12 @@ function SchedulePageContent() {
     
     // Update pending FTE per team
     const fteTransferred = selectedSlots.length * 0.25
+    // For buffer PCA, use buffer_fte if available
+    const effectiveFTE = isBufferStaff && bufferFTE !== undefined ? bufferFTE : fteTransferred
     setPendingPCAFTEPerTeam(prev => ({
       ...prev,
-      [sourceTeam]: Math.max(0, (prev[sourceTeam] || 0) + fteTransferred),
-      [targetTeam]: Math.max(0, (prev[targetTeam] || 0) - fteTransferred),
+      [effectiveSourceTeam]: Math.max(0, (prev[effectiveSourceTeam] || 0) + effectiveFTE),
+      [targetTeam]: Math.max(0, (prev[targetTeam] || 0) - effectiveFTE),
     }))
     
     // Reset drag state
@@ -3675,20 +4085,6 @@ function SchedulePageContent() {
     const staffId = activeId.includes('::') ? activeId.split('::')[0] : activeId
     const staffMember = staff.find(s => s.id === staffId)
     
-    // Reset PCA drag state completely
-    const resetPcaDragState = () => {
-      setPcaDragState({
-        isActive: false,
-        isDraggingFromPopover: false,
-        staffId: null,
-        staffName: null,
-        sourceTeam: null,
-        availableSlots: [],
-        selectedSlots: [],
-        showSlotSelection: false,
-        popoverPosition: null,
-      })
-    }
     
     // Show popover again after unsuccessful drag from popover
     const showPopoverAgain = () => {
@@ -3713,36 +4109,92 @@ function SchedulePageContent() {
     if ((pcaDragState.isActive && pcaDragState.staffId === staffId) || pcaDragState.isDraggingFromPopover) {
       const effectiveStaffId = pcaDragState.staffId || staffId
       
-      // Handle PCA slot transfer
-      if (!over) {
-        // Dropped outside - if was dragging from popover, show it again
-        if (pcaDragState.isDraggingFromPopover) {
-          showPopoverAgain()
+      // Handle PCA slot discard (dropped outside any team)
+      if (!over || !over.id.toString().startsWith('pca-')) {
+        // Dropped outside any PCA block - handle slot discard
+        const currentAllocation = Object.values(pcaAllocations).flat()
+          .find(a => a.staff_id === effectiveStaffId)
+        
+        if (!currentAllocation) {
+          // No allocation to discard
+          resetPcaDragState()
           return
         }
-        // If popover was showing, keep it visible for re-drag
-        if (pcaDragState.showSlotSelection && pcaDragState.availableSlots.length > 1) {
-          pausePcaDrag()
+        
+        const sourceTeam = pcaDragState.sourceTeam || currentAllocation.team
+        const assignedSlots: number[] = []
+        if (currentAllocation.slot1 === sourceTeam) assignedSlots.push(1)
+        if (currentAllocation.slot2 === sourceTeam) assignedSlots.push(2)
+        if (currentAllocation.slot3 === sourceTeam) assignedSlots.push(3)
+        if (currentAllocation.slot4 === sourceTeam) assignedSlots.push(4)
+        
+        // If single slot, discard immediately
+        if (assignedSlots.length === 1) {
+          performSlotDiscard(effectiveStaffId, sourceTeam, assignedSlots)
+          resetPcaDragState()
           return
         }
+        
+        // If multi-slot, show slot selection for discard
+        if (assignedSlots.length > 1) {
+          // Set up for slot discard selection
+          setPcaDragState(prev => ({
+            ...prev,
+            isActive: false,
+            isDraggingFromPopover: false,
+            showSlotSelection: true,
+            availableSlots: assignedSlots,
+            selectedSlots: [], // User will select which slots to discard
+            popoverPosition: prev.popoverPosition || calculatePopoverPosition({ left: 100, top: 100, width: 0, height: 0 }, 150),
+            isDiscardMode: true, // Flag to indicate this is discard, not transfer
+          }))
+          return
+        }
+        
         resetPcaDragState()
-        return // Dropped outside
+        return
       }
       
       const overId = over.id.toString()
       
       // Check if dropped on a PCA block (pca-{team})
       if (!overId.startsWith('pca-')) {
-        // Not dropped on a PCA block - if was dragging from popover, show it again
-        if (pcaDragState.isDraggingFromPopover) {
-          showPopoverAgain()
+        // Not dropped on a PCA block - handle discard (same as above)
+        const currentAllocation = Object.values(pcaAllocations).flat()
+          .find(a => a.staff_id === effectiveStaffId)
+        
+        if (!currentAllocation) {
+          resetPcaDragState()
           return
         }
-        // If popover was showing, keep it visible
-        if (pcaDragState.showSlotSelection && pcaDragState.availableSlots.length > 1) {
-          pausePcaDrag()
+        
+        const sourceTeam = pcaDragState.sourceTeam || currentAllocation.team
+        const assignedSlots: number[] = []
+        if (currentAllocation.slot1 === sourceTeam) assignedSlots.push(1)
+        if (currentAllocation.slot2 === sourceTeam) assignedSlots.push(2)
+        if (currentAllocation.slot3 === sourceTeam) assignedSlots.push(3)
+        if (currentAllocation.slot4 === sourceTeam) assignedSlots.push(4)
+        
+        if (assignedSlots.length === 1) {
+          performSlotDiscard(effectiveStaffId, sourceTeam, assignedSlots)
+          resetPcaDragState()
           return
         }
+        
+        if (assignedSlots.length > 1) {
+          setPcaDragState(prev => ({
+            ...prev,
+            isActive: false,
+            isDraggingFromPopover: false,
+            showSlotSelection: true,
+            availableSlots: assignedSlots,
+            selectedSlots: [],
+            popoverPosition: prev.popoverPosition || calculatePopoverPosition({ left: 100, top: 100, width: 0, height: 0 }, 150),
+            isDiscardMode: true,
+          }))
+          return
+        }
+        
         resetPcaDragState()
         return
       }
@@ -3788,7 +4240,50 @@ function SchedulePageContent() {
     })
     
     // Handle therapist drag (existing logic)
-    if (!over) return // Dropped outside
+    if (!over) {
+      // Dropped outside - handle buffer therapist discard
+      if (staffMember && ['RPT', 'SPT', 'APPT'].includes(staffMember.rank)) {
+        const isBufferStaff = staffMember.status === 'buffer'
+        if (isBufferStaff && (currentStep === 'leave-fte' || currentStep === 'therapist-pca')) {
+          // Find current team from allocations
+          let currentTeam: Team | undefined
+          for (const [team, allocs] of Object.entries(therapistAllocations)) {
+            if (allocs.some(a => a.staff_id === staffId)) {
+              currentTeam = team as Team
+              break
+            }
+          }
+          
+          if (currentTeam) {
+            // Remove buffer therapist from team
+            setTherapistAllocations(prev => ({
+              ...prev,
+              [currentTeam!]: prev[currentTeam!].filter(a => a.staff_id !== staffId),
+            }))
+            
+            // Update staff.team to null in database
+            supabase
+              .from('staff')
+              .update({ team: null })
+              .eq('id', staffId)
+              .then(() => {
+                // Update local state
+                setBufferStaff(prev => prev.map(s => 
+                  s.id === staffId ? { ...s, team: null } : s
+                ))
+              })
+            
+            // Remove from staffOverrides
+            setStaffOverrides(prev => {
+              const updated = { ...prev }
+              delete updated[staffId]
+              return updated
+            })
+          }
+        }
+      }
+      return // Dropped outside
+    }
     
     // Check if dropped on a therapist block (therapist-{team})
     const overId = over.id.toString()
@@ -3798,12 +4293,20 @@ function SchedulePageContent() {
     
     if (!staffMember) return
     
-    // Only allow RPT and SPT to be moved
-    if (staffMember.rank === 'APPT') {
-      return // APPT cannot be moved - card will return to original position
+    // Allow RPT, SPT, and buffer therapists (including APPT buffer) to be moved
+    if (!['RPT', 'SPT', 'APPT'].includes(staffMember.rank)) return
+    
+    // Regular APPT (non-buffer) cannot be moved
+    const isBufferStaff = staffMember.status === 'buffer'
+    if (staffMember.rank === 'APPT' && !isBufferStaff) {
+      return // Regular APPT cannot be moved - card will return to original position
     }
     
-    if (!['RPT', 'SPT'].includes(staffMember.rank)) return
+    // Buffer therapist: only transferrable in step 1 & 2
+    if (isBufferStaff && currentStep !== 'leave-fte' && currentStep !== 'therapist-pca') {
+      // Buffer therapist transfer not allowed after Step 2
+      return
+    }
     
     // Validate: Therapist transfer is only allowed in step 1 & 2
     if (currentStep !== 'leave-fte' && currentStep !== 'therapist-pca') {
@@ -3820,7 +4323,7 @@ function SchedulePageContent() {
       }
     }
     
-    // If no current team found, check staffOverrides
+    // If no current team found, check staffOverrides or staff.team
     if (!currentTeam) {
       currentTeam = staffOverrides[staffId]?.team ?? staffMember.team ?? undefined
     }
@@ -3828,12 +4331,12 @@ function SchedulePageContent() {
     // If already in target team, no change needed
     if (currentTeam === targetTeam) return
     
-    // Get current FTE from allocation or staffOverrides
+    // Get current FTE from allocation, staffOverrides, or buffer_fte
     const currentAlloc = Object.values(therapistAllocations).flat()
       .find(a => a.staff_id === staffId)
-    const currentFTE = staffOverrides[staffId]?.fteRemaining 
-      ?? currentAlloc?.fte_therapist 
-      ?? 1.0
+    const currentFTE = isBufferStaff 
+      ? (staffOverrides[staffId]?.fteRemaining ?? staffMember.buffer_fte ?? 1.0)
+      : (staffOverrides[staffId]?.fteRemaining ?? currentAlloc?.fte_therapist ?? 1.0)
     
     // Update staffOverrides with new team
     setStaffOverrides(prev => ({
@@ -3845,6 +4348,20 @@ function SchedulePageContent() {
         leaveType: prev[staffId]?.leaveType ?? currentAlloc?.leave_type ?? null,
       }
     }))
+    
+    // For buffer therapist, also update the staff.team in the database
+    if (isBufferStaff) {
+      supabase
+        .from('staff')
+        .update({ team: targetTeam })
+        .eq('id', staffId)
+        .then(() => {
+          // Update local state
+          setBufferStaff(prev => prev.map(s => 
+            s.id === staffId ? { ...s, team: targetTeam } : s
+          ))
+        })
+    }
   }
 
   return (
@@ -3863,6 +4380,7 @@ function SchedulePageContent() {
           onClose={handleCloseSlotSelection}
           onStartDrag={handleStartDragFromPopover}
           position={pcaDragState.popoverPosition}
+          isDiscardMode={pcaDragState.isDiscardMode}
         />
       )}
       
@@ -4119,8 +4637,31 @@ function SchedulePageContent() {
             isInitialized={initializedSteps.has(currentStep)}
             isLoading={loading}
             errorMessage={
-              currentStep === 'therapist-pca' 
+              currentStep === 'therapist-pca'
                 ? (pcaAllocationErrors.missingSlotSubstitution || pcaAllocationErrors.specialProgramAllocation)
+                : undefined
+            }
+            bufferTherapistStatus={
+              currentStep === 'therapist-pca'
+                ? (() => {
+                    // Check if there are buffer therapists
+                    const bufferTherapists = bufferStaff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
+                    if (bufferTherapists.length === 0) return undefined
+                    
+                    // Check if all buffer therapists are assigned to teams
+                    const assignedBufferTherapists = bufferTherapists.filter(staff => {
+                      // Check if staff is in any team's therapistAllocations
+                      return Object.values(therapistAllocations).some(teamAllocs =>
+                        teamAllocs.some(alloc => alloc.staff_id === staff.id)
+                      )
+                    })
+                    
+                    if (assignedBufferTherapists.length === bufferTherapists.length) {
+                      return 'Buffer therapist detected and assigned'
+                    } else {
+                      return 'Buffer therapist detected and not yet assigned'
+                    }
+                  })()
                 : undefined
             }
           />
@@ -4131,6 +4672,7 @@ function SchedulePageContent() {
             therapists={therapists}
             pcas={pcas}
             inactiveStaff={inactiveStaff}
+            bufferStaff={bufferStaff}
             onEditStaff={handleEditStaff}
             staffOverrides={staffOverrides}
             specialPrograms={specialPrograms}
@@ -4138,6 +4680,7 @@ function SchedulePageContent() {
             currentStep={currentStep}
             initializedSteps={initializedSteps}
             weekday={selectedDate ? getWeekday(selectedDate) : undefined}
+            onBufferStaffCreated={loadStaff}
             onSlotTransfer={(staffId: string, targetTeam: string, slots: number[]) => {
               // Find source team from allocations
               let sourceTeam: Team | null = null
@@ -4150,6 +4693,7 @@ function SchedulePageContent() {
               if (sourceTeam) {
                 // Update drag state and perform transfer
                 const staffMember = staff.find(s => s.id === staffId)
+                const isBufferStaff = staffMember?.status === 'buffer'
                 setPcaDragState({
                   isActive: true,
                   isDraggingFromPopover: false,
@@ -4160,6 +4704,7 @@ function SchedulePageContent() {
                   selectedSlots: slots,
                   showSlotSelection: false,
                   popoverPosition: null,
+                  isBufferStaff: isBufferStaff || false,
                 })
                 performSlotTransfer(targetTeam as Team)
               }
@@ -4189,6 +4734,7 @@ function SchedulePageContent() {
                         allocations={therapistAllocations[team]}
                         specialPrograms={specialPrograms}
                         weekday={currentWeekday}
+                        currentStep={currentStep}
                         onEditStaff={handleEditStaff}
                       />
                     ))}
@@ -4214,6 +4760,7 @@ function SchedulePageContent() {
                           allPCAStaff={pcas}
                           currentStep={currentStep}
                           step2Initialized={initializedSteps.has('therapist-pca')}
+                          initializedSteps={initializedSteps}
                           weekday={getWeekday(selectedDate)}
                           externalHover={popoverDragHoverTeam === team}
                           allocationLog={allocationTracker?.[team]}
@@ -4528,6 +5075,7 @@ function SchedulePageContent() {
           floatingPCAs={buildPCADataFromCurrentState().filter(p => p.floating)}
           existingAllocations={recalculateFromCurrentState().existingAllocations}
           specialPrograms={specialPrograms}
+          bufferStaff={bufferStaff}
           onSave={handleFloatingPCAConfigSave}
           onCancel={handleFloatingPCAConfigCancel}
         />

@@ -3,6 +3,7 @@ export type Team = 'FO' | 'SMM' | 'SFM' | 'CPPC' | 'MC' | 'GMC' | 'NSM' | 'DRO'
 export type SpecialProgram = 'CRP' | 'DRM' | 'Robotic' | 'Ortho' | 'Neuro' | 'Cardiac' | 'DRO'
 export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
 export type LeaveType = 'VL' | 'half day VL' | 'TIL' | 'SDO' | 'sick leave' | 'study leave' | 'medical follow-up' | 'others' | string | null
+export type StaffStatus = 'active' | 'inactive' | 'buffer'
 
 // Mapping of leave types to default FTE remaining
 export const LEAVE_TYPE_FTE_MAP: Record<Exclude<LeaveType, null | 'others' | 'medical follow-up'>, number> = {
@@ -23,7 +24,8 @@ export interface Staff {
   team: Team | null
   floating: boolean
   floor_pca: ('upper' | 'lower')[] | null  // Floor PCA property: upper, lower, or both
-  active?: boolean  // If false, staff doesn't appear in team allocations
+  status?: StaffStatus  // Staff status: active, inactive, or buffer
+  buffer_fte?: number  // FTE value for buffer staff (determined by slots for PCA)
   created_at: string
   updated_at: string
 }

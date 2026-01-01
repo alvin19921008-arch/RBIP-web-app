@@ -33,18 +33,18 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
   // This prevents drag styling from applying to the same staff card in other teams
   // Use '::' as separator (unlikely to appear in UUIDs)
   const draggableId = dragTeam ? `${staff.id}::${dragTeam}` : staff.id
-  const dragProps = draggable ? useDraggable({
+  
+  // Always call useDraggable hook (React hooks must be called unconditionally)
+  // But conditionally apply listeners/attributes based on draggable prop
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: draggableId,
     data: { staff, allocation, team: dragTeam },
-  }) : {
-    attributes: {},
-    listeners: {},
-    setNodeRef: null,
-    transform: null,
-    isDragging: false,
-  }
-
-  const { attributes, listeners, setNodeRef, transform, isDragging } = dragProps
+  })
+  
+  // Conditionally apply drag functionality based on draggable prop
+  const effectiveAttributes = draggable ? attributes : {}
+  const effectiveListeners = draggable ? listeners : {}
+  const effectiveSetNodeRef = draggable ? setNodeRef : undefined
 
   const style = transform
     ? {
@@ -53,9 +53,12 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
     : undefined
 
   // Display name (FTE will be shown separately on the right)
-  const displayName = sptDisplay 
+  // Add "*" suffix for buffer staff
+  const isBufferStaff = staff.status === 'buffer'
+  const baseName = sptDisplay 
     ? `${staff.name} ${sptDisplay}`
     : staff.name
+  const displayName = isBufferStaff ? `${baseName}*` : baseName
   
   // FTE value to display on the right (for staff pool)
   const fteDisplay = showFTE && fteRemaining !== undefined
@@ -83,9 +86,11 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
 
   return (
     <div
-      ref={setNodeRef || undefined}
-      style={style}
-      {...(draggable && !isHoveringEdit ? { ...listeners, ...attributes } : {})}
+      ref={effectiveSetNodeRef}
+      style={transform ? {
+        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+      } : undefined}
+      {...(draggable && !isHoveringEdit ? { ...effectiveListeners, ...effectiveAttributes } : {})}
       className={cn(
         "relative p-1 border-2 rounded-md bg-card hover:bg-accent transition-colors",
         borderColorClass,

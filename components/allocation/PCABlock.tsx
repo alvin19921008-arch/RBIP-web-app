@@ -6,7 +6,7 @@ import { Staff } from '@/types/staff'
 import { SpecialProgram } from '@/types/allocation'
 import { StaffCard } from './StaffCard'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { useDroppable } from '@dnd-kit/core'
+import { useDroppable, useDndContext } from '@dnd-kit/core'
 import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 
@@ -23,12 +23,13 @@ interface PCABlockProps {
   allPCAStaff?: Staff[] // All PCA staff (for identifying non-floating PCAs even when not in allocations)
   currentStep?: string // Current step in the workflow - substitution styling only shown in step 2+
   step2Initialized?: boolean // Whether Step 2 algorithm has been run
+  initializedSteps?: Set<string> // Set of initialized steps (for transfer restriction validation)
   weekday?: 'mon' | 'tue' | 'wed' | 'thu' | 'fri' // Weekday for checking if DRM is active
   externalHover?: boolean // External hover state (e.g., from popover drag)
   allocationLog?: TeamAllocationLog // Allocation tracking log for this team (from Step 3.4)
 }
 
-export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averagePCAPerTeam, baseAveragePCAPerTeam, specialPrograms = [], allPCAAllocations = [], staffOverrides = {}, allPCAStaff = [], currentStep = 'leave-fte', step2Initialized = false, weekday, externalHover = false, allocationLog }: PCABlockProps) {
+export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averagePCAPerTeam, baseAveragePCAPerTeam, specialPrograms = [], allPCAAllocations = [], staffOverrides = {}, allPCAStaff = [], currentStep = 'leave-fte', step2Initialized = false, initializedSteps, weekday, externalHover = false, allocationLog }: PCABlockProps) {
   // Only show substitution styling AFTER Step 2 algorithm has run (not just when navigating to Step 2)
   const showSubstitutionStyling = currentStep !== 'leave-fte' && step2Initialized
   
@@ -37,8 +38,15 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     data: { type: 'pca', team },
   })
   
-  // Combine dnd-kit hover and external hover
-  const showHoverEffect = isOver || externalHover
+  const { active } = useDndContext()
+  
+  // Only show drag zone border if a PCA is being dragged
+  const isPCADragging = active?.data?.current?.staff 
+    ? active.data.current.staff.rank === 'PCA'
+    : false
+  
+  // Combine dnd-kit hover and external hover, but only if PCA is being dragged
+  const showHoverEffect = (isOver || externalHover) && isPCADragging
 
   // Filter out staff with FTE = 0 (they should only appear in leave block)
   // Check both allocation FTE and current override FTE (in case allocations haven't been regenerated)
@@ -800,6 +808,14 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
             // Underline name for whole day substituting floating PCA (Step 2+ only)
             const nameStyle = (showSubstitutionStyling && allocation.staff.floating && isWholeDaySub) ? 'underline' : undefined
             
+            // Buffer floating PCA: transferrable in Step 3 (before and after algo)
+            // Regular floating PCA: transferrable in Step 3 onwards
+            const isBufferStaff = allocation.staff.status === 'buffer'
+            const isFloatingPCA = allocation.staff.floating
+            // All floating PCA (buffer and regular) can be dragged in Step 3 onwards
+            // The schedule page validation will handle step restrictions
+            const canDrag = isFloatingPCA
+            
             return (
               <StaffCard
                 key={`${allocation.id}-regular-${team}`}
@@ -811,6 +827,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                 borderColor={borderColor}
                 nameColor={nameStyle}
                 dragTeam={team}
+                draggable={canDrag} // All floating PCA can be dragged in Step 3 onwards
               />
             )
           })}
@@ -842,6 +859,8 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
             // Set border color to deep green for non-floating PCA
             const borderColor = !allocation.staff.floating ? 'border-green-700' : undefined
             
+            // Special program slots are non-draggable (always)
+            
             return (
               <StaffCard
                 key={`${allocation.id}-special-${team}`}
@@ -853,6 +872,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                 nameColor={nameColor}
                 borderColor={borderColor}
                 dragTeam={team}
+                draggable={false} // Special program slots are never draggable
               />
             )
           })}

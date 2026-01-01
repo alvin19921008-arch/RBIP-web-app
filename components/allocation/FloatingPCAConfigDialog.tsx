@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { TeamPendingCard, TIE_BREAKER_COLORS } from './TeamPendingCard'
 import { TeamReservationCard } from './TeamReservationCard'
 import { TeamAdjacentSlotCard } from './TeamAdjacentSlotCard'
-import { ChevronRight, ArrowLeft, ArrowRight, Lightbulb, GripVertical } from 'lucide-react'
+import { ChevronRight, ArrowLeft, ArrowRight, Lightbulb, GripVertical, Check, Circle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { 
@@ -28,6 +28,7 @@ import {
   FloatingPCAAllocationResultV2,
 } from '@/lib/algorithms/pcaAllocation'
 import { AllocationTracker } from '@/types/schedule'
+import { Staff } from '@/types/staff'
 import {
   DndContext,
   DragEndEvent,
@@ -46,7 +47,7 @@ import {
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
 // Mini-step within Step 3
-type MiniStep = '3.1' | '3.2' | '3.3' | '3.4'
+type MiniStep = '3.0' | '3.1' | '3.2' | '3.3' | '3.4'
 
 interface FloatingPCAConfigDialogProps {
   open: boolean
@@ -55,6 +56,7 @@ interface FloatingPCAConfigDialogProps {
   floatingPCAs: PCAData[]  // Floating PCAs with their current FTE
   existingAllocations: PCAAllocation[]  // Allocations from Step 2
   specialPrograms: SpecialProgram[]  // Special program definitions
+  bufferStaff?: Staff[]  // Buffer staff (for Step 3.0 detection)
   onSave: (
     result: FloatingPCAAllocationResultV2,
     teamOrder: Team[],
@@ -141,11 +143,17 @@ export function FloatingPCAConfigDialog({
   floatingPCAs,
   existingAllocations,
   specialPrograms,
+  bufferStaff = [],
   onSave,
   onCancel,
 }: FloatingPCAConfigDialogProps) {
   // Current mini-step
-  const [currentMiniStep, setCurrentMiniStep] = useState<MiniStep>('3.1')
+  const [currentMiniStep, setCurrentMiniStep] = useState<MiniStep>('3.0')
+  
+  // Step 3.0: Buffer PCA detection and confirmation
+  const [bufferPCAAssigned, setBufferPCAAssigned] = useState<Staff[]>([])
+  const [bufferPCAUnassigned, setBufferPCAUnassigned] = useState<Staff[]>([])
+  const [bufferPCAConfirmed, setBufferPCAConfirmed] = useState(false)
   
   // Step 3.1: adjusted pending FTE values (rounded)
   const [adjustedFTE, setAdjustedFTE] = useState<Record<Team, number>>({} as Record<Team, number>)
@@ -181,11 +189,90 @@ export function FloatingPCAConfigDialog({
   // Updated allocations after 3.2 assignments (for 3.3 computation)
   const [updatedAllocations, setUpdatedAllocations] = useState<PCAAllocation[]>([])
   
+  // Detect buffer PCA assignment status
+  useEffect(() => {
+    if (open && bufferStaff.length > 0) {
+      // Filter buffer staff to only PCA rank
+      const bufferPCAs = bufferStaff.filter(s => s.rank === 'PCA' && s.status === 'buffer')
+      
+      // Check which buffer PCAs have been assigned (appear in existingAllocations)
+      const assigned: Staff[] = []
+      const unassigned: Staff[] = []
+      
+      bufferPCAs.forEach(pca => {
+        const isAssigned = existingAllocations.some(alloc => alloc.staff_id === pca.id)
+        if (isAssigned) {
+          assigned.push(pca)
+        } else {
+          unassigned.push(pca)
+        }
+      })
+      
+      setBufferPCAAssigned(assigned)
+      setBufferPCAUnassigned(unassigned)
+      
+      // If all assigned or none exist, proceed to 3.1
+      if (assigned.length === bufferPCAs.length || bufferPCAs.length === 0) {
+        setCurrentMiniStep('3.1')
+        setBufferPCAConfirmed(true)
+      } else {
+        // Some unassigned - show Step 3.0 confirmation
+        setCurrentMiniStep('3.0')
+        setBufferPCAConfirmed(false)
+      }
+    } else if (open) {
+      // No buffer staff - proceed directly to 3.1
+      setCurrentMiniStep('3.1')
+      setBufferPCAConfirmed(true)
+    }
+  }, [open, bufferStaff, existingAllocations])
+  
+  // Calculate buffer floating PCA FTE assigned per team
+  const bufferFloatingPCAFTEPerTeam = useMemo(() => {
+    const result: Record<Team, number> = {
+      FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
+    }
+    
+    if (bufferStaff.length === 0) return result
+    
+    // Get buffer floating PCA staff IDs
+    const bufferFloatingPCAIds = new Set(
+      bufferStaff
+        .filter(s => s.rank === 'PCA' && s.status === 'buffer' && s.floating)
+        .map(s => s.id)
+    )
+    
+    // Calculate assigned slots per team from existingAllocations
+    existingAllocations.forEach(alloc => {
+      if (bufferFloatingPCAIds.has(alloc.staff_id)) {
+        TEAMS.forEach(team => {
+          let bufferSlots = 0
+          if (alloc.slot1 === team) bufferSlots++
+          if (alloc.slot2 === team) bufferSlots++
+          if (alloc.slot3 === team) bufferSlots++
+          if (alloc.slot4 === team) bufferSlots++
+          result[team] += bufferSlots * 0.25
+        })
+      }
+    })
+    
+    return result
+  }, [bufferStaff, existingAllocations])
+  
+  // Calculate non-floating PCA assigned (check if any non-floating PCA exists in allocations)
+  // Since existingAllocations includes non-floating PCA from Step 2, we can check by looking at floatingPCAs
+  // Non-floating PCA are those NOT in floatingPCAs list
+  const hasNonFloatingPCAAssigned = useMemo(() => {
+    if (existingAllocations.length === 0) return false
+    const floatingPCAIds = new Set(floatingPCAs.map(p => p.id))
+    // Check if there are any allocations that are NOT in floatingPCAs (i.e., non-floating)
+    return existingAllocations.some(alloc => !floatingPCAIds.has(alloc.staff_id))
+  }, [existingAllocations, floatingPCAs])
+  
   // Initialize state when dialog opens
   useEffect(() => {
-    if (open) {
-      // Reset to step 3.1
-      setCurrentMiniStep('3.1')
+    if (open && bufferPCAConfirmed) {
+      // Reset to step 3.1 (after Step 3.0 is confirmed)
       setSlotSelections([])
       setTeamReservations(null)
       setPCASlotReservations({})
@@ -197,6 +284,7 @@ export function FloatingPCAConfigDialog({
       setUpdatedAllocations([...existingAllocations])
       
       // Round initial values - these are the original values (max allowed)
+      // If buffer PCA was assigned, pending FTE should already be updated
       const rounded: Record<Team, number> = {} as Record<Team, number>
       TEAMS.forEach(team => {
         rounded[team] = roundToNearestQuarterWithMidpoint(initialPendingFTE[team] || 0)
@@ -212,7 +300,7 @@ export function FloatingPCAConfigDialog({
       const sorted = sortTeamsByPendingFTE(TEAMS, rounded, TEAMS)
       setTeamOrder(sorted)
     }
-  }, [open, initialPendingFTE, existingAllocations])
+  }, [open, initialPendingFTE, existingAllocations, bufferPCAConfirmed])
   
   // Compute tie groups from current adjusted FTE
   const tieGroups = useMemo(() => identifyTieGroups(adjustedFTE), [adjustedFTE])
@@ -489,15 +577,104 @@ export function FloatingPCAConfigDialog({
     setTeamOrder(sorted)
   }
 
+  // Render Step 3.0 content (Buffer PCA detection and confirmation)
+  const renderStep30 = () => {
+    if (bufferPCAUnassigned.length === 0) {
+      // All assigned - auto-proceed to 3.1
+      return null
+    }
+    
+    return (
+      <div className="space-y-4">
+        <DialogDescription>
+          Buffer PCA staff detected but not yet assigned to teams.
+        </DialogDescription>
+        
+        <div className="space-y-2">
+          <p className="text-sm font-medium">Unassigned Buffer PCA Staff:</p>
+          <ul className="list-disc list-inside space-y-1 text-sm">
+            {bufferPCAUnassigned.map(pca => (
+              <li key={pca.id}>
+                {pca.name}* ({pca.buffer_fte ? `${pca.buffer_fte.toFixed(2)} FTE` : 'FTE not set'})
+              </li>
+            ))}
+          </ul>
+        </div>
+        
+        <div className="p-4 bg-muted rounded-lg">
+          <p className="text-sm mb-2">
+            Should the algorithm process these buffer PCA staff as regular floating PCA?
+          </p>
+          <p className="text-xs text-muted-foreground">
+            • <strong>Yes</strong>: Algorithm will treat them as regular floating PCA and assign them automatically
+            <br />
+            • <strong>No</strong>: Exit dialog so you can assign them manually first
+          </p>
+        </div>
+        
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => {
+              // No - exit dialog
+              onCancel()
+            }}
+          >
+            No, Exit Dialog
+          </Button>
+          <Button
+            onClick={() => {
+              // Yes - proceed to 3.1, algo will treat as regular floating PCA
+              setBufferPCAConfirmed(true)
+              setCurrentMiniStep('3.1')
+            }}
+          >
+            Yes, Continue to Step 3.1
+          </Button>
+        </DialogFooter>
+      </div>
+    )
+  }
+  
   // Render Step 3.1 content
   const renderStep31 = () => (
     <>
       <DialogDescription>
-        Adjust the pending PCA's slot(s) a team would be receiving (if needed). The value shown here is already after the assignment of fixed-team PCA.
+        Adjust the floating PCA's slot(s) a team would be receiving (if needed).
+        <br />
+        <span className="text-sm mt-1 block">
+          The values here is already <span className="underline">AFTER</span> the assignment of fixed-team PCA. The "Assigned" value is the no. of <span className="underline">floating</span> PCA's slot(s) assigned to the team from step 3 onwards.
+        </span>
         <span className="flex items-center gap-1.5 mt-2">
           <Lightbulb className="h-4 w-4 text-amber-500" />
           <strong>Suggestion:</strong> If among the tie-breaker group, the pending slots value is high (&gt;= 0.75) or there are &gt;=3 teams within same tie-breaker condition, manual force adjustment of the pending value may be needed.
         </span>
+        
+        {/* Tick-to-do list */}
+        <div className="mt-3 space-y-1.5 text-sm">
+          {bufferStaff.some(s => s.rank === 'PCA' && s.status === 'buffer' && s.floating) && (
+            <div className="flex items-center gap-2">
+              {bufferPCAAssigned.length > 0 ? (
+                <div className="relative h-4 w-4 flex items-center justify-center">
+                  <div className="absolute inset-0 bg-green-600 rounded-full" />
+                  <Check className="h-3 w-3 relative text-white stroke-[3]" />
+                </div>
+              ) : (
+                <Circle className="h-4 w-4 text-green-600 border-2 border-green-600 rounded-full" />
+              )}
+              <span>Buffer floating PCA assigned</span>
+            </div>
+          )}
+          {hasNonFloatingPCAAssigned && (
+            <div className="flex items-center gap-2">
+              <div className="relative h-4 w-4 flex items-center justify-center">
+                <div className="absolute inset-0 bg-green-600 rounded-full" />
+                <Check className="h-3 w-3 relative text-white stroke-[3]" />
+              </div>
+              <span>Non-floating PCA assigned</span>
+            </div>
+          )}
+        </div>
       </DialogDescription>
       
       <div className="py-4">
@@ -521,6 +698,8 @@ export function FloatingPCAConfigDialog({
                     tieGroupIndex={teamTieInfo[team]?.groupIndex ?? null}
                     isTied={teamTieInfo[team]?.isTied ?? false}
                     onValueChange={handleValueChange}
+                    assignedFTE={bufferFloatingPCAFTEPerTeam[team] > 0 ? bufferFloatingPCAFTEPerTeam[team] : undefined}
+                    orderPosition={index + 1}
                   />
                   {index < teamOrder.length - 1 && (
                     <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
@@ -579,6 +758,7 @@ export function FloatingPCAConfigDialog({
                 reservation={teamReservations?.[team] || null}
                 selections={slotSelections}
                 onSelectionChange={handleSelectionChange}
+                orderPosition={index + 1}
               />
               {index < teamOrder.length - 1 && (
                 <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
@@ -639,6 +819,7 @@ export function FloatingPCAConfigDialog({
                 adjacentSlots={adjacentReservations?.[team] || []}
                 selections={step33Selections}
                 onSelectionChange={handleStep33SelectionChange}
+                orderPosition={index + 1}
               />
               {index < teamOrder.length - 1 && (
                 <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
@@ -685,29 +866,32 @@ export function FloatingPCAConfigDialog({
         </DialogHeader>
         
         {/* Step indicator */}
-        <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground mb-2">
-          <span className={cn(
-            'px-3 py-1.5 rounded-lg transition-colors',
-            currentMiniStep === '3.1' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
-          )}>
-            3.1 Adjust
-          </span>
-          <ChevronRight className="h-4 w-4" />
-          <span className={cn(
-            'px-3 py-1.5 rounded-lg transition-colors',
-            currentMiniStep === '3.2' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
-          )}>
-            3.2 Preferred
-          </span>
-          <ChevronRight className="h-4 w-4" />
-          <span className={cn(
-            'px-3 py-1.5 rounded-lg transition-colors',
-            currentMiniStep === '3.3' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
-          )}>
-            3.3 Adjacent
-          </span>
-        </div>
+        {currentMiniStep !== '3.0' && (
+          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground mb-2">
+            <span className={cn(
+              'px-3 py-1.5 rounded-lg transition-colors',
+              currentMiniStep === '3.1' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
+            )}>
+              3.1 Adjust
+            </span>
+            <ChevronRight className="h-4 w-4" />
+            <span className={cn(
+              'px-3 py-1.5 rounded-lg transition-colors',
+              currentMiniStep === '3.2' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
+            )}>
+              3.2 Preferred
+            </span>
+            <ChevronRight className="h-4 w-4" />
+            <span className={cn(
+              'px-3 py-1.5 rounded-lg transition-colors',
+              currentMiniStep === '3.3' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
+            )}>
+              3.3 Adjacent
+            </span>
+          </div>
+        )}
         
+        {currentMiniStep === '3.0' && renderStep30()}
         {currentMiniStep === '3.1' && renderStep31()}
         {currentMiniStep === '3.2' && renderStep32()}
         {currentMiniStep === '3.3' && renderStep33()}
