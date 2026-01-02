@@ -692,7 +692,7 @@ export function TeamConfigurationPanel() {
                               <div key={wardId} className="flex items-center gap-3 py-2 border-b last:border-b-0">
                                   <span className="font-medium">{wardLabel}</span>
                                 <span className="text-sm text-muted-foreground">
-                                    Ward beds: {beds}
+                                    Bed no.: {beds}
                                   </span>
                                 <Button
                                   type="button"
@@ -902,7 +902,7 @@ function PortionPopoverDialog({
 
         <div className="space-y-4">
           <div>
-            <Label>Original ward beds</Label>
+            <Label>Bed stat</Label>
             <p className="text-sm text-muted-foreground">{popover.totalBeds}</p>
           </div>
 

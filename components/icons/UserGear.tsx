@@ -4,35 +4,35 @@ interface UserGearIconProps {
   className?: string
 }
 
-// User-gear icon combining user silhouette with gear/settings icon
+// SPT icon: person with shoulder badges
 export function UserGearIcon({ className }: UserGearIconProps) {
   return (
     <svg
-      width="20"
-      height="20"
-      viewBox="0 0 256 256"
-      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="16"
+      strokeWidth="1"
       strokeLinecap="round"
       strokeLinejoin="round"
+      className={className}
     >
-      {/* User icon - left side */}
-      <circle cx="80" cy="80" r="32" />
-      <path d="M16,224a64,64,0,0,1,128,0" />
-      
-      {/* Gear icon - right side, overlapping */}
-      <circle cx="176" cy="80" r="40" fill="none" />
-      <circle cx="176" cy="80" r="28" fill="none" />
-      <line x1="176" y1="40" x2="176" y2="20" />
-      <line x1="176" y1="140" x2="176" y2="160" />
-      <line x1="216" y1="80" x2="236" y2="80" />
-      <line x1="136" y1="80" x2="116" y2="80" />
-      <line x1="198.627" y1="41.373" x2="210.627" y2="29.373" />
-      <line x1="153.373" y1="118.627" x2="141.373" y2="130.627" />
-      <line x1="198.627" y1="118.627" x2="210.627" y2="130.627" />
-      <line x1="153.373" y1="41.373" x2="141.373" y2="29.373" />
+      {/* Head */}
+      <circle cx="12" cy="7" r="5" />
+
+      {/* Neck */}
+      <path d="M12 12v3" />
+
+      {/* Curved upper body (shoulders and chest) */}
+      <path d="M6 19c2-4 8-4 12 0" />
+
+      {/* Left shoulder badge - filled */}
+      <rect x="3.5" y="15.5" width="4" height="1" rx="1" fill="currentColor" />
+
+      {/* Right shoulder badge - filled */}
+      <rect x="16" y="15.5" width="4" height="1" rx="1" fill="currentColor" />
     </svg>
   )
 }

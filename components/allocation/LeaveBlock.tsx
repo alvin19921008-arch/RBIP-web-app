@@ -70,7 +70,7 @@ export function LeaveBlock({ team, staffOnLeave, onEditStaff }: LeaveBlockProps)
           ))}
           {staffOnLeave.length === 0 && (
             <p className="text-sm text-muted-foreground text-center py-4">
-              No leave arrangements
+              --
             </p>
           )}
         </div>

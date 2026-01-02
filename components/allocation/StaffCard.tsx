@@ -1,13 +1,14 @@
 'use client'
 
-import { useState, ReactNode } from 'react'
+import React, { useState, ReactNode } from 'react'
 import { Staff } from '@/types/staff'
 import { TherapistAllocation } from '@/types/schedule'
 import { useDraggable } from '@dnd-kit/core'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { Pencil } from 'lucide-react'
+import { Pencil, X } from 'lucide-react'
 import { formatFTE } from '@/lib/utils/rounding'
+import { Tooltip } from '@/components/ui/tooltip'
 
 interface StaffCardProps {
   staff: Staff
@@ -16,6 +17,7 @@ interface StaffCardProps {
   sptDisplay?: string
   slotDisplay?: ReactNode // Optional: slot display with leave/come back times
   onEdit?: (event?: React.MouseEvent) => void
+  onConvertToInactive?: (event?: React.MouseEvent) => void // For buffer staff: convert back to inactive
   draggable?: boolean
   nameColor?: string // Optional: custom color class for name (e.g., 'text-red-600')
   borderColor?: string // Optional: custom border color class (e.g., 'border-green-700')
@@ -28,7 +30,44 @@ interface StaffCardProps {
   initializedSteps?: Set<string> // For slot transfer validation
 }
 
-export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDisplay, onEdit, draggable = true, nameColor, borderColor, dragTeam, baseFTE, trueFTE, isFloatingPCA, showFTE, currentStep, initializedSteps }: StaffCardProps) {
+function wrapTimeRangesInNode(node: ReactNode): ReactNode {
+  // Wrap time ranges like "1500-1630" so they never split across lines.
+  const TIME_RANGE_RE = /(\d{4}-\d{4})/g
+
+  if (typeof node === 'string') {
+    const parts = node.split(TIME_RANGE_RE)
+    if (parts.length === 1) return node
+    return parts.map((part, idx) => {
+      if (TIME_RANGE_RE.test(part)) {
+        // Reset regex state after .test on global regex
+        TIME_RANGE_RE.lastIndex = 0
+        return (
+          <span key={`tr-${idx}`} className="whitespace-nowrap">
+            {part}
+          </span>
+        )
+      }
+      TIME_RANGE_RE.lastIndex = 0
+      return <React.Fragment key={`txt-${idx}`}>{part}</React.Fragment>
+    })
+  }
+
+  if (Array.isArray(node)) {
+    return node.map((child, idx) => (
+      <React.Fragment key={`arr-${idx}`}>{wrapTimeRangesInNode(child)}</React.Fragment>
+    ))
+  }
+
+  if (React.isValidElement(node)) {
+    const children = (node.props as { children?: ReactNode }).children
+    if (children === undefined) return node
+    return React.cloneElement(node, node.props, wrapTimeRangesInNode(children))
+  }
+
+  return node
+}
+
+export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDisplay, onEdit, onConvertToInactive, draggable = true, nameColor, borderColor, dragTeam, baseFTE, trueFTE, isFloatingPCA, showFTE, currentStep, initializedSteps }: StaffCardProps) {
   // Use composite ID to ensure each team's instance has a unique draggable id
   // This prevents drag styling from applying to the same staff card in other teams
   // Use '::' as separator (unlikely to appear in UUIDs)
@@ -71,6 +110,7 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
 
   const [isHoveringCard, setIsHoveringCard] = useState(false)
   const [isHoveringEdit, setIsHoveringEdit] = useState(false)
+  const [isHoveringConvert, setIsHoveringConvert] = useState(false)
 
   // Determine border color: use provided borderColor, or default based on rank
   const borderColorClass = borderColor 
@@ -83,6 +123,7 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
 
   // Battery display for floating PCA in staff pool
   const showBattery = isFloatingPCA && baseFTE !== undefined && trueFTE !== undefined
+  const renderedSlotDisplay = slotDisplay ? wrapTimeRangesInNode(slotDisplay) : null
 
   return (
     <div
@@ -90,11 +131,11 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
       style={transform ? {
         transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
       } : undefined}
-      {...(draggable && !isHoveringEdit ? { ...effectiveListeners, ...effectiveAttributes } : {})}
+      {...(draggable && !isHoveringEdit && !isHoveringConvert ? { ...effectiveListeners, ...effectiveAttributes } : {})}
       className={cn(
         "relative p-1 border-2 rounded-md bg-card hover:bg-accent transition-colors",
         borderColorClass,
-        draggable && !isHoveringEdit && "cursor-move",
+        draggable && !isHoveringEdit && !isHoveringConvert && "cursor-move",
         isDragging && "opacity-50",
         showBattery && "overflow-hidden"
       )}
@@ -102,6 +143,7 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
       onMouseLeave={() => {
         setIsHoveringCard(false)
         setIsHoveringEdit(false)
+        setIsHoveringConvert(false)
       }}
     >
       {showBattery ? (
@@ -147,10 +189,32 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
               <Pencil className="h-3 w-3" />
             </Button>
           )}
+          {onConvertToInactive && isBufferStaff && isHoveringCard && (
+            <Tooltip content="Convert to Inactive">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 flex-shrink-0 ml-1"
+                onMouseEnter={() => setIsHoveringConvert(true)}
+                onMouseLeave={() => setIsHoveringConvert(false)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  e.preventDefault()
+                  onConvertToInactive?.(e)
+                }}
+                onMouseDown={(e) => {
+                  e.stopPropagation()
+                  e.preventDefault()
+                }}
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </Tooltip>
+          )}
         </div>
         {slotDisplay && (
-          <div className="text-xs mt-0.5 ml-0">
-            {slotDisplay}
+          <div className="text-xs mt-0.5 ml-0 break-normal hyphens-none">
+            {renderedSlotDisplay}
           </div>
         )}
       </div>
@@ -183,10 +247,32 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
                 <Pencil className="h-3 w-3" />
               </Button>
             )}
+            {onConvertToInactive && isBufferStaff && isHoveringCard && (
+              <Tooltip content="Convert to Inactive">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 flex-shrink-0 ml-1"
+                  onMouseEnter={() => setIsHoveringConvert(true)}
+                  onMouseLeave={() => setIsHoveringConvert(false)}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    e.preventDefault()
+                    onConvertToInactive?.(e)
+                  }}
+                  onMouseDown={(e) => {
+                    e.stopPropagation()
+                    e.preventDefault()
+                  }}
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </Tooltip>
+            )}
           </div>
           {slotDisplay && (
-            <div className="text-xs mt-0.5 ml-0">
-              {slotDisplay}
+            <div className="text-xs mt-0.5 ml-0 break-normal hyphens-none">
+              {renderedSlotDisplay}
             </div>
           )}
         </div>

@@ -62,7 +62,7 @@ export function CalculationBlock({ team, calculations, onBedsChange }: Calculati
           {calculations.designated_wards.join(', ') || 'None'}
         </div>
         <div>
-          <span className="font-semibold">Ward Beds:</span>{' '}
+          <span className="font-semibold">Bed No.:</span>{' '}
           {isEditingBeds ? (
             <input
               type="number"

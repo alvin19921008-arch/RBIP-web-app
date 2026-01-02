@@ -30,6 +30,13 @@ import {
 import { AllocationTracker } from '@/types/schedule'
 import { Staff } from '@/types/staff'
 import {
+  recordAssignment,
+  getTeamFloor,
+  isFloorPCAForTeam,
+  getTeamPreferenceInfo,
+  finalizeTrackerSummary,
+} from '@/lib/utils/floatingPCAHelpers'
+import {
   DndContext,
   DragEndEvent,
   closestCenter,
@@ -57,6 +64,10 @@ interface FloatingPCAConfigDialogProps {
   existingAllocations: PCAAllocation[]  // Allocations from Step 2
   specialPrograms: SpecialProgram[]  // Special program definitions
   bufferStaff?: Staff[]  // Buffer staff (for Step 3.0 detection)
+  staffOverrides?: Record<string, {
+    substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
+    [key: string]: any
+  }>  // Staff overrides including substitution info (for excluding substitution slots in Step 3.2)
   onSave: (
     result: FloatingPCAAllocationResultV2,
     teamOrder: Team[],
@@ -144,6 +155,7 @@ export function FloatingPCAConfigDialog({
   existingAllocations,
   specialPrograms,
   bufferStaff = [],
+  staffOverrides = {},
   onSave,
   onCancel,
 }: FloatingPCAConfigDialogProps) {
@@ -289,6 +301,7 @@ export function FloatingPCAConfigDialog({
       TEAMS.forEach(team => {
         rounded[team] = roundToNearestQuarterWithMidpoint(initialPendingFTE[team] || 0)
       })
+      
       setOriginalRoundedFTE(rounded)
       setAdjustedFTE(rounded) // Start with original values
       
@@ -380,11 +393,13 @@ export function FloatingPCAConfigDialog({
     setUpdatedAllocations([...existingAllocations])
     
     // Compute reservations based on Step 3.1 output
+    // Pass staffOverrides to exclude substitution slots from available slots
     const result = computeReservations(
       pcaPreferences,
       adjustedFTE,
       floatingPCAs,
-      existingAllocations
+      existingAllocations,
+      staffOverrides
     )
     
     setTeamReservations(result.teamReservations)
@@ -529,6 +544,61 @@ export function FloatingPCAConfigDialog({
         pcaPreferences: pcaPreferences,
         specialPrograms: specialPrograms,
       })
+      
+      // Add Step 3.2 and 3.3 assignments to the tracker
+      // These assignments were made before the algorithm ran, so they need to be added to the tracker
+      // Get allocation order for each team
+      const allocationOrderMap = new Map<Team, number>()
+      teamOrder.forEach((team, index) => {
+        allocationOrderMap.set(team, index + 1)
+      })
+      
+      // Add Step 3.2 assignments to tracker
+      for (const assignment of step32Assignments) {
+        const pca = floatingPCAs.find(p => p.id === assignment.pcaId)
+        if (!pca) continue
+        
+        const teamPref = getTeamPreferenceInfo(assignment.team, pcaPreferences)
+        const teamFloor = getTeamFloor(assignment.team, pcaPreferences)
+        const isPreferredPCA = teamPref.preferredPCAIds.includes(assignment.pcaId)
+        const isPreferredSlot = teamPref.preferredSlot === assignment.slot
+        
+        recordAssignment(algorithmResult.tracker, assignment.team, {
+          slot: assignment.slot,
+          pcaId: assignment.pcaId,
+          pcaName: assignment.pcaName,
+          assignedIn: 'step32',
+          wasPreferredSlot: isPreferredSlot,
+          wasPreferredPCA: isPreferredPCA,
+          wasFloorPCA: isFloorPCAForTeam(pca, teamFloor),
+          allocationOrder: allocationOrderMap.get(assignment.team),
+        })
+      }
+      
+      // Add Step 3.3 assignments to tracker
+      for (const assignment of step33Selections) {
+        const pca = floatingPCAs.find(p => p.id === assignment.pcaId)
+        if (!pca) continue
+        
+        const teamPref = getTeamPreferenceInfo(assignment.team, pcaPreferences)
+        const teamFloor = getTeamFloor(assignment.team, pcaPreferences)
+        const isPreferredPCA = teamPref.preferredPCAIds.includes(assignment.pcaId)
+        const isPreferredSlot = teamPref.preferredSlot === assignment.slot
+        
+        recordAssignment(algorithmResult.tracker, assignment.team, {
+          slot: assignment.slot,
+          pcaId: assignment.pcaId,
+          pcaName: assignment.pcaName,
+          assignedIn: 'step33',
+          wasPreferredSlot: isPreferredSlot,
+          wasPreferredPCA: isPreferredPCA,
+          wasFloorPCA: isFloorPCAForTeam(pca, teamFloor),
+          allocationOrder: allocationOrderMap.get(assignment.team),
+        })
+      }
+      
+      // Finalize tracker summary after adding Step 3.2/3.3 assignments
+      finalizeTrackerSummary(algorithmResult.tracker)
       
       // Pass the full result to the parent
       onSave(algorithmResult, teamOrder, step32Assignments, step33Selections)
@@ -692,7 +762,10 @@ export function FloatingPCAConfigDialog({
                 <div key={team} className="flex items-center gap-1.5 flex-shrink-0">
                   <TeamPendingCard
                     team={team}
-                    pendingFTE={adjustedFTE[team] || 0}
+                    pendingFTE={(() => {
+                      const value = adjustedFTE[team] || 0
+                      return value
+                    })()}
                     originalPendingFTE={originalRoundedFTE[team] || 0}
                     maxValue={originalRoundedFTE[team] || 0}
                     tieGroupIndex={teamTieInfo[team]?.groupIndex ?? null}

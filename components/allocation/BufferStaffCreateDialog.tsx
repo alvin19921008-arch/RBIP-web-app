@@ -136,10 +136,6 @@ export function BufferStaffCreateDialog({
     }
 
     try {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:138',message:'handleSubmit: Starting staff creation',data:{staffData:JSON.stringify(staffData),rank},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
-      
       // Insert new staff - try with buffer_fte first
       let { data: newStaff, error: staffError } = await supabase
         .from('staff')
@@ -147,16 +143,8 @@ export function BufferStaffCreateDialog({
         .select()
         .single()
 
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:145',message:'handleSubmit: Staff insert result',data:{hasData:!!newStaff,error:staffError?.message,errorCode:staffError?.code,errorDetails:staffError?.details},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
-
       // If buffer_fte or status column doesn't exist, show helpful error message
       if (staffError && (staffError.code === 'PGRST204' || staffError.message?.includes('buffer_fte') || staffError.message?.includes('status'))) {
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:150',message:'handleSubmit: Database column missing',data:{errorMessage:staffError.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
-        
         const missingColumn = staffError.message?.includes('buffer_fte') ? 'buffer_fte' : 
                              staffError.message?.includes('status') ? 'status' : 'required column'
         alert(`Database migration required: The ${missingColumn} column is missing. Please run the migration file: supabase/migrations/add_buffer_staff_system.sql in your Supabase SQL Editor.`)
@@ -164,18 +152,11 @@ export function BufferStaffCreateDialog({
       }
 
       if (staffError) {
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:158',message:'handleSubmit: Staff insert error details',data:{message:staffError.message,code:staffError.code,details:staffError.details,hint:staffError.hint},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
         throw staffError
       }
 
       // Create SPT allocation if needed
       if (rank === 'SPT' && (specialty || isRbipSupervisor)) {
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:155',message:'handleSubmit: Creating SPT allocation',data:{staffId:newStaff.id,specialty,isRbipSupervisor},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
-        
         const { error: sptError } = await supabase.from('spt_allocations').insert({
           staff_id: newStaff.id,
           specialty: specialty ?? null,
@@ -187,24 +168,12 @@ export function BufferStaffCreateDialog({
           substitute_team_head: false,
           active: true,
         })
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:167',message:'handleSubmit: SPT allocation result',data:{error:sptError?.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
-        
         if (sptError) throw sptError
       }
-
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:172',message:'handleSubmit: Success',data:{staffId:newStaff.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
 
       onSave()
       onOpenChange(false)
     } catch (err) {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:178',message:'handleSubmit: Catch block error',data:{error:err instanceof Error ? err.message : String(err),stack:err instanceof Error ? err.stack : undefined},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       console.error('Error creating buffer staff:', err)
       alert('Failed to create buffer staff. Please try again.')
     }
