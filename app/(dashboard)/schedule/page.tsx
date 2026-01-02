@@ -2142,6 +2142,7 @@ function SchedulePageContent() {
           invalidSlot: override?.invalidSlot,
           leaveComebackTime: override?.leaveComebackTime,
           isLeave: override?.isLeave,
+          floor_pca: s.floor_pca || null,  // Include floor_pca for floor matching detection
         }
       })
   }, [staff, staffOverrides])
@@ -2626,48 +2627,147 @@ function SchedulePageContent() {
           return
         }
         
+        // RESET Step 3-related data when re-running the algorithm
+        // This ensures the algorithm computes based on fresh state, not from previous Step 3 runs
+        
+        // 1. Clear floating PCA allocations from pcaAllocations (keep non-floating PCA from Step 2)
+        // IMPORTANT: Preserve floating PCA allocations that have special_program_ids (from Step 2)
+        // Calculate cleaned allocations FIRST (before state update) so we can use it for pending FTE calculation
+        const cleanedPcaAllocations: Record<Team, (PCAAllocation & { staff: Staff })[]> = {
+          FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
+        }
+        
+        TEAMS.forEach(team => {
+          // Keep:
+          // 1. Non-floating PCA allocations (from Step 2)
+          // 2. Floating PCA allocations with special_program_ids (from Step 2 special program allocation)
+          const preservedAllocs = (pcaAllocations[team] || []).filter(alloc => {
+            const staffMember = staff.find(s => s.id === alloc.staff_id)
+            if (!staffMember) return false
+            
+            // Keep non-floating PCAs
+            if (!staffMember.floating) return true
+            
+            // Keep floating PCAs that have special_program_ids (allocated to special programs in Step 2)
+            if (alloc.special_program_ids && alloc.special_program_ids.length > 0) {
+              return true
+            }
+            
+            // Remove other floating PCA allocations (will be re-allocated in Step 3)
+            return false
+          })
+          cleanedPcaAllocations[team] = preservedAllocs
+        })
+        
+        // Now update state with cleaned allocations
+        setPcaAllocations(cleanedPcaAllocations)
+        
+        // 2. Clear slotOverrides for floating PCAs from staffOverrides (preserve Step 1 & 2 data)
+        setStaffOverrides(prev => {
+          const cleaned = { ...prev }
+          
+          // Find all floating PCA staff IDs
+          const floatingPCAIds = new Set(
+            staff
+              .filter(s => s.rank === 'PCA' && s.floating)
+              .map(s => s.id)
+          )
+          
+          // Clear slotOverrides for floating PCAs, but preserve other override data (leaveType, fteRemaining, etc.)
+          floatingPCAIds.forEach(pcaId => {
+            if (cleaned[pcaId]) {
+              const { slotOverrides, ...otherOverrides } = cleaned[pcaId]
+              // Only keep the override if it has other meaningful data, otherwise remove it entirely
+              if (Object.keys(otherOverrides).length > 0) {
+                cleaned[pcaId] = otherOverrides
+              } else {
+                delete cleaned[pcaId]
+              }
+            }
+          })
+          
+          return cleaned
+        })
+        
         const recalculatedPendingFTE: Record<Team, number> = {
           FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
         }
         
         // Calculate buffer floating PCA slots assigned per team
+        // Note: After reset, buffer floating PCA allocations should also be cleared
+        // But we check the current state before reset for buffer PCA that might have been manually assigned
         const bufferFloatingPCAFTEPerTeam: Record<Team, number> = {
           FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
         }
         
-        Object.entries(pcaAllocations).forEach(([team, allocs]) => {
+        // After reset, pcaAllocations no longer has floating PCAs, so buffer floating PCA count will be 0
+        // This is correct - buffer floating PCA should be re-assigned by the algorithm
+        
+        // Calculate non-floating PCA assigned per team from CLEANED allocations (not state)
+        // Only count non-floating PCA allocations (exclude floating PCA substitutions)
+        const nonFloatingPCAAssignedPerTeam: Record<Team, number> = {
+          FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
+        }
+        
+        Object.entries(cleanedPcaAllocations).forEach(([team, allocs]) => {
           allocs.forEach(alloc => {
+            // Only count non-floating PCA allocations
             const staffMember = staff.find(s => s.id === alloc.staff_id)
-            if (staffMember && staffMember.status === 'buffer' && staffMember.floating) {
-              // Count buffer floating PCA slots assigned to this team
-              let bufferSlots = 0
-              if (alloc.slot1 === team) bufferSlots++
-              if (alloc.slot2 === team) bufferSlots++
-              if (alloc.slot3 === team) bufferSlots++
-              if (alloc.slot4 === team) bufferSlots++
-              bufferFloatingPCAFTEPerTeam[team as Team] += bufferSlots * 0.25
+            if (!staffMember || staffMember.floating) return
+            
+            // Calculate slots assigned to this team for this non-floating PCA
+            let slotsInTeam = 0
+            if (alloc.slot1 === team) slotsInTeam++
+            if (alloc.slot2 === team) slotsInTeam++
+            if (alloc.slot3 === team) slotsInTeam++
+            if (alloc.slot4 === team) slotsInTeam++
+            
+            // Exclude invalid slot from count
+            const invalidSlot = (alloc as any).invalid_slot
+            if (invalidSlot) {
+              const slotField = `slot${invalidSlot}` as keyof PCAAllocation
+              if (alloc[slotField] === team) {
+                slotsInTeam = Math.max(0, slotsInTeam - 1)
+              }
             }
+            
+            // Add FTE contribution (0.25 per slot)
+            nonFloatingPCAAssignedPerTeam[team as Team] += slotsInTeam * 0.25
           })
         })
         
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'schedule/page.tsx:2705',message:'Calculating pending FTE for Step 3.1',data:{step2ResultTeamPCAAssigned:step2Result.teamPCAAssigned,nonFloatingPCAAssignedPerTeam,rawAveragePCAPerTeam:step2Result.rawAveragePCAPerTeam},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+        
         TEAMS.forEach(team => {
-          // Use raw avg PCA/team from step2Result (unrounded)
-          const rawAvgPCA = step2Result.rawAveragePCAPerTeam[team] || 0
-          // Round FIRST
-          const roundedAvgPCA = roundToNearestQuarterWithMidpoint(rawAvgPCA)
+          // Use displayed avg PCA/team from calculations (accounts for CRP -0.4 therapist FTE adjustment for CPPC)
+          // This matches what the user sees in Block 6, not the raw value from step2Result
+          // For DRO: use the final value (with +0.4 DRM add-on) since the add-on is part of DRO's requirement
+          const displayedAvgPCA = calculations[team]?.average_pca_per_team || 0
           
-          // Get non-floating PCA assigned from step2Result (from Step 2 algorithm)
-          const nonFloatingPCAAssigned = step2Result.teamPCAAssigned[team] || 0
+          // Get non-floating PCA assigned (only non-floating, excluding floating substitutions)
+          const nonFloatingPCAAssigned = nonFloatingPCAAssignedPerTeam[team] || 0
           
           // Get buffer floating PCA slots assigned (manually assigned in Step 3)
+          // After reset, this will be 0, which is correct
           const bufferFloatingFTE = bufferFloatingPCAFTEPerTeam[team] || 0
           
-          // Calculate pending: roundedAvg - nonFloating - bufferFloating
-          const pending = Math.max(0, roundedAvgPCA - nonFloatingPCAAssigned - bufferFloatingFTE)
+          // Calculate pending: displayedAvg - nonFloating - bufferFloating (subtract FIRST, then round)
+          // This ensures mathematical consistency: rounding happens on the actual pending amount, not the requirement
+          const rawPending = Math.max(0, displayedAvgPCA - nonFloatingPCAAssigned - bufferFloatingFTE)
+          const pending = roundToNearestQuarterWithMidpoint(rawPending)
           
-          // The pending value is already based on rounded avg, so we keep it as is (no additional rounding needed)
+          // #region agent log
+          fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'schedule/page.tsx:2752',message:'Pending FTE calculation for team',data:{team,displayedAvgPCA,nonFloatingPCAAssigned,bufferFloatingFTE,rawPending,pending,step2ResultValue:step2Result.teamPCAAssigned[team]||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+          // #endregion
+          
           recalculatedPendingFTE[team] = pending
         })
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'schedule/page.tsx:2766',message:'Setting pendingPCAFTEPerTeam before opening dialog',data:{recalculatedPendingFTE,currentPendingPCAFTEPerTeam:pendingPCAFTEPerTeam},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
         
         setPendingPCAFTEPerTeam(recalculatedPendingFTE)
         // Step 3.1: Open the configuration dialog instead of running algo directly
@@ -3933,15 +4033,16 @@ function SchedulePageContent() {
         fte_pca: bufferFTE,
         fte_remaining: bufferFTE,
         slot_assigned: selectedSlots.length * 0.25,
+        slot_whole: null,
         slot1: selectedSlots.includes(1) ? targetTeam : null,
         slot2: selectedSlots.includes(2) ? targetTeam : null,
         slot3: selectedSlots.includes(3) ? targetTeam : null,
         slot4: selectedSlots.includes(4) ? targetTeam : null,
         leave_type: null,
         special_program_ids: null,
-        invalid_slot: null,
-        leave_comeback_time: null,
-        leave_mode: null,
+        invalid_slot: undefined,
+        leave_comeback_time: undefined,
+        leave_mode: undefined,
         fte_subtraction: 0,
         staff: staffMember,
       }
@@ -4817,54 +4918,15 @@ function SchedulePageContent() {
                           }
                         })
                       
-                      const pcaLeaves = pcaAllocations[team]
-                        .filter(alloc => {
-                          const override = staffOverrides[alloc.staff.id]
-                          const hasLeaveType = override?.leaveType !== null && override?.leaveType !== undefined
-                          const hasLeaveTypeInAlloc = alloc.leave_type !== null
-                          const hasZeroFTE = (alloc.fte_pca || 0) === 0
-                          return hasLeaveType || hasLeaveTypeInAlloc || hasZeroFTE
-                        })
-                        .map(alloc => {
-                          const override = staffOverrides[alloc.staff.id]
-                          // Use override leave type if available, otherwise use allocation leave type
-                          const leaveType = override?.leaveType !== null && override?.leaveType !== undefined
-                            ? override.leaveType
-                            : (alloc.leave_type || 'On Leave')
-                          // Use override FTE if available, otherwise use allocation FTE
-                          const fteRemaining = override?.fteRemaining !== undefined
-                            ? override.fteRemaining
-                            : (alloc.fte_pca || 0)
-                          return { 
-                            ...alloc.staff, 
-                            leave_type: leaveType,
-                            fteRemaining: fteRemaining
-                          }
-                        })
-                      
                       // Also check staffOverrides for staff with leave types that might not be in allocations
                       // This includes non-floating staff assigned to this team
+                      // Only include therapists (SPT, APPT, RPT) - exclude PCA
                       const overrideLeaves = Object.entries(staffOverrides)
                         .filter(([staffId, override]) => {
                           const staffMember = staff.find(s => s.id === staffId)
-                          // Include staff with any leave type set, regardless of FTE
-                          return staffMember && staffMember.team === team && override.leaveType !== null && override.leaveType !== undefined
-                        })
-                        .map(([staffId, override]) => {
-                          const staffMember = staff.find(s => s.id === staffId)!
-                          return {
-                            ...staffMember,
-                            leave_type: override.leaveType || 'On Leave',
-                            fteRemaining: override.fteRemaining
-                          }
-                        })
-                      
-                      // Also include floating PCAs with leave (they don't belong to a specific team, so show in all teams)
-                      const floatingPCAWithLeave = Object.entries(staffOverrides)
-                        .filter(([staffId, override]) => {
-                          const staffMember = staff.find(s => s.id === staffId)
-                          // Include floating PCAs with leave type or FTE=0
-                          return staffMember && staffMember.floating && staffMember.rank === 'PCA' && (override.leaveType !== null || override.fteRemaining === 0)
+                          // Include only therapists with any leave type set, regardless of FTE
+                          const isTherapist = staffMember && ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)
+                          return isTherapist && staffMember.team === team && override.leaveType !== null && override.leaveType !== undefined
                         })
                         .map(([staffId, override]) => {
                           const staffMember = staff.find(s => s.id === staffId)!
@@ -4876,7 +4938,8 @@ function SchedulePageContent() {
                         })
                       
                       // Combine and deduplicate by staff id, prioritizing override leaves
-                      const allLeaves = [...therapistLeaves, ...pcaLeaves, ...overrideLeaves, ...floatingPCAWithLeave]
+                      // Only include therapists - exclude PCA leaves
+                      const allLeaves = [...therapistLeaves, ...overrideLeaves]
                       const uniqueLeaves = allLeaves.filter((staff, index, self) =>
                         index === self.findIndex(s => s.id === staff.id)
                       )

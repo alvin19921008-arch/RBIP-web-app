@@ -4,11 +4,12 @@ import { useState, useEffect, useRef } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Staff, StaffRank, Team, StaffStatus } from '@/types/staff'
+import { Staff, StaffRank, Team, StaffStatus, SpecialProgram as StaffSpecialProgram } from '@/types/staff'
 import { TEAMS } from '@/lib/utils/types'
 import { SpecialProgram } from '@/types/allocation'
 import { Edit2, Trash2, Plus, X, Loader2, ArrowUpDown, ChevronDown } from 'lucide-react'
 import { StaffEditDialog } from './StaffEditDialog'
+import { BufferStaffConvertDialog } from '@/components/allocation/BufferStaffConvertDialog'
 import { cn } from '@/lib/utils'
 
 const RANK_ORDER: StaffRank[] = ['SPT', 'APPT', 'RPT', 'PCA', 'workman']
@@ -20,7 +21,7 @@ type StaffSortConfig =
   | { column: 'team'; value: Team }
   | { column: 'floating'; value: 'yes' | 'no' }
   | { column: 'floorPCA'; value: 'upper' | 'lower' | 'both' }
-  | { column: 'specialProgram'; value: string }
+  | { column: 'specialProgram'; value: StaffSpecialProgram }
 
 export function StaffProfilePanel() {
   const [staff, setStaff] = useState<Staff[]>([])
@@ -31,7 +32,7 @@ export function StaffProfilePanel() {
   const [selectedStaffIds, setSelectedStaffIds] = useState<Set<string>>(new Set())
   const [filters, setFilters] = useState({
     rank: null as StaffRank[] | null,
-    specialProgram: null as string[] | null,
+    specialProgram: null as StaffSpecialProgram[] | null,
     floorPCA: null as 'upper' | 'lower' | 'both' | null,
     status: null as 'active' | 'inactive' | 'buffer' | null,
   })
@@ -247,14 +248,14 @@ export function StaffProfilePanel() {
     const staffMember = staff.find((s) => s.id === staffId)
     if (!staffMember) return
     
-    // For PCA staff converting to buffer, show slot selection dialog first
-    if (newStatus === 'buffer' && staffMember.rank === 'PCA') {
+    // For any staff converting to buffer (from inactive), show convert dialog
+    if (newStatus === 'buffer' && staffMember.status === 'inactive') {
       setPcaStaffForBuffer(staffMember)
       setShowBufferSlotDialog(true)
       return
     }
     
-    // For non-PCA or other status changes, update directly
+    // For other status changes, update directly
     await updateStaffStatus(staffId, newStatus, staffMember)
   }
   
@@ -296,10 +297,9 @@ export function StaffProfilePanel() {
     }
   }
   
-  const handleBufferSlotSelectionConfirm = async (slots: number[], bufferFTE: number) => {
-    if (!pcaStaffForBuffer) return
-    
-    await updateStaffStatus(pcaStaffForBuffer.id, 'buffer', pcaStaffForBuffer, bufferFTE)
+  const handleBufferConvertSave = () => {
+    // Reload data after conversion
+    loadData()
     setShowBufferSlotDialog(false)
     setPcaStaffForBuffer(null)
   }
@@ -677,12 +677,8 @@ export function StaffProfilePanel() {
   }
 
   // Get unique special program names from staff
-  const availableSpecialPrograms = Array.from(
-    new Set(
-      staff
-        .flatMap((s) => s.special_program || [])
-        .filter((p): p is string => !!p)
-    )
+  const availableSpecialPrograms: StaffSpecialProgram[] = Array.from(
+    new Set(staff.flatMap((s) => s.special_program || []).filter(Boolean))
   ).sort()
 
   // Calculate headcount by rank (excluding inactive and buffer staff)
@@ -760,7 +756,7 @@ export function StaffProfilePanel() {
                       const value = e.target.value
                       setFilters((prev) => ({
                         ...prev,
-                        specialProgram: value === 'all' ? null : [value],
+                        specialProgram: value === 'all' ? null : [value as StaffSpecialProgram],
                       }))
                     }}
                     className="w-full px-3 py-2 border rounded-md text-sm"
@@ -955,7 +951,7 @@ export function StaffProfilePanel() {
       )}
 
       {showBufferSlotDialog && pcaStaffForBuffer && (
-        <BufferSlotSelectionDialog
+        <BufferStaffConvertDialog
           open={showBufferSlotDialog}
           onOpenChange={(open) => {
             if (!open) {
@@ -964,7 +960,8 @@ export function StaffProfilePanel() {
             }
           }}
           staff={pcaStaffForBuffer}
-          onConfirm={handleBufferSlotSelectionConfirm}
+          onSave={handleBufferConvertSave}
+          specialPrograms={specialPrograms}
         />
       )}
 

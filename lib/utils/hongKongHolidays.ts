@@ -48,7 +48,9 @@ export function isHongKongHoliday(date: Date): { isHoliday: boolean; name?: stri
   // Check if it's a public holiday
   const holiday = hk.isHoliday(date)
   if (holiday) {
-    return { isHoliday: true, name: holiday.name }
+    // In date-holidays typings, a truthy result is an array of holidays for that date.
+    const name = holiday.map(h => h.name).join(', ')
+    return { isHoliday: true, name }
   }
   
   return { isHoliday: false }

@@ -2,7 +2,7 @@
 
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
-**Last Updated**: 2025-01-15  
+**Last Updated**: 2025-01-16  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -220,7 +220,7 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Proper handling of `buffer_fte` DECIMAL precision
   - Status field integration with existing staff management system
 
-### Phase 8: History Page & UI Enhancements (Latest)
+### Phase 8: History Page & UI Enhancements
 - ✅ **Schedule History Page**
   - Displays all schedules with any allocation data (even partially completed)
   - Grouped by month with latest schedules first within each month
@@ -254,6 +254,52 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Root cause: `onClick` prop was overriding Checkbox component's internal `onCheckedChange` handler
   - Solution: Destructured `onClick` from props and merged handlers to call both `onCheckedChange` and prop's `onClick`
   - Excluded `onClick` from spread props using `Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'>`
+
+### Phase 9: Pending FTE Bug Fix & Safe Wrapper System (Latest)
+- ✅ **Critical Bug Fix: Pending FTE Overwrite Issue**
+  - **Problem**: When `assignSlotsToTeam()` was called with `pendingFTE: 0.25` (local request), the global `pendingFTE[team]` was incorrectly overwritten with `result.newPendingFTE` (which is only the local remaining, often 0)
+  - **Impact**: Teams with pending FTE > 0.25 (e.g., 1.0) would prematurely stop receiving slots after the first 0.25 assignment, causing under-allocation
+  - **Root Cause**: `result.newPendingFTE` represents the remaining of the local request (0.25), not the team's global pending FTE
+  - **Solution**: Changed all one-slot calls to subtract `0.25 * slotsAssigned.length` from global pending instead of overwriting with `result.newPendingFTE`
+  - **Fixed Locations**:
+    - Condition A Step 1/2/3 (preferred slot attempts)
+    - Condition A Step 4 (fill remaining from preferred PCA - one-slot loop)
+    - Condition B preferred-slot attempts (floor/non-floor)
+    - Cycle 3 cleanup (one-slot-at-a-time)
+- ✅ **Safe Wrapper System for Pending FTE Updates**
+  - **Purpose**: Prevent regression of pending FTE overwrite bug by making the correct update pattern structural
+  - **Implementation**: Added two wrapper functions in `lib/utils/floatingPCAHelpers.ts`:
+    - `assignOneSlotAndUpdatePending()`: For one-slot (0.25) requests - automatically subtracts from global pending
+    - `assignUpToPendingAndUpdatePending()`: For global pending requests - uses `result.newPendingFTE` correctly
+  - **Key Features**:
+    - Both wrappers accept optional `context` parameter (human-readable labels like "Preferred PCA + preferred slot → preferred slot from preferred PCA")
+    - Both wrappers automatically update `pendingFTEByTeam[team]` internally, preventing manual update errors
+    - Wrappers read/write the shared `pendingFTEByTeam` record directly, removing the footgun of passing wrong pending values
+  - **Refactoring**: Completely refactored `lib/algorithms/pcaAllocation.ts` to use wrappers exclusively:
+    - Removed all direct calls to `assignSlotsToTeam()`
+    - All Conditions A/B/C/D now use appropriate wrapper based on intent
+    - All fallback functions (floor/non-floor) use appropriate wrapper
+    - Cycle 3 cleanup uses one-slot wrapper
+  - **Benefits**:
+    - Type-safe: Impossible to accidentally call wrong wrapper (TypeScript enforces correct usage)
+    - Self-documenting: Context strings make debugging easier
+    - Regression-proof: Future edits cannot reintroduce the overwrite bug
+- ✅ **"Remaining" Slot Tag in Tracking Tooltip**
+  - **Feature**: Added `assignmentTag?: 'remaining'` field to `SlotAssignmentLog` interface
+  - **Purpose**: Track slots assigned as "fill remaining slots from same PCA" (e.g., Condition B follow-up fill, Condition A Step 4 fill)
+  - **Display**: Tooltip in `PCABlock.tsx` now shows `, remaining` inline for slots tagged with this marker
+  - **Usage**: Automatically tagged when slots are assigned via "fill remaining from same PCA" logic
+- ✅ **TypeScript Strict Mode Compliance Fixes**
+  - Fixed `Record<PanelType, string>` type error in dashboard page (excluded `null` from Record keys)
+  - Fixed `invalid_slot: null` type error in schedule page (changed to `undefined`)
+  - Fixed missing `slot_whole` property in buffer PCA allocation creation
+  - Fixed `currentStep` prop missing from `TherapistBlockProps` interface
+  - Fixed `special_program` type mismatches in buffer staff dialogs (changed from `string[]` to `StaffSpecialProgram[]`)
+  - Fixed `allocationLog.assignments[0]` type narrowing issue in `PCABlock.tsx`
+  - Fixed `active` property missing from `Staff` interface (added as optional for legacy/DB column support)
+  - Fixed checkbox component type mismatch (`HTMLInputElement` vs `HTMLButtonElement`)
+  - Fixed holiday utility type error (handled array return from `date-holidays` library)
+  - All fixes verified with `npm run build` (strict TypeScript compilation passes)
 
 ### Technical Achievements
 - ✅ **Type Safety**: Comprehensive database type conversion utilities
@@ -975,6 +1021,24 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 - Step 3.2/3.3 assignments reduce available capacity for final algorithm, preventing over-allocation
 - **Critical**: Adjusted FTE values are targets, but actual allocation is limited by available floating PCA pool
 
+### Pitfall 15: Pending FTE Overwrite Bug (Critical Allocation Bug)
+**Problem**: Teams with pending FTE > 0.25 (e.g., 1.0) would only receive 0.25 FTE (one slot) instead of their full requirement  
+**Root Cause**: 
+- When `assignSlotsToTeam()` was called with `pendingFTE: 0.25` (local request for one slot), the code incorrectly overwrote global `pendingFTE[team]` with `result.newPendingFTE`
+- `result.newPendingFTE` is only the remaining of the local 0.25 request (often 0), NOT the team's global pending FTE
+- This caused the algorithm to think the team was satisfied after just one slot, stopping further assignments
+**Solution**: 
+- Changed all one-slot calls to subtract `0.25 * slotsAssigned.length` from global pending instead of overwriting
+- Implemented safe wrapper system (`assignOneSlotAndUpdatePending` and `assignUpToPendingAndUpdatePending`) that automatically handles correct pending updates
+- Wrappers read/write `pendingFTEByTeam` directly, preventing manual update errors
+- Refactored entire `pcaAllocation.ts` to use wrappers exclusively, making the bug impossible to regress
+- Added optional `context` parameter to wrappers for debugging (human-readable labels)
+**Fixed Locations**:
+- Condition A Step 1/2/3 (preferred slot attempts with `pendingFTE: 0.25`)
+- Condition A Step 4 (fill remaining from preferred PCA - one-slot loop)
+- Condition B preferred-slot attempts (floor/non-floor with `pendingFTE: 0.25`)
+- Cycle 3 cleanup (one-slot-at-a-time with `pendingFTE: 0.25`)
+
 ---
 
 ## File Reference Guide
@@ -1046,6 +1110,8 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 19. **Buffer Staff**: Use `buffer_fte` instead of default 1.0 FTE; buffer therapists assignable in Step 1 & 2 only; buffer floating PCA assignable in Step 3 onwards
 20. **Step 3.0**: Entry point to Step 3 wizard before sub-steps 3.1-3.4
 21. **Over-Fill Prevention**: Step 3.1 adjustments have upper limits; Step 3.4 algorithm respects available floating PCA capacity to prevent over-allocation
+22. **Pending FTE Update Safety**: Always use `assignOneSlotAndUpdatePending()` for one-slot calls and `assignUpToPendingAndUpdatePending()` for global pending calls - never manually update `pendingFTE[team]` after calling these wrappers
+23. **"Remaining" Slot Tag**: Slots assigned as "fill remaining from same PCA" are automatically tagged with `assignmentTag: 'remaining'` and displayed in tooltip
 
 ---
 

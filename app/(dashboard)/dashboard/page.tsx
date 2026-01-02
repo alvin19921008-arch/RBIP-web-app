@@ -11,8 +11,9 @@ import { TeamConfigurationPanel } from '@/components/dashboard/TeamConfiguration
 import { DashboardSidebar, type CategoryId } from '@/components/dashboard/DashboardSidebar'
 
 type PanelType = 'special-programs' | 'spt-allocations' | 'pca-preferences' | 'pca-unmet-needs' | 'staff-profile' | 'ward-config' | 'team-configuration' | null
+type PanelKey = Exclude<PanelType, null>
 
-const categoryLabels: Record<PanelType, string> = {
+const categoryLabels: Record<PanelKey, string> = {
   'special-programs': 'Special Programs',
   'spt-allocations': 'SPT Allocations',
   'pca-preferences': 'PCA Preferences',
@@ -20,10 +21,9 @@ const categoryLabels: Record<PanelType, string> = {
   'staff-profile': 'Staff Profile',
   'ward-config': 'Ward Config and Bed Stat',
   'team-configuration': 'Team Configuration',
-  null: 'Dashboard',
 }
 
-const categoryDescriptions: Record<PanelType, string> = {
+const categoryDescriptions: Record<PanelKey, string> = {
   'special-programs': 'Manage special program configurations',
   'spt-allocations': 'Configure SPT allocation settings',
   'pca-preferences': 'Manage PCA preference settings',
@@ -31,7 +31,6 @@ const categoryDescriptions: Record<PanelType, string> = {
   'staff-profile': 'Manage staff records and configurations',
   'ward-config': 'Manage ward names and bed counts',
   'team-configuration': 'Manage team staffing and ward responsibilities',
-  null: 'Configure system settings and preferences',
 }
 
 export default function DashboardPage() {
@@ -54,10 +53,10 @@ export default function DashboardPage() {
         {/* Header section - dynamic based on selection */}
         <div className="mb-6">
           <h1 className="text-3xl font-bold mb-2">
-            {categoryLabels[activePanel]}
+            {activePanel ? categoryLabels[activePanel] : 'Dashboard'}
           </h1>
           <p className="text-muted-foreground">
-            {categoryDescriptions[activePanel]}
+            {activePanel ? categoryDescriptions[activePanel] : 'Configure system settings and preferences'}
           </p>
         </div>
 

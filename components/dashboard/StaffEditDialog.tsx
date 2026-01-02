@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Staff, StaffRank, Team, StaffStatus } from '@/types/staff'
+import { Staff, StaffRank, Team, StaffStatus, SpecialProgram as StaffSpecialProgram } from '@/types/staff'
 import { SpecialProgram } from '@/types/allocation'
 import { TEAMS } from '@/lib/utils/types'
 import { X, Info } from 'lucide-react'
@@ -28,7 +28,7 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
   const [name, setName] = useState(staff.name || '')
   const [rank, setRank] = useState<StaffRank>(staff.rank || 'PCA')
   const [team, setTeam] = useState<Team | null>(staff.team || null)
-  const [specialProgram, setSpecialProgram] = useState<string[]>(staff.special_program || [])
+  const [specialProgram, setSpecialProgram] = useState<StaffSpecialProgram[]>(staff.special_program || [])
   const [floating, setFloating] = useState<boolean>(staff.floating ?? false)
   const [floorPCA, setFloorPCA] = useState<'upper' | 'lower' | 'both' | null>(() => {
     if (staff.rank !== 'PCA' || !staff.floor_pca || staff.floor_pca.length === 0) return null
@@ -78,7 +78,7 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
   }, [rank])
 
   // Get available special program names from specialPrograms prop
-  const availableProgramNames = specialPrograms.map((p) => p.name).sort()
+  const availableProgramNames = specialPrograms.map((p) => p.name as StaffSpecialProgram).sort()
 
   // Validation
   const isTeamRequired = () => {

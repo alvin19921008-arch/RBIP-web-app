@@ -14,6 +14,7 @@ interface TherapistBlockProps {
   allocations: (TherapistAllocation & { staff: Staff })[]
   specialPrograms?: SpecialProgram[]
   weekday?: 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
+  currentStep?: string
   onEditStaff?: (staffId: string, event?: React.MouseEvent) => void
 }
 

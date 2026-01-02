@@ -6,67 +6,82 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Staff, StaffRank, Team, StaffStatus, SpecialProgram as StaffSpecialProgram } from '@/types/staff'
+import { Staff, Team, StaffStatus, SpecialProgram as StaffSpecialProgram } from '@/types/staff'
 import { SpecialProgram } from '@/types/allocation'
 import { TEAMS } from '@/lib/utils/types'
 import { X, Info } from 'lucide-react'
 
-const RANKS: StaffRank[] = ['SPT', 'APPT', 'RPT', 'PCA']
-const SPECIALTY_OPTIONS = ['MSK/Ortho', 'Cardiac', 'Neuro', 'Cancer', 'nil']
-
-interface BufferStaffCreateDialogProps {
+interface BufferStaffConvertDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  staff: Staff | null
   onSave: () => void
   specialPrograms?: SpecialProgram[]
 }
 
-export function BufferStaffCreateDialog({ 
+export function BufferStaffConvertDialog({ 
   open, 
   onOpenChange, 
+  staff,
   onSave,
   specialPrograms = []
-}: BufferStaffCreateDialogProps) {
+}: BufferStaffConvertDialogProps) {
   const supabase = createClientComponentClient()
 
-  const [name, setName] = useState('')
-  const [rank, setRank] = useState<StaffRank>('PCA')
   const [team, setTeam] = useState<Team | null>(null)
   const [specialProgram, setSpecialProgram] = useState<StaffSpecialProgram[]>([])
   const [floating, setFloating] = useState<boolean>(false)
   const [floorPCA, setFloorPCA] = useState<'upper' | 'lower' | 'both' | null>(null)
   const [bufferFTE, setBufferFTE] = useState<number>(1.0) // For therapist ranks
   const [availableSlots, setAvailableSlots] = useState<number[]>([]) // For PCA rank
-  const [specialty, setSpecialty] = useState<string | null>(null)
-  const [isRbipSupervisor, setIsRbipSupervisor] = useState(false)
 
-  // Reset form when dialog opens/closes
+  // Initialize form from staff data when dialog opens
   useEffect(() => {
-    if (!open) {
-      setName('')
-      setRank('PCA')
-      setTeam(null)
-      setSpecialProgram([])
-      setFloating(false)
-      setFloorPCA(null)
-      setBufferFTE(1.0)
-      setAvailableSlots([])
-      setSpecialty(null)
-      setIsRbipSupervisor(false)
+    if (open && staff) {
+      // Initialize from existing staff data
+      setTeam(staff.team || null)
+      setSpecialProgram(staff.special_program || [])
+      setFloating(staff.floating || false)
+      
+      // Initialize floor_pca
+      if (staff.floor_pca) {
+        if (staff.floor_pca.length === 2) {
+          setFloorPCA('both')
+        } else if (staff.floor_pca.includes('upper')) {
+          setFloorPCA('upper')
+        } else if (staff.floor_pca.includes('lower')) {
+          setFloorPCA('lower')
+        } else {
+          setFloorPCA(null)
+        }
+      } else {
+        setFloorPCA(null)
+      }
+      
+      // Initialize buffer FTE (for therapist) or available slots (for PCA)
+      if (staff.rank === 'PCA') {
+        // Default to all slots for PCA
+        setAvailableSlots([1, 2, 3, 4])
+      } else {
+        // For therapist, default to 1.0 FTE
+        setBufferFTE(staff.buffer_fte || 1.0)
+      }
     }
-  }, [open])
+  }, [open, staff])
 
-  // Reset floor PCA and slots when rank changes
+  // Reset floor PCA and slots when rank changes (shouldn't happen for existing staff, but just in case)
   useEffect(() => {
-    if (rank !== 'PCA') {
+    if (staff && staff.rank !== 'PCA') {
       setFloorPCA(null)
       setFloating(false)
       setAvailableSlots([])
-    } else {
+    } else if (staff && staff.rank === 'PCA') {
       // Default to all slots for PCA
-      setAvailableSlots([1, 2, 3, 4])
+      if (availableSlots.length === 0) {
+        setAvailableSlots([1, 2, 3, 4])
+      }
     }
-  }, [rank])
+  }, [staff])
 
   // Get available special program names
   const availableProgramNames = specialPrograms.map((p) => p.name as StaffSpecialProgram).sort()
@@ -88,26 +103,23 @@ export function BufferStaffCreateDialog({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    
+    if (!staff) return
 
     // Validate required fields
-    if (!name.trim()) {
-      alert('Staff name is required')
-      return
-    }
-
-    if (rank === 'PCA' && floorPCA === null) {
+    if (staff.rank === 'PCA' && floorPCA === null) {
       alert('Floor PCA is required for PCA staff')
       return
     }
 
-    if (rank === 'PCA' && availableSlots.length === 0) {
+    if (staff.rank === 'PCA' && availableSlots.length === 0) {
       alert('At least one slot must be selected for PCA staff')
       return
     }
 
     // Convert floor_pca to array format
     let floorPCAArray: ('upper' | 'lower')[] | null = null
-    if (rank === 'PCA' && floorPCA) {
+    if (staff.rank === 'PCA' && floorPCA) {
       if (floorPCA === 'both') {
         floorPCAArray = ['upper', 'lower']
       } else {
@@ -117,114 +129,60 @@ export function BufferStaffCreateDialog({
 
     // Calculate buffer_fte
     let finalBufferFTE: number | null = null
-    if (rank === 'PCA') {
+    if (staff.rank === 'PCA') {
       finalBufferFTE = calculatePCAFTE(availableSlots)
     } else {
       finalBufferFTE = bufferFTE
     }
 
-    // Prepare staff data
-    const staffData: Partial<Staff> = {
-      name: name.trim(),
-      rank,
-      team: rank === 'PCA' && floating ? null : team,
-      special_program: specialProgram.length > 0 ? specialProgram : null,
-      floating: rank === 'PCA' ? floating : false,
-      floor_pca: floorPCAArray,
+    // Prepare update data
+    const updateData: Partial<Staff> = {
       status: 'buffer' as StaffStatus,
+      team: staff.rank === 'PCA' && floating ? null : team,
+      special_program: specialProgram.length > 0 ? specialProgram : null,
+      floating: staff.rank === 'PCA' ? floating : false,
+      floor_pca: floorPCAArray,
       buffer_fte: finalBufferFTE,
     }
 
     try {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:138',message:'handleSubmit: Starting staff creation',data:{staffData:JSON.stringify(staffData),rank},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
-      
-      // Insert new staff - try with buffer_fte first
-      let { data: newStaff, error: staffError } = await supabase
+      const { error } = await supabase
         .from('staff')
-        .insert(staffData)
-        .select()
-        .single()
+        .update(updateData)
+        .eq('id', staff.id)
 
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:145',message:'handleSubmit: Staff insert result',data:{hasData:!!newStaff,error:staffError?.message,errorCode:staffError?.code,errorDetails:staffError?.details},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
-
-      // If buffer_fte or status column doesn't exist, show helpful error message
-      if (staffError && (staffError.code === 'PGRST204' || staffError.message?.includes('buffer_fte') || staffError.message?.includes('status'))) {
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:150',message:'handleSubmit: Database column missing',data:{errorMessage:staffError.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
-        
-        const missingColumn = staffError.message?.includes('buffer_fte') ? 'buffer_fte' : 
-                             staffError.message?.includes('status') ? 'status' : 'required column'
-        alert(`Database migration required: The ${missingColumn} column is missing. Please run the migration file: supabase/migrations/add_buffer_staff_system.sql in your Supabase SQL Editor.`)
+      if (error) {
+        console.error('Error converting to buffer staff:', error)
+        alert('Failed to convert to buffer staff. Please try again.')
         return
       }
-
-      if (staffError) {
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:158',message:'handleSubmit: Staff insert error details',data:{message:staffError.message,code:staffError.code,details:staffError.details,hint:staffError.hint},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
-        throw staffError
-      }
-
-      // Create SPT allocation if needed
-      if (rank === 'SPT' && (specialty || isRbipSupervisor)) {
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:155',message:'handleSubmit: Creating SPT allocation',data:{staffId:newStaff.id,specialty,isRbipSupervisor},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
-        
-        const { error: sptError } = await supabase.from('spt_allocations').insert({
-          staff_id: newStaff.id,
-          specialty: specialty ?? null,
-          is_rbip_supervisor: isRbipSupervisor ?? false,
-          teams: [],
-          weekdays: [],
-          slots: {},
-          fte_addon: 0,
-          substitute_team_head: false,
-          active: true,
-        })
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:167',message:'handleSubmit: SPT allocation result',data:{error:sptError?.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
-        
-        if (sptError) throw sptError
-      }
-
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:172',message:'handleSubmit: Success',data:{staffId:newStaff.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
 
       onSave()
       onOpenChange(false)
     } catch (err) {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BufferStaffCreateDialog.tsx:178',message:'handleSubmit: Catch block error',data:{error:err instanceof Error ? err.message : String(err),stack:err instanceof Error ? err.stack : undefined},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
-      console.error('Error creating buffer staff:', err)
-      alert('Failed to create buffer staff. Please try again.')
+      console.error('Error converting to buffer staff:', err)
+      alert('Failed to convert to buffer staff. Please try again.')
     }
   }
 
   const isTeamRequired = () => {
-    if (rank === 'SPT') return false
-    if (['APPT', 'RPT'].includes(rank)) return true
-    if (rank === 'PCA' && !floating) return true
+    if (!staff) return false
+    if (staff.rank === 'SPT') return false
+    if (['APPT', 'RPT'].includes(staff.rank)) return true
+    if (staff.rank === 'PCA' && !floating) return true
     return false
   }
 
-  const pcaFTE = calculatePCAFTE(availableSlots)
+  if (!staff) return null
+
+  const pcaFTE = staff.rank === 'PCA' ? calculatePCAFTE(availableSlots) : 0
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between">
-            <DialogTitle>Create Buffer Staff</DialogTitle>
+            <DialogTitle>Convert to Buffer Staff: {staff.name}</DialogTitle>
             <button
               onClick={() => onOpenChange(false)}
               className="p-1 hover:bg-accent rounded"
@@ -236,38 +194,11 @@ export function BufferStaffCreateDialog({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Staff Name */}
-          <div>
-            <Label htmlFor="name">
-              Staff Name <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              id="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              className="mt-1"
-            />
-          </div>
-
-          {/* Rank */}
-          <div>
-            <Label htmlFor="rank">
-              Rank <span className="text-destructive">*</span>
-            </Label>
-            <select
-              id="rank"
-              value={rank}
-              onChange={(e) => setRank(e.target.value as StaffRank)}
-              required
-              className="w-full h-10 px-3 py-2 rounded-md border border-input bg-background text-sm"
-            >
-              {RANKS.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
+          {/* Staff Info (Read-only) */}
+          <div className="bg-muted p-3 rounded-md">
+            <div className="text-sm">
+              <span className="font-semibold">Rank:</span> {staff.rank}
+            </div>
           </div>
 
           {/* Team */}
@@ -289,12 +220,12 @@ export function BufferStaffCreateDialog({
                 </option>
               ))}
             </select>
-            {rank === 'PCA' && (
+            {staff.rank === 'PCA' && (
               <p className="text-xs text-muted-foreground mt-1">
                 {floating ? 'Floating PCA does not require a team assignment.' : 'Non-floating PCA requires a team assignment.'}
               </p>
             )}
-            {rank === 'SPT' && (
+            {staff.rank === 'SPT' && (
               <p className="text-xs text-muted-foreground mt-1">
                 Team assignment for SPT is optional and can be configured in SPT Allocations.
               </p>
@@ -334,7 +265,7 @@ export function BufferStaffCreateDialog({
           </div>
 
           {/* Therapist: FTE Input */}
-          {['SPT', 'APPT', 'RPT'].includes(rank) && (
+          {['SPT', 'APPT', 'RPT'].includes(staff.rank) && (
             <div>
               <Label htmlFor="buffer-fte">
                 Buffer FTE <span className="text-destructive">*</span>
@@ -362,7 +293,7 @@ export function BufferStaffCreateDialog({
           )}
 
           {/* PCA Properties */}
-          {rank === 'PCA' && (
+          {staff.rank === 'PCA' && (
             <div className="space-y-4 border p-4 rounded-md">
               <div>
                 <Label htmlFor="floating">
@@ -444,12 +375,11 @@ export function BufferStaffCreateDialog({
             </div>
           )}
 
-
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit">Create Buffer Staff</Button>
+            <Button type="submit">Convert to Buffer</Button>
           </DialogFooter>
         </form>
       </DialogContent>

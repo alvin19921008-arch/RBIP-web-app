@@ -911,68 +911,210 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
               </div>
             )}
             {/* Assigned PCA-FTE per team (rounded, excluding special program slots) with allocation tracking tooltip */}
-            {assignedPcaFteRounded > 0 && (
-              <div className="relative group mt-0.5">
-                <div className="text-xs text-black/60 cursor-help">
-                  Assigned: {assignedPcaFteRounded.toFixed(2)}
-                </div>
-                {/* Allocation Tracking Tooltip on hover */}
-                <div className="absolute left-0 bottom-full mb-2 w-80 p-3 bg-gray-900 text-white text-xs rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity z-50 pointer-events-none">
-                  {allocationLog && allocationLog.assignments.length > 0 ? (
-                    <div className="space-y-2">
-                      {/* Summary Header */}
-                      <div className="font-semibold border-b border-gray-700 pb-1">
-                        Allocation Tracking - {team}
-                      </div>
-                      
-                      {/* Summary Stats */}
-                      <div className="grid grid-cols-2 gap-1 text-[10px]">
-                        <div>Total slots: {allocationLog.summary.totalSlotsAssigned}</div>
-                        <div>From 3.2: {allocationLog.summary.fromStep32}</div>
-                        <div>From 3.3: {allocationLog.summary.fromStep33}</div>
-                        <div>From 3.4: {allocationLog.summary.fromStep34Cycle1 + allocationLog.summary.fromStep34Cycle2 + allocationLog.summary.fromStep34Cycle3}</div>
-                      </div>
-                      
-                      {/* Per-Slot Details */}
-                      <div className="space-y-1 border-t border-gray-700 pt-1 max-h-32 overflow-y-auto">
-                        {allocationLog.assignments.map((a, i) => (
-                          <div key={i} className="text-[10px] flex flex-wrap items-center gap-1">
-                            <span className="font-mono">Slot {a.slot}:</span>
-                            <span>{a.pcaName}</span>
-                            <span className="text-gray-400">
-                              ({a.assignedIn === 'step34' 
-                                ? `C${a.cycle}${a.condition ? `-${a.condition}` : ''}` 
-                                : a.assignedIn})
-                            </span>
-                            {a.wasPreferredPCA && <span className="text-green-400">★PCA</span>}
-                            {a.wasPreferredSlot && <span className="text-blue-400">★Slot</span>}
-                            {a.wasFloorPCA && <span className="text-yellow-400">Floor</span>}
-                            {a.wasExcludedInCycle1 && <span className="text-orange-400">C2-unlocked</span>}
+            {assignedPcaFteRounded > 0 && (() => {
+              // Detect buffer floating PCA assignments from allocations (not in allocationLog)
+              // These are manual assignments from step 3.0
+              const bufferFloatingAssignments: Array<{ pcaId: string; pcaName: string; slots: number[] }> = []
+              const bufferFloatingSlots: number[] = []
+              
+              allocations.forEach(alloc => {
+                if (alloc.staff.floating && alloc.staff.status === 'buffer') {
+                  const slots: number[] = []
+                  if (alloc.slot1 === team) slots.push(1)
+                  if (alloc.slot2 === team) slots.push(2)
+                  if (alloc.slot3 === team) slots.push(3)
+                  if (alloc.slot4 === team) slots.push(4)
+                  
+                  if (slots.length > 0) {
+                    bufferFloatingAssignments.push({
+                      pcaId: alloc.staff_id,
+                      pcaName: alloc.staff.name,
+                      slots
+                    })
+                    bufferFloatingSlots.push(...slots)
+                  }
+                }
+              })
+              
+              // Check if team was fulfilled by buffer assignments
+              const hasBufferAssignments = bufferFloatingSlots.length > 0
+              const hasAllocationLog = allocationLog && allocationLog.assignments.length > 0
+              
+              // Group assignments by PCA name for display
+              // Exclude buffer floating PCAs from groupedByPCA (they're shown separately above)
+              const bufferPCAIds = new Set(bufferFloatingAssignments.map(b => b.pcaId))
+              type AllocationAssignment = TeamAllocationLog['assignments'][number]
+              const groupedByPCA = new Map<string, Array<{ slot: number; assignment: AllocationAssignment }>>()
+              if (hasAllocationLog) {
+                allocationLog.assignments.forEach(a => {
+                  // Skip buffer floating PCAs - they're already shown in bufferFloatingAssignments section
+                  if (bufferPCAIds.has(a.pcaId)) return
+                  
+                  if (!groupedByPCA.has(a.pcaName)) {
+                    groupedByPCA.set(a.pcaName, [])
+                  }
+                  groupedByPCA.get(a.pcaName)!.push({ slot: a.slot, assignment: a })
+                })
+              }
+              
+              // Count actual slots (1,2,3,4) - count ALL slot numbers, not unique slots
+              // This means if 光劭 has slots [1,2,4] and 友好 has slot [2], total = 4 slots (1+2+4+2)
+              // From allocation log: get all slot numbers (including duplicates)
+              // BUT exclude buffer floating PCAs - they're counted separately
+              const slotsFromLog = hasAllocationLog 
+                ? allocationLog.assignments
+                    .filter(a => !bufferPCAIds.has(a.pcaId))  // Exclude buffer PCAs from log
+                    .map(a => a.slot)
+                : []
+              // From buffer assignments: get all slot numbers
+              // Combine and count all slots (not unique)
+              const allSlots = [...slotsFromLog, ...bufferFloatingSlots]
+              const totalActualSlots = allSlots.length
+              
+              // Check if team was fulfilled by buffer assignments only
+              // This happens when buffer assignments cover all the team's needs and no algorithm ran
+              const fulfilledByBufferOnly = hasBufferAssignments && !hasAllocationLog && bufferFloatingSlots.length > 0
+              
+              // Get allocation order (if available)
+              const allocationOrder = hasAllocationLog && allocationLog.assignments.length > 0
+                ? allocationLog.assignments[0].allocationOrder
+                : undefined
+              
+              // Condition descriptions
+              const getConditionDescription = (condition?: 'A' | 'B' | 'C' | 'D'): string => {
+                switch (condition) {
+                  case 'A': return 'Preferred PCA + Preferred slot'
+                  case 'B': return 'Preferred slot only'
+                  case 'C': return 'Preferred PCA only'
+                  case 'D': return 'No preferences'
+                  default: return ''
+                }
+              }
+              
+              // Determine tooltip position (left for DRO and rightmost teams to prevent truncation)
+              const showOnLeft = team === 'DRO' || ['NSM', 'GMC', 'MC'].includes(team)
+              
+              return (
+                <div className="relative group mt-0.5">
+                  <div className="text-xs text-black/60 cursor-help">
+                    Assigned: {assignedPcaFteRounded.toFixed(2)}
+                  </div>
+                  {/* Allocation Tracking Tooltip on hover */}
+                  <div className={`absolute ${showOnLeft ? 'right-0' : 'left-0'} bottom-full mb-2 w-80 p-3 bg-gray-900 text-white text-xs rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity z-50 pointer-events-none`}>
+                    {(hasAllocationLog || hasBufferAssignments) ? (
+                      <div className="space-y-2">
+                        {/* Summary Header */}
+                        <div className="font-semibold border-b border-gray-700 pb-1">
+                          Allocation Tracking - {team}
+                        </div>
+                        
+                        {/* Allocation Order - show before total slots */}
+                        {allocationOrder !== undefined && (
+                          <div className="text-[10px] text-gray-300">
+                            {allocationOrder === 1 ? '1st' : allocationOrder === 2 ? '2nd' : allocationOrder === 3 ? '3rd' : `${allocationOrder}th`} in allocation order during algo run
                           </div>
-                        ))}
+                        )}
+                        
+                        {/* Summary Stats */}
+                        <div className="grid grid-cols-2 gap-1 text-[10px] border-t border-gray-700 pt-1">
+                          <div>Total slots: {totalActualSlots}</div>
+                          {hasBufferAssignments && <div>From 3.0: {bufferFloatingSlots.length}</div>}
+                          {hasAllocationLog && (() => {
+                            // Recalculate step 3.4 count by filtering out buffer PCAs (same as slotsFromLog)
+                            const step34Assignments = allocationLog.assignments.filter(a => 
+                              a.assignedIn === 'step34' && !bufferPCAIds.has(a.pcaId)
+                            )
+                            const fromStep34Count = step34Assignments.length
+                            const fromStep34Cycle1 = step34Assignments.filter(a => a.cycle === 1).length
+                            const fromStep34Cycle2 = step34Assignments.filter(a => a.cycle === 2).length
+                            const fromStep34Cycle3 = step34Assignments.filter(a => a.cycle === 3).length
+                            
+                            return (
+                              <>
+                                <div>From 3.2: {allocationLog.summary.fromStep32}</div>
+                                <div>From 3.3: {allocationLog.summary.fromStep33}</div>
+                                <div>From 3.4: {fromStep34Count}</div>
+                              </>
+                            )
+                          })()}
+                        </div>
+                        
+                        {/* Show message if fulfilled by buffer only */}
+                        {fulfilledByBufferOnly && (
+                          <div className="text-[10px] text-yellow-400 border-t border-gray-700 pt-1">
+                            Team pending requirement wholly fulfilled by manual buffer floating PCA assignment (Step 3.0)
+                          </div>
+                        )}
+                        
+                        {/* Per-PCA Details (grouped by PCA name) */}
+                        <div className="space-y-1 border-t border-gray-700 pt-1 max-h-48 overflow-y-auto">
+                          {/* Buffer floating PCA assignments (Step 3.0) */}
+                          {bufferFloatingAssignments.map((bufferAssign, idx) => (
+                            <div key={`buffer-${idx}`} className="text-[10px]">
+                              <div className="font-medium">{bufferAssign.pcaName}:</div>
+                              {bufferAssign.slots.map(slot => (
+                                <div key={slot} className="text-[10px] pl-4">
+                                  slot {slot} (From step 3.0)
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                          
+                          {/* Algorithm assignments (grouped by PCA) */}
+                          {Array.from(groupedByPCA.entries()).map(([pcaName, slotAssignments]) => (
+                            <div key={pcaName} className="text-[10px]">
+                              <div className="font-medium">{pcaName}:</div>
+                              {slotAssignments.map(({ slot, assignment }) => (
+                                <div key={slot} className="text-[10px] pl-4">
+                                  slot {slot} (
+                                  {assignment.assignedIn === 'step34' 
+                                    ? `C${assignment.cycle}${assignment.condition ? `-${getConditionDescription(assignment.condition)}` : ''}` 
+                                    : assignment.assignedIn === 'step32' 
+                                    ? 'From step 3.2'
+                                    : assignment.assignedIn === 'step33'
+                                    ? 'From step 3.3'
+                                    : assignment.assignedIn === 'step30'
+                                    ? 'From step 3.0'
+                                    : assignment.assignedIn}
+                                  {assignment.wasPreferredPCA && assignment.wasPreferredSlot ? ', ★PCA, ★Slot' :
+                                   assignment.wasPreferredSlot ? ', ★Slot' :
+                                   assignment.wasPreferredPCA ? ', ★PCA' : ''}
+                                  {assignment.assignmentTag === 'remaining' && ', remaining'}
+                                  {assignment.wasFloorPCA !== undefined && (
+                                    assignment.wasFloorPCA ? ', Floor' : ', Non-floor'
+                                  )}
+                                  {assignment.wasExcludedInCycle1 && ', C2-unlocked'}
+                                  )
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                        
+                        {/* Constraint Status */}
+                        {hasAllocationLog && (
+                          <div className="text-[10px] border-t border-gray-700 pt-1 text-gray-400">
+                            AM/PM: {allocationLog.summary.amPmBalanced ? '✓ Balanced' : '○ Not balanced'}
+                            {' | '}
+                            Gym: {allocationLog.summary.gymSlotUsed ? '⚠ Used' : '✓ Avoided'}
+                          </div>
+                        )}
                       </div>
-                      
-                      {/* Constraint Status */}
-                      <div className="text-[10px] border-t border-gray-700 pt-1 text-gray-400">
-                        AM/PM: {allocationLog.summary.amPmBalanced ? '✓ Balanced' : '○ Not balanced'}
-                        {' | '}
-                        Gym: {allocationLog.summary.gymSlotUsed ? '⚠ Used' : '✓ Avoided'}
+                    ) : (
+                      <div className="space-y-1">
+                        <div>Original calculated PCA: {originalCalculatedPCA.toFixed(2)}</div>
+                        <div>Expected to assign PCA: {originalCalculatedPCA.toFixed(2)} → {roundingDetails.rounded.toFixed(2)}</div>
+                        <div>in interval of {roundingDetails.lower.toFixed(2)} - ({roundingDetails.midpoint.toFixed(3)}) - {roundingDetails.upper.toFixed(2)} (rounded to nearest 0.25)</div>
+                        <div>Finally assigned with a/v PCA: {assignedPcaFteRounded.toFixed(2)}</div>
+                        <div className="text-gray-400 mt-2 text-[10px]">Run Step 3 algorithm to see detailed tracking.</div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      <div>Original calculated PCA: {originalCalculatedPCA.toFixed(2)}</div>
-                      <div>Expected to assign PCA: {originalCalculatedPCA.toFixed(2)} → {roundingDetails.rounded.toFixed(2)}</div>
-                      <div>in interval of {roundingDetails.lower.toFixed(2)} - ({roundingDetails.midpoint.toFixed(3)}) - {roundingDetails.upper.toFixed(2)} (rounded to nearest 0.25)</div>
-                      <div>Finally assigned with a/v PCA: {assignedPcaFteRounded.toFixed(2)}</div>
-                      <div className="text-gray-400 mt-2 text-[10px]">Run Step 3 algorithm to see detailed tracking.</div>
-                    </div>
-                  )}
-                  {/* Arrow pointing down */}
-                  <div className="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                    )}
+                    {/* Arrow pointing down */}
+                    <div className={`absolute top-full ${showOnLeft ? 'right-4' : 'left-4'} w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900`}></div>
+                  </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
           </div>
         ) : null}
       </CardContent>

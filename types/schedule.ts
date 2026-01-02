@@ -91,17 +91,20 @@ export interface SlotAssignmentLog {
   slot: number                    // 1, 2, 3, or 4
   pcaId: string                   // Which PCA was assigned
   pcaName: string                 // PCA name for display
-  assignedIn: 'step32' | 'step33' | 'step34'  // Which step made this assignment
+  assignedIn: 'step30' | 'step32' | 'step33' | 'step34'  // Which step made this assignment
   
   // Step 3.4 specific tracking
   cycle?: 1 | 2 | 3              // Which cycle (only for step34)
   condition?: 'A' | 'B' | 'C' | 'D'  // Which condition (only for step34 cycle 1)
+  allocationOrder?: number        // Order in which this team was allocated (1st, 2nd, etc.)
+  assignmentTag?: 'remaining'     // Short tag for display (e.g. 'remaining' slots from same PCA)
   
   // Decision factors
   wasPreferredSlot?: boolean      // Was this the team's preferred slot?
   wasPreferredPCA?: boolean       // Was this the team's preferred PCA?
   wasFloorPCA?: boolean           // Was this a floor-matched PCA?
   wasExcludedInCycle1?: boolean   // Did this PCA become available only in Cycle 2?
+  isBufferAssignment?: boolean    // Was this assigned from buffer floating PCA (step 3.0)?
   
   // Constraint handling
   amPmBalanceAchieved?: boolean   // Was AM/PM balance achieved?
@@ -117,6 +120,7 @@ export interface TeamAllocationLog {
   assignments: SlotAssignmentLog[]
   summary: {
     totalSlotsAssigned: number
+    fromStep30: number              // Buffer floating PCA manual assignments
     fromStep32: number
     fromStep33: number
     fromStep34Cycle1: number
@@ -128,6 +132,7 @@ export interface TeamAllocationLog {
     nonFloorPCAsUsed: number
     amPmBalanced: boolean
     gymSlotUsed: boolean  // true if gym slot was assigned despite avoidance
+    fulfilledByBuffer?: boolean     // true if team's pending was wholly fulfilled by buffer assignments
   }
 }
 

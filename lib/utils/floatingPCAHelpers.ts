@@ -248,6 +248,122 @@ export interface AssignSlotsResult {
   amPmBalanced: boolean
 }
 
+// ============================================================================
+// Safe Pending FTE Update Wrappers (prevents local/global overwrite bugs)
+// ============================================================================
+
+const ONE_SLOT_FTE = 0.25 as const
+
+/**
+ * Human-readable context for debugging / instrumentation.
+ * Keep these labels aligned with the Step 3.4 narrative shown to users.
+ */
+export type PendingUpdateContext =
+  | 'Preferred PCA + preferred slot → preferred slot from preferred PCA'
+  | 'Preferred PCA + preferred slot → preferred slot from floor PCA'
+  | 'Preferred PCA + preferred slot → preferred slot from non-floor PCA'
+  | 'Preferred PCA + preferred slot → fill remaining from preferred PCA'
+  | 'Preferred slot only → preferred slot from floor PCA'
+  | 'Preferred slot only → preferred slot from non-floor PCA'
+  | 'Preferred slot only → fill remaining from same PCA'
+  | 'Preferred PCA only → fill from preferred PCA'
+  | 'No preferences → floor PCA fallback'
+  | 'Floor PCA fallback'
+  | 'Non-floor PCA fallback'
+  | 'Cleanup pass → one slot at a time'
+
+export interface AssignAndUpdatePendingResult extends AssignSlotsResult {
+  pendingBefore: number
+  pendingAfter: number
+  context?: PendingUpdateContext
+}
+
+/**
+ * Assign exactly ONE slot (0.25) and update the team's global pendingFTE record.
+ *
+ * This is the safe way to do "local request" calls. It prevents regressions where
+ * callers accidentally overwrite the team's global pending with result.newPendingFTE
+ * (which is only the local remaining for the 0.25 request).
+ */
+export function assignOneSlotAndUpdatePending(
+  options: Omit<AssignSlotsOptions, 'pendingFTE'> & {
+    pendingFTEByTeam: Record<Team, number>
+    context?: PendingUpdateContext
+  }
+): AssignAndUpdatePendingResult {
+  const { pendingFTEByTeam, team, context, ...rest } = options
+  const pendingBefore = pendingFTEByTeam[team] ?? 0
+
+  // If remaining need is less than one slot, treat as complete (avoid accidental over-fill).
+  if (pendingBefore < ONE_SLOT_FTE) {
+    return {
+      slotsAssigned: [],
+      newPendingFTE: 0,
+      amPmBalanced: false,
+      pendingBefore,
+      pendingAfter: pendingBefore,
+      context,
+    }
+  }
+
+  const result = assignSlotsToTeam({
+    ...rest,
+    team,
+    pendingFTE: ONE_SLOT_FTE,
+  })
+
+  const pendingAfter = Math.max(0, pendingBefore - result.slotsAssigned.length * ONE_SLOT_FTE)
+  pendingFTEByTeam[team] = pendingAfter
+
+  return {
+    ...result,
+    pendingBefore,
+    pendingAfter,
+    context,
+  }
+}
+
+/**
+ * Assign up to the team's current pendingFTE (global request) and update the team's global pendingFTE record.
+ *
+ * This is the safe way to do "global request" calls where result.newPendingFTE is valid to store back.
+ */
+export function assignUpToPendingAndUpdatePending(
+  options: Omit<AssignSlotsOptions, 'pendingFTE'> & {
+    pendingFTEByTeam: Record<Team, number>
+    context?: PendingUpdateContext
+  }
+): AssignAndUpdatePendingResult {
+  const { pendingFTEByTeam, team, context, ...rest } = options
+  const pendingBefore = pendingFTEByTeam[team] ?? 0
+
+  if (pendingBefore <= 0) {
+    return {
+      slotsAssigned: [],
+      newPendingFTE: 0,
+      amPmBalanced: false,
+      pendingBefore,
+      pendingAfter: pendingBefore,
+      context,
+    }
+  }
+
+  const result = assignSlotsToTeam({
+    ...rest,
+    team,
+    pendingFTE: pendingBefore,
+  })
+
+  pendingFTEByTeam[team] = result.newPendingFTE
+
+  return {
+    ...result,
+    pendingBefore,
+    pendingAfter: result.newPendingFTE,
+    context,
+  }
+}
+
 /**
  * Assign slots from a PCA to a team with AM/PM balancing.
  * Mutates the allocation object.
@@ -391,6 +507,7 @@ export function createEmptyTracker(): AllocationTracker {
       assignments: [],
       summary: {
         totalSlotsAssigned: 0,
+        fromStep30: 0,
         fromStep32: 0,
         fromStep33: 0,
         fromStep34Cycle1: 0,
@@ -402,6 +519,7 @@ export function createEmptyTracker(): AllocationTracker {
         nonFloorPCAsUsed: 0,
         amPmBalanced: false,
         gymSlotUsed: false,
+        fulfilledByBuffer: false,
       },
     }
   }
@@ -422,7 +540,9 @@ export function recordAssignment(
   // Update summary
   teamLog.summary.totalSlotsAssigned++
   
-  if (log.assignedIn === 'step32') {
+  if (log.assignedIn === 'step30') {
+    teamLog.summary.fromStep30++
+  } else if (log.assignedIn === 'step32') {
     teamLog.summary.fromStep32++
   } else if (log.assignedIn === 'step33') {
     teamLog.summary.fromStep33++

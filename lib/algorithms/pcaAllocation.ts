@@ -1684,9 +1684,10 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
   }
 
   // Allocate floating PCA to highest pending teams first, filling each completely
+  const excludedTeams = new Set<Team>() // Track teams that can't be filled
   while (remainingFloatingPCA.length > 0) {
-    // Get next team with highest pending FTE
-    const targetTeam = await getNextHighestPendingTeam()
+    // Get next team with highest pending FTE (excluding teams that can't be filled)
+    const targetTeam = await getNextHighestPendingTeam(excludedTeams)
     if (!targetTeam) break // No more teams need PCA
     
     // Fill this team completely (until pending = 0)
@@ -1822,7 +1823,11 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         }
       }
       
-      if (!pcaToAssign) break // No available PCA for this team
+      if (!pcaToAssign) {
+        // No available PCA for this team - exclude it from further selection to prevent infinite loop
+        excludedTeams.add(targetTeam)
+        break // Exit inner loop, outer loop will try next team
+      }
       
       const allocation = allocations.find(a => a.staff_id === pcaToAssign!.id)
       const remainingFTE = allocation?.fte_remaining || 1
@@ -1886,6 +1891,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           if (slotsTakenByOtherFloating.includes(slot)) continue
           
           const slotField = slot === 1 ? 'slot1' : slot === 2 ? 'slot2' : slot === 3 ? 'slot3' : 'slot4'
+          // Only assign if slot is null (not already assigned, including special program assignments)
           if (allocation[slotField] === null && (!avoidGym || gymSlot !== slot)) {
             allocation[slotField] = targetTeam
             slotsAssigned++
@@ -2121,7 +2127,9 @@ import {
   findAvailablePCAs,
   getOrCreateAllocation,
   getTeamExistingSlots,
-  assignSlotsToTeam,
+  assignOneSlotAndUpdatePending,
+  assignUpToPendingAndUpdatePending,
+  getAvailableSlotsForTeam,
   isFloorPCAForTeam,
   TeamPreferenceInfo,
 } from '@/lib/utils/floatingPCAHelpers'
@@ -2176,6 +2184,25 @@ export async function allocateFloatingPCA_v2(
   // Initialize tracker
   const tracker = createEmptyTracker()
   
+  // Track allocation order (1st, 2nd, etc.) - based on team order from Step 3.1, not chronological assignment
+  // Build a map from team to its position in teamOrder (1-based)
+  const allocationOrderMap = new Map<Team, number>()
+  teamOrder.forEach((team, index) => {
+    allocationOrderMap.set(team, index + 1) // 1-based: 1st, 2nd, 3rd, etc.
+  })
+  
+  // Helper to record assignment with allocation order tracking
+  const recordAssignmentWithOrder = (team: Team, log: Parameters<typeof recordAssignment>[2]) => {
+    // Get allocation order from teamOrder position (not chronological)
+    const order = allocationOrderMap.get(team)!
+    
+    // Add allocation order to log
+    recordAssignment(tracker, team, {
+      ...log,
+      allocationOrder: order,
+    })
+  }
+  
   // Track errors
   const errors: { preferredSlotUnassigned?: string[] } = {}
   
@@ -2223,19 +2250,19 @@ export async function allocateFloatingPCA_v2(
     switch (pref.condition) {
       case 'A':
         // Condition A: Preferred PCA + Preferred Slot
-        await processConditionA(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, preferredPCAMap, tracker, errors)
+        await processConditionA(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, preferredPCAMap, tracker, errors, recordAssignmentWithOrder)
         break
       case 'B':
         // Condition B: Preferred Slot only
-        await processConditionB(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, preferredPCAMap, tracker, errors)
+        await processConditionB(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, preferredPCAMap, tracker, errors, recordAssignmentWithOrder)
         break
       case 'C':
         // Condition C: Preferred PCA only
-        await processConditionC(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, preferredPCAMap, tracker)
+        await processConditionC(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, preferredPCAMap, tracker, recordAssignmentWithOrder)
         break
       case 'D':
         // Condition D: No preferences
-        await processConditionD(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, preferredPCAMap, tracker)
+        await processConditionD(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, preferredPCAMap, tracker, recordAssignmentWithOrder)
         break
     }
     
@@ -2255,7 +2282,7 @@ export async function allocateFloatingPCA_v2(
       if (isAllocationComplete()) break
       
       const pref = teamPrefs[team]
-      await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 2)
+      await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 2, recordAssignmentWithOrder, undefined)
     }
     
     // Phase 2b: Non-Floor PCA
@@ -2267,7 +2294,7 @@ export async function allocateFloatingPCA_v2(
         if (isAllocationComplete()) break
         
         const pref = teamPrefs[team]
-        await processNonFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker)
+        await processNonFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, recordAssignmentWithOrder)
       }
     }
   }
@@ -2277,13 +2304,16 @@ export async function allocateFloatingPCA_v2(
   // ========================================================================
   
   if (!isAllocationComplete()) {
-    await processCycle3Cleanup(allocations, pendingFTE, pcaPool, pcaPreferences, teamPrefs, tracker)
+    await processCycle3Cleanup(allocations, pendingFTE, pcaPool, pcaPreferences, teamPrefs, tracker, recordAssignmentWithOrder)
   }
   
   // Finalize tracker summary
   finalizeTrackerSummary(tracker)
-  
-  
+
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:2330',message:'Final allocation order map (post-fix)',data:{allocationOrderMap:Object.fromEntries(allocationOrderMap),teamOrder:teamOrder,orderByTeamOrder:teamOrder.map((t,i)=>({team:t,teamOrderIndex:i+1,allocationOrder:allocationOrderMap.get(t)||null}))},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'C'})}).catch(()=>{});
+  // #endregion
+
   return {
     allocations,
     pendingPCAFTEPerTeam: pendingFTE,
@@ -2305,9 +2335,14 @@ async function processConditionA(
   pcaPreferences: PCAPreference[],
   preferredPCAMap: Map<string, Team[]>,
   tracker: AllocationTracker,
-  errors: { preferredSlotUnassigned?: string[] }
+  errors: { preferredSlotUnassigned?: string[] },
+  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void
 ): Promise<void> {
   const { preferredPCAIds, preferredSlot, teamFloor, gymSlot, avoidGym } = pref
+  
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:2339',message:'Condition A entry',data:{team,preferredSlot,preferredPCAIds,pendingFTE:pendingFTE[team]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+  // #endregion
   
   if (!preferredSlot) return
   
@@ -2325,37 +2360,47 @@ async function processConditionA(
     
     // Check if preferred slot is available
     const existingSlots = getTeamExistingSlots(team, allocations)
-    const result = assignSlotsToTeam({
+    const result = assignOneSlotAndUpdatePending({
       pca,
       allocation,
       team,
-      pendingFTE: 0.25,  // Just one slot for preferred
       teamExistingSlots: existingSlots,
       gymSlot,
       avoidGym,
       preferredSlot,
+      pendingFTEByTeam: pendingFTE,
+      context: 'Preferred PCA + preferred slot → preferred slot from preferred PCA',
     })
     
-    if (result.slotsAssigned.includes(preferredSlot)) {
-      preferredSlotAssigned = true
-      // BUG FIX: Use result.newPendingFTE (which is 0 when pendingFTE=0.25 and 1 slot assigned)
-      // Then adjust by the difference: we passed 0.25 but pendingFTE[team] might be larger
-      const fteUsedForPreferredSlot = 0.25
-      pendingFTE[team] = Math.max(0, pendingFTE[team] - fteUsedForPreferredSlot)
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:2368',message:'Condition A Step 1 - after assignSlotsToTeam',data:{team,pcaId,pcaName:pca.name,preferredSlot,slotsAssigned:result.slotsAssigned,includesPreferredSlot:result.slotsAssigned.includes(preferredSlot),newPendingFTE:result.newPendingFTE,allocationSlots:{slot1:allocation.slot1,slot2:allocation.slot2,slot3:allocation.slot3,slot4:allocation.slot4}},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+    // #endregion
+    
+    // Record ALL slots assigned, even if preferred slot is not included
+    // This handles the case where preferred slot was already assigned in Step 3.2,
+    // but other slots from the preferred PCA are still assigned in Step 1
+    if (result.slotsAssigned.length > 0) {
+      // Check if preferred slot was assigned (for preferredSlotAssigned flag)
+      if (result.slotsAssigned.includes(preferredSlot)) {
+        preferredSlotAssigned = true
+      }
       
-      recordAssignment(tracker, team, {
-        slot: preferredSlot,
-        pcaId: pca.id,
-        pcaName: pca.name,
-        assignedIn: 'step34',
-        cycle: 1,
-        condition: 'A',
-        wasPreferredSlot: true,
-        wasPreferredPCA: true,
-        wasFloorPCA: isFloorPCAForTeam(pca, teamFloor),
-        amPmBalanceAchieved: result.amPmBalanced,
-        gymSlotAvoided: gymSlot !== null && preferredSlot !== gymSlot,
-      })
+      // Record ALL slots assigned (not just when preferred slot is included)
+      for (const slot of result.slotsAssigned) {
+        recordAssignmentWithOrder(team, {
+          slot,
+          pcaId: pca.id,
+          pcaName: pca.name,
+          assignedIn: 'step34',
+          cycle: 1,
+          condition: 'A',
+          wasPreferredSlot: slot === preferredSlot,
+          wasPreferredPCA: true,
+          wasFloorPCA: undefined,  // Not from floor/non-floor loop - from preferred PCA
+          amPmBalanceAchieved: result.amPmBalanced,
+          gymSlotAvoided: gymSlot !== null && slot !== gymSlot,
+        })
+      }
     }
   }
   
@@ -2380,37 +2425,37 @@ async function processConditionA(
       
       const allocation = getOrCreateAllocation(pca.id, pca.name, pca.fte_pca, pca.leave_type, team, allocations)
       const existingSlots = getTeamExistingSlots(team, allocations)
-      const result = assignSlotsToTeam({
+      const result = assignOneSlotAndUpdatePending({
         pca,
         allocation,
         team,
-        pendingFTE: 0.25,
         teamExistingSlots: existingSlots,
         gymSlot,
         avoidGym,
         preferredSlot,
+        pendingFTEByTeam: pendingFTE,
+        context: 'Preferred PCA + preferred slot → preferred slot from floor PCA',
       })
       
       if (result.slotsAssigned.includes(preferredSlot)) {
         preferredSlotAssigned = true
-        // BUG FIX: Use result.newPendingFTE (which is 0 when pendingFTE=0.25 and 1 slot assigned)
-        // Then adjust by the difference: we passed 0.25 but pendingFTE[team] might be larger
-        const fteUsedForPreferredSlot = 0.25
-        pendingFTE[team] = Math.max(0, pendingFTE[team] - fteUsedForPreferredSlot)
         
-        recordAssignment(tracker, team, {
-          slot: preferredSlot,
-          pcaId: pca.id,
-          pcaName: pca.name,
-          assignedIn: 'step34',
-          cycle: 1,
-          condition: 'A',
-          wasPreferredSlot: true,
-          wasPreferredPCA: false,
-          wasFloorPCA: true,
-          amPmBalanceAchieved: result.amPmBalanced,
-          gymSlotAvoided: gymSlot !== null && preferredSlot !== gymSlot,
-        })
+        // Record ALL slots assigned (not just the preferred slot)
+        for (const slot of result.slotsAssigned) {
+          recordAssignmentWithOrder(team, {
+            slot,
+            pcaId: pca.id,
+            pcaName: pca.name,
+            assignedIn: 'step34',
+            cycle: 1,
+            condition: 'A',
+            wasPreferredSlot: slot === preferredSlot,
+            wasPreferredPCA: false,
+            wasFloorPCA: true,
+            amPmBalanceAchieved: result.amPmBalanced,
+            gymSlotAvoided: gymSlot !== null && slot !== gymSlot,
+          })
+        }
       }
     }
   }
@@ -2436,37 +2481,37 @@ async function processConditionA(
       
       const allocation = getOrCreateAllocation(pca.id, pca.name, pca.fte_pca, pca.leave_type, team, allocations)
       const existingSlots = getTeamExistingSlots(team, allocations)
-      const result = assignSlotsToTeam({
+      const result = assignOneSlotAndUpdatePending({
         pca,
         allocation,
         team,
-        pendingFTE: 0.25,
         teamExistingSlots: existingSlots,
         gymSlot,
         avoidGym,
         preferredSlot,
+        pendingFTEByTeam: pendingFTE,
+        context: 'Preferred PCA + preferred slot → preferred slot from non-floor PCA',
       })
       
       if (result.slotsAssigned.includes(preferredSlot)) {
         preferredSlotAssigned = true
-        // BUG FIX: Use result.newPendingFTE (which is 0 when pendingFTE=0.25 and 1 slot assigned)
-        // Then adjust by the difference: we passed 0.25 but pendingFTE[team] might be larger
-        const fteUsedForPreferredSlot = 0.25
-        pendingFTE[team] = Math.max(0, pendingFTE[team] - fteUsedForPreferredSlot)
         
-        recordAssignment(tracker, team, {
-          slot: preferredSlot,
-          pcaId: pca.id,
-          pcaName: pca.name,
-          assignedIn: 'step34',
-          cycle: 1,
-          condition: 'A',
-          wasPreferredSlot: true,
-          wasPreferredPCA: false,
-          wasFloorPCA: false,
-          amPmBalanceAchieved: result.amPmBalanced,
-          gymSlotAvoided: gymSlot !== null && preferredSlot !== gymSlot,
-        })
+        // Record ALL slots assigned (not just the preferred slot)
+        for (const slot of result.slotsAssigned) {
+          recordAssignmentWithOrder(team, {
+            slot,
+            pcaId: pca.id,
+            pcaName: pca.name,
+            assignedIn: 'step34',
+            cycle: 1,
+            condition: 'A',
+            wasPreferredSlot: slot === preferredSlot,
+            wasPreferredPCA: false,
+            wasFloorPCA: false,
+            amPmBalanceAchieved: result.amPmBalanced,
+            gymSlotAvoided: gymSlot !== null && slot !== gymSlot,
+          })
+        }
       }
     }
   }
@@ -2478,6 +2523,10 @@ async function processConditionA(
   }
   
   // Step 4: Fill remaining slots from preferred PCA(s)
+  // Continue assigning from the same PCA until team's pending FTE = 0 or PCA has no more slots
+  // NOTE: assignSlotsToTeam() already limits assignments to the team's pending FTE, so it will NOT
+  // over-assign. For example, if team needs 0.5 FTE (2 slots) and PCA has 0.75 FTE (3 slots),
+  // it will only assign 2 slots (0.5 FTE), not 3 slots (0.75 FTE).
   if (pendingFTE[team] > 0) {
     for (const pcaId of preferredPCAIds) {
       if (pendingFTE[team] <= 0) break
@@ -2485,43 +2534,101 @@ async function processConditionA(
       const pca = pcaPool.find(p => p.id === pcaId)
       if (!pca) continue
       
-      const allocation = allocations.find(a => a.staff_id === pca.id)
-      if (!allocation || allocation.fte_remaining <= 0) continue
-      
-      const existingSlots = getTeamExistingSlots(team, allocations)
-      const result = assignSlotsToTeam({
-        pca,
-        allocation,
-        team,
-        pendingFTE: pendingFTE[team],
-        teamExistingSlots: existingSlots,
-        gymSlot,
-        avoidGym,
-      })
-      
-      for (const slot of result.slotsAssigned) {
-        recordAssignment(tracker, team, {
-          slot,
-          pcaId: pca.id,
-          pcaName: pca.name,
-          assignedIn: 'step34',
-          cycle: 1,
-          condition: 'A',
-          wasPreferredSlot: false,
-          wasPreferredPCA: true,
-          wasFloorPCA: isFloorPCAForTeam(pca, teamFloor),
-          amPmBalanceAchieved: result.amPmBalanced,
-          gymSlotAvoided: gymSlot !== null && slot !== gymSlot,
-        })
+      if (team === 'FO') {
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:Step4PreferredPCA_start',message:'CondA Step4 - processing preferred PCA',data:{team,pcaId,pcaName:pca.name,pendingFTE:pendingFTE[team],gymSlot,avoidGym},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+      }
+
+      // Get or create allocation for this PCA
+      const allocation = getOrCreateAllocation(pca.id, pca.name, pca.fte_pca, pca.leave_type, team, allocations)
+
+      if (team === 'FO') {
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:Step4PreferredPCA_alloc',message:'CondA Step4 - got allocation',data:{team,pcaId,fteRemaining:allocation.fte_remaining,slot1:allocation.slot1,slot2:allocation.slot2,slot3:allocation.slot3,slot4:allocation.slot4,pendingFTE:pendingFTE[team]},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
       }
       
-      pendingFTE[team] = result.newPendingFTE
+      // Continue assigning from this PCA until team's pending FTE is exhausted or PCA has no more slots
+      // The while loop ensures we stay on the same PCA and keep assigning until one condition is met:
+      // 1. Team's pending FTE reaches 0 (team requirement fulfilled)
+      // 2. PCA's fte_remaining reaches 0 (PCA exhausted)
+      // 3. PCA has no more available slots for this team
+      while (pendingFTE[team] > 0 && allocation.fte_remaining > 0) {
+        // Check if PCA has any available slots for this team
+        const existingSlots = getTeamExistingSlots(team, allocations)
+        const availableSlots = getAvailableSlotsForTeam(allocation, gymSlot, avoidGym)
+        
+        // If no available slots, break (PCA is exhausted for this team)
+        if (team === 'FO') {
+          // #region agent log
+          fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:Step4PreferredPCA_iter',message:'CondA Step4 - loop iteration',data:{team,pcaId,pendingFTE:pendingFTE[team],fteRemaining:allocation.fte_remaining,existingSlots,availableSlots,slot1:allocation.slot1,slot2:allocation.slot2,slot3:allocation.slot3,slot4:allocation.slot4,gymSlot,avoidGym},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
+        }
+
+        if (availableSlots.length === 0) {
+          if (team === 'FO') {
+            // #region agent log
+            fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:Step4PreferredPCA_break_noAvailable',message:'CondA Step4 - break: no available slots',data:{team,pcaId,pendingFTE:pendingFTE[team],fteRemaining:allocation.fte_remaining,existingSlots,slot1:allocation.slot1,slot2:allocation.slot2,slot3:allocation.slot3,slot4:allocation.slot4,gymSlot,avoidGym},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})}).catch(()=>{});
+            // #endregion
+          }
+          break
+        }
+        
+        // Assign ONE slot (0.25 FTE) at a time from this PCA.
+        // This avoids AM/PM balancing heuristics "skipping" a remaining usable slot
+        // when the team still has pending FTE (e.g. slot 4 remains usable while slot 3 is blocked by avoidGym).
+        const result = assignOneSlotAndUpdatePending({
+          pca,
+          allocation,
+          team,
+          teamExistingSlots: existingSlots,
+          gymSlot,
+          avoidGym,
+          pendingFTEByTeam: pendingFTE,
+          context: 'Preferred PCA + preferred slot → fill remaining from preferred PCA',
+        })
+
+        if (team === 'FO') {
+          // #region agent log
+          fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:Step4PreferredPCA_afterAssign',message:'CondA Step4 - after assignSlotsToTeam',data:{team,pcaId,slotsAssigned:result.slotsAssigned,newPendingFTEReported:result.newPendingFTE,fteRemaining:allocation.fte_remaining,slot1:allocation.slot1,slot2:allocation.slot2,slot3:allocation.slot3,slot4:allocation.slot4},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'D'})}).catch(()=>{});
+          // #endregion
+        }
+        
+        // If no slots were assigned, break (shouldn't happen, but safety check)
+        if (result.slotsAssigned.length === 0) {
+          if (team === 'FO') {
+            // #region agent log
+            fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:Step4PreferredPCA_break_noAssign',message:'CondA Step4 - break: assignSlotsToTeam returned no slots',data:{team,pcaId,pendingFTE:pendingFTE[team],fteRemaining:allocation.fte_remaining,existingSlots,availableSlots,slot1:allocation.slot1,slot2:allocation.slot2,slot3:allocation.slot3,slot4:allocation.slot4,gymSlot,avoidGym},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'E'})}).catch(()=>{});
+            // #endregion
+          }
+          break
+        }
+        
+        // Record all slots assigned
+        for (const slot of result.slotsAssigned) {
+          recordAssignmentWithOrder(team, {
+            slot,
+            pcaId: pca.id,
+            pcaName: pca.name,
+            assignedIn: 'step34',
+            cycle: 1,
+            condition: 'A',
+            assignmentTag: 'remaining',
+            wasPreferredSlot: false,
+            wasPreferredPCA: true,
+            wasFloorPCA: undefined,  // Not from floor/non-floor loop - from preferred PCA
+            amPmBalanceAchieved: result.amPmBalanced,
+            gymSlotAvoided: gymSlot !== null && slot !== gymSlot,
+          })
+        }
+      }
     }
   }
   
   // Step 5: Fill remaining from floor PCA (excluding preferred of other teams)
   if (pendingFTE[team] > 0) {
-    await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 1, 'A')
+    await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 1, recordAssignmentWithOrder, 'A')
   }
 }
 
@@ -2538,7 +2645,8 @@ async function processConditionB(
   pcaPreferences: PCAPreference[],
   preferredPCAMap: Map<string, Team[]>,
   tracker: AllocationTracker,
-  errors: { preferredSlotUnassigned?: string[] }
+  errors: { preferredSlotUnassigned?: string[] },
+  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void
 ): Promise<void> {
   const { preferredSlot, teamFloor, gymSlot, avoidGym } = pref
   
@@ -2567,58 +2675,61 @@ async function processConditionB(
     
     const allocation = getOrCreateAllocation(pca.id, pca.name, pca.fte_pca, pca.leave_type, team, allocations)
     const existingSlots = getTeamExistingSlots(team, allocations)
-    const result = assignSlotsToTeam({
+    const result = assignOneSlotAndUpdatePending({
       pca,
       allocation,
       team,
-      pendingFTE: 0.25,
       teamExistingSlots: existingSlots,
       gymSlot,
       avoidGym,
       preferredSlot,
+      pendingFTEByTeam: pendingFTE,
+      context: 'Preferred slot only → preferred slot from floor PCA',
     })
     
     if (result.slotsAssigned.includes(preferredSlot)) {
       preferredSlotAssigned = true
-      // BUG FIX: Use result.newPendingFTE instead of manually subtracting 0.25
-      // The result.newPendingFTE already accounts for the slots assigned (should be 0 when pendingFTE=0.25 and 1 slot assigned)
-      pendingFTE[team] = result.newPendingFTE
       lastUsedPCA = pca
-      
-      recordAssignment(tracker, team, {
-        slot: preferredSlot,
-        pcaId: pca.id,
-        pcaName: pca.name,
-        assignedIn: 'step34',
-        cycle: 1,
-        condition: 'B',
-        wasPreferredSlot: true,
-        wasPreferredPCA: false,
-        wasFloorPCA: true,
-        amPmBalanceAchieved: result.amPmBalanced,
-        gymSlotAvoided: gymSlot !== null && preferredSlot !== gymSlot,
-      })
+
+      // Record ALL slots assigned (not just the preferred slot)
+      for (const slot of result.slotsAssigned) {
+        recordAssignmentWithOrder(team, {
+          slot,
+          pcaId: pca.id,
+          pcaName: pca.name,
+          assignedIn: 'step34',
+          cycle: 1,
+          condition: 'B',
+          wasPreferredSlot: slot === preferredSlot,
+          wasPreferredPCA: false,
+          wasFloorPCA: true,
+          amPmBalanceAchieved: result.amPmBalanced,
+          gymSlotAvoided: gymSlot !== null && slot !== gymSlot,
+        })
+      }
       
       // Fill remaining from same PCA
       if (pendingFTE[team] > 0 && allocation.fte_remaining > 0) {
-        const moreSlots = assignSlotsToTeam({
+        const moreSlots = assignUpToPendingAndUpdatePending({
           pca,
           allocation,
           team,
-          pendingFTE: pendingFTE[team],
           teamExistingSlots: [...existingSlots, ...result.slotsAssigned],
           gymSlot,
           avoidGym,
+          pendingFTEByTeam: pendingFTE,
+          context: 'Preferred slot only → fill remaining from same PCA',
         })
         
         for (const slot of moreSlots.slotsAssigned) {
-          recordAssignment(tracker, team, {
+          recordAssignmentWithOrder(team, {
             slot,
             pcaId: pca.id,
             pcaName: pca.name,
             assignedIn: 'step34',
             cycle: 1,
             condition: 'B',
+            assignmentTag: 'remaining',
             wasPreferredSlot: false,
             wasPreferredPCA: false,
             wasFloorPCA: true,
@@ -2626,8 +2737,6 @@ async function processConditionB(
             gymSlotAvoided: gymSlot !== null && slot !== gymSlot,
           })
         }
-        
-        pendingFTE[team] = moreSlots.newPendingFTE
       }
     }
   }
@@ -2653,59 +2762,61 @@ async function processConditionB(
       
       const allocation = getOrCreateAllocation(pca.id, pca.name, pca.fte_pca, pca.leave_type, team, allocations)
       const existingSlots = getTeamExistingSlots(team, allocations)
-      const result = assignSlotsToTeam({
+      const result = assignOneSlotAndUpdatePending({
         pca,
         allocation,
         team,
-        pendingFTE: 0.25,
         teamExistingSlots: existingSlots,
         gymSlot,
         avoidGym,
         preferredSlot,
+        pendingFTEByTeam: pendingFTE,
+        context: 'Preferred slot only → preferred slot from non-floor PCA',
       })
       
       if (result.slotsAssigned.includes(preferredSlot)) {
         preferredSlotAssigned = true
-        // BUG FIX: Use result.newPendingFTE (which is 0 when pendingFTE=0.25 and 1 slot assigned)
-        // Then adjust by the difference: we passed 0.25 but pendingFTE[team] might be larger
-        const fteUsedForPreferredSlot = 0.25
-        pendingFTE[team] = Math.max(0, pendingFTE[team] - fteUsedForPreferredSlot)
         lastUsedPCA = pca
-        
-        recordAssignment(tracker, team, {
-          slot: preferredSlot,
-          pcaId: pca.id,
-          pcaName: pca.name,
-          assignedIn: 'step34',
-          cycle: 1,
-          condition: 'B',
-          wasPreferredSlot: true,
-          wasPreferredPCA: false,
-          wasFloorPCA: false,
-          amPmBalanceAchieved: result.amPmBalanced,
-          gymSlotAvoided: gymSlot !== null && preferredSlot !== gymSlot,
-        })
+
+        // Record ALL slots assigned (not just the preferred slot)
+        for (const slot of result.slotsAssigned) {
+          recordAssignmentWithOrder(team, {
+            slot,
+            pcaId: pca.id,
+            pcaName: pca.name,
+            assignedIn: 'step34',
+            cycle: 1,
+            condition: 'B',
+            wasPreferredSlot: slot === preferredSlot,
+            wasPreferredPCA: false,
+            wasFloorPCA: false,
+            amPmBalanceAchieved: result.amPmBalanced,
+            gymSlotAvoided: gymSlot !== null && slot !== gymSlot,
+          })
+        }
         
         // Fill remaining from same PCA
         if (pendingFTE[team] > 0 && allocation.fte_remaining > 0) {
-          const moreSlots = assignSlotsToTeam({
+          const moreSlots = assignUpToPendingAndUpdatePending({
             pca,
             allocation,
             team,
-            pendingFTE: pendingFTE[team],
             teamExistingSlots: [...existingSlots, ...result.slotsAssigned],
             gymSlot,
             avoidGym,
+            pendingFTEByTeam: pendingFTE,
+            context: 'Preferred slot only → fill remaining from same PCA',
           })
           
           for (const slot of moreSlots.slotsAssigned) {
-            recordAssignment(tracker, team, {
+            recordAssignmentWithOrder(team, {
               slot,
               pcaId: pca.id,
               pcaName: pca.name,
               assignedIn: 'step34',
               cycle: 1,
               condition: 'B',
+              assignmentTag: 'remaining',
               wasPreferredSlot: false,
               wasPreferredPCA: false,
               wasFloorPCA: false,
@@ -2713,8 +2824,6 @@ async function processConditionB(
               gymSlotAvoided: gymSlot !== null && slot !== gymSlot,
             })
           }
-          
-          pendingFTE[team] = moreSlots.newPendingFTE
         }
       }
     }
@@ -2728,7 +2837,7 @@ async function processConditionB(
   
   // Step 3: Continue filling from floor PCAs
   if (pendingFTE[team] > 0) {
-    await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 1, 'B')
+    await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 1, recordAssignmentWithOrder, 'B')
   }
 }
 
@@ -2744,7 +2853,8 @@ async function processConditionC(
   pcaPool: PCAData[],
   pcaPreferences: PCAPreference[],
   preferredPCAMap: Map<string, Team[]>,
-  tracker: AllocationTracker
+  tracker: AllocationTracker,
+  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void
 ): Promise<void> {
   const { preferredPCAIds, teamFloor, gymSlot, avoidGym } = pref
   
@@ -2759,38 +2869,39 @@ async function processConditionC(
     if (allocation.fte_remaining <= 0) continue
     
     const existingSlots = getTeamExistingSlots(team, allocations)
-    const result = assignSlotsToTeam({
+    const result = assignUpToPendingAndUpdatePending({
       pca,
       allocation,
       team,
-      pendingFTE: pendingFTE[team],
       teamExistingSlots: existingSlots,
       gymSlot,
       avoidGym,
+      pendingFTEByTeam: pendingFTE,
+      context: 'Preferred PCA only → fill from preferred PCA',
     })
     
-    for (const slot of result.slotsAssigned) {
-      recordAssignment(tracker, team, {
-        slot,
-        pcaId: pca.id,
-        pcaName: pca.name,
-        assignedIn: 'step34',
-        cycle: 1,
-        condition: 'C',
-        wasPreferredSlot: false,
-        wasPreferredPCA: true,
-        wasFloorPCA: isFloorPCAForTeam(pca, teamFloor),
-        amPmBalanceAchieved: result.amPmBalanced,
-        gymSlotAvoided: gymSlot !== null && slot !== gymSlot,
-      })
-    }
+      // Condition C: Preferred PCA only - don't set wasFloorPCA (not from floor/non-floor loop)
+      for (const slot of result.slotsAssigned) {
+        recordAssignmentWithOrder(team, {
+          slot,
+          pcaId: pca.id,
+          pcaName: pca.name,
+          assignedIn: 'step34',
+          cycle: 1,
+          condition: 'C',
+          wasPreferredSlot: false,
+          wasPreferredPCA: true,
+          wasFloorPCA: undefined,  // Not from floor/non-floor loop - from preferred PCA
+          amPmBalanceAchieved: result.amPmBalanced,
+          gymSlotAvoided: gymSlot !== null && slot !== gymSlot,
+        })
+      }
     
-    pendingFTE[team] = result.newPendingFTE
   }
   
   // Step 2: Fill remaining from floor PCA
   if (pendingFTE[team] > 0) {
-    await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 1, 'C')
+    await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 1, recordAssignmentWithOrder, 'C')
   }
 }
 
@@ -2806,10 +2917,11 @@ async function processConditionD(
   pcaPool: PCAData[],
   pcaPreferences: PCAPreference[],
   preferredPCAMap: Map<string, Team[]>,
-  tracker: AllocationTracker
+  tracker: AllocationTracker,
+  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void
 ): Promise<void> {
   // Just use floor PCA fallback directly
-  await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 1, 'D')
+  await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 1, recordAssignmentWithOrder, 'D')
 }
 
 // ============================================================================
@@ -2825,6 +2937,7 @@ async function processFloorPCAFallback(
   pcaPreferences: PCAPreference[],
   tracker: AllocationTracker,
   cycle: 1 | 2,
+  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void,
   condition?: 'A' | 'B' | 'C' | 'D'
 ): Promise<void> {
   const { teamFloor, gymSlot, avoidGym } = pref
@@ -2847,6 +2960,12 @@ async function processFloorPCAFallback(
     gymSlot,
     avoidGym,
   })
+
+  if (team === 'FO' && cycle === 2) {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:FloorFallback_cycle2_entry',message:'Cycle2 floor fallback - FO entry',data:{team,cycle,condition,pendingFTE:pendingFTE[team],teamFloor,gymSlot,avoidGym,floorPCAsCount:floorPCAs.length,firstFloorPCAIds:floorPCAs.slice(0,5).map(p=>p.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'F'})}).catch(()=>{});
+    // #endregion
+  }
   
   for (const pca of floorPCAs) {
     if (pendingFTE[team] <= 0) break
@@ -2855,21 +2974,24 @@ async function processFloorPCAFallback(
     if (allocation.fte_remaining <= 0) continue
     
     const existingSlots = getTeamExistingSlots(team, allocations)
-    const result = assignSlotsToTeam({
+    const result = assignUpToPendingAndUpdatePending({
       pca,
       allocation,
       team,
-      pendingFTE: pendingFTE[team],
       teamExistingSlots: existingSlots,
       gymSlot,
       avoidGym,
+      pendingFTEByTeam: pendingFTE,
+      context: condition === 'D'
+        ? 'No preferences → floor PCA fallback'
+        : 'Floor PCA fallback',
     })
     
     // Check if this PCA was excluded in Cycle 1 but available now (Cycle 2)
     const wasExcludedInCycle1 = cycle === 2 && preferredPCAMap.has(pca.id)
     
     for (const slot of result.slotsAssigned) {
-      recordAssignment(tracker, team, {
+      recordAssignmentWithOrder(team, {
         slot,
         pcaId: pca.id,
         pcaName: pca.name,
@@ -2885,7 +3007,6 @@ async function processFloorPCAFallback(
       })
     }
     
-    pendingFTE[team] = result.newPendingFTE
   }
 }
 
@@ -2900,7 +3021,8 @@ async function processNonFloorPCAFallback(
   pendingFTE: Record<Team, number>,
   pcaPool: PCAData[],
   pcaPreferences: PCAPreference[],
-  tracker: AllocationTracker
+  tracker: AllocationTracker,
+  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void
 ): Promise<void> {
   const { teamFloor, gymSlot, avoidGym } = pref
   
@@ -2926,18 +3048,19 @@ async function processNonFloorPCAFallback(
     if (allocation.fte_remaining <= 0) continue
     
     const existingSlots = getTeamExistingSlots(team, allocations)
-    const result = assignSlotsToTeam({
+    const result = assignUpToPendingAndUpdatePending({
       pca,
       allocation,
       team,
-      pendingFTE: pendingFTE[team],
       teamExistingSlots: existingSlots,
       gymSlot,
       avoidGym,
+      pendingFTEByTeam: pendingFTE,
+      context: 'Non-floor PCA fallback',
     })
     
     for (const slot of result.slotsAssigned) {
-      recordAssignment(tracker, team, {
+      recordAssignmentWithOrder(team, {
         slot,
         pcaId: pca.id,
         pcaName: pca.name,
@@ -2951,7 +3074,6 @@ async function processNonFloorPCAFallback(
       })
     }
     
-    pendingFTE[team] = result.newPendingFTE
   }
 }
 
@@ -2965,7 +3087,8 @@ async function processCycle3Cleanup(
   pcaPool: PCAData[],
   pcaPreferences: PCAPreference[],
   teamPrefs: Record<Team, TeamPreferenceInfo>,
-  tracker: AllocationTracker
+  tracker: AllocationTracker,
+  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void
 ): Promise<void> {
   // Find PCAs with unassigned slots
   const pcasWithSlots = pcaPool.filter(pca => {
@@ -2991,19 +3114,20 @@ async function processCycle3Cleanup(
       const existingSlots = getTeamExistingSlots(team, allocations)
 
       // Assign one slot at a time in Cycle 3
-      const result = assignSlotsToTeam({
+      const result = assignOneSlotAndUpdatePending({
         pca,
         allocation,
         team,
-        pendingFTE: 0.25,  // One slot at a time
         teamExistingSlots: existingSlots,
         gymSlot,
         avoidGym,
+        pendingFTEByTeam: pendingFTE,
+        context: 'Cleanup pass → one slot at a time',
       })
       
       if (result.slotsAssigned.length > 0) {
         for (const slot of result.slotsAssigned) {
-          recordAssignment(tracker, team, {
+          recordAssignmentWithOrder(team, {
             slot,
             pcaId: pca.id,
             pcaName: pca.name,
@@ -3011,13 +3135,11 @@ async function processCycle3Cleanup(
             cycle: 3,
             wasPreferredSlot: false,
             wasPreferredPCA: pref.preferredPCAIds.includes(pca.id),
-            wasFloorPCA: isFloorPCAForTeam(pca, teamFloor),
+            wasFloorPCA: undefined,  // Not from floor/non-floor loop - from preferred PCA
             amPmBalanceAchieved: result.amPmBalanced,
             gymSlotAvoided: gymSlot !== null && slot !== gymSlot,
           })
         }
-        
-        pendingFTE[team] = result.newPendingFTE
       }
 
       // After assigning, check if PCA is exhausted

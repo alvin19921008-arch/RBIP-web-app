@@ -25,6 +25,7 @@ export interface Staff {
   floating: boolean
   floor_pca: ('upper' | 'lower')[] | null  // Floor PCA property: upper, lower, or both
   status?: StaffStatus  // Staff status: active, inactive, or buffer
+  active?: boolean // Legacy/DB column support (some panels still reference s.active)
   buffer_fte?: number  // FTE value for buffer staff (determined by slots for PCA)
   created_at: string
   updated_at: string
