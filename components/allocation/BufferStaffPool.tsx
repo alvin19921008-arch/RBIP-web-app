@@ -8,10 +8,12 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { BufferStaffCreateDialog } from './BufferStaffCreateDialog'
 import { BufferSlotSelectionDialog } from './BufferSlotSelectionDialog'
+import { BufferStaffConvertDialog } from './BufferStaffConvertDialog'
 import { StaffCard } from './StaffCard'
 import { SpecialProgram } from '@/types/allocation'
 import { ChevronUp, ChevronDown, ChevronRight } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
+import { DragValidationTooltip } from './DragValidationTooltip'
 
 interface BufferStaffPoolProps {
   inactiveStaff: Staff[]
@@ -24,14 +26,17 @@ interface BufferStaffPoolProps {
   weekday?: 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
 }
 
+
 export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaffCreated, specialPrograms = [], currentStep, pcaAllocations = {}, staffOverrides = {}, weekday }: BufferStaffPoolProps) {
   const [sourceMode, setSourceMode] = useState<'select' | 'create' | null>(null)
   const [selectedStaffIds, setSelectedStaffIds] = useState<Set<string>>(new Set())
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [showInactiveMenu, setShowInactiveMenu] = useState(false)
   const [showSlotDialog, setShowSlotDialog] = useState(false)
+  const [showConvertDialog, setShowConvertDialog] = useState(false)
   const [pcaStaffToConvert, setPcaStaffToConvert] = useState<Staff[]>([])
   const [currentPcaIndex, setCurrentPcaIndex] = useState(0)
+  const [staffToConvert, setStaffToConvert] = useState<Staff | null>(null)
   const [isBufferStaffExpanded, setIsBufferStaffExpanded] = useState(true)
   const [isPoolCollapsed, setIsPoolCollapsed] = useState(false)
   const supabase = createClientComponentClient()
@@ -164,25 +169,28 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
   const handleConvertToBuffer = async () => {
     if (selectedStaffIds.size === 0) return
 
-    const staffToConvert = inactiveStaff.filter(s => selectedStaffIds.has(s.id))
-    const pcaStaff = staffToConvert.filter(s => s.rank === 'PCA')
-    const nonPcaStaff = staffToConvert.filter(s => s.rank !== 'PCA')
-
-    // Convert non-PCA staff first (they don't need slot selection)
-    for (const staff of nonPcaStaff) {
-      await supabase
-        .from('staff')
-        .update({ status: 'buffer' as StaffStatus })
-        .eq('id', staff.id)
-    }
-
-    // For PCA staff, show slot selection dialog
-    if (pcaStaff.length > 0) {
-      setPcaStaffToConvert(pcaStaff)
+    const selectedStaff = inactiveStaff.filter(s => selectedStaffIds.has(s.id))
+    
+    // Show convert dialog for first staff member
+    if (selectedStaff.length > 0) {
+      setStaffToConvert(selectedStaff[0])
+      setPcaStaffToConvert(selectedStaff)
       setCurrentPcaIndex(0)
-      setShowSlotDialog(true)
+      setShowConvertDialog(true)
+    }
+  }
+
+  const handleConvertDialogSave = () => {
+    // Move to next staff or finish
+    if (currentPcaIndex < pcaStaffToConvert.length - 1) {
+      setCurrentPcaIndex(currentPcaIndex + 1)
+      setStaffToConvert(pcaStaffToConvert[currentPcaIndex + 1])
     } else {
-      // No PCA staff, just finish
+      // All staff converted
+      setShowConvertDialog(false)
+      setStaffToConvert(null)
+      setPcaStaffToConvert([])
+      setCurrentPcaIndex(0)
       setSelectedStaffIds(new Set())
       setShowInactiveMenu(false)
       setSourceMode(null)
@@ -232,6 +240,25 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
     setShowCreateDialog(false)
     setSourceMode(null)
     onBufferStaffCreated?.()
+  }
+
+  const handleConvertToInactive = async (staffId: string) => {
+    try {
+      const { error } = await supabase
+        .from('staff')
+        .update({ status: 'inactive' as StaffStatus })
+        .eq('id', staffId)
+
+      if (error) {
+        console.error('Error converting to inactive:', error)
+        alert('Failed to convert to inactive. Please try again.')
+      } else {
+        onBufferStaffCreated?.()
+      }
+    } catch (err) {
+      console.error('Error converting to inactive:', err)
+      alert('Failed to convert to inactive. Please try again.')
+    }
   }
 
   // Get all inactive staff for checkbox menu (max 5 visible, scrollable)
@@ -371,61 +398,62 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
                         const baseFTE = getBaseFTERemaining(staff.id, staff)
                         const trueFTE = isFloatingPCA ? getTrueFTERemaining(staff.id, staff) : undefined
                         
-                        // Buffer therapists are draggable in Step 1 & 2
-                        const canDragBufferTherapist = isBufferTherapist && (currentStep === 'leave-fte' || currentStep === 'therapist-pca')
-                        // Buffer floating PCA is draggable in Step 3 (before and after algo)
+                        // Buffer therapists are draggable in Step 2 only
+                        const canDragBufferTherapist = isBufferTherapist && currentStep === 'therapist-pca'
+                        // Buffer floating PCA is draggable in Step 3 only
                         const canDragBufferFloatingPCA = isFloatingPCA && currentStep === 'floating-pca'
-                        const draggable = isFloatingPCA ? canDragBufferFloatingPCA : canDragBufferTherapist
+                        const isInCorrectStep = isFloatingPCA ? canDragBufferFloatingPCA : canDragBufferTherapist
                         
-                        // Add tooltip for buffer floating PCA when not draggable
-                        if (isFloatingPCA && !draggable) {
-                          return (
-                            <Tooltip key={staff.id} content="Dragging is only allowed in Step 3 onwards">
-                              <StaffCard
-                                staff={staff}
-                                draggable={draggable}
-                                showFTE={isBufferTherapist}
-                                fteRemaining={staff.buffer_fte}
-                                baseFTE={baseFTE}
-                                trueFTE={trueFTE}
-                                isFloatingPCA={isFloatingPCA}
-                                borderColor={undefined}
-                              />
-                            </Tooltip>
-                          )
-                        }
-                        
-                        // Add tooltip for buffer therapist when not draggable
-                        if (isBufferTherapist && !draggable) {
-                          return (
-                            <Tooltip key={staff.id} content="Dragging is only allowed in Step 1 and 2">
-                              <StaffCard
-                                staff={staff}
-                                draggable={draggable}
-                                showFTE={isBufferTherapist}
-                                fteRemaining={staff.buffer_fte}
-                                baseFTE={baseFTE}
-                                trueFTE={trueFTE}
-                                isFloatingPCA={isFloatingPCA}
-                                borderColor={undefined}
-                              />
-                            </Tooltip>
-                          )
-                        }
-                        
-                        return (
+                        // Always allow dragging (will snap back if not in correct step, like regular staff)
+                        // Create StaffCard with convert to inactive callback
+                        const staffCard = (
                           <StaffCard
                             key={staff.id}
                             staff={staff}
-                            draggable={draggable}
+                            draggable={true}
                             showFTE={isBufferTherapist}
                             fteRemaining={staff.buffer_fte}
                             baseFTE={isFloatingPCA ? baseFTE : undefined}
                             trueFTE={trueFTE}
                             isFloatingPCA={isFloatingPCA}
                             borderColor={undefined}
+                            currentStep={currentStep}
+                            onConvertToInactive={(e) => {
+                              e?.stopPropagation()
+                              handleConvertToInactive(staff.id)
+                            }}
                           />
                         )
+
+                        // Add tooltip for buffer floating PCA when not in correct step
+                        // Tooltip only shows when dragging is detected (not on hover)
+                        if (isFloatingPCA && !isInCorrectStep) {
+                          return (
+                            <DragValidationTooltip 
+                              key={staff.id}
+                              staffId={staff.id}
+                              allowMultiLine={true}
+                              content="Floating PCA slot dragging-&-allocating is only available in Step 3 only."
+                            >
+                              {staffCard}
+                            </DragValidationTooltip>
+                          )
+                        }
+                        
+                        // Add tooltip for buffer therapist when not in correct step
+                        if (isBufferTherapist && !isInCorrectStep) {
+                          return (
+                            <DragValidationTooltip 
+                              key={staff.id}
+                              staffId={staff.id}
+                              content="Therapist slot dragging-&-allocating is only available in Step 2 only."
+                            >
+                              {staffCard}
+                            </DragValidationTooltip>
+                          )
+                        }
+                        
+                        return staffCard
                       })}
                           </div>
                         </div>
@@ -444,6 +472,26 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
           open={showCreateDialog}
           onOpenChange={handleCreateDialogClose}
           onSave={handleCreateDialogClose}
+          specialPrograms={loadedSpecialPrograms}
+        />
+      )}
+
+      {showConvertDialog && staffToConvert && (
+        <BufferStaffConvertDialog
+          open={showConvertDialog}
+          onOpenChange={(open) => {
+            if (!open) {
+              setShowConvertDialog(false)
+              setStaffToConvert(null)
+              setPcaStaffToConvert([])
+              setCurrentPcaIndex(0)
+              setSelectedStaffIds(new Set())
+              setShowInactiveMenu(false)
+              setSourceMode(null)
+            }
+          }}
+          staff={staffToConvert}
+          onSave={handleConvertDialogSave}
           specialPrograms={loadedSpecialPrograms}
         />
       )}

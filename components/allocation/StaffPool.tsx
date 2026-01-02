@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { Staff } from '@/types/staff'
 import { StaffCard } from './StaffCard'
+import { DragValidationTooltip } from './DragValidationTooltip'
+import { TeamTransferWarningTooltip } from './TeamTransferWarningTooltip'
 import { InactiveStaffPool } from './InactiveStaffPool'
 import { BufferStaffPool } from './BufferStaffPool'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -85,20 +87,8 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
     // Initial True-FTE = available slots * 0.25
     let trueFTE = availableSlots.length * 0.25
     
-    // Subtract special program FTE (only if Step 2 has run - special programs are assigned in Step 2)
-    // In Step 1, don't subtract special program FTE yet
-    if (currentStep !== 'leave-fte' && specialPrograms && weekday) {
-      const staffPrograms = staff.special_program || []
-      for (const programName of staffPrograms) {
-        const program = specialPrograms.find(p => p.name === programName)
-        if (program && program.weekdays.includes(weekday)) {
-          const programFTE = program.fte_subtraction?.[staffId]?.[weekday] || 0
-          trueFTE -= programFTE
-        }
-      }
-    }
-    
     // Subtract already assigned slots (from pcaAllocations)
+    // This includes both regular assignments and special program assignments
     let assignedSlots = 0
     Object.values(pcaAllocations).forEach((teamAllocs: any[]) => {
       teamAllocs.forEach((alloc: any) => {
@@ -113,7 +103,9 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
     })
     const assignedFTE = assignedSlots * 0.25
     
-    // Final True-FTE = initial - special program - assigned
+    // Final True-FTE = initial - assigned slots
+    // Special program FTE is already accounted for in assigned slots, so we don't need to subtract it separately
+    // This fixes the double-subtraction bug where special program FTE was subtracted both from fte_subtraction and from assigned slots
     return Math.max(0, trueFTE - assignedFTE)
   }
 
@@ -299,15 +291,50 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
                     const showFTE = staff.rank !== 'SPT' && (baseFTE > 0 && baseFTE < 1 || baseFTE === 0)
                     // For buffer staff, always show FTE if it's not 1.0
                     const shouldShowFTE = showFTE || (staff.status === 'buffer' && staff.buffer_fte !== undefined && staff.buffer_fte !== 1.0)
-                    return (
-                    <StaffCard
-                      key={staff.id}
-                      staff={staff}
-                      onEdit={(e) => onEditStaff?.(staff.id, e)}
+                    const isBufferStaff = staff.status === 'buffer'
+                    const isTherapistRank = ['SPT', 'APPT', 'RPT'].includes(staff.rank)
+                    const isInCorrectStep = currentStep === 'therapist-pca'
+                    // Check if this is a fixed-team staff (APPT, RPT) that can be transferred with warning
+                    const isFixedTeamStaff = !isBufferStaff && (staff.rank === 'APPT' || staff.rank === 'RPT')
+                    
+                    const staffCard = (
+                      <StaffCard
+                        key={staff.id}
+                        staff={staff}
+                        onEdit={(e) => onEditStaff?.(staff.id, e)}
                         fteRemaining={shouldShowFTE ? baseFTE : undefined}
                         showFTE={shouldShowFTE}
-                    />
+                        draggable={true} // Always allow dragging (will snap back if not in correct step)
+                      />
                     )
+                    
+                    // For fixed-team staff (APPT, RPT), show warning tooltip when dragging (if in correct step)
+                    if (isFixedTeamStaff && isInCorrectStep) {
+                      return (
+                        <TeamTransferWarningTooltip
+                          key={staff.id}
+                          staffId={staff.id}
+                          content="Team transfer for fixed-team staff detected."
+                        >
+                          {staffCard}
+                        </TeamTransferWarningTooltip>
+                      )
+                    }
+                    
+                    // Add tooltip for regular therapist when not in correct step (buffer staff handled in BufferStaffPool)
+                    if (!isBufferStaff && isTherapistRank && !isInCorrectStep) {
+                      return (
+                        <DragValidationTooltip
+                          key={staff.id}
+                          staffId={staff.id}
+                          content="Therapist slot dragging-&-allocating is only available in Step 2 only."
+                        >
+                          {staffCard}
+                        </DragValidationTooltip>
+                      )
+                    }
+                    
+                    return staffCard
                   })}
                 </div>
               )}
@@ -345,15 +372,18 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
                 // For buffer PCA, always show FTE if buffer_fte is set
                 const shouldShowFTE = showFTE || (pca.status === 'buffer' && pca.buffer_fte !== undefined && pca.buffer_fte !== 1.0)
                 const isFloatingPCA = pca.floating === true
+                const isBufferStaff = pca.status === 'buffer'
                 // Enable drag for floating PCA (slot transfer will be validated in handleDragStart)
                 // Apply border-green-700 to non-floating PCA (same as schedule page)
                 // For buffer floating PCA, also show green border
                 const borderColor = !isFloatingPCA ? 'border-green-700' : (pca.status === 'buffer' ? 'border-green-700' : undefined)
-                return (
-                <StaffCard
-                  key={pca.id}
-                  staff={pca}
-                  onEdit={() => onEditStaff?.(pca.id)}
+                const isInCorrectStep = currentStep === 'floating-pca'
+                
+                const staffCard = (
+                  <StaffCard
+                    key={pca.id}
+                    staff={pca}
+                    onEdit={() => onEditStaff?.(pca.id)}
                     fteRemaining={shouldShowFTE ? baseFTE : undefined}
                     showFTE={shouldShowFTE}
                     baseFTE={isFloatingPCA ? baseFTE : undefined}
@@ -361,10 +391,25 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
                     isFloatingPCA={isFloatingPCA}
                     currentStep={currentStep}
                     initializedSteps={initializedSteps}
-                    draggable={isFloatingPCA}
+                    draggable={true} // Always allow dragging (will snap back if not in correct step)
                     borderColor={borderColor}
-                />
+                  />
                 )
+                
+                // Add tooltip for regular floating PCA when not in correct step (buffer staff handled in BufferStaffPool)
+                if (!isBufferStaff && isFloatingPCA && !isInCorrectStep) {
+                  return (
+                    <DragValidationTooltip
+                      key={pca.id}
+                      staffId={pca.id}
+                      content="Floating PCA slot dragging-&-allocating is only available in Step 3 only."
+                    >
+                      {staffCard}
+                    </DragValidationTooltip>
+                  )
+                }
+                
+                return staffCard
               })}
             </div>
           )}

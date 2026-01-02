@@ -2,6 +2,7 @@ import { Team } from '@/types/staff'
 import { PCAAllocation } from '@/types/schedule'
 import { PCAPreference, SpecialProgram } from '@/types/allocation'
 import { roundToNearestQuarter, roundDownToQuarter, roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
+import { getTeamFloor, isFloorPCAForTeam } from '@/lib/utils/floatingPCAHelpers'
 
 export interface PCAData {
   id: string
@@ -40,6 +41,23 @@ export interface PCAAllocationContext {
   // Step 3.1 overrides: user-adjusted pending FTE and team order
   userAdjustedPendingFTE?: Record<Team, number> // User-adjusted rounded pending FTE values
   userTeamOrder?: Team[] // User-specified team allocation priority order
+  // Non-floating PCA substitution callback - called DURING algorithm execution when substitution is needed
+  onNonFloatingSubstitution?: (
+    substitutions: Array<{
+      nonFloatingPCAId: string
+      nonFloatingPCAName: string
+      team: Team
+      fte: number
+      missingSlots: number[]
+      availableFloatingPCAs: Array<{
+        id: string
+        name: string
+        availableSlots: number[]
+        isPreferred: boolean
+        isFloorPCA: boolean
+      }>
+    }>
+  ) => Promise<Record<string, { floatingPCAId: string; slots: number[] }>> // Returns user selections: key = `${team}-${nonFloatingPCAId}`
 }
 
 export interface PCAAllocationResult {
@@ -199,10 +217,14 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
   const phase = context.phase || 'all' // Default to 'all' for backward compatibility
   
   // For 'floating' phase, start with existing allocations from non-floating phase
-  const allocations: PCAAllocation[] = phase === 'floating' && context.existingAllocations 
-    ? [...context.existingAllocations] 
+  // IMPORTANT: Do NOT seed allocations for 'non-floating-with-special' (Step 2).
+  // Seeding Step 2 with saved non-floating allocations causes duplicates when we allocate non-floating again.
+  // Only 'floating' (Step 3) should seed from prior phases.
+  const allocations: PCAAllocation[] = phase === 'floating' && context.existingAllocations
+    ? [...context.existingAllocations]
     : []
   
+
   let totalPCAOnDuty = context.totalPCAAvailable
   
   // Initialize error tracking
@@ -231,6 +253,671 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
   const shouldDoNonFloating = phase === 'all' || phase === 'non-floating' || phase === 'non-floating-with-special'
   const shouldDoSpecialProgram = phase === 'all' || phase === 'non-floating-with-special'
   const shouldDoFloating = phase === 'all' || phase === 'floating'
+
+  // Get weekday for special program and floating PCA allocation
+  const weekday = getWeekday(context.date)
+
+  // If there are non-floating substitution needs, we must allocate special-program slots FIRST.
+  // Otherwise, the substitution checkbox list will incorrectly include PCAs that will later be reserved
+  // for special programs (and for whole-day substitution, those PCAs should be excluded).
+  const willNeedNonFloatingSubstitution =
+    shouldDoNonFloating &&
+    (nonFloatingUnavailable.length > 0 ||
+      nonFloatingPCA.some(pca => {
+        if (!pca.team) return false
+        const availableSlots = pca.availableSlots && pca.availableSlots.length > 0 ? pca.availableSlots : [1, 2, 3, 4]
+        const missingSlots = [1, 2, 3, 4].filter(slot => !availableSlots.includes(slot))
+        if (missingSlots.length === 0) return false
+        const actualFTE = pca.fte_pca || 0
+        return Math.abs(actualFTE - 1.0) >= 0.001
+      }))
+
+  let specialProgramsAllocated = false
+
+  const runSpecialProgramAllocation = () => {
+    // Priority 1: Special program requirements
+    // Note: DRM is skipped here because it doesn't have designated PCA staff.
+    // DRM only adds +0.4 FTE to DRO's required PCA/team (already applied to averagePCAPerTeam).
+    // Floating PCA allocation (Priority 3-4) will respect the higher DRO requirement.
+    const unallocatedPrograms: string[] = []
+    context.specialPrograms.forEach((program) => {
+      if (!program.weekdays.includes(weekday)) return
+
+      // Skip DRM - it doesn't have designated PCA staff, only adds to DRO's required FTE
+      if (program.name === 'DRM') return
+
+      let programSlots = program.slots[weekday] || []
+
+      // Fallback: If slots are empty but program is active for this weekday, use default slots
+      // For Robotic: always use slots [1, 2, 3, 4] (all slots)
+      // For CRP: derive from SPT allocations (therapist running the program determines slots)
+      // For other programs: use slots from program configuration or default to [1, 2, 3, 4]
+      if (programSlots.length === 0) {
+        if (program.name === 'Robotic') {
+          programSlots = [1, 2, 3, 4] // Robotic always uses all 4 slots
+        } else if (program.name === 'CRP') {
+          // For CRP, slots should be determined by which therapist runs it
+          // Check SPT allocations to find which therapist is running CRP on this weekday
+          // For now, default to slot 2 (most common for CRP)
+          programSlots = [2]
+        } else {
+          // For other programs, default to all slots if not specified
+          programSlots = [1, 2, 3, 4]
+        }
+      }
+
+      if (programSlots.length === 0) return
+
+      // Find teams that need this special program PCA
+      // Use tolerance (0.01) to avoid floating point precision issues (e.g., 1.0 vs 1.0001)
+      const TOLERANCE = 0.01
+      const teamsNeedingProgram = Object.entries(context.averagePCAPerTeam)
+        .filter(([team, required]) => {
+          const teamKey = team as Team
+          const preference = context.pcaPreferences.find(p => p.team === teamKey)
+          const gymSlot = preference?.gym_schedule ?? null
+          const slotConflict = programSlots.some(slot => slot === gymSlot)
+
+          // Check if we should avoid gym schedule for this team (floating PCA only)
+          const avoidGym = shouldAvoidGymSchedule(preference)
+
+          // If there's a conflict and we should avoid gym, skip this team
+          if (slotConflict && avoidGym) {
+            return false
+          }
+
+          // Use tolerance to handle floating point precision issues (e.g., DRM add-on creating 1.0001 vs 1.0)
+          return teamPCAAssigned[teamKey] < (required - TOLERANCE)
+        })
+        .map(([team]) => team as Team)
+
+      if (teamsNeedingProgram.length === 0) return
+
+      // Use PCA preference order if available, otherwise use any available PCA
+      let pcaToAssign: PCAData | null = null
+      let assignedPCAId: string | null = null
+
+      if (program.pca_preference_order && program.pca_preference_order.length > 0) {
+        // Try preference order first
+        for (const preferredPcaId of program.pca_preference_order) {
+          // Check floating PCA first (as per requirement: floating first)
+          const floatingPca = floatingPCA.find(
+            pca => pca.id === preferredPcaId &&
+            pca.special_program?.includes(program.name) &&
+            pca.is_available &&
+            !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
+          )
+
+          if (floatingPca) {
+            pcaToAssign = floatingPca
+            assignedPCAId = preferredPcaId
+            break
+          }
+
+          // Check non-floating PCA (if floating not found)
+          const nonFloatingPca = nonFloatingPCA.find(
+            pca => pca.id === preferredPcaId &&
+            pca.special_program?.includes(program.name) &&
+            pca.is_available &&
+            !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
+          )
+
+          if (nonFloatingPca) {
+            pcaToAssign = nonFloatingPca
+            assignedPCAId = preferredPcaId
+            break
+          }
+        }
+
+        // If all in preference list are unavailable, fall back to any available PCA
+        if (!pcaToAssign) {
+          // For DRM, use any available floating PCA (no special program requirement)
+          // For other programs, use PCA with the special program
+          if (program.name === 'DRM') {
+            // Try floating PCA first (any available floating PCA)
+            const fallbackFloating = floatingPCA.find(
+              pca => pca.is_available &&
+              !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
+            )
+
+            if (fallbackFloating) {
+              pcaToAssign = fallbackFloating
+            } else {
+              // Try non-floating PCA
+              const fallbackNonFloating = nonFloatingPCA.find(
+                pca => pca.is_available &&
+                !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
+              )
+
+              if (fallbackNonFloating) {
+                pcaToAssign = fallbackNonFloating
+              }
+            }
+          } else {
+            // Other programs: use PCA with the special program
+            const fallbackFloating = floatingPCA.find(
+              pca => pca.special_program?.includes(program.name) &&
+              pca.is_available &&
+              !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
+            )
+
+            if (fallbackFloating) {
+              pcaToAssign = fallbackFloating
+            } else {
+              // Try non-floating PCA
+              const fallbackNonFloating = nonFloatingPCA.find(
+                pca => pca.special_program?.includes(program.name) &&
+                pca.is_available &&
+                !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
+              )
+
+              if (fallbackNonFloating) {
+                pcaToAssign = fallbackNonFloating
+              }
+            }
+          }
+        }
+      } else {
+        // No preference order - for DRM, use ANY available floating PCA (not just those with DRM in special_program)
+        // For other programs, use PCA with the special program
+        if (program.name === 'DRM') {
+          // DRM: Use any available floating PCA (no special program requirement)
+          const availableFloatingPCA = floatingPCA.find(
+            pca => pca.is_available &&
+            !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
+          )
+
+          if (availableFloatingPCA) {
+            pcaToAssign = availableFloatingPCA
+          } else {
+            // Fall back to non-floating PCA if no floating available
+            const availableNonFloatingPCA = nonFloatingPCA.find(
+              pca => pca.is_available &&
+              !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
+            )
+
+            if (availableNonFloatingPCA) {
+              pcaToAssign = availableNonFloatingPCA
+            }
+          }
+        } else {
+          // Other programs: use PCA with the special program (existing logic)
+          const availableFloatingPCA = floatingPCA.find(
+            pca => pca.special_program?.includes(program.name) &&
+            pca.is_available &&
+            !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
+          )
+
+          if (availableFloatingPCA) {
+            pcaToAssign = availableFloatingPCA
+          } else {
+            // Fall back to non-floating PCA
+            const availableNonFloatingPCA = nonFloatingPCA.find(
+              pca => pca.special_program?.includes(program.name) &&
+              pca.is_available &&
+              !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
+            )
+
+            if (availableNonFloatingPCA) {
+              pcaToAssign = availableNonFloatingPCA
+            }
+          }
+        }
+      }
+
+      // For special programs, determine target teams based on program type
+      // Robotic: slots go to SMM (1-2) and SFM (3-4), so we need to check if SMM or SFM need PCA
+      // CRP: slot goes to the team running the program (determined by which team has staff in program)
+      // Other programs: use the team that needs PCA
+      let targetTeamsForProgram: Team[] = []
+
+      if (program.name === 'Robotic') {
+        // Robotic: Check if SMM or SFM need PCA (slots 1-2 go to SMM, 3-4 go to SFM)
+        if (teamPCAAssigned['SMM'] < context.averagePCAPerTeam['SMM'] ||
+            teamPCAAssigned['SFM'] < context.averagePCAPerTeam['SFM']) {
+          // Use SMM as the primary team (slots will be mapped correctly by getSlotTeamForSpecialProgram)
+          targetTeamsForProgram = ['SMM']
+        }
+      } else if (program.name === 'CRP') {
+        // CRP: default to CPPC (future: infer from therapist allocations)
+        targetTeamsForProgram = ['CPPC']
+      } else {
+        // Other programs: use teams needing PCA (existing logic)
+        targetTeamsForProgram = teamsNeedingProgram
+      }
+
+      if (targetTeamsForProgram.length === 0) return
+
+      // Assign PCA to target teams (for Robotic/CRP, only one allocation; for others, one per team)
+      // For Robotic/CRP, check if we've already created an allocation for this program
+      let programAllocationCreated = false
+      let programAssigned = false // Track if any PCA was assigned for this program
+
+      targetTeamsForProgram.forEach((targetTeam) => {
+        // For Robotic/CRP, only create one allocation total (not per team)
+        if ((program.name === 'Robotic' || program.name === 'CRP') && programAllocationCreated) {
+          return
+        }
+
+        const neededFTE = context.averagePCAPerTeam[targetTeam] - teamPCAAssigned[targetTeam]
+        if (neededFTE <= 0 && program.name !== 'Robotic') return // For Robotic, always create allocation if SMM/SFM need it
+
+        let assigned = false
+
+        // Try preference order first if available
+        if (program.pca_preference_order && program.pca_preference_order.length > 0) {
+          for (const preferredPcaId of program.pca_preference_order) {
+            // Check floating PCA first
+            // For special programs (Robotic/CRP), check if PCA already has allocation for this program (any team)
+            // For other programs, check if PCA has allocation for this program and team
+            const floatingPca = floatingPCA.find(
+              pca => pca.id === preferredPcaId &&
+              pca.special_program?.includes(program.name) &&
+              pca.is_available &&
+              (program.name === 'Robotic' || program.name === 'CRP'
+                ? !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
+                : !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id) && a.team === targetTeam))
+            )
+
+            if (floatingPca) {
+              // For special programs (Robotic/CRP), find allocation by program, not by team
+              // For other programs, find by team
+              const existingAllocation = (program.name === 'Robotic' || program.name === 'CRP')
+                ? allocations.find(a => a.staff_id === floatingPca.id && a.special_program_ids?.includes(program.id))
+                : allocations.find(a => a.staff_id === floatingPca.id && a.team === targetTeam)
+              const remainingFTE = existingAllocation?.fte_remaining ?? floatingPca.fte_pca
+
+              // Any allocation (including substitutions) for slot-usage checks
+              const anyAllocationForPCA = allocations.find(a => a.staff_id === floatingPca.id)
+              const anyAssignedSlots = anyAllocationForPCA
+                ? [1, 2, 3, 4].filter(slot => {
+                    const slotTeam = slot === 1 ? anyAllocationForPCA.slot1 : slot === 2 ? anyAllocationForPCA.slot2 : slot === 3 ? anyAllocationForPCA.slot3 : anyAllocationForPCA.slot4
+                    return slotTeam !== null
+                  })
+                : []
+
+              // CRITICAL: Do not assign special program PCA if required program slots are already occupied
+              // (e.g., PCA used as non-floating substitute already has slots assigned)
+              const requiredProgramSlots = programSlots
+              const anyAllocationHasRequiredSlotsOccupied = anyAllocationForPCA
+                ? requiredProgramSlots.some(slot => {
+                    const slotTeam = slot === 1 ? anyAllocationForPCA.slot1 : slot === 2 ? anyAllocationForPCA.slot2 : slot === 3 ? anyAllocationForPCA.slot3 : anyAllocationForPCA.slot4
+                    return slotTeam !== null
+                  })
+                : false
+              if (anyAllocationHasRequiredSlotsOccupied) {
+                continue
+              }
+
+              if (remainingFTE > 0) {
+                // Calculate FTE based on number of slots assigned
+                // Each slot is 0.25 FTE, so slots 1+2+3+4 = 1.0 FTE total
+                const slotsToAssign = programSlots.length
+                const ftePerSlot = 0.25
+                const fteForSlots = slotsToAssign * ftePerSlot
+                // For special programs, use all slots FTE, not just what's needed by the team
+                const fteToAssign = program.name === 'Robotic' || program.name === 'CRP'
+                  ? Math.min(remainingFTE, fteForSlots) // Use full slot FTE for special programs
+                  : Math.min(neededFTE, remainingFTE, fteForSlots, program.pca_required || fteForSlots)
+
+                // IMPORTANT: reuse the PCA's existing allocation (if any) to avoid duplicate allocations for the same staff_id
+                const baseAllocationForPCA = allocations.find(a => a.staff_id === floatingPca.id) ?? existingAllocation
+
+                if (baseAllocationForPCA) {
+                  // Track newly assigned slots to avoid double-counting
+                  const newlyAssignedSlots: { slot: number, team: Team }[] = []
+                  programSlots.forEach(slot => {
+                    const slotTeam = getSlotTeamForSpecialProgram(program.name, slot, targetTeam)
+                    if (slot === 1 && baseAllocationForPCA.slot1 === null && slotTeam) {
+                      baseAllocationForPCA.slot1 = slotTeam
+                      newlyAssignedSlots.push({ slot: 1, team: slotTeam })
+                    }
+                    if (slot === 2 && baseAllocationForPCA.slot2 === null && slotTeam) {
+                      baseAllocationForPCA.slot2 = slotTeam
+                      newlyAssignedSlots.push({ slot: 2, team: slotTeam })
+                    }
+                    if (slot === 3 && baseAllocationForPCA.slot3 === null && slotTeam) {
+                      baseAllocationForPCA.slot3 = slotTeam
+                      newlyAssignedSlots.push({ slot: 3, team: slotTeam })
+                    }
+                    if (slot === 4 && baseAllocationForPCA.slot4 === null && slotTeam) {
+                      baseAllocationForPCA.slot4 = slotTeam
+                      newlyAssignedSlots.push({ slot: 4, team: slotTeam })
+                    }
+                  })
+                  baseAllocationForPCA.fte_remaining -= fteToAssign
+                  if (!baseAllocationForPCA.special_program_ids) {
+                    baseAllocationForPCA.special_program_ids = []
+                  }
+                  if (!baseAllocationForPCA.special_program_ids.includes(program.id)) {
+                    baseAllocationForPCA.special_program_ids.push(program.id)
+                  }
+                  // Update teamPCAAssigned only for newly assigned slots (0.25 per slot)
+                  newlyAssignedSlots.forEach(({ team }) => {
+                    teamPCAAssigned[team] += 0.25
+                  })
+                } else {
+                  const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program.name, 1, targetTeam) : null
+                  const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program.name, 2, targetTeam) : null
+                  const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program.name, 3, targetTeam) : null
+                  const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program.name, 4, targetTeam) : null
+
+                  const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
+                  const allocation: PCAAllocation = {
+                    id: crypto.randomUUID(),
+                    schedule_id: '',
+                    staff_id: floatingPca.id,
+                    team: targetTeam,
+                    fte_pca: floatingPca.fte_pca,  // Use PCA's actual on-duty FTE (Base_FTE-remaining)
+                    fte_remaining: floatingPca.fte_pca - fteToAssign,  // True-FTE remaining after this assignment
+                    slot_assigned: fteAssigned,
+                    slot_whole: null,
+                    slot1: slot1Team,
+                    slot2: slot2Team,
+                    slot3: slot3Team,
+                    slot4: slot4Team,
+                    leave_type: null,
+                    special_program_ids: [program.id],
+                  }
+                  allocations.push(allocation)
+                  // Update teamPCAAssigned for each slot team (not just targetTeam)
+                  updateTeamPCAAssignedFromSlots(teamPCAAssigned, slot1Team, slot2Team, slot3Team, slot4Team)
+                }
+                assigned = true
+                programAssigned = true
+                if (program.name === 'Robotic' || program.name === 'CRP') {
+                  programAllocationCreated = true
+                }
+                break
+              }
+            }
+
+            // Check non-floating PCA if floating not found
+            // For special programs (Robotic/CRP), check if PCA already has allocation for this program (any team)
+            const nonFloatingPca = nonFloatingPCA.find(
+              pca => pca.id === preferredPcaId &&
+              pca.special_program?.includes(program.name) &&
+              pca.is_available &&
+              (program.name === 'Robotic' || program.name === 'CRP'
+                ? !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
+                : !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id) && a.team === targetTeam))
+            )
+
+            if (nonFloatingPca) {
+              // For special programs (Robotic/CRP), find allocation by program, not by team
+              const existingAllocation = (program.name === 'Robotic' || program.name === 'CRP')
+                ? allocations.find(a => a.staff_id === nonFloatingPca.id && a.special_program_ids?.includes(program.id))
+                : allocations.find(a => a.staff_id === nonFloatingPca.id && a.team === targetTeam)
+              const remainingFTE = existingAllocation?.fte_remaining || 1
+
+              if (remainingFTE > 0) {
+                // Calculate FTE based on number of slots assigned
+                const slotsToAssign = programSlots.length
+                const ftePerSlot = 0.25
+                const fteForSlots = slotsToAssign * ftePerSlot
+                const fteToAssign = Math.min(neededFTE, remainingFTE, fteForSlots, program.pca_required || fteForSlots)
+
+                if (existingAllocation) {
+                  // Track newly assigned slots to avoid double-counting
+                  const newlyAssignedSlots: { slot: number, team: Team }[] = []
+                  programSlots.forEach(slot => {
+                    const slotTeam = getSlotTeamForSpecialProgram(program.name, slot, targetTeam)
+                    if (slot === 1 && existingAllocation.slot1 === null && slotTeam) {
+                      existingAllocation.slot1 = slotTeam
+                      newlyAssignedSlots.push({ slot: 1, team: slotTeam })
+                    }
+                    if (slot === 2 && existingAllocation.slot2 === null && slotTeam) {
+                      existingAllocation.slot2 = slotTeam
+                      newlyAssignedSlots.push({ slot: 2, team: slotTeam })
+                    }
+                    if (slot === 3 && existingAllocation.slot3 === null && slotTeam) {
+                      existingAllocation.slot3 = slotTeam
+                      newlyAssignedSlots.push({ slot: 3, team: slotTeam })
+                    }
+                    if (slot === 4 && existingAllocation.slot4 === null && slotTeam) {
+                      existingAllocation.slot4 = slotTeam
+                      newlyAssignedSlots.push({ slot: 4, team: slotTeam })
+                    }
+                  })
+                  existingAllocation.fte_remaining -= fteToAssign
+                  if (!existingAllocation.special_program_ids) {
+                    existingAllocation.special_program_ids = []
+                  }
+                  if (!existingAllocation.special_program_ids.includes(program.id)) {
+                    existingAllocation.special_program_ids.push(program.id)
+                  }
+                  // Update teamPCAAssigned only for newly assigned slots (0.25 per slot)
+                  newlyAssignedSlots.forEach(({ team }) => {
+                    teamPCAAssigned[team] += 0.25
+                  })
+                } else {
+                  const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program.name, 1, targetTeam) : null
+                  const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program.name, 2, targetTeam) : null
+                  const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program.name, 3, targetTeam) : null
+                  const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program.name, 4, targetTeam) : null
+                  const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
+
+                  const allocation: PCAAllocation = {
+                    id: crypto.randomUUID(),
+                    schedule_id: '',
+                    staff_id: nonFloatingPca.id,
+                    team: targetTeam,
+                    fte_pca: nonFloatingPca.fte_pca,  // Use PCA's actual on-duty FTE (Base_FTE-remaining)
+                    fte_remaining: nonFloatingPca.fte_pca - fteToAssign,  // True-FTE remaining after this assignment
+                    slot_assigned: fteAssigned,
+                    slot_whole: null,
+                    slot1: slot1Team,
+                    slot2: slot2Team,
+                    slot3: slot3Team,
+                    slot4: slot4Team,
+                    leave_type: null,
+                    special_program_ids: [program.id],
+                  }
+                  allocations.push(allocation)
+                  // Update teamPCAAssigned for each slot team (not just targetTeam)
+                  updateTeamPCAAssignedFromSlots(teamPCAAssigned, slot1Team, slot2Team, slot3Team, slot4Team)
+                }
+                assigned = true
+                programAssigned = true
+                if (program.name === 'Robotic' || program.name === 'CRP') {
+                  programAllocationCreated = true
+                }
+                break
+              }
+            }
+          }
+        }
+
+        // If not assigned from preference order, fall back to any available PCA
+        if (!assigned) {
+          // Try floating PCA first
+          // For special programs (Robotic/CRP), check if PCA already has allocation for this program (any team)
+          const fallbackFloating = floatingPCA.find(
+            pca => pca.special_program?.includes(program.name) &&
+            pca.is_available &&
+            (program.name === 'Robotic' || program.name === 'CRP'
+              ? !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
+              : !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id) && a.team === targetTeam))
+          )
+
+          if (fallbackFloating) {
+            const existingAllocation = allocations.find(a => a.staff_id === fallbackFloating.id && a.team === targetTeam)
+            const remainingFTE = existingAllocation?.fte_remaining || 1
+
+            if (remainingFTE > 0) {
+              // Calculate FTE based on number of slots assigned
+              const slotsToAssign = programSlots.length
+              const ftePerSlot = 0.25
+              const fteForSlots = slotsToAssign * ftePerSlot
+              // For special programs, use all slots FTE, not just what's needed by the team
+              const fteToAssign = program.name === 'Robotic' || program.name === 'CRP'
+                ? Math.min(remainingFTE, fteForSlots) // Use full slot FTE for special programs
+                : Math.min(neededFTE, remainingFTE, fteForSlots, program.pca_required || fteForSlots)
+
+              if (existingAllocation) {
+                // Track newly assigned slots to avoid double-counting
+                const newlyAssignedSlots: { slot: number, team: Team }[] = []
+                programSlots.forEach(slot => {
+                  const slotTeam = getSlotTeamForSpecialProgram(program.name, slot, targetTeam)
+                  if (slot === 1 && existingAllocation.slot1 === null && slotTeam) {
+                    existingAllocation.slot1 = slotTeam
+                    newlyAssignedSlots.push({ slot: 1, team: slotTeam })
+                  }
+                  if (slot === 2 && existingAllocation.slot2 === null && slotTeam) {
+                    existingAllocation.slot2 = slotTeam
+                    newlyAssignedSlots.push({ slot: 2, team: slotTeam })
+                  }
+                  if (slot === 3 && existingAllocation.slot3 === null && slotTeam) {
+                    existingAllocation.slot3 = slotTeam
+                    newlyAssignedSlots.push({ slot: 3, team: slotTeam })
+                  }
+                  if (slot === 4 && existingAllocation.slot4 === null && slotTeam) {
+                    existingAllocation.slot4 = slotTeam
+                    newlyAssignedSlots.push({ slot: 4, team: slotTeam })
+                  }
+                })
+                existingAllocation.fte_remaining -= fteToAssign
+                if (!existingAllocation.special_program_ids) {
+                  existingAllocation.special_program_ids = []
+                }
+                if (!existingAllocation.special_program_ids.includes(program.id)) {
+                  existingAllocation.special_program_ids.push(program.id)
+                }
+                // Update teamPCAAssigned only for newly assigned slots (0.25 per slot)
+                newlyAssignedSlots.forEach(({ team }) => {
+                  teamPCAAssigned[team] += 0.25
+                })
+              } else {
+                const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program.name, 1, targetTeam) : null
+                const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program.name, 2, targetTeam) : null
+                const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program.name, 3, targetTeam) : null
+                const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program.name, 4, targetTeam) : null
+                const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
+
+                const allocation: PCAAllocation = {
+                  id: crypto.randomUUID(),
+                  schedule_id: '',
+                  staff_id: fallbackFloating.id,
+                  team: targetTeam,
+                  fte_pca: fallbackFloating.fte_pca,  // Use PCA's actual on-duty FTE (Base_FTE-remaining)
+                  fte_remaining: fallbackFloating.fte_pca - fteToAssign,  // True-FTE remaining after this assignment
+                  slot_assigned: fteAssigned,
+                  slot_whole: null,
+                  slot1: slot1Team,
+                  slot2: slot2Team,
+                  slot3: slot3Team,
+                  slot4: slot4Team,
+                  leave_type: null,
+                  special_program_ids: [program.id],
+                }
+                allocations.push(allocation)
+                // Update teamPCAAssigned for each slot team (not just targetTeam)
+                updateTeamPCAAssignedFromSlots(teamPCAAssigned, slot1Team, slot2Team, slot3Team, slot4Team)
+              }
+              assigned = true
+              programAssigned = true
+            }
+          }
+
+          // Try non-floating PCA if floating not available
+          if (!assigned) {
+            // For special programs (Robotic/CRP), check if PCA already has allocation for this program (any team)
+            const fallbackNonFloating = nonFloatingPCA.find(
+              pca => pca.special_program?.includes(program.name) &&
+              pca.is_available &&
+              (program.name === 'Robotic' || program.name === 'CRP'
+                ? !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
+                : !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id) && a.team === targetTeam))
+            )
+
+            if (fallbackNonFloating) {
+              const existingAllocation = allocations.find(a => a.staff_id === fallbackNonFloating.id && a.team === targetTeam)
+              const remainingFTE = existingAllocation?.fte_remaining || 1
+
+              if (remainingFTE > 0) {
+                // Calculate FTE based on number of slots assigned
+                const slotsToAssign = programSlots.length
+                const ftePerSlot = 0.25
+                const fteForSlots = slotsToAssign * ftePerSlot
+                const fteToAssign = Math.min(neededFTE, remainingFTE, fteForSlots, program.pca_required || fteForSlots)
+
+                if (existingAllocation) {
+                  // Track newly assigned slots to avoid double-counting
+                  const newlyAssignedSlots: { slot: number, team: Team }[] = []
+                  programSlots.forEach(slot => {
+                    const slotTeam = getSlotTeamForSpecialProgram(program.name, slot, targetTeam)
+                    if (slot === 1 && existingAllocation.slot1 === null && slotTeam) {
+                      existingAllocation.slot1 = slotTeam
+                      newlyAssignedSlots.push({ slot: 1, team: slotTeam })
+                    }
+                    if (slot === 2 && existingAllocation.slot2 === null && slotTeam) {
+                      existingAllocation.slot2 = slotTeam
+                      newlyAssignedSlots.push({ slot: 2, team: slotTeam })
+                    }
+                    if (slot === 3 && existingAllocation.slot3 === null && slotTeam) {
+                      existingAllocation.slot3 = slotTeam
+                      newlyAssignedSlots.push({ slot: 3, team: slotTeam })
+                    }
+                    if (slot === 4 && existingAllocation.slot4 === null && slotTeam) {
+                      existingAllocation.slot4 = slotTeam
+                      newlyAssignedSlots.push({ slot: 4, team: slotTeam })
+                    }
+                  })
+                  existingAllocation.fte_remaining -= fteToAssign
+                  if (!existingAllocation.special_program_ids) {
+                    existingAllocation.special_program_ids = []
+                  }
+                  if (!existingAllocation.special_program_ids.includes(program.id)) {
+                    existingAllocation.special_program_ids.push(program.id)
+                  }
+                  // Update teamPCAAssigned only for newly assigned slots (0.25 per slot)
+                  newlyAssignedSlots.forEach(({ team }) => {
+                    teamPCAAssigned[team] += 0.25
+                  })
+                } else {
+                  const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program.name, 1, targetTeam) : null
+                  const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program.name, 2, targetTeam) : null
+                  const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program.name, 3, targetTeam) : null
+                  const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program.name, 4, targetTeam) : null
+                  const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
+
+                  const allocation: PCAAllocation = {
+                    id: crypto.randomUUID(),
+                    schedule_id: '',
+                    staff_id: fallbackNonFloating.id,
+                    team: targetTeam,
+                    fte_pca: fallbackNonFloating.fte_pca,  // Use PCA's actual on-duty FTE (Base_FTE-remaining)
+                    fte_remaining: fallbackNonFloating.fte_pca - fteToAssign,  // True-FTE remaining after this assignment
+                    slot_assigned: fteAssigned,
+                    slot_whole: null,
+                    slot1: slot1Team,
+                    slot2: slot2Team,
+                    slot3: slot3Team,
+                    slot4: slot4Team,
+                    leave_type: null,
+                    special_program_ids: [program.id],
+                  }
+                  allocations.push(allocation)
+                  // Update teamPCAAssigned for each slot team (not just targetTeam)
+                  updateTeamPCAAssignedFromSlots(teamPCAAssigned, slot1Team, slot2Team, slot3Team, slot4Team)
+                }
+              }
+            }
+          }
+        }
+      })
+
+      // Track if program couldn't be allocated
+      if (!programAssigned && teamsNeedingProgram.length > 0) {
+        unallocatedPrograms.push(program.name)
+      }
+    })
+
+    // Create error message if any programs couldn't be allocated
+    if (unallocatedPrograms.length > 0) {
+      errors.specialProgramAllocation = `Unable to find PCA for special programs: ${unallocatedPrograms.join(', ')}`
+    }
+  }
 
   // ============================================================================
   // NON-FLOATING PCA ALLOCATION (Phase: 'non-floating' or 'all')
@@ -302,131 +989,200 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
     teamPCAAssigned[team] += assignedFTE
   })
 
+  // If substitutions are needed, allocate special-program slots FIRST so the substitution
+  // candidate list reflects real availability (whole-day substitution must exclude special-program PCAs).
+  if (shouldDoSpecialProgram && willNeedNonFloatingSubstitution && !specialProgramsAllocated) {
+    runSpecialProgramAllocation()
+    specialProgramsAllocated = true
+  }
+
+  // Helper function to get available floating PCAs for substitution (filtered and sorted)
+  // Must be defined before Part 1.1.5 and Part 1.2 where it's used
+  const getAvailableFloatingPCAsForSubstitution = (
+    team: Team,
+    missingSlots: number[],
+    allocations: PCAAllocation[]
+  ): Array<{
+    id: string
+    name: string
+    availableSlots: number[]
+    isPreferred: boolean
+    isFloorPCA: boolean
+  }> => {
+    const teamPref = context.pcaPreferences.find(p => p.team === team)
+    const preferredPCAIds = teamPref?.preferred_pca_ids || []
+    const teamFloor = teamPref?.floor_pca_selection ?? null
+
+    // Get weekday for special program check
+    const weekday = context.date.getDay()
+    const weekdayMap: { [key: number]: 'mon' | 'tue' | 'wed' | 'thu' | 'fri' } = {
+      1: 'mon', 2: 'tue', 3: 'wed', 4: 'thu', 5: 'fri'
+    }
+    const currentWeekday = weekdayMap[weekday] || 'mon'
+
+    // Get non-floating PCA IDs (to exclude)
+    const nonFloatingPCAIds = new Set(
+      context.pcaPool.filter(p => !p.floating && p.team !== null).map(p => p.id)
+    )
+
+    // Get special program PCAs for this weekday
+    // NOTE: We don't exclude PCAs with special programs entirely - they may still have available slots
+    // Special programs might only use some slots (e.g., CRP uses slot 2), so the PCA can still substitute
+    // We'll check slot availability later instead of excluding them here
+    const specialProgramPCAs = new Set<string>()
+    // Removed: We no longer exclude PCAs with special programs from substitution
+    // They can still be used if they have the required slots available
+
+    const available: Array<{
+      id: string
+      name: string
+      availableSlots: number[]
+      isPreferred: boolean
+      isFloorPCA: boolean
+    }> = []
+
+    floatingPCA.forEach(pca => {
+      // Exclude non-floating PCAs of other teams
+      if (nonFloatingPCAIds.has(pca.id)) {
+        return
+      }
+
+      // NOTE: We no longer exclude PCAs with special programs here
+      // Special programs might only use some slots (e.g., CRP uses slot 2), so the PCA can still substitute
+      // We check slot availability below to ensure the required slots are free
+
+      // Check if PCA has all missing slots available
+      const pcaAvailableSlots = pca.availableSlots && pca.availableSlots.length > 0
+        ? pca.availableSlots
+        : [1, 2, 3, 4]
+      
+      const hasAllMissingSlots = missingSlots.every(slot => pcaAvailableSlots.includes(slot))
+      if (!hasAllMissingSlots) {
+        return
+      }
+
+      // Check if required slots are available (not already assigned, including to special programs)
+      const existingAllocation = allocations.find(a => a.staff_id === pca.id)
+      if (existingAllocation) {
+        // Check if PCA is actually assigned to a special program on this day
+        // Only exclude if the PCA has special_program_ids AND the required slots overlap with assigned slots
+        const hasSpecialProgramAssignment = existingAllocation.special_program_ids && existingAllocation.special_program_ids.length > 0
+        
+        // Get slots assigned to special programs (if any)
+        const specialProgramSlots: number[] = []
+        if (hasSpecialProgramAssignment) {
+          if (existingAllocation.slot1 !== null) specialProgramSlots.push(1)
+          if (existingAllocation.slot2 !== null) specialProgramSlots.push(2)
+          if (existingAllocation.slot3 !== null) specialProgramSlots.push(3)
+          if (existingAllocation.slot4 !== null) specialProgramSlots.push(4)
+        }
+        
+        // For whole-day substitution (all 4 slots needed), exclude if PCA is assigned to special program
+        // For partial substitution, only exclude if required slots overlap with special program slots
+        if (missingSlots.length === 4 && hasSpecialProgramAssignment) {
+          // Whole-day substitution: exclude if PCA is assigned to special program (uses slots)
+          return
+        }
+        
+        // For partial substitution: check if any required slots overlap with already assigned slots
+        const assignedSlots: number[] = []
+        if (existingAllocation.slot1 !== null) assignedSlots.push(1)
+        if (existingAllocation.slot2 !== null) assignedSlots.push(2)
+        if (existingAllocation.slot3 !== null) assignedSlots.push(3)
+        if (existingAllocation.slot4 !== null) assignedSlots.push(4)
+        
+        // Check if any missing slots overlap with already assigned slots
+        const hasOverlap = missingSlots.some(slot => assignedSlots.includes(slot))
+        if (hasOverlap) {
+          return
+        }
+      }
+
+      // Check floor PCA matching
+      // A PCA matches if their floor_pca array includes the team's floor preference
+      // e.g., if teamFloor = 'upper' and pca.floor_pca = ['upper'] or ['upper', 'lower'], it matches
+      const isFloorPCA = teamFloor !== null && 
+        pca.floor_pca !== null && 
+        pca.floor_pca !== undefined && 
+        Array.isArray(pca.floor_pca) && 
+        pca.floor_pca.length > 0 &&
+        pca.floor_pca.includes(teamFloor)
+
+      available.push({
+        id: pca.id,
+        name: pca.name,
+        availableSlots: pcaAvailableSlots,
+        isPreferred: preferredPCAIds.includes(pca.id),
+        isFloorPCA: isFloorPCA || false
+      })
+    })
+
+    // Sort: preferred → floor → non-floor
+    available.sort((a, b) => {
+      if (a.isPreferred && !b.isPreferred) return -1
+      if (!a.isPreferred && b.isPreferred) return 1
+      if (a.isFloorPCA && !b.isFloorPCA) return -1
+      if (!a.isFloorPCA && b.isFloorPCA) return 1
+      return a.name.localeCompare(b.name)
+    })
+
+    return available
+  }
+
   // Part 1.1.5: Whole-day substitution for non-floating PCAs with FTE=0
   // For non-floating PCAs that are completely unavailable (FTE=0), find a floating PCA to substitute all 4 slots
+  // NOTE: This is now handled in Part 1.2 via the substitution callback, so we skip automatic assignment here
+  // The callback will collect these as substitution needs and let user choose
+  const wholeDaySubstitutionNeeds: Array<{
+    nonFloatingPCAId: string
+    nonFloatingPCAName: string
+    team: Team
+    fte: number
+    missingSlots: number[]
+    availableFloatingPCAs: Array<{
+      id: string
+      name: string
+      availableSlots: number[]
+      isPreferred: boolean
+      isFloorPCA: boolean
+    }>
+  }> = []
+
   nonFloatingUnavailable.forEach((pca) => {
     
     if (!pca.team) return
     const team = pca.team  // Capture non-null team for type safety
     
-    // Get team's PCA preferences
-    const teamPreference = context.pcaPreferences.find(p => p.team === team)
-    const preferredPCAIds = teamPreference?.preferred_pca_ids || []
+    // Collect as substitution need (will be handled by callback or automatic algorithm)
+    const missingSlots = [1, 2, 3, 4] // All slots missing for FTE=0
+    const availableFloatingPCAs = getAvailableFloatingPCAsForSubstitution(team, missingSlots, allocations)
     
-    // Find a floating PCA that can cover all 4 slots
-    let substituteFound = false
-    const slotsToSubstitute = [1, 2, 3, 4]
-    
-    // Try preferred PCAs first
-    for (const preferredPcaId of preferredPCAIds) {
-      const floatingPca = floatingPCA.find(
-        p => p.id === preferredPcaId &&
-        p.is_available &&
-        p.fte_pca >= 1.0 // Need full 1.0 FTE for whole-day substitution
-      )
-      
-      if (!floatingPca) continue
-      
-      // Check if this floating PCA already has allocations
-      const existingAllocation = allocations.find(a => a.staff_id === floatingPca.id)
-      if (existingAllocation) {
-        // Check if all 4 slots are available (not already assigned)
-        if (existingAllocation.slot1 !== null || existingAllocation.slot2 !== null ||
-            existingAllocation.slot3 !== null || existingAllocation.slot4 !== null) {
-          continue // Some slots already assigned, skip
-        }
-        
-        // Assign all 4 slots to the unavailable PCA's team
-        existingAllocation.slot1 = team
-        existingAllocation.slot2 = team
-        existingAllocation.slot3 = team
-        existingAllocation.slot4 = team
-        existingAllocation.team = team
-        
-        const baseFTE = floatingPca.fte_pca
-        updateAllocationFTE(existingAllocation, baseFTE)
-      } else {
-        // Create new allocation for floating PCA to substitute all 4 slots
-        const newAllocation: PCAAllocation = {
-          id: crypto.randomUUID(),
-          schedule_id: '',
-          staff_id: floatingPca.id,
-          team: team,
-          fte_pca: 1.0, // Full day
-          fte_remaining: floatingPca.fte_pca - 1.0,
-          slot_assigned: 1.0,
-          slot_whole: null,
-          slot1: team,
-          slot2: team,
-          slot3: team,
-          slot4: team,
-          leave_type: floatingPca.leave_type,
-          special_program_ids: null,
-        }
-        allocations.push(newAllocation)
-      }
-      
-      // Update tracking
-      teamPCAAssigned[team] += 1.0
-      substituteFound = true
-      break
-    }
-    
-    // If no preferred PCA found, try any available floating PCA
-    if (!substituteFound) {
-      const floatingPca = floatingPCA.find(
-        p => p.is_available &&
-        p.fte_pca >= 1.0 && // Need full 1.0 FTE for whole-day substitution
-        !allocations.some(a => a.staff_id === p.id) // Not already allocated
-      )
-      
-      if (floatingPca) {
-        
-        // Create new allocation for floating PCA to substitute all 4 slots
-        const newAllocation: PCAAllocation = {
-          id: crypto.randomUUID(),
-          schedule_id: '',
-          staff_id: floatingPca.id,
-          team: team,
-          fte_pca: 1.0, // Full day
-          fte_remaining: floatingPca.fte_pca - 1.0,
-          slot_assigned: 1.0,
-          slot_whole: null,
-          slot1: team,
-          slot2: team,
-          slot3: team,
-          slot4: team,
-          leave_type: floatingPca.leave_type,
-          special_program_ids: null,
-        }
-        allocations.push(newAllocation)
-        
-        // Update tracking
-        teamPCAAssigned[team] += 1.0
-        substituteFound = true
-      }
-    }
-    
-    // If still no substitute found, log error
-    if (!substituteFound) {
-      if (!errors.missingSlotSubstitution) {
-        errors.missingSlotSubstitution = `No floating PCA available to substitute for ${pca.name} (FTE=0) in team ${team}`
-      } else {
-        errors.missingSlotSubstitution += `; ${pca.name} (FTE=0) in team ${team}`
-      }
-    }
+    wholeDaySubstitutionNeeds.push({
+      nonFloatingPCAId: pca.id,
+      nonFloatingPCAName: pca.name,
+      team,
+      fte: 0,
+      missingSlots,
+      availableFloatingPCAs
+    })
   })
 
-  // Part 1.2: Substitute missing slots with floating PCAs
-  // For non-floating PCAs with unavailable slots, find floating PCAs to substitute those missing slots
-  const unsubstitutedSlots: Array<{pcaName: string, team: Team, slots: number[]}> = []
-  
-  // Helper function to check if a PCA ID appears in any team's preference
-  const isPCAInAnyTeamPreference = (pcaId: string): boolean => {
-    return context.pcaPreferences.some(pref => 
-      pref.preferred_pca_ids.includes(pcaId)
-    )
-  }
+  // Collect all substitution needs first (partial substitutions from Part 1.2)
+  // Start with whole-day substitutions, then add partial substitutions
+  const substitutionNeeds: Array<{
+    nonFloatingPCAId: string
+    nonFloatingPCAName: string
+    team: Team
+    fte: number
+    missingSlots: number[]
+    availableFloatingPCAs: Array<{
+      id: string
+      name: string
+      availableSlots: number[]
+      isPreferred: boolean
+      isFloorPCA: boolean
+    }>
+  }> = [...wholeDaySubstitutionNeeds] // Start with whole-day substitutions
 
   nonFloatingPCA.forEach((pca) => {
     if (!pca.team) return
@@ -443,16 +1199,259 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
     const missingSlots = allSlots.filter(slot => !availableSlots.includes(slot))
     
     if (missingSlots.length === 0) return // All slots available, no substitution needed
-    
-    // Get team's PCA preferences
-    const teamPreference = context.pcaPreferences.find(p => p.team === team)
-    const preferredPCAIds = teamPreference?.preferred_pca_ids || []
-    
-    // Track which slots couldn't be substituted
-    const remainingMissingSlots: number[] = []
-    
-    // For each missing slot, find a floating PCA to substitute
-    missingSlots.forEach((missingSlot) => {
+
+    // Get actual FTE to determine if substitution is needed
+    const actualFTE = pca.fte_pca || 0
+    if (Math.abs(actualFTE - 1.0) < 0.001) {
+      return // FTE = 1.0, no substitution needed
+    }
+
+    // Collect substitution need (will be handled by callback or automatic algorithm)
+    const availableFloatingPCAs = getAvailableFloatingPCAsForSubstitution(team, missingSlots, allocations)
+    substitutionNeeds.push({
+      nonFloatingPCAId: pca.id,
+      nonFloatingPCAName: pca.name,
+      team,
+      fte: actualFTE,
+      missingSlots,
+      availableFloatingPCAs
+    })
+  })
+
+  // If callback is provided, use it to get user selections (includes both whole-day and partial substitutions)
+  let userSubstitutionSelections: Record<string, { floatingPCAId: string; slots: number[] }> = {}
+  if (context.onNonFloatingSubstitution && substitutionNeeds.length > 0) {
+    userSubstitutionSelections = await context.onNonFloatingSubstitution(substitutionNeeds)
+  }
+
+  // Apply user selections for whole-day substitutions first
+  wholeDaySubstitutionNeeds.forEach((subNeed) => {
+    const selectionKey = `${subNeed.team}-${subNeed.nonFloatingPCAId}`
+    const userSelection = userSubstitutionSelections[selectionKey]
+
+    if (userSelection) {
+      // Use user's selection
+      const floatingPca = floatingPCA.find(p => p.id === userSelection.floatingPCAId)
+      if (!floatingPca) return
+
+      const existingAllocation = allocations.find(a => a.staff_id === floatingPca.id)
+      
+      if (existingAllocation) {
+        // Update existing allocation - assign all 4 slots
+        existingAllocation.slot1 = subNeed.team
+        existingAllocation.slot2 = subNeed.team
+        existingAllocation.slot3 = subNeed.team
+        existingAllocation.slot4 = subNeed.team
+        existingAllocation.team = subNeed.team
+        const baseFTE = floatingPca.fte_pca
+        updateAllocationFTE(existingAllocation, baseFTE)
+      } else {
+        // Create new allocation for whole-day substitution
+        const newAllocation: PCAAllocation = {
+          id: crypto.randomUUID(),
+          schedule_id: '',
+          staff_id: floatingPca.id,
+          team: subNeed.team,
+          fte_pca: 1.0, // Full day
+          fte_remaining: floatingPca.fte_pca - 1.0,
+          slot_assigned: 1.0,
+          slot_whole: null,
+          slot1: subNeed.team,
+          slot2: subNeed.team,
+          slot3: subNeed.team,
+          slot4: subNeed.team,
+          leave_type: floatingPca.leave_type,
+          special_program_ids: null,
+        }
+        allocations.push(newAllocation)
+      }
+
+      // Update tracking
+      teamPCAAssigned[subNeed.team] += 1.0
+    } else {
+      // Use automatic algorithm (original logic) - only if callback not provided or user skipped
+      // Get team's PCA preferences
+      const teamPreference = context.pcaPreferences.find(p => p.team === subNeed.team)
+      const preferredPCAIds = teamPreference?.preferred_pca_ids || []
+      
+      // Find a floating PCA that can cover all 4 slots
+      let substituteFound = false
+      
+      // Try preferred PCAs first
+      for (const preferredPcaId of preferredPCAIds) {
+        const floatingPca = floatingPCA.find(
+          p => p.id === preferredPcaId &&
+          p.is_available &&
+          p.fte_pca >= 1.0 // Need full 1.0 FTE for whole-day substitution
+        )
+        
+        if (!floatingPca) continue
+        
+        // Check if this floating PCA already has allocations
+        const existingAllocation = allocations.find(a => a.staff_id === floatingPca.id)
+        if (existingAllocation) {
+          // Check if all 4 slots are available (not already assigned)
+          if (existingAllocation.slot1 !== null || existingAllocation.slot2 !== null ||
+              existingAllocation.slot3 !== null || existingAllocation.slot4 !== null) {
+            continue // Some slots already assigned, skip
+          }
+          
+          // Assign all 4 slots to the unavailable PCA's team
+          existingAllocation.slot1 = subNeed.team
+          existingAllocation.slot2 = subNeed.team
+          existingAllocation.slot3 = subNeed.team
+          existingAllocation.slot4 = subNeed.team
+          existingAllocation.team = subNeed.team
+          
+          const baseFTE = floatingPca.fte_pca
+          updateAllocationFTE(existingAllocation, baseFTE)
+        } else {
+          // Create new allocation for floating PCA to substitute all 4 slots
+          const newAllocation: PCAAllocation = {
+            id: crypto.randomUUID(),
+            schedule_id: '',
+            staff_id: floatingPca.id,
+            team: subNeed.team,
+            fte_pca: 1.0, // Full day
+            fte_remaining: floatingPca.fte_pca - 1.0,
+            slot_assigned: 1.0,
+            slot_whole: null,
+            slot1: subNeed.team,
+            slot2: subNeed.team,
+            slot3: subNeed.team,
+            slot4: subNeed.team,
+            leave_type: floatingPca.leave_type,
+            special_program_ids: null,
+          }
+          allocations.push(newAllocation)
+        }
+        
+        // Update tracking
+        teamPCAAssigned[subNeed.team] += 1.0
+        substituteFound = true
+        break
+      }
+      
+      // If no preferred PCA found, try any available floating PCA
+      if (!substituteFound) {
+        const floatingPca = floatingPCA.find(
+          p => p.is_available &&
+          p.fte_pca >= 1.0 && // Need full 1.0 FTE for whole-day substitution
+          !allocations.some(a => a.staff_id === p.id) // Not already allocated
+        )
+        
+        if (floatingPca) {
+          // Create new allocation for floating PCA to substitute all 4 slots
+          const newAllocation: PCAAllocation = {
+            id: crypto.randomUUID(),
+            schedule_id: '',
+            staff_id: floatingPca.id,
+            team: subNeed.team,
+            fte_pca: 1.0, // Full day
+            fte_remaining: floatingPca.fte_pca - 1.0,
+            slot_assigned: 1.0,
+            slot_whole: null,
+            slot1: subNeed.team,
+            slot2: subNeed.team,
+            slot3: subNeed.team,
+            slot4: subNeed.team,
+            leave_type: floatingPca.leave_type,
+            special_program_ids: null,
+          }
+          allocations.push(newAllocation)
+          
+          // Update tracking
+          teamPCAAssigned[subNeed.team] += 1.0
+          substituteFound = true
+        }
+      }
+      
+      // If still no substitute found, log error
+      if (!substituteFound) {
+        if (!errors.missingSlotSubstitution) {
+          errors.missingSlotSubstitution = `No floating PCA available to substitute for ${subNeed.nonFloatingPCAName} (FTE=0) in team ${subNeed.team}`
+        } else {
+          errors.missingSlotSubstitution += `; ${subNeed.nonFloatingPCAName} (FTE=0) in team ${subNeed.team}`
+        }
+      }
+    }
+  })
+
+  // Part 1.2: Substitute missing slots with floating PCAs
+  // For non-floating PCAs with unavailable slots, find floating PCAs to substitute those missing slots
+  const unsubstitutedSlots: Array<{pcaName: string, team: Team, slots: number[]}> = []
+  
+  // Helper function to check if a PCA ID appears in any team's preference
+  const isPCAInAnyTeamPreference = (pcaId: string): boolean => {
+    return context.pcaPreferences.some(pref => 
+      pref.preferred_pca_ids.includes(pcaId)
+    )
+  }
+
+
+  // Apply user selections or use automatic algorithm for partial substitutions
+  const partialSubstitutionNeeds = substitutionNeeds.filter(sub => sub.fte !== 0)
+  partialSubstitutionNeeds.forEach((subNeed) => {
+    const selectionKey = `${subNeed.team}-${subNeed.nonFloatingPCAId}`
+    const userSelection = userSubstitutionSelections[selectionKey]
+
+    if (userSelection) {
+      // Use user's selection
+      const floatingPca = floatingPCA.find(p => p.id === userSelection.floatingPCAId)
+      if (!floatingPca) return
+
+      const existingAllocation = allocations.find(a => a.staff_id === floatingPca.id)
+      
+      if (existingAllocation) {
+        // Update existing allocation
+        userSelection.slots.forEach(slot => {
+          const slotField = slot === 1 ? 'slot1' : slot === 2 ? 'slot2' : slot === 3 ? 'slot3' : 'slot4'
+          if (existingAllocation[slotField] === null) {
+            existingAllocation[slotField] = subNeed.team
+          }
+        })
+        const baseFTE = floatingPca.fte_pca
+        updateAllocationFTE(existingAllocation, baseFTE)
+      } else {
+        // Create new allocation
+        const slot1Team = userSelection.slots.includes(1) ? subNeed.team : null
+        const slot2Team = userSelection.slots.includes(2) ? subNeed.team : null
+        const slot3Team = userSelection.slots.includes(3) ? subNeed.team : null
+        const slot4Team = userSelection.slots.includes(4) ? subNeed.team : null
+        
+        const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
+        const newAllocation: PCAAllocation = {
+          id: crypto.randomUUID(),
+          schedule_id: '',
+          staff_id: floatingPca.id,
+          team: subNeed.team,
+          fte_pca: floatingPca.fte_pca,
+          fte_remaining: floatingPca.fte_pca - fteAssigned,
+          slot_assigned: fteAssigned,
+          slot_whole: null,
+          slot1: slot1Team,
+          slot2: slot2Team,
+          slot3: slot3Team,
+          slot4: slot4Team,
+          leave_type: floatingPca.leave_type,
+          special_program_ids: null,
+        }
+        allocations.push(newAllocation)
+      }
+
+      // Update tracking
+      teamPCAAssigned[subNeed.team] += userSelection.slots.length * 0.25
+    } else {
+      // Use automatic algorithm (original logic)
+      // Get team's PCA preferences
+      const teamPreference = context.pcaPreferences.find(p => p.team === subNeed.team)
+      const preferredPCAIds = teamPreference?.preferred_pca_ids || []
+      
+      // Track which slots couldn't be substituted
+      const remainingMissingSlots: number[] = []
+      
+      // For each missing slot, find a floating PCA to substitute
+      subNeed.missingSlots.forEach((missingSlot) => {
       let substituteFound = false
       
       // If team has preferences, try preferred PCA IDs first
@@ -480,26 +1479,26 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           // Found suitable floating PCA - assign to non-floating PCA's team for this slot
           if (existingAllocation) {
             // Update existing allocation
-            if (missingSlot === 1) existingAllocation.slot1 = pca.team
-            if (missingSlot === 2) existingAllocation.slot2 = pca.team
-            if (missingSlot === 3) existingAllocation.slot3 = pca.team
-            if (missingSlot === 4) existingAllocation.slot4 = pca.team
+            if (missingSlot === 1) existingAllocation.slot1 = subNeed.team
+            if (missingSlot === 2) existingAllocation.slot2 = subNeed.team
+            if (missingSlot === 3) existingAllocation.slot3 = subNeed.team
+            if (missingSlot === 4) existingAllocation.slot4 = subNeed.team
             
             const baseFTE = floatingPca.fte_pca
             updateAllocationFTE(existingAllocation, baseFTE)
           } else {
             // Create new allocation
-            const slot1Team = missingSlot === 1 ? team : null
-            const slot2Team = missingSlot === 2 ? team : null
-            const slot3Team = missingSlot === 3 ? team : null
-            const slot4Team = missingSlot === 4 ? team : null
+            const slot1Team = missingSlot === 1 ? subNeed.team : null
+            const slot2Team = missingSlot === 2 ? subNeed.team : null
+            const slot3Team = missingSlot === 3 ? subNeed.team : null
+            const slot4Team = missingSlot === 4 ? subNeed.team : null
             
             const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
             const newAllocation: PCAAllocation = {
               id: crypto.randomUUID(),
               schedule_id: '',
               staff_id: floatingPca.id,
-              team: team,
+              team: subNeed.team,
               fte_pca: floatingPca.fte_pca,  // Use PCA's actual on-duty FTE (Base_FTE-remaining)
               fte_remaining: floatingPca.fte_pca - 0.25,  // True-FTE remaining after 1 slot assignment
               slot_assigned: fteAssigned,
@@ -515,7 +1514,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           }
           
           // Update tracking
-          teamPCAAssigned[team] += 0.25
+          teamPCAAssigned[subNeed.team] += 0.25
           substituteFound = true
           break // Exit preference loop - found substitute
         }
@@ -540,29 +1539,29 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               // Skip this, try fallback
             } else {
               // Assign non-preferred floating PCA
-              if (missingSlot === 1) existingAllocation.slot1 = team
-              if (missingSlot === 2) existingAllocation.slot2 = team
-              if (missingSlot === 3) existingAllocation.slot3 = team
-              if (missingSlot === 4) existingAllocation.slot4 = team
+              if (missingSlot === 1) existingAllocation.slot1 = subNeed.team
+              if (missingSlot === 2) existingAllocation.slot2 = subNeed.team
+              if (missingSlot === 3) existingAllocation.slot3 = subNeed.team
+              if (missingSlot === 4) existingAllocation.slot4 = subNeed.team
               
               const baseFTE = nonPreferredFloating.fte_pca
               updateAllocationFTE(existingAllocation, baseFTE)
-              teamPCAAssigned[team] += 0.25
+              teamPCAAssigned[subNeed.team] += 0.25
               substituteFound = true
             }
           } else {
             // Create new allocation
-            const slot1Team = missingSlot === 1 ? team : null
-            const slot2Team = missingSlot === 2 ? team : null
-            const slot3Team = missingSlot === 3 ? team : null
-            const slot4Team = missingSlot === 4 ? team : null
+            const slot1Team = missingSlot === 1 ? subNeed.team : null
+            const slot2Team = missingSlot === 2 ? subNeed.team : null
+            const slot3Team = missingSlot === 3 ? subNeed.team : null
+            const slot4Team = missingSlot === 4 ? subNeed.team : null
             
             const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
             const newAllocation: PCAAllocation = {
               id: crypto.randomUUID(),
               schedule_id: '',
               staff_id: nonPreferredFloating.id,
-              team: team,
+              team: subNeed.team,
               fte_pca: nonPreferredFloating.fte_pca,  // Use PCA's actual on-duty FTE (Base_FTE-remaining)
               fte_remaining: nonPreferredFloating.fte_pca - 0.25,  // True-FTE remaining after 1 slot assignment
               slot_assigned: fteAssigned,
@@ -575,7 +1574,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               special_program_ids: null,
             }
             allocations.push(newAllocation)
-            teamPCAAssigned[team] += 0.25
+            teamPCAAssigned[subNeed.team] += 0.25
             substituteFound = true
           }
         }
@@ -597,28 +1596,28 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                 // Skip - no substitute available
               } else {
                 // Assign fallback floating PCA
-                if (missingSlot === 1) existingAllocation.slot1 = team
-                if (missingSlot === 2) existingAllocation.slot2 = team
-                if (missingSlot === 3) existingAllocation.slot3 = team
-                if (missingSlot === 4) existingAllocation.slot4 = team
+                if (missingSlot === 1) existingAllocation.slot1 = subNeed.team
+                if (missingSlot === 2) existingAllocation.slot2 = subNeed.team
+                if (missingSlot === 3) existingAllocation.slot3 = subNeed.team
+                if (missingSlot === 4) existingAllocation.slot4 = subNeed.team
                 
                 const baseFTE = fallbackFloating.fte_pca
                 updateAllocationFTE(existingAllocation, baseFTE)
-                teamPCAAssigned[team] += 0.25
+                teamPCAAssigned[subNeed.team] += 0.25
                 substituteFound = true
               }
             } else {
-              const slot1Team = missingSlot === 1 ? team : null
-              const slot2Team = missingSlot === 2 ? team : null
-              const slot3Team = missingSlot === 3 ? team : null
-              const slot4Team = missingSlot === 4 ? team : null
+              const slot1Team = missingSlot === 1 ? subNeed.team : null
+              const slot2Team = missingSlot === 2 ? subNeed.team : null
+              const slot3Team = missingSlot === 3 ? subNeed.team : null
+              const slot4Team = missingSlot === 4 ? subNeed.team : null
               
               const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
               const newAllocation: PCAAllocation = {
                 id: crypto.randomUUID(),
                 schedule_id: '',
                 staff_id: fallbackFloating.id,
-                team: team,
+                team: subNeed.team,
                 fte_pca: fallbackFloating.fte_pca,  // Use PCA's actual on-duty FTE (Base_FTE-remaining)
                 fte_remaining: fallbackFloating.fte_pca - 0.25,  // True-FTE remaining after 1 slot assignment
                 slot_assigned: fteAssigned,
@@ -631,7 +1630,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                 special_program_ids: null,
               }
               allocations.push(newAllocation)
-              teamPCAAssigned[team] += 0.25
+              teamPCAAssigned[subNeed.team] += 0.25
               substituteFound = true
             }
           }
@@ -653,28 +1652,28 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               // Skip - no substitute available
             } else {
               // Assign fallback floating PCA
-              if (missingSlot === 1) existingAllocation.slot1 = team
-              if (missingSlot === 2) existingAllocation.slot2 = team
-              if (missingSlot === 3) existingAllocation.slot3 = team
-              if (missingSlot === 4) existingAllocation.slot4 = team
+              if (missingSlot === 1) existingAllocation.slot1 = subNeed.team
+              if (missingSlot === 2) existingAllocation.slot2 = subNeed.team
+              if (missingSlot === 3) existingAllocation.slot3 = subNeed.team
+              if (missingSlot === 4) existingAllocation.slot4 = subNeed.team
               
               const baseFTE = fallbackFloating.fte_pca
               updateAllocationFTE(existingAllocation, baseFTE)
-              teamPCAAssigned[team] += 0.25
+              teamPCAAssigned[subNeed.team] += 0.25
               substituteFound = true
             }
           } else {
-            const slot1Team = missingSlot === 1 ? team : null
-            const slot2Team = missingSlot === 2 ? team : null
-            const slot3Team = missingSlot === 3 ? team : null
-            const slot4Team = missingSlot === 4 ? team : null
+            const slot1Team = missingSlot === 1 ? subNeed.team : null
+            const slot2Team = missingSlot === 2 ? subNeed.team : null
+            const slot3Team = missingSlot === 3 ? subNeed.team : null
+            const slot4Team = missingSlot === 4 ? subNeed.team : null
             
             const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
             const newAllocation: PCAAllocation = {
               id: crypto.randomUUID(),
               schedule_id: '',
               staff_id: fallbackFloating.id,
-              team: team,
+              team: subNeed.team,
               fte_pca: fallbackFloating.fte_pca,  // Use PCA's actual on-duty FTE (Base_FTE-remaining)
               fte_remaining: fallbackFloating.fte_pca - 0.25,  // True-FTE remaining after 1 slot assignment
               slot_assigned: fteAssigned,
@@ -687,25 +1686,26 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               special_program_ids: null,
             }
             allocations.push(newAllocation)
-            teamPCAAssigned[team] += 0.25
+            teamPCAAssigned[subNeed.team] += 0.25
             substituteFound = true
-    }
+          }
         }
       }
       
-      // Track if slot couldn't be substituted
-      if (!substituteFound) {
-        remainingMissingSlots.push(missingSlot)
-      }
-    })
-    
-    // Track unsubstituted slots for error reporting
-    if (remainingMissingSlots.length > 0) {
-      unsubstitutedSlots.push({
-        pcaName: pca.name,
-        team: team,
-        slots: remainingMissingSlots
+        // Track if slot couldn't be substituted
+        if (!substituteFound) {
+          remainingMissingSlots.push(missingSlot)
+        }
       })
+      
+      // Track unsubstituted slots for error reporting
+      if (remainingMissingSlots.length > 0) {
+        unsubstitutedSlots.push({
+          pcaName: subNeed.nonFloatingPCAName,
+          team: subNeed.team,
+          slots: remainingMissingSlots
+        })
+      }
     }
   })
   
@@ -734,6 +1734,12 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
     pendingPCAFTEPerTeam[teamKey] = Math.max(0, pending)
   })
 
+  /*
+  // LEGACY: Special-program allocation block (disabled).
+  // We now run special-program allocation via runSpecialProgramAllocation() and control the timing:
+  // - If non-floating substitution is needed: allocate special programs BEFORE substitution candidate list
+  // - Otherwise: allocate special programs here (after non-floating/substitution)
+  //
   // Get weekday for special program and floating PCA allocation
   const weekday = getWeekday(context.date)
   
@@ -994,8 +2000,29 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             const existingAllocation = (program.name === 'Robotic' || program.name === 'CRP')
               ? allocations.find(a => a.staff_id === floatingPca.id && a.special_program_ids?.includes(program.id))
               : allocations.find(a => a.staff_id === floatingPca.id && a.team === targetTeam)
-            const remainingFTE = existingAllocation?.fte_remaining || 1
-            
+            const remainingFTE = existingAllocation?.fte_remaining ?? floatingPca.fte_pca
+
+            // Any allocation (including substitutions) for slot-usage checks
+            const anyAllocationForPCA = allocations.find(a => a.staff_id === floatingPca.id)
+            const anyAssignedSlots = anyAllocationForPCA
+              ? [1, 2, 3, 4].filter(slot => {
+                  const slotTeam = slot === 1 ? anyAllocationForPCA.slot1 : slot === 2 ? anyAllocationForPCA.slot2 : slot === 3 ? anyAllocationForPCA.slot3 : anyAllocationForPCA.slot4
+                  return slotTeam !== null
+                })
+              : []
+
+            // CRITICAL: Do not assign special program PCA if required program slots are already occupied
+            // (e.g., PCA used as non-floating substitute already has slots assigned)
+            const requiredProgramSlots = programSlots
+            const anyAllocationHasRequiredSlotsOccupied = anyAllocationForPCA
+              ? requiredProgramSlots.some(slot => {
+                  const slotTeam = slot === 1 ? anyAllocationForPCA.slot1 : slot === 2 ? anyAllocationForPCA.slot2 : slot === 3 ? anyAllocationForPCA.slot3 : anyAllocationForPCA.slot4
+                  return slotTeam !== null
+                })
+              : false
+            if (anyAllocationHasRequiredSlotsOccupied) {
+              continue
+            }
               if (remainingFTE > 0) {
               // Calculate FTE based on number of slots assigned
               // Each slot is 0.25 FTE, so slots 1+2+3+4 = 1.0 FTE total
@@ -1007,34 +2034,37 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                 ? Math.min(remainingFTE, fteForSlots) // Use full slot FTE for special programs
                 : Math.min(neededFTE, remainingFTE, fteForSlots, program.pca_required || fteForSlots)
               
-              if (existingAllocation) {
+              // IMPORTANT: reuse the PCA's existing allocation (if any) to avoid duplicate allocations for the same staff_id
+              const baseAllocationForPCA = allocations.find(a => a.staff_id === floatingPca.id) ?? existingAllocation
+
+              if (baseAllocationForPCA) {
                 // Track newly assigned slots to avoid double-counting
                 const newlyAssignedSlots: { slot: number, team: Team }[] = []
                 programSlots.forEach(slot => {
                   const slotTeam = getSlotTeamForSpecialProgram(program.name, slot, targetTeam)
-                  if (slot === 1 && existingAllocation.slot1 === null && slotTeam) {
-                    existingAllocation.slot1 = slotTeam
+                  if (slot === 1 && baseAllocationForPCA.slot1 === null && slotTeam) {
+                    baseAllocationForPCA.slot1 = slotTeam
                     newlyAssignedSlots.push({ slot: 1, team: slotTeam })
                   }
-                  if (slot === 2 && existingAllocation.slot2 === null && slotTeam) {
-                    existingAllocation.slot2 = slotTeam
+                  if (slot === 2 && baseAllocationForPCA.slot2 === null && slotTeam) {
+                    baseAllocationForPCA.slot2 = slotTeam
                     newlyAssignedSlots.push({ slot: 2, team: slotTeam })
                   }
-                  if (slot === 3 && existingAllocation.slot3 === null && slotTeam) {
-                    existingAllocation.slot3 = slotTeam
+                  if (slot === 3 && baseAllocationForPCA.slot3 === null && slotTeam) {
+                    baseAllocationForPCA.slot3 = slotTeam
                     newlyAssignedSlots.push({ slot: 3, team: slotTeam })
                   }
-                  if (slot === 4 && existingAllocation.slot4 === null && slotTeam) {
-                    existingAllocation.slot4 = slotTeam
+                  if (slot === 4 && baseAllocationForPCA.slot4 === null && slotTeam) {
+                    baseAllocationForPCA.slot4 = slotTeam
                     newlyAssignedSlots.push({ slot: 4, team: slotTeam })
                   }
                 })
-                existingAllocation.fte_remaining -= fteToAssign
-                if (!existingAllocation.special_program_ids) {
-                  existingAllocation.special_program_ids = []
+                baseAllocationForPCA.fte_remaining -= fteToAssign
+                if (!baseAllocationForPCA.special_program_ids) {
+                  baseAllocationForPCA.special_program_ids = []
                 }
-                if (!existingAllocation.special_program_ids.includes(program.id)) {
-                  existingAllocation.special_program_ids.push(program.id)
+                if (!baseAllocationForPCA.special_program_ids.includes(program.id)) {
+                  baseAllocationForPCA.special_program_ids.push(program.id)
                 }
                 // Update teamPCAAssigned only for newly assigned slots (0.25 per slot)
                 newlyAssignedSlots.forEach(({ team }) => {
@@ -1362,6 +2392,15 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
     errors.specialProgramAllocation = `Unable to find PCA for special programs: ${unallocatedPrograms.join(', ')}`
   }
   } // End of shouldDoSpecialProgram block
+  */
+
+  // ============================================================================
+  // SPECIAL PROGRAM PCA ALLOCATION (Phase: 'non-floating-with-special' or 'all')
+  // ============================================================================
+  if (shouldDoSpecialProgram && !specialProgramsAllocated) {
+    runSpecialProgramAllocation()
+    specialProgramsAllocated = true
+  }
 
   // ============================================================================
   // FLOATING PCA ALLOCATION (Phase: 'floating' or 'all')
@@ -2130,7 +3169,6 @@ import {
   assignOneSlotAndUpdatePending,
   assignUpToPendingAndUpdatePending,
   getAvailableSlotsForTeam,
-  isFloorPCAForTeam,
   TeamPreferenceInfo,
 } from '@/lib/utils/floatingPCAHelpers'
 
@@ -2310,10 +3348,6 @@ export async function allocateFloatingPCA_v2(
   // Finalize tracker summary
   finalizeTrackerSummary(tracker)
 
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:2330',message:'Final allocation order map (post-fix)',data:{allocationOrderMap:Object.fromEntries(allocationOrderMap),teamOrder:teamOrder,orderByTeamOrder:teamOrder.map((t,i)=>({team:t,teamOrderIndex:i+1,allocationOrder:allocationOrderMap.get(t)||null}))},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'C'})}).catch(()=>{});
-  // #endregion
-
   return {
     allocations,
     pendingPCAFTEPerTeam: pendingFTE,
@@ -2339,11 +3373,7 @@ async function processConditionA(
   recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void
 ): Promise<void> {
   const { preferredPCAIds, preferredSlot, teamFloor, gymSlot, avoidGym } = pref
-  
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:2339',message:'Condition A entry',data:{team,preferredSlot,preferredPCAIds,pendingFTE:pendingFTE[team]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-  // #endregion
-  
+
   if (!preferredSlot) return
   
   let preferredSlotAssigned = false
@@ -2371,10 +3401,6 @@ async function processConditionA(
       pendingFTEByTeam: pendingFTE,
       context: 'Preferred PCA + preferred slot → preferred slot from preferred PCA',
     })
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:2368',message:'Condition A Step 1 - after assignSlotsToTeam',data:{team,pcaId,pcaName:pca.name,preferredSlot,slotsAssigned:result.slotsAssigned,includesPreferredSlot:result.slotsAssigned.includes(preferredSlot),newPendingFTE:result.newPendingFTE,allocationSlots:{slot1:allocation.slot1,slot2:allocation.slot2,slot3:allocation.slot3,slot4:allocation.slot4}},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-    // #endregion
     
     // Record ALL slots assigned, even if preferred slot is not included
     // This handles the case where preferred slot was already assigned in Step 3.2,
@@ -2535,18 +3561,12 @@ async function processConditionA(
       if (!pca) continue
       
       if (team === 'FO') {
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:Step4PreferredPCA_start',message:'CondA Step4 - processing preferred PCA',data:{team,pcaId,pcaName:pca.name,pendingFTE:pendingFTE[team],gymSlot,avoidGym},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
       }
 
       // Get or create allocation for this PCA
       const allocation = getOrCreateAllocation(pca.id, pca.name, pca.fte_pca, pca.leave_type, team, allocations)
 
       if (team === 'FO') {
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:Step4PreferredPCA_alloc',message:'CondA Step4 - got allocation',data:{team,pcaId,fteRemaining:allocation.fte_remaining,slot1:allocation.slot1,slot2:allocation.slot2,slot3:allocation.slot3,slot4:allocation.slot4,pendingFTE:pendingFTE[team]},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
       }
       
       // Continue assigning from this PCA until team's pending FTE is exhausted or PCA has no more slots
@@ -2561,16 +3581,10 @@ async function processConditionA(
         
         // If no available slots, break (PCA is exhausted for this team)
         if (team === 'FO') {
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:Step4PreferredPCA_iter',message:'CondA Step4 - loop iteration',data:{team,pcaId,pendingFTE:pendingFTE[team],fteRemaining:allocation.fte_remaining,existingSlots,availableSlots,slot1:allocation.slot1,slot2:allocation.slot2,slot3:allocation.slot3,slot4:allocation.slot4,gymSlot,avoidGym},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'B'})}).catch(()=>{});
-          // #endregion
         }
 
         if (availableSlots.length === 0) {
           if (team === 'FO') {
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:Step4PreferredPCA_break_noAvailable',message:'CondA Step4 - break: no available slots',data:{team,pcaId,pendingFTE:pendingFTE[team],fteRemaining:allocation.fte_remaining,existingSlots,slot1:allocation.slot1,slot2:allocation.slot2,slot3:allocation.slot3,slot4:allocation.slot4,gymSlot,avoidGym},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})}).catch(()=>{});
-            // #endregion
           }
           break
         }
@@ -2590,17 +3604,11 @@ async function processConditionA(
         })
 
         if (team === 'FO') {
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:Step4PreferredPCA_afterAssign',message:'CondA Step4 - after assignSlotsToTeam',data:{team,pcaId,slotsAssigned:result.slotsAssigned,newPendingFTEReported:result.newPendingFTE,fteRemaining:allocation.fte_remaining,slot1:allocation.slot1,slot2:allocation.slot2,slot3:allocation.slot3,slot4:allocation.slot4},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'D'})}).catch(()=>{});
-          // #endregion
         }
         
         // If no slots were assigned, break (shouldn't happen, but safety check)
         if (result.slotsAssigned.length === 0) {
           if (team === 'FO') {
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:Step4PreferredPCA_break_noAssign',message:'CondA Step4 - break: assignSlotsToTeam returned no slots',data:{team,pcaId,pendingFTE:pendingFTE[team],fteRemaining:allocation.fte_remaining,existingSlots,availableSlots,slot1:allocation.slot1,slot2:allocation.slot2,slot3:allocation.slot3,slot4:allocation.slot4,gymSlot,avoidGym},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'E'})}).catch(()=>{});
-            // #endregion
           }
           break
         }
@@ -2962,9 +3970,6 @@ async function processFloorPCAFallback(
   })
 
   if (team === 'FO' && cycle === 2) {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:FloorFallback_cycle2_entry',message:'Cycle2 floor fallback - FO entry',data:{team,cycle,condition,pendingFTE:pendingFTE[team],teamFloor,gymSlot,avoidGym,floorPCAsCount:floorPCAs.length,firstFloorPCAIds:floorPCAs.slice(0,5).map(p=>p.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'F'})}).catch(()=>{});
-    // #endregion
   }
   
   for (const pca of floorPCAs) {

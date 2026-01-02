@@ -2,7 +2,7 @@
 
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
-**Last Updated**: 2025-01-16  
+**Last Updated**: 2025-01-27  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -255,7 +255,42 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Solution: Destructured `onClick` from props and merged handlers to call both `onCheckedChange` and prop's `onClick`
   - Excluded `onClick` from spread props using `Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'>`
 
-### Phase 9: Pending FTE Bug Fix & Safe Wrapper System (Latest)
+### Phase 10: Non-Floating PCA Substitution & Team Transfer Features (Latest)
+- ✅ **Interactive Non-Floating PCA Substitution Dialog**
+  - Dialog appears during Step 2 algorithm execution when non-floating PCAs with FTE ≠ 1 need substitution
+  - Wizard-style dialog if >1 teams need substitution; simple dialog for single team
+  - Floating PCA candidates sorted by: preferred PCA → floor PCA matching team → non-floor PCA
+  - Excludes non-floating PCAs of other teams and PCAs actually assigned to special programs with overlapping slots
+  - User selections stored in `staffOverrides.substitutionFor` with `nonFloatingPCAId`, `team`, and `slots`
+  - Substitution slots excluded from Step 3.2 slot selection (via `computeReservations`)
+  - Special program allocation runs before substitution dialog to correctly reserve slots
+- ✅ **Team Transfer for Fixed-Team Therapists (APPT, RPT)**
+  - Emergency fallback feature for urgent team reassignments
+  - Allowed in Step 2 only with warning tooltip (thicker orange border)
+  - Warning tooltip: "Team transfer for fixed-team staff detected."
+  - FTE carried to target team; original team loses PT-FTE/team
+  - Stored in `staffOverrides.team` (does NOT change `staff.team` property - override only)
+  - Works for both schedule page and Staff Pool drag operations
+- ✅ **UI Enhancements for Substitution Display**
+  - Green text for partial substitution slots (specific slots substituted)
+  - Green border for whole-day substituting floating PCA
+  - Separate display for mixed slots (substituting + regular slots)
+  - Prevents "false green" - only actual substituting slots turn green
+  - Slot text wrapping: Time ranges (HHMM-HHMM) never break across lines
+  - Dynamic Step 1 slot display: Non-floating PCA cards update immediately based on `staffOverrides`
+- ✅ **Drag Validation Tooltip System**
+  - Replaced non-modal popover dialogs with drag-activated tooltips
+  - Tooltip content matches rank: PCA (2-line) vs Therapist (1-line)
+  - Shows only when dragging is detected (not on hover)
+  - Applied to regular staff, buffer staff, and Staff Pool
+  - Step validation: Therapists (Step 2 only), Floating PCA (Step 3 only)
+- ✅ **SPT Slot Discard Functionality**
+  - SPT slot discard removes entire allocation from team (like buffer therapist)
+  - Shared function `removeTherapistAllocationFromTeam()` for consistency
+  - No slot selection popover - immediate removal regardless of slot count
+  - Works correctly for both single and multi-slot SPT allocations
+
+### Phase 9: Pending FTE Bug Fix & Safe Wrapper System
 - ✅ **Critical Bug Fix: Pending FTE Overwrite Issue**
   - **Problem**: When `assignSlotsToTeam()` was called with `pendingFTE: 0.25` (local request), the global `pendingFTE[team]` was incorrectly overwritten with `result.newPendingFTE` (which is only the local remaining, often 0)
   - **Impact**: Teams with pending FTE > 0.25 (e.g., 1.0) would prematurely stop receiving slots after the first 0.25 assignment, causing under-allocation
@@ -1020,6 +1055,53 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 - Final algorithm (Step 3.4) respects total floating PCA capacity and assigns based on available FTE
 - Step 3.2/3.3 assignments reduce available capacity for final algorithm, preventing over-allocation
 - **Critical**: Adjusted FTE values are targets, but actual allocation is limited by available floating PCA pool
+
+### Pitfall 15: Pending FTE Overwrite Bug (Critical Allocation Bug)
+**Problem**: Teams with pending FTE > 0.25 (e.g., 1.0) would only receive 0.25 FTE (one slot) instead of their full requirement  
+**Root Cause**: 
+- When `assignSlotsToTeam()` was called with `pendingFTE: 0.25` (local request for one slot), the code incorrectly overwrote global `pendingFTE[team]` with `result.newPendingFTE`
+- `result.newPendingFTE` is only the remaining of the local 0.25 request (often 0), NOT the team's global pending FTE
+- This caused the algorithm to think the team was satisfied after just one slot, stopping further assignments
+**Solution**: 
+- Changed all one-slot calls to subtract `0.25 * slotsAssigned.length` from global pending instead of overwriting
+- Implemented safe wrapper system (`assignOneSlotAndUpdatePending` and `assignUpToPendingAndUpdatePending`) that automatically handles correct pending updates
+- Wrappers read/write `pendingFTEByTeam` directly, preventing manual update errors
+- Refactored entire `pcaAllocation.ts` to use wrappers exclusively, making the bug impossible to regress
+- Added optional `context` parameter to wrappers for debugging (human-readable labels)
+**Fixed Locations**:
+- Condition A Step 1/2/3 (preferred slot attempts with `pendingFTE: 0.25`)
+- Condition A Step 4 (fill remaining from preferred PCA - one-slot loop)
+- Condition B preferred-slot attempts (floor/non-floor with `pendingFTE: 0.25`)
+- Cycle 3 cleanup (one-slot-at-a-time with `pendingFTE: 0.25`)
+
+### Pitfall 16: Non-Floating PCA Duplication After Substitution
+**Problem**: Non-floating PCAs appeared twice on schedule page with 2.0 FTE after substitution  
+**Root Cause**: `allocatePCA` was seeding existing non-floating allocations for Step 2 and then re-allocating them, causing duplicates  
+**Solution**: Changed `allocatePCA` to only seed `existingAllocations` for the `'floating'` phase. For `'non-floating-with-special'`, it starts with an empty `allocations` array
+
+### Pitfall 17: Special Program PCA Conflict with Substitution
+**Problem**: Special program allocation picked a floating PCA even if it was selected as a substitute and its slots were occupied  
+**Root Cause**: Special program allocation ran after substitution needs were collected, and didn't check if substitute PCA's slots were already taken  
+**Solution**: Extracted special program allocation into `runSpecialProgramAllocation` and reordered to run *before* substitution needs are collected. Added `anyAllocationHasRequiredSlotsOccupied` check to prevent overwrites
+
+### Pitfall 18: Step 3.2 Substitution Slot Exclusion Bug
+**Problem**: In Step 3.2, slots used for substitution (from Step 2) were still appearing as available for selection  
+**Root Cause**: `handleSubstitutionWizardConfirm` was incorrectly parsing `nonFloatingPCAId` from key by splitting on `-`, which truncated UUIDs containing hyphens. This led to `substitutionFor` not being saved into `staffOverrides`  
+**Solution**: Modified parsing to use `indexOf('-')` and `slice()` to correctly parse team and UUID. Ensured `staffOverrides` with `substitutionFor` is correctly passed to `computeReservations`
+
+### Pitfall 19: SPT Slot Discard Using Wrong Behavior
+**Problem**: SPT slot discard was showing slot selection popover (like floating PCA) instead of removing entire allocation (like buffer therapist)  
+**Root Cause**: SPT slot discard logic was checking for multiple slots and showing selection popover, rather than immediately removing the allocation  
+**Solution**: Refactored to use shared `removeTherapistAllocationFromTeam()` function. SPT slot discard now immediately removes entire allocation from team regardless of slot count, matching buffer therapist behavior
+
+### Pitfall 20: Battery Bar FTE Display Bug for Special Program PCAs
+**Problem**: Battery bars in Staff Pool showed incorrect FTE for CRP-candidate PCAs:
+- Assigned PCA (君): showed 0.5 instead of 0.75
+- Unassigned PCA (淑貞): showed 0.75 instead of 1.0  
+**Root Cause**: `getTrueFTERemaining` was:
+1. Subtracting special program FTE based on `staff.special_program` property (affiliation) rather than actual assignment
+2. Double-subtracting for assigned PCAs: once from `program.fte_subtraction[staffId][weekday]` and again from assigned slots in `pcaAllocations`  
+**Solution**: Removed special program FTE subtraction logic. Function now only subtracts assigned slots from `pcaAllocations`, which already includes special program assignments. This ensures only actually assigned PCAs have FTE reduced and no double-subtraction occurs
 
 ### Pitfall 15: Pending FTE Overwrite Bug (Critical Allocation Bug)
 **Problem**: Teams with pending FTE > 0.25 (e.g., 1.0) would only receive 0.25 FTE (one slot) instead of their full requirement  

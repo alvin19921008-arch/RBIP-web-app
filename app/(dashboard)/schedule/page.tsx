@@ -19,6 +19,7 @@ import { StaffEditDialog } from '@/components/allocation/StaffEditDialog'
 import { TieBreakDialog } from '@/components/allocation/TieBreakDialog'
 import { StepIndicator } from '@/components/allocation/StepIndicator'
 import { FloatingPCAConfigDialog } from '@/components/allocation/FloatingPCAConfigDialog'
+import { NonFloatingSubstitutionDialog } from '@/components/allocation/NonFloatingSubstitutionDialog'
 import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopover'
 import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X, ArrowLeft } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
@@ -44,6 +45,7 @@ import {
   SpecialProgramRef,
 } from '@/lib/db/types'
 import { useAllocationSync } from '@/lib/hooks/useAllocationSync'
+import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 const WEEKDAYS: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri']
@@ -127,9 +129,9 @@ function SchedulePageContent() {
   }, [tieBreakResolver])
   const [tieBreakDecisions, setTieBreakDecisions] = useState<Record<string, Team>>({}) // Store tie-breaker decisions: key = `${teams.sort().join(',')}:${pendingFTE}`, value = selected team
   // Store staff leave/FTE overrides for the current date
-  const [staffOverrides, setStaffOverrides] = useState<Record<string, { leaveType: LeaveType | null; fteRemaining: number; team?: Team; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean; slotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null } }>>({})
+  const [staffOverrides, setStaffOverrides] = useState<Record<string, { leaveType: LeaveType | null; fteRemaining: number; team?: Team; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean; slotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null }; substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] } }>>({})
   const [currentScheduleId, setCurrentScheduleId] = useState<string | null>(null)
-  const [savedOverrides, setSavedOverrides] = useState<Record<string, { leaveType: LeaveType | null; fteRemaining: number; team?: Team; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean; slotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null } }>>({})
+  const [savedOverrides, setSavedOverrides] = useState<Record<string, { leaveType: LeaveType | null; fteRemaining: number; team?: Team; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean; slotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null }; substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] } }>>({})
   const [saving, setSaving] = useState(false)
   const [scheduleLoadedForDate, setScheduleLoadedForDate] = useState<string | null>(null) // Track which date's schedule is loaded
   const [hasSavedAllocations, setHasSavedAllocations] = useState(false) // Track if we loaded allocations from DB (to skip regeneration)
@@ -176,6 +178,28 @@ function SchedulePageContent() {
   
   // Step 3.1: Floating PCA Configuration Dialog state
   const [floatingPCAConfigOpen, setFloatingPCAConfigOpen] = useState(false)
+  
+  // Non-floating PCA substitution wizard state
+  const [substitutionWizardOpen, setSubstitutionWizardOpen] = useState(false)
+  const [substitutionWizardData, setSubstitutionWizardData] = useState<{
+    teams: Team[]
+    substitutionsByTeam: Record<Team, Array<{
+      nonFloatingPCAId: string
+      nonFloatingPCAName: string
+      team: Team
+      fte: number
+      missingSlots: number[]
+      availableFloatingPCAs: Array<{
+        id: string
+        name: string
+        availableSlots: number[]
+        isPreferred: boolean
+        isFloorPCA: boolean
+      }>
+    }>>
+    isWizardMode: boolean // true if multiple teams, false if single team
+  } | null>(null)
+  const substitutionWizardResolverRef = useRef<((selections: Record<string, { floatingPCAId: string; slots: number[] }>) => void) | null>(null)
   const [adjustedPendingFTE, setAdjustedPendingFTE] = useState<Record<Team, number> | null>(null)
   const [teamAllocationOrder, setTeamAllocationOrder] = useState<Team[] | null>(null)
   const [allocationTracker, setAllocationTracker] = useState<AllocationTracker | null>(null)
@@ -2129,6 +2153,18 @@ function SchedulePageContent() {
         const baseFTERemaining = override && override.fteSubtraction !== undefined
           ? Math.max(0, baseFTE - override.fteSubtraction)
           : (override ? override.fteRemaining : baseFTE)
+        
+        // For floating PCAs, check if they have substitutionFor and exclude those slots from availableSlots
+        let availableSlots = override?.availableSlots
+        if (s.floating && override?.substitutionFor) {
+          const substitutionSlots = override.substitutionFor.slots
+          const baseAvailableSlots = availableSlots && availableSlots.length > 0
+            ? availableSlots
+            : [1, 2, 3, 4]
+          // Remove substitution slots from available slots
+          availableSlots = baseAvailableSlots.filter(slot => !substitutionSlots.includes(slot))
+        }
+        
         return {
           id: s.id,
           name: s.name,
@@ -2138,7 +2174,7 @@ function SchedulePageContent() {
           fte_pca: baseFTERemaining,
           leave_type: override?.leaveType || null,
           is_available: baseFTERemaining > 0,
-          availableSlots: override?.availableSlots,
+          availableSlots: availableSlots,
           invalidSlot: override?.invalidSlot,
           leaveComebackTime: override?.leaveComebackTime,
           isLeave: override?.isLeave,
@@ -2152,15 +2188,101 @@ function SchedulePageContent() {
   // ============================================================================
 
   /**
+   * Detect non-floating PCAs that need substitution (FTE ≠ 1.0)
+   * Returns a record of teams with their non-floating PCAs needing substitution
+   */
+  const detectNonFloatingSubstitutions = useCallback((
+    allocationsByTeam: Record<Team, (PCAAllocation & { staff: Staff })[]>
+  ): Record<Team, Array<{
+    nonFloatingPCAId: string
+    nonFloatingPCAName: string
+    fte: number
+    missingSlots: number[]
+    currentSubstitute?: { pcaId: string; pcaName: string; slots: number[] }
+  }>> => {
+    const substitutionsNeeded = createEmptyTeamRecord<Array<{
+      nonFloatingPCAId: string
+      nonFloatingPCAName: string
+      fte: number
+      missingSlots: number[]
+      currentSubstitute?: { pcaId: string; pcaName: string; slots: number[] }
+    }>>([])
+
+    // Iterate through all PCA allocations to find non-floating PCAs with FTE ≠ 1.0
+    Object.entries(allocationsByTeam).forEach(([team, allocations]) => {
+      const teamTyped = team as Team
+      allocations.forEach(alloc => {
+        const staffMember = staff.find(s => s.id === alloc.staff_id)
+        if (!staffMember || staffMember.floating) return // Only non-floating PCAs
+
+        // Get actual FTE from staffOverrides or allocation
+        const override = staffOverrides[alloc.staff_id]
+        const actualFTE = override?.fteRemaining !== undefined 
+          ? override.fteRemaining 
+          : (alloc.fte_pca || 0)
+
+        // Check if FTE ≠ 1.0 (needs substitution)
+        if (Math.abs(actualFTE - 1.0) > 0.001) {
+          // Identify missing slots (slots not in availableSlots)
+          const allSlots = [1, 2, 3, 4]
+          const availableSlots = override?.availableSlots && override.availableSlots.length > 0
+            ? override.availableSlots
+            : (actualFTE === 0 ? [] : [1, 2, 3, 4]) // If FTE = 0, no slots available
+          const missingSlots = allSlots.filter(slot => !availableSlots.includes(slot))
+
+          if (missingSlots.length > 0) {
+            // Check if algorithm already assigned a floating PCA substitution
+            // Look for floating PCAs with slots assigned to this team that match missing slots
+            let currentSubstitute: { pcaId: string; pcaName: string; slots: number[] } | undefined
+            Object.values(allocationsByTeam).flat().forEach(floatingAlloc => {
+              const floatingStaff = staff.find(s => s.id === floatingAlloc.staff_id)
+              if (!floatingStaff || !floatingStaff.floating) return
+
+              // Check if this floating PCA has slots assigned to the non-floating PCA's team
+              const assignedSlots: number[] = []
+              if (floatingAlloc.slot1 === teamTyped) assignedSlots.push(1)
+              if (floatingAlloc.slot2 === teamTyped) assignedSlots.push(2)
+              if (floatingAlloc.slot3 === teamTyped) assignedSlots.push(3)
+              if (floatingAlloc.slot4 === teamTyped) assignedSlots.push(4)
+
+              // Check if assigned slots match missing slots (or are a subset)
+              const matchingSlots = assignedSlots.filter(slot => missingSlots.includes(slot))
+              if (matchingSlots.length > 0 && !currentSubstitute) {
+                currentSubstitute = {
+                  pcaId: floatingAlloc.staff_id,
+                  pcaName: floatingStaff.name,
+                  slots: matchingSlots
+                }
+              }
+            })
+
+            substitutionsNeeded[teamTyped].push({
+              nonFloatingPCAId: alloc.staff_id,
+              nonFloatingPCAName: staffMember.name,
+              fte: actualFTE,
+              missingSlots,
+              currentSubstitute
+            })
+          }
+        }
+      })
+    })
+
+    return substitutionsNeeded
+  }, [staff, staffOverrides])
+
+  /**
    * Step 2: Generate Therapist allocations + Non-floating PCA allocations + Special Program PCA
    * This step does NOT trigger tie-breakers (floating PCA handled in Step 3)
+   * Returns the PCA allocations by team for use in substitution detection
+   * @param cleanedOverrides Optional cleaned overrides (with availableSlots cleared for floating PCAs)
    */
-  const generateStep2_TherapistAndNonFloatingPCA = async () => {
-    if (staff.length === 0) return
+  const generateStep2_TherapistAndNonFloatingPCA = async (cleanedOverrides?: typeof staffOverrides): Promise<Record<Team, (PCAAllocation & { staff: Staff })[]>> => {
+    if (staff.length === 0) return createEmptyTeamRecord<Array<PCAAllocation & { staff: Staff }>>([])
 
     setLoading(true)
     try {
-      const overrides = staffOverrides
+      const overrides = cleanedOverrides ?? staffOverrides
 
       // Transform staff data for algorithms
       const staffData: StaffData[] = staff.map(s => {
@@ -2242,6 +2364,7 @@ function SchedulePageContent() {
           const baseFTERemaining = override && override.fteSubtraction !== undefined
             ? Math.max(0, baseFTE - override.fteSubtraction)
             : (override ? override.fteRemaining : baseFTE) // Fallback to fteRemaining if fteSubtraction not available
+          
           return {
             id: s.id,
             name: s.name,
@@ -2251,10 +2374,12 @@ function SchedulePageContent() {
             leave_type: override ? override.leaveType : null,
             is_available: override ? (override.fteRemaining > 0) : true, // Use fteRemaining (includes special program) for availability check
             team: s.team,
-            availableSlots: override?.availableSlots,
+            availableSlots: override?.availableSlots, // Will be undefined if cleared, which defaults to [1,2,3,4] in algorithm
             invalidSlot: override?.invalidSlot,
             leaveComebackTime: override?.leaveComebackTime,
             isLeave: override?.isLeave,
+            // Needed for floor PCA sorting/grouping in substitution dialog
+            floor_pca: s.floor_pca || null,
           }
         })
 
@@ -2307,6 +2432,76 @@ function SchedulePageContent() {
 
       // Run PCA allocation with phase = 'non-floating-with-special' 
       // This allocates non-floating PCAs + special program PCAs (no tie-breakers, no floating PCA)
+      // Callback for non-floating PCA substitution - called DURING algorithm execution
+      const handleNonFloatingSubstitution = async (
+        substitutions: Array<{
+          nonFloatingPCAId: string
+          nonFloatingPCAName: string
+          team: Team
+          fte: number
+          missingSlots: number[]
+          availableFloatingPCAs: Array<{
+            id: string
+            name: string
+            availableSlots: number[]
+            isPreferred: boolean
+            isFloorPCA: boolean
+          }>
+        }>
+      ): Promise<Record<string, { floatingPCAId: string; slots: number[] }>> => {
+        // Group substitutions by team - use factory to create unique array instances per team
+        const substitutionsByTeam = createEmptyTeamRecordFactory<Array<typeof substitutions[0]>>(() => [])
+        substitutions.forEach(sub => {
+          substitutionsByTeam[sub.team].push(sub)
+        })
+
+        // Only include teams that actually have substitutions (FTE ≠ 1)
+        const teamsWithSubstitutions = TEAMS.filter(
+          team => substitutionsByTeam[team].length > 0
+        )
+
+        if (teamsWithSubstitutions.length === 0) {
+          return {} // No substitutions needed
+        }
+
+        // Show wizard dialog only if multiple teams need substitution, otherwise simple dialog
+        const isWizardMode = teamsWithSubstitutions.length > 1
+
+        // Show dialog and wait for user selections
+        return new Promise((resolve) => {
+          setSubstitutionWizardData({
+            teams: teamsWithSubstitutions,
+            substitutionsByTeam: substitutionsByTeam as Record<Team, typeof substitutions>,
+            isWizardMode
+          })
+          setSubstitutionWizardOpen(true)
+
+          // Store resolver to be called when user confirms
+          const resolver = (selections: Record<string, { floatingPCAId: string; slots: number[] }>) => {
+            setSubstitutionWizardOpen(false)
+            setSubstitutionWizardData(null)
+            resolve(selections)
+          }
+
+          // Store resolver in ref so it can be accessed from handler
+          substitutionWizardResolverRef.current = resolver
+        })
+      }
+
+      // Get existing allocations (from saved data) so the substitution list can:
+      // - treat already-assigned special-program PCAs as unavailable (keep them excluded)
+      // - but NOT block all candidates just because they were previously assigned as floating PCAs in the saved schedule
+      //   (we are re-running Step 2, so clear non-special-program floating allocations)
+      const { existingAllocations: existingAllocsRaw } = recalculateFromCurrentState()
+      const existingAllocsForSubstitution = existingAllocsRaw.filter(alloc => {
+        const staffMember = staff.find(s => s.id === alloc.staff_id)
+        if (!staffMember) return false
+        // Always keep non-floating allocations (they're not candidates anyway)
+        if (!staffMember.floating) return true
+        // Keep only floating allocations that are special-program assignments
+        return !!(alloc.special_program_ids && alloc.special_program_ids.length > 0)
+      })
+      
       const pcaContext: PCAAllocationContext = {
         date: selectedDate,
         totalPCAAvailable: totalPCA,
@@ -2316,6 +2511,8 @@ function SchedulePageContent() {
         pcaPreferences,
         // gymSchedules removed - now comes from pcaPreferences
         phase: 'non-floating-with-special', // Non-floating + special program PCAs
+        onNonFloatingSubstitution: handleNonFloatingSubstitution, // Callback for substitution dialog
+        existingAllocations: existingAllocsForSubstitution, // Pass existing allocations to check for special program assignments
       }
 
       const pcaResult = await allocatePCA(pcaContext)
@@ -2372,8 +2569,12 @@ function SchedulePageContent() {
       // Update step status (don't auto-advance)
       setStepStatus(prev => ({ ...prev, 'therapist-pca': 'completed' }))
 
+      // Return the allocations for use in substitution detection
+      return pcaByTeam
     } catch (error) {
       console.error('Error in Step 2:', error)
+      // Return empty allocations on error
+      return createEmptyTeamRecord<Array<PCAAllocation & { staff: Staff }>>([])
     } finally {
       setLoading(false)
     }
@@ -2615,7 +2816,32 @@ function SchedulePageContent() {
           return
         }
         
-        await generateStep2_TherapistAndNonFloatingPCA()
+        // RESET Step 2-related data when initializing the algorithm
+        // This ensures the algorithm computes based on fresh state, not from previous Step 2/3 runs
+        // Clear availableSlots for floating PCAs from staffOverrides (preserve Step 1 data)
+        const cleanedOverrides = { ...staffOverrides }
+        
+        // Find all floating PCA staff IDs
+        const floatingPCAIds = new Set(
+          staff
+            .filter(s => s.rank === 'PCA' && s.floating)
+            .map(s => s.id)
+        )
+        
+        // Clear availableSlots for floating PCAs, but preserve other override data (leaveType, fteRemaining, etc.)
+        floatingPCAIds.forEach(pcaId => {
+          if (cleanedOverrides[pcaId]) {
+            const { availableSlots, ...otherOverrides } = cleanedOverrides[pcaId]
+            // Keep the override with other data (leaveType, fteRemaining, etc.)
+            cleanedOverrides[pcaId] = otherOverrides
+          }
+        })
+        
+        // Update state with cleaned overrides
+        setStaffOverrides(cleanedOverrides)
+        
+        // Run Step 2 algorithm with cleaned overrides - it will pause for substitution dialog if needed
+        await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides)
         setInitializedSteps(prev => new Set(prev).add('therapist-pca'))
         break
       case 'floating-pca':
@@ -2673,12 +2899,16 @@ function SchedulePageContent() {
               .map(s => s.id)
           )
           
-          // Clear slotOverrides for floating PCAs, but preserve other override data (leaveType, fteRemaining, etc.)
+          // Clear slotOverrides for floating PCAs, but preserve other override data (leaveType, fteRemaining, substitutionFor, etc.)
           floatingPCAIds.forEach(pcaId => {
             if (cleaned[pcaId]) {
               const { slotOverrides, ...otherOverrides } = cleaned[pcaId]
-              // Only keep the override if it has other meaningful data, otherwise remove it entirely
-              if (Object.keys(otherOverrides).length > 0) {
+              // CRITICAL: Preserve substitutionFor - it's needed for Step 3.2 to exclude substitution slots
+              // Always keep the override if it has substitutionFor, even if no other properties
+              const hasSubstitutionFor = !!otherOverrides.substitutionFor
+              const hasOtherKeys = Object.keys(otherOverrides).length > 0
+              
+              if (hasSubstitutionFor || hasOtherKeys) {
                 cleaned[pcaId] = otherOverrides
               } else {
                 delete cleaned[pcaId]
@@ -2736,10 +2966,6 @@ function SchedulePageContent() {
           })
         })
         
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'schedule/page.tsx:2705',message:'Calculating pending FTE for Step 3.1',data:{step2ResultTeamPCAAssigned:step2Result.teamPCAAssigned,nonFloatingPCAAssignedPerTeam,rawAveragePCAPerTeam:step2Result.rawAveragePCAPerTeam},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
-        
         TEAMS.forEach(team => {
           // Use displayed avg PCA/team from calculations (accounts for CRP -0.4 therapist FTE adjustment for CPPC)
           // This matches what the user sees in Block 6, not the raw value from step2Result
@@ -2758,16 +2984,8 @@ function SchedulePageContent() {
           const rawPending = Math.max(0, displayedAvgPCA - nonFloatingPCAAssigned - bufferFloatingFTE)
           const pending = roundToNearestQuarterWithMidpoint(rawPending)
           
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'schedule/page.tsx:2752',message:'Pending FTE calculation for team',data:{team,displayedAvgPCA,nonFloatingPCAAssigned,bufferFloatingFTE,rawPending,pending,step2ResultValue:step2Result.teamPCAAssigned[team]||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-          // #endregion
-          
           recalculatedPendingFTE[team] = pending
         })
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'schedule/page.tsx:2766',message:'Setting pendingPCAFTEPerTeam before opening dialog',data:{recalculatedPendingFTE,currentPendingPCAFTEPerTeam:pendingPCAFTEPerTeam},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-        // #endregion
         
         setPendingPCAFTEPerTeam(recalculatedPendingFTE)
         // Step 3.1: Open the configuration dialog instead of running algo directly
@@ -2890,6 +3108,83 @@ function SchedulePageContent() {
    */
   const handleFloatingPCAConfigCancel = () => {
     setFloatingPCAConfigOpen(false)
+  }
+
+  /**
+   * Handle confirmation from NonFloatingSubstitutionDialog
+   * Resolves the promise in the algorithm callback with user's selections
+   */
+  const handleSubstitutionWizardConfirm = (
+    selections: Record<string, { floatingPCAId: string; slots: number[] }>
+  ) => {
+    // Resolve the promise in the algorithm callback
+    if (substitutionWizardResolverRef.current) {
+      substitutionWizardResolverRef.current(selections)
+      substitutionWizardResolverRef.current = null
+    }
+    
+    // Also update staffOverrides for persistence
+    const newOverrides = { ...staffOverrides }
+
+    // Apply all selections to staffOverrides
+    Object.entries(selections).forEach(([key, selection]) => {
+      // Key format is `${team}-${nonFloatingPCAId}` but nonFloatingPCAId is a UUID containing '-'.
+      // So we must split ONLY on the first '-' to avoid truncating the UUID.
+      const dashIdx = key.indexOf('-')
+      const team = (dashIdx >= 0 ? key.slice(0, dashIdx) : key) as Team
+      const nonFloatingPCAId = dashIdx >= 0 ? key.slice(dashIdx + 1) : ''
+
+      const nonFloatingPCA = staff.find(s => s.id === nonFloatingPCAId)
+      if (!nonFloatingPCA) return
+
+      // Update floating PCA's staffOverrides with substitutionFor
+      const floatingPCA = staff.find(s => s.id === selection.floatingPCAId)
+      if (floatingPCA) {
+        const existingOverride = newOverrides[selection.floatingPCAId] || {
+          leaveType: null,
+          fteRemaining: 1.0,
+        }
+        newOverrides[selection.floatingPCAId] = {
+          ...existingOverride,
+          substitutionFor: {
+            nonFloatingPCAId,
+            nonFloatingPCAName: nonFloatingPCA.name,
+            team,
+            slots: selection.slots
+          }
+        }
+      }
+
+    })
+
+    setStaffOverrides(newOverrides)
+    // Note: pcaAllocations will be updated by the algorithm after it receives the selections
+  }
+
+  /**
+   * Handle cancel from NonFloatingSubstitutionDialog
+   * Resolves with empty selections (algorithm will use automatic fallback)
+   */
+  const handleSubstitutionWizardCancel = () => {
+    if (substitutionWizardResolverRef.current) {
+      substitutionWizardResolverRef.current({})
+      substitutionWizardResolverRef.current = null
+    }
+    setSubstitutionWizardOpen(false)
+    setSubstitutionWizardData(null)
+  }
+
+  /**
+   * Handle skip from NonFloatingSubstitutionDialog
+   * Resolves with empty selections (algorithm will use automatic fallback)
+   */
+  const handleSubstitutionWizardSkip = () => {
+    if (substitutionWizardResolverRef.current) {
+      substitutionWizardResolverRef.current({})
+      substitutionWizardResolverRef.current = null
+    }
+    setSubstitutionWizardOpen(false)
+    setSubstitutionWizardData(null)
   }
 
   /**
@@ -3490,63 +3785,15 @@ function SchedulePageContent() {
       // Validate slot transfer for floating PCA from StaffPool
       if (isFromStaffPool) {
         const isBufferStaff = staffMember.status === 'buffer'
-        // Only allow slot transfer when:
-        // 1. Step 3 algorithm has run (initializedSteps.has('floating-pca')) OR
-        //    current step is 'floating-pca' (for buffer PCA assignment before algo)
-        // 2. Current step is 'floating-pca' (Step 3), 'bed-relieving' (Step 4), or 'review' (Step 5)
-        const isStep3OrLater = currentStep === 'floating-pca' || currentStep === 'bed-relieving' || currentStep === 'review'
-        const algoHasRun = initializedSteps.has('floating-pca')
-        // For buffer PCA: allow in Step 3 before algo (for pre-assignment) AND after algo (Step 3.4+)
-        // For regular PCA: allow in Step 3 onwards (before or after algo)
-        const canTransfer = isStep3OrLater && (
-          (isBufferStaff && currentStep === 'floating-pca') || // Buffer PCA: Step 3 (before and after algo)
-          (!isBufferStaff && (algoHasRun || currentStep === 'floating-pca')) // Regular PCA: Step 3 onwards
-        )
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'schedule/page.tsx:3320',message:'PCA drag validation from StaffPool',data:{staffId,staffName:staffMember.name,isBufferStaff,isFromStaffPool,currentStep,isStep3OrLater,algoHasRun,canTransfer},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-        // #endregion
+        // Only allow slot transfer in Step 3 only
+        // For buffer PCA: allow in Step 3 (before and after algo)
+        // For regular PCA: allow in Step 3 only
+        const canTransfer = currentStep === 'floating-pca'
         
         // Store buffer staff flag in drag state for later use
         setPcaDragState(prev => ({ ...prev, isBufferStaff }))
         if (!canTransfer) {
-        // Show warning popover - find the dragged element
-        const activeRect = active.rect.current.initial
-        const cardRect = activeRect || active.rect.current.translated
-        
-        const popoverWidth = 200
-        const padding = 10
-        
-        let popoverX: number
-        let popoverY: number
-        
-        if (cardRect) {
-          popoverY = cardRect.top
-          
-          // Position to the left if it would be cut off on the right
-          const rightEdge = cardRect.left + cardRect.width + padding + popoverWidth
-          const windowWidth = window.innerWidth
-          
-          if (rightEdge > windowWidth - 20) {
-            popoverX = cardRect.left - popoverWidth - padding
-          } else {
-            popoverX = cardRect.left + cardRect.width + padding
-          }
-        } else {
-          popoverX = 100
-          popoverY = 100
-        }
-        
-        setSlotTransferWarningPopover({
-          show: true,
-          position: { x: popoverX, y: popoverY },
-        })
-        
-        // Auto-dismiss after 5 seconds
-        setTimeout(() => {
-          setSlotTransferWarningPopover(prev => ({ ...prev, show: false }))
-        }, 5000)
-        
+        // Don't show popover (tooltip handles the reminder for both buffer and regular staff)
         // Cancel the drag by not setting pcaDragState
         return
       }
@@ -3700,50 +3947,16 @@ function SchedulePageContent() {
   const handleDragMove = (event: DragMoveEvent) => {
     const { over, active } = event
     
-    // Validate therapist drag: only allowed in step 1 & 2
+    // Validate therapist drag: only allowed in step 2
+    // This applies to all therapists (SPT, APPT, RPT) including fixed-team staff
     if (therapistDragState.isActive && therapistDragState.sourceTeam) {
       const overId = over?.id?.toString() || ''
       const isOverDifferentTeam = overId.startsWith('therapist-') && overId !== `therapist-${therapistDragState.sourceTeam}`
       
-      // Show warning popover when user drags out of source team after step 2
-      if (isOverDifferentTeam && currentStep !== 'leave-fte' && currentStep !== 'therapist-pca') {
-        // Calculate popover position
-        const activeRect = active.rect.current.initial
-        const translatedRect = active.rect.current.translated
-        const cardRect = activeRect || translatedRect
-        
-        const popoverWidth = 200
-        const padding = 10
-        
-        let popoverX: number
-        let popoverY: number
-        
-        if (cardRect) {
-          popoverY = cardRect.top
-          
-          const rightEdge = cardRect.left + cardRect.width + padding + popoverWidth
-          const windowWidth = window.innerWidth
-          
-          if (rightEdge > windowWidth - 20) {
-            popoverX = cardRect.left - popoverWidth - padding
-          } else {
-            popoverX = cardRect.left + cardRect.width + padding
-          }
-        } else {
-          popoverX = 100
-          popoverY = 100
-        }
-        
-        setTherapistTransferWarningPopover({
-          show: true,
-          position: { x: popoverX, y: popoverY },
-        })
-        
-        // Auto-dismiss after 5 seconds
-        setTimeout(() => {
-          setTherapistTransferWarningPopover(prev => ({ ...prev, show: false }))
-        }, 5000)
-        
+      // Don't show popover when user drags out of source team after step 2
+      // Tooltip handles the reminder for both buffer and regular staff
+      // Fixed-team staff (APPT, RPT) will show warning tooltip when dragging
+      if (isOverDifferentTeam && currentStep !== 'therapist-pca') {
         // Reset therapist drag state
         setTherapistDragState({
           isActive: false,
@@ -3762,48 +3975,10 @@ function SchedulePageContent() {
     const overId = over?.id?.toString() || ''
     const isOverDifferentTeam = overId.startsWith('pca-') && overId !== `pca-${pcaDragState.sourceTeam}`
     
-    // Validate: Floating PCA slot transfer is only allowed in step 3 onwards
-    // Show warning popover when user drags out of source team before step 3
-    if (isOverDifferentTeam && currentStep !== 'floating-pca' && currentStep !== 'bed-relieving' && currentStep !== 'review') {
-      // Calculate popover position (similar to slot selection popover)
-      const activeRect = active.rect.current.initial
-      const translatedRect = active.rect.current.translated
-      const cardRect = activeRect || translatedRect
-      
-      const popoverWidth = 200 // Width for warning message
-      const padding = 10
-      
-      let popoverX: number
-      let popoverY: number
-      
-      if (cardRect) {
-        popoverY = cardRect.top
-        
-        // Position to the left if it would be cut off on the right
-        const rightEdge = cardRect.left + cardRect.width + padding + popoverWidth
-        const windowWidth = window.innerWidth
-        
-        if (rightEdge > windowWidth - 20) {
-          popoverX = cardRect.left - popoverWidth - padding
-        } else {
-          popoverX = cardRect.left + cardRect.width + padding
-        }
-      } else {
-        popoverX = 100
-        popoverY = 100
-      }
-      
-      setSlotTransferWarningPopover({
-        show: true,
-        position: { x: popoverX, y: popoverY },
-      })
-      
-      // Auto-dismiss after 5 seconds
-      setTimeout(() => {
-        setSlotTransferWarningPopover(prev => ({ ...prev, show: false }))
-      }, 5000)
-      
-      // Reset drag state to prevent the transfer
+    // Validate: Floating PCA slot transfer is only allowed in step 3
+    // Don't show popover (tooltip handles the reminder)
+    // Just reset drag state to prevent the transfer
+    if (isOverDifferentTeam && currentStep !== 'floating-pca') {
       setPcaDragState({
         isActive: false,
         isDraggingFromPopover: false,
@@ -3892,7 +4067,13 @@ function SchedulePageContent() {
     
     // If in discard mode, perform discard immediately (no need to drag)
     if (pcaDragState.isDiscardMode && pcaDragState.sourceTeam && pcaDragState.staffId) {
-      performSlotDiscard(pcaDragState.staffId, pcaDragState.sourceTeam, pcaDragState.selectedSlots)
+      // Check if this is SPT (therapist) or PCA
+      const staffMember = staff.find(s => s.id === pcaDragState.staffId)
+      if (staffMember?.rank === 'SPT') {
+        performTherapistSlotDiscard(pcaDragState.staffId, pcaDragState.sourceTeam, pcaDragState.selectedSlots)
+      } else {
+        performSlotDiscard(pcaDragState.staffId, pcaDragState.sourceTeam, pcaDragState.selectedSlots)
+      }
       resetPcaDragState()
       return
     }
@@ -3905,7 +4086,46 @@ function SchedulePageContent() {
     }))
   }
   
-  // Perform slot discard (opposite of slot transfer)
+  // Shared function to remove therapist allocation from team (for buffer therapist and SPT slot discard)
+  const removeTherapistAllocationFromTeam = (staffId: string, sourceTeam: Team) => {
+    setTherapistAllocations(prev => ({
+      ...prev,
+      [sourceTeam]: prev[sourceTeam].filter(a => a.staff_id !== staffId),
+    }))
+    
+    // Clear staffOverrides for this staff (remove team assignment)
+    setStaffOverrides(prev => {
+      const updated = { ...prev }
+      if (updated[staffId]) {
+        const { team, ...rest } = updated[staffId]
+        if (Object.keys(rest).length === 0) {
+          delete updated[staffId]
+        } else {
+          updated[staffId] = rest
+        }
+      }
+      return updated
+    })
+  }
+  
+  // Perform therapist slot discard (for SPT) - works like buffer therapist removal
+  const performTherapistSlotDiscard = (staffId: string, sourceTeam: Team, slotsToDiscard: number[]) => {
+    if (slotsToDiscard.length === 0) return
+    
+    const currentAllocation = Object.values(therapistAllocations).flat()
+      .find(a => a.staff_id === staffId && a.team === sourceTeam)
+    
+    if (!currentAllocation) return
+    
+    const staffMember = staff.find(s => s.id === staffId)
+    if (!staffMember || staffMember.rank !== 'SPT') return // Only SPT has slot assignments
+    
+    // For SPT, slot discard removes the entire allocation from the team (like buffer therapist)
+    // This is different from PCA slot discard which only removes specific slots
+    removeTherapistAllocationFromTeam(staffId, sourceTeam)
+  }
+  
+  // Perform slot discard (opposite of slot transfer) - for PCA
   const performSlotDiscard = (staffId: string, sourceTeam: Team, slotsToDiscard: number[]) => {
     if (slotsToDiscard.length === 0) return
     
@@ -4229,14 +4449,26 @@ function SchedulePageContent() {
         if (currentAllocation.slot3 === sourceTeam) assignedSlots.push(3)
         if (currentAllocation.slot4 === sourceTeam) assignedSlots.push(4)
         
-        // If single slot, discard immediately
+        // Check if this is SPT (therapist) or PCA
+        const staffMember = staff.find(s => s.id === effectiveStaffId)
+        const isSPT = staffMember?.rank === 'SPT'
+        
+        // For SPT, slot discard removes the entire allocation (like buffer therapist)
+        // No need to show slot selection - just remove the allocation immediately
+        if (isSPT) {
+          performTherapistSlotDiscard(effectiveStaffId, sourceTeam, assignedSlots)
+          resetPcaDragState()
+          return
+        }
+        
+        // For PCA, handle single vs multi-slot discard
         if (assignedSlots.length === 1) {
           performSlotDiscard(effectiveStaffId, sourceTeam, assignedSlots)
           resetPcaDragState()
           return
         }
         
-        // If multi-slot, show slot selection for discard
+        // If multi-slot, show slot selection for discard (PCA only)
         if (assignedSlots.length > 1) {
           // Set up for slot discard selection
           setPcaDragState(prev => ({
@@ -4276,12 +4508,26 @@ function SchedulePageContent() {
         if (currentAllocation.slot3 === sourceTeam) assignedSlots.push(3)
         if (currentAllocation.slot4 === sourceTeam) assignedSlots.push(4)
         
+        // Check if this is SPT (therapist) or PCA
+        const staffMemberForDiscard = staff.find(s => s.id === effectiveStaffId)
+        const isSPTForDiscard = staffMemberForDiscard?.rank === 'SPT'
+        
+        // For SPT, slot discard removes the entire allocation (like buffer therapist)
+        // No need to show slot selection - just remove the allocation immediately
+        if (isSPTForDiscard) {
+          performTherapistSlotDiscard(effectiveStaffId, sourceTeam, assignedSlots)
+          resetPcaDragState()
+          return
+        }
+        
+        // For PCA, handle single vs multi-slot discard
         if (assignedSlots.length === 1) {
           performSlotDiscard(effectiveStaffId, sourceTeam, assignedSlots)
           resetPcaDragState()
           return
         }
         
+        // If multi-slot, show slot selection for discard (PCA only)
         if (assignedSlots.length > 1) {
           setPcaDragState(prev => ({
             ...prev,
@@ -4342,10 +4588,38 @@ function SchedulePageContent() {
     
     // Handle therapist drag (existing logic)
     if (!over) {
-      // Dropped outside - handle buffer therapist discard
+      // Dropped outside - handle SPT slot discard or buffer therapist discard
       if (staffMember && ['RPT', 'SPT', 'APPT'].includes(staffMember.rank)) {
         const isBufferStaff = staffMember.status === 'buffer'
-        if (isBufferStaff && (currentStep === 'leave-fte' || currentStep === 'therapist-pca')) {
+        const isSPT = staffMember.rank === 'SPT'
+        
+        // For SPT: handle slot discard (similar to floating PCA)
+        if (isSPT && therapistDragState.isActive && therapistDragState.sourceTeam) {
+          const currentAllocation = Object.values(therapistAllocations).flat()
+            .find(a => a.staff_id === staffId)
+          
+          if (currentAllocation) {
+            const sourceTeam = therapistDragState.sourceTeam
+            const assignedSlots: number[] = []
+            if (currentAllocation.slot1 === sourceTeam) assignedSlots.push(1)
+            if (currentAllocation.slot2 === sourceTeam) assignedSlots.push(2)
+            if (currentAllocation.slot3 === sourceTeam) assignedSlots.push(3)
+            if (currentAllocation.slot4 === sourceTeam) assignedSlots.push(4)
+            
+            // For SPT, slot discard removes the entire allocation (like buffer therapist)
+            // No need to show slot selection - just remove the allocation immediately
+            performTherapistSlotDiscard(staffId, sourceTeam, assignedSlots)
+            setTherapistDragState({
+              isActive: false,
+              staffId: null,
+              sourceTeam: null,
+            })
+            return
+          }
+        }
+        
+        // For buffer therapist: handle whole therapist removal
+        if (isBufferStaff && currentStep === 'therapist-pca') {
           // Find current team from allocations
           let currentTeam: Team | undefined
           for (const [team, allocs] of Object.entries(therapistAllocations)) {
@@ -4356,11 +4630,8 @@ function SchedulePageContent() {
           }
           
           if (currentTeam) {
-            // Remove buffer therapist from team
-            setTherapistAllocations(prev => ({
-              ...prev,
-              [currentTeam!]: prev[currentTeam!].filter(a => a.staff_id !== staffId),
-            }))
+            // Remove buffer therapist from team using shared function
+            removeTherapistAllocationFromTeam(staffId, currentTeam)
             
             // Update staff.team to null in database
             supabase
@@ -4373,13 +4644,6 @@ function SchedulePageContent() {
                   s.id === staffId ? { ...s, team: null } : s
                 ))
               })
-            
-            // Remove from staffOverrides
-            setStaffOverrides(prev => {
-              const updated = { ...prev }
-              delete updated[staffId]
-              return updated
-            })
           }
         }
       }
@@ -4394,23 +4658,14 @@ function SchedulePageContent() {
     
     if (!staffMember) return
     
-    // Allow RPT, SPT, and buffer therapists (including APPT buffer) to be moved
+    // Allow RPT, SPT, APPT (including buffer and fixed-team) to be moved
     if (!['RPT', 'SPT', 'APPT'].includes(staffMember.rank)) return
     
-    // Regular APPT (non-buffer) cannot be moved
     const isBufferStaff = staffMember.status === 'buffer'
-    if (staffMember.rank === 'APPT' && !isBufferStaff) {
-      return // Regular APPT cannot be moved - card will return to original position
-    }
+    const isFixedTeamStaff = !isBufferStaff && (staffMember.rank === 'APPT' || staffMember.rank === 'RPT')
     
-    // Buffer therapist: only transferrable in step 1 & 2
-    if (isBufferStaff && currentStep !== 'leave-fte' && currentStep !== 'therapist-pca') {
-      // Buffer therapist transfer not allowed after Step 2
-      return
-    }
-    
-    // Validate: Therapist transfer is only allowed in step 1 & 2
-    if (currentStep !== 'leave-fte' && currentStep !== 'therapist-pca') {
+    // Validate: Therapist transfer is only allowed in step 2
+    if (currentStep !== 'therapist-pca') {
       // Transfer not allowed - card will return to original position
       return
     }
@@ -4440,6 +4695,8 @@ function SchedulePageContent() {
       : (staffOverrides[staffId]?.fteRemaining ?? currentAlloc?.fte_therapist ?? 1.0)
     
     // Update staffOverrides with new team
+    // For fixed-team staff (APPT, RPT), this is a staff override (does NOT change staff.team property)
+    // For buffer staff, also update the staff.team in the database
     setStaffOverrides(prev => ({
       ...prev,
       [staffId]: {
@@ -4451,6 +4708,7 @@ function SchedulePageContent() {
     }))
     
     // For buffer therapist, also update the staff.team in the database
+    // For fixed-team staff (APPT, RPT), do NOT change staff.team - it's only a staff override
     if (isBufferStaff) {
       supabase
         .from('staff')
@@ -4463,6 +4721,10 @@ function SchedulePageContent() {
           ))
         })
     }
+    
+    // For fixed-team staff (APPT, RPT), the FTE is carried to target team
+    // The original team will lose PT-FTE/team when allocations are regenerated
+    // This is handled by the therapist allocation algorithm respecting staffOverrides.team
   }
 
   return (
@@ -4485,61 +4747,6 @@ function SchedulePageContent() {
         />
       )}
       
-      {/* Warning Popover for slot transfer before step 3 */}
-      {slotTransferWarningPopover.show && slotTransferWarningPopover.position && (
-        <div
-          className="fixed z-[9999] bg-white dark:bg-slate-800 rounded-lg shadow-xl border-2 border-amber-500 p-3 w-[200px]"
-          style={{
-            left: slotTransferWarningPopover.position.x,
-            top: slotTransferWarningPopover.position.y,
-            pointerEvents: 'auto',
-          }}
-        >
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              setSlotTransferWarningPopover({ show: false, position: null })
-            }}
-            className="absolute top-1 right-1 p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-          <div className="text-xs font-semibold text-amber-800 dark:text-amber-200 mb-1 pr-4">
-            Slot Transfer Not Available
-          </div>
-          <div className="text-[10px] text-slate-600 dark:text-slate-400 leading-tight">
-            Floating PCA slot transfer is only available in Step 3 (Floating PCA) onwards. Please complete Steps 1 and 2 first.
-          </div>
-        </div>
-      )}
-      
-      {/* Warning Popover for therapist transfer after step 2 */}
-      {therapistTransferWarningPopover.show && therapistTransferWarningPopover.position && (
-        <div
-          className="fixed z-[9999] bg-white dark:bg-slate-800 rounded-lg shadow-xl border-2 border-amber-500 p-3 w-[200px]"
-          style={{
-            left: therapistTransferWarningPopover.position.x,
-            top: therapistTransferWarningPopover.position.y,
-            pointerEvents: 'auto',
-          }}
-        >
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              setTherapistTransferWarningPopover({ show: false, position: null })
-            }}
-            className="absolute top-1 right-1 p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-          <div className="text-xs font-semibold text-amber-800 dark:text-amber-200 mb-1 pr-4">
-            Therapist Transfer Not Available
-          </div>
-          <div className="text-[10px] text-slate-600 dark:text-slate-400 leading-tight">
-            Therapist transfer is only available in Step 1 (Leave & FTE) and Step 2 (Therapist & PCA). Please return to Steps 1 or 2 to transfer therapists.
-          </div>
-        </div>
-      )}
       
       {/* Warning Popover for leave arrangement edit after step 1 */}
       {leaveEditWarningPopover.show && leaveEditWarningPopover.position && (
@@ -5139,9 +5346,28 @@ function SchedulePageContent() {
           existingAllocations={recalculateFromCurrentState().existingAllocations}
           specialPrograms={specialPrograms}
           bufferStaff={bufferStaff}
+          staffOverrides={staffOverrides}
           onSave={handleFloatingPCAConfigSave}
           onCancel={handleFloatingPCAConfigCancel}
         />
+
+        {substitutionWizardData && (
+          <NonFloatingSubstitutionDialog
+            open={substitutionWizardOpen}
+            teams={substitutionWizardData.teams}
+            substitutionsByTeam={substitutionWizardData.substitutionsByTeam}
+            isWizardMode={substitutionWizardData.isWizardMode}
+            allStaff={staff}
+            pcaPreferences={pcaPreferences}
+            specialPrograms={specialPrograms}
+            weekday={getWeekday(selectedDate)}
+            currentAllocations={[]} // Not needed - algorithm handles allocations
+            staffOverrides={staffOverrides}
+            onConfirm={handleSubstitutionWizardConfirm}
+            onCancel={handleSubstitutionWizardCancel}
+            onSkip={handleSubstitutionWizardSkip}
+          />
+        )}
 
         {/* Calendar Popover */}
         {calendarOpen && (

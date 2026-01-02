@@ -61,17 +61,23 @@ function getSlotTeam(allocation: PCAAllocation, slot: number): Team | null {
  * - Adjusted pending FTE from Step 3.1
  * - Floating PCA availability
  * - Existing allocations from previous steps
+ * - Substitution slots (from staffOverrides) - these should be excluded
  * 
  * @param pcaPreferences Team PCA preferences from database
  * @param adjustedPendingFTE Adjusted pending FTE from Step 3.1
  * @param floatingPCAs Available floating PCAs with their data
  * @param existingAllocations Allocations from Step 2 (slots already assigned)
+ * @param staffOverrides Staff overrides including substitution info (optional)
  */
 export function computeReservations(
   pcaPreferences: PCAPreference[],
   adjustedPendingFTE: Record<Team, number>,
   floatingPCAs: PCAData[],
-  existingAllocations: PCAAllocation[]
+  existingAllocations: PCAAllocation[],
+  staffOverrides?: Record<string, {
+    substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
+    [key: string]: any
+  }>
 ): ReservationResult {
   // Initialize empty reservations
   const teamReservations: TeamReservations = {
@@ -107,6 +113,17 @@ export function computeReservations(
       if (existingAlloc) {
         const slotOwner = getSlotTeam(existingAlloc, preferredSlot)
         if (slotOwner !== null) continue  // Slot already taken
+      }
+      
+      // Skip if this slot is being used for substitution (from Step 2)
+      if (staffOverrides) {
+        const override = staffOverrides[pcaId]
+        if (override?.substitutionFor) {
+          const substitutionSlots = override.substitutionFor.slots
+          if (substitutionSlots.includes(preferredSlot)) {
+            continue  // Slot is being used for substitution, not available
+          }
+        }
       }
       
       // This PCA's slot is available for reservation

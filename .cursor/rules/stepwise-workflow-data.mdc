@@ -26,6 +26,12 @@ Step 1: Leave & FTE
     ↓ staffOverrides (leave types, FTE remaining, team changes)
 Step 2: Therapist & Non-Floating PCA
     ↓ staffOverrides + step2Result (non-floating allocations, teamPCAAssigned)
+    ↓ Step 2.1: Special program allocation (runs before substitution)
+    ↓ Step 2.2: Non-floating PCA substitution dialog (if FTE ≠ 1)
+      - Interactive dialog during algorithm execution
+      - Wizard-style if >1 teams need substitution; simple dialog for single team
+      - User selections stored in staffOverrides.substitutionFor
+    ↓ Step 2.3: Finalize non-floating allocations
 Step 3: Floating PCA (Interactive Wizard: 3.0 → 3.1 → 3.2 → 3.3 → 3.4)
     ↓ staffOverrides + Step 2 allocations + pendingPCA-FTE/team
     ↓ Step 3.1: Adjust pending FTE & team order
@@ -54,7 +60,7 @@ Step 4: Bed Relieving
 | Step | PCA Types Handled | Sync Behavior |
 |------|-------------------|---------------|
 | Step 1 | None | Sync therapist allocations only; **recalculate schedule calculations immediately on staffOverrides change** |
-| Step 2 | Non-floating, Substitution, Special Program | Sync therapist; PCA algo runs on button click |
+| Step 2 | Non-floating, Substitution, Special Program | Sync therapist; PCA algo runs on button click; Special program allocation runs first, then substitution dialog if needed |
 | Step 3 | Floating (tie-breaker) | Sync therapist; preserve Step 2 PCA allocations |
 | Step 4 | None | Sync therapist; bed algo uses PT/team from calculations |
 
@@ -68,7 +74,7 @@ Step 4: Bed Relieving
 
 | Step | Algo | Data Sources |
 |------|------|--------------|
-| Step 2 | `generateAllocationsWithOverrides()` | `staffOverrides`: team, fteRemaining, leaveType, availableSlots; buffer staff with `buffer_fte` |
+| Step 2 | `generateAllocationsWithOverrides()` | `staffOverrides`: team, fteRemaining, leaveType, availableSlots, substitutionFor; buffer staff with `buffer_fte`; Special program allocation runs first, then substitution dialog if non-floating PCAs have FTE ≠ 1 |
 | Step 3 | `allocatePCA(phase='floating')` | 1. `existingAllocations` from Step 2; 2. `staffOverrides`: remaining FTE; 3. `pendingPCA-FTE/team` (adjusted from 3.1); 4. `teamOrder` (from 3.1); 5. Buffer floating PCA with `buffer_fte` |
 | Step 4 | `allocateBeds()` | `scheduleCalculations.ptPerTeam` (derived from therapist allocations) |
 
@@ -166,12 +172,20 @@ Record<string, {
     slot3?: Team | null
     slot4?: Team | null
   }
+  substitutionFor?: {  // For non-floating PCA substitution (Step 2)
+    nonFloatingPCAId: string
+    nonFloatingPCAName: string
+    team: Team
+    slots: number[]
+  }
 }>
 ```
 
 **Rule:** Any function that processes staff data MUST check `staffOverrides` first before using default values from the database.
 
 **Slot Overrides:** Manual slot transfers (drag-and-drop) for floating PCA staff cards are stored in `slotOverrides`. These override the slot assignments from algorithm-generated allocations and persist through step transitions.
+
+**Substitution For:** Non-floating PCA substitution selections (Step 2) are stored in `substitutionFor`. When a floating PCA is selected to substitute for a non-floating PCA with FTE ≠ 1, this field tracks which non-floating PCA and which slots are being substituted. Used to exclude substitution slots from Step 3.2 slot selection.
 
 **Buffer Staff:**
 - Buffer staff have `status: 'buffer'` and `buffer_fte` field in database

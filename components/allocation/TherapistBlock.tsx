@@ -4,6 +4,8 @@ import { Team } from '@/types/staff'
 import { TherapistAllocation } from '@/types/schedule'
 import { Staff } from '@/types/staff'
 import { StaffCard } from './StaffCard'
+import { DragValidationTooltip } from './DragValidationTooltip'
+import { TeamTransferWarningTooltip } from './TeamTransferWarningTooltip'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDroppable, useDndContext } from '@dnd-kit/core'
 import { SpecialProgram } from '@/types/allocation'
@@ -125,16 +127,19 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
             }
             // If no leave but special program FTE subtraction exists, don't show FTE (displayFTE remains undefined)
             
-            // Buffer therapist: transferrable in Step 1 & 2 only (not >= Step 3)
-            // Regular therapist: transferrable in Step 1 & 2 only
+            // Buffer therapist: transferrable in Step 2 only
+            // Regular therapist: transferrable in Step 2 only
             // Reuse isBufferStaff from above
             const isTherapistRank = ['SPT', 'APPT', 'RPT'].includes(allocation.staff.rank)
-            // For buffer therapist, allow dragging in Step 1 & 2 only
+            // For buffer therapist, allow dragging in Step 2 only
             // For regular therapist, dragging is handled by schedule page validation
-            const canDragBufferTherapist = isBufferStaff && (currentStep === 'leave-fte' || currentStep === 'therapist-pca')
-            const draggable = !isBufferStaff || canDragBufferTherapist
+            const canDragBufferTherapist = isBufferStaff && currentStep === 'therapist-pca'
+            const isInCorrectStep = currentStep === 'therapist-pca'
             
-            return (
+            // Check if this is a fixed-team staff (APPT, RPT) that can be transferred with warning
+            const isFixedTeamStaff = !isBufferStaff && (allocation.staff.rank === 'APPT' || allocation.staff.rank === 'RPT')
+            
+            const staffCard = (
               <StaffCard
                 key={allocation.id}
                 staff={allocation.staff}
@@ -142,10 +147,41 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
                 fteRemaining={displayFTE}
                 sptDisplay={sptDisplay}
                 onEdit={(e) => onEditStaff?.(allocation.staff_id, e)}
-                draggable={draggable}
+                draggable={true} // Always allow dragging (will snap back if not in correct step)
                 dragTeam={team}
               />
             )
+            
+            // For fixed-team staff (APPT, RPT), show warning tooltip when dragging (if in correct step)
+            // Use composite ID (staffId::team) to match the draggable ID
+            if (isFixedTeamStaff && isInCorrectStep) {
+              const compositeStaffId = `${allocation.staff.id}::${team}`
+              return (
+                <TeamTransferWarningTooltip
+                  key={allocation.id}
+                  staffId={compositeStaffId}
+                  content="Team transfer for fixed-team staff detected."
+                >
+                  {staffCard}
+                </TeamTransferWarningTooltip>
+              )
+            }
+            
+            // Add tooltip for regular therapist when not in correct step (buffer staff handled in BufferStaffPool)
+            if (!isBufferStaff && !isInCorrectStep) {
+              const compositeStaffId = `${allocation.staff.id}::${team}`
+              return (
+                <DragValidationTooltip
+                  key={allocation.id}
+                  staffId={compositeStaffId}
+                  content="Therapist slot dragging-&-allocating is only available in Step 2 only."
+                >
+                  {staffCard}
+                </DragValidationTooltip>
+              )
+            }
+            
+            return staffCard
           })}
           {therapistAllocations.length === 0 && (
             <p className="text-sm text-muted-foreground text-center py-4">
