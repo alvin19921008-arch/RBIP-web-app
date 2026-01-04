@@ -12,11 +12,6 @@ import { TimeIntervalSlider } from './TimeIntervalSlider'
 import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
 import { roundToNearestQuarter } from '@/lib/utils/rounding'
 
-interface SpecialProgramFTEInfo {
-  name: string
-  fteSubtraction: number
-}
-
 interface StaffEditDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -25,8 +20,6 @@ interface StaffEditDialogProps {
   staffRank?: string // Staff rank to determine if slot fields should be shown
   currentLeaveType: LeaveType | null
   currentFTERemaining: number
-  specialProgramFTESubtraction?: number // FTE subtracted due to special programs (deprecated, use specialProgramFTEInfo)
-  specialProgramFTEInfo?: SpecialProgramFTEInfo[] // Special programs causing FTE subtraction with program names
   currentFTESubtraction?: number
   currentAvailableSlots?: number[]
   // REMOVED: currentInvalidSlot, currentLeaveComebackTime, currentIsLeave
@@ -70,8 +63,6 @@ export function StaffEditDialog({
   staffRank,
   currentLeaveType,
   currentFTERemaining,
-  specialProgramFTESubtraction = 0,
-  specialProgramFTEInfo = [],
   currentFTESubtraction,
   currentAvailableSlots,
   // REMOVED: currentInvalidSlot, currentLeaveComebackTime, currentIsLeave
@@ -83,17 +74,12 @@ export function StaffEditDialog({
   weekday,
   onSave,
 }: StaffEditDialogProps) {
-  // Calculate total special program FTE subtraction (use specialProgramFTEInfo if available, fallback to specialProgramFTESubtraction)
-  const totalSpecialProgramFTE = specialProgramFTEInfo.length > 0
-    ? specialProgramFTEInfo.reduce((sum, info) => sum + info.fteSubtraction, 0)
-    : specialProgramFTESubtraction
-  
   const [leaveType, setLeaveType] = useState<LeaveType | null>(currentLeaveType)
   const [customLeaveType, setCustomLeaveType] = useState<string>('')
   const [fteRemaining, setFteRemaining] = useState<number>(currentFTERemaining)
-  const [fteSubtraction, setFteSubtraction] = useState<number>(currentFTESubtraction ?? (1.0 - currentFTERemaining - totalSpecialProgramFTE))
+  const [fteSubtraction, setFteSubtraction] = useState<number>(currentFTESubtraction ?? (1.0 - currentFTERemaining))
   const [fteRemainingInput, setFteRemainingInput] = useState<string>(currentFTERemaining.toFixed(2))
-  const [fteSubtractionInput, setFteSubtractionInput] = useState<string>((currentFTESubtraction ?? (1.0 - currentFTERemaining - totalSpecialProgramFTE)).toFixed(2))
+  const [fteSubtractionInput, setFteSubtractionInput] = useState<string>((currentFTESubtraction ?? (1.0 - currentFTERemaining)).toFixed(2))
   const [availableSlots, setAvailableSlots] = useState<number[]>(currentAvailableSlots ?? [])
   // REMOVED: invalidSlot, leaveComebackTime, timeInputValue, timePeriod, isLeave
   // NEW: Invalid slots with time ranges
@@ -108,6 +94,8 @@ export function StaffEditDialog({
   const [specialProgramAvailable, setSpecialProgramAvailable] = useState<boolean>(currentSpecialProgramAvailable ?? false)
   // NEW: Unavailable slots (auto-populated from available slots)
   const [unavailableSlots, setUnavailableSlots] = useState<number[]>([])
+  // Bug 2 Fix: Track if user has started editing FTE to show unavailable slots
+  const [hasStartedEditingFTE, setHasStartedEditingFTE] = useState<boolean>(false)
   // FTE validation error state
   const [fteValidationError, setFteValidationError] = useState<string | null>(null)
 
@@ -116,7 +104,7 @@ export function StaffEditDialog({
       // Reset all state when dialog opens
       setLeaveType(currentLeaveType)
       setFteRemaining(roundTo2Decimals(currentFTERemaining))
-      const calculatedSubtraction = currentFTESubtraction ?? (1.0 - currentFTERemaining - totalSpecialProgramFTE)
+      const calculatedSubtraction = currentFTESubtraction ?? (1.0 - currentFTERemaining)
       setFteSubtraction(roundTo2Decimals(Math.max(0, calculatedSubtraction)))
       setFteRemainingInput(roundTo2Decimals(currentFTERemaining).toFixed(2))
       setFteSubtractionInput(roundTo2Decimals(Math.max(0, calculatedSubtraction)).toFixed(2))
@@ -129,28 +117,31 @@ export function StaffEditDialog({
       setSpecialProgramAvailable(currentSpecialProgramAvailable ?? false)
       setShowCustomInput(currentLeaveType === 'others')
       setCustomLeaveType('')
-      // Reset unavailable slots - will be auto-populated after 2 seconds
+      // Bug 2 Fix: Reset unavailable slots and editing flag when dialog opens
       setUnavailableSlots([])
+      setHasStartedEditingFTE(false)
     }
-  }, [open, currentLeaveType, currentFTERemaining, currentFTESubtraction, currentAvailableSlots, currentInvalidSlots, currentAmPmSelection, currentSpecialProgramAvailable, totalSpecialProgramFTE])
+  }, [open, currentLeaveType, currentFTERemaining, currentFTESubtraction, currentAvailableSlots, currentInvalidSlots, currentAmPmSelection, currentSpecialProgramAvailable])
 
-  // Auto-populate unavailable slots immediately when available slots change
+  // Bug 2 Fix: Auto-populate unavailable slots only when user has started editing FTE
   useEffect(() => {
-    if (availableSlots.length > 0) {
+    // Only show unavailable slots if user has started editing FTE
+    if (hasStartedEditingFTE && availableSlots.length > 0) {
       const unavailable = [1, 2, 3, 4].filter(s => !availableSlots.includes(s))
       setUnavailableSlots(unavailable)
-      
       // CRITICAL: Remove invalid slots that are no longer in unavailable slots
       // If a slot becomes available again, it shouldn't be marked as invalid
       setInvalidSlots(prev => prev.filter(is => unavailable.includes(is.slot)))
     } else {
       setUnavailableSlots([])
-      // If no available slots, clear all invalid slots
-      setInvalidSlots([])
+      // If no available slots or user hasn't started editing, clear all invalid slots
+      if (!hasStartedEditingFTE || availableSlots.length === 0) {
+        setInvalidSlots([])
+      }
     }
-  }, [availableSlots])
+  }, [availableSlots, hasStartedEditingFTE])
 
-  const maxFTE = 1.0 - totalSpecialProgramFTE
+  const maxFTE = 1.0
   const fteIsMultipleOfQuarter = isMultipleOfQuarter(fteRemaining)
   // Hide slot-related fields for therapist ranks (RPT, APPT, SPT)
   const isTherapistRank = staffRank && ['RPT', 'APPT', 'SPT'].includes(staffRank)
@@ -188,6 +179,8 @@ export function StaffEditDialog({
   const handleFTESubtractionInputChange = (value: string) => {
     // Allow free typing - only update the input string
     setFteSubtractionInput(value)
+    // Bug 2 Fix: Mark that user has started editing FTE
+    setHasStartedEditingFTE(true)
     // Clear validation error when user changes input
     setFteValidationError(null)
   }
@@ -225,6 +218,8 @@ export function StaffEditDialog({
   const handleFTERemainingInputChange = (value: string) => {
     // Allow free typing - only update the input string
     setFteRemainingInput(value)
+    // Bug 2 Fix: Mark that user has started editing FTE
+    setHasStartedEditingFTE(true)
     // Clear validation error when user changes input
     setFteValidationError(null)
   }
@@ -374,6 +369,12 @@ export function StaffEditDialog({
       finalInvalidSlots = undefined
     }
 
+    // If FTE is set to 0, force available slots to be empty so user isn't blocked by stale slot selections.
+    if (showSlotFields && finalRemaining === 0) {
+      finalSlots = []
+      finalInvalidSlots = []
+    }
+
     // FTE Validation: Check if rounded FTE remaining is far off from available slots FTE
     if (showSlotFields && finalSlots && finalSlots.length > 0) {
       const roundedFTE = roundToNearestQuarter(finalRemaining)
@@ -389,6 +390,7 @@ export function StaffEditDialog({
           `FTE remaining (${finalRemaining.toFixed(2)}) rounded to ${roundedFTE.toFixed(2)} is ${direction} available slots FTE (${trueFTEFromSlots.toFixed(2)}). ` +
           `Please select ${suggestedSlots} slot${suggestedSlots !== 1 ? 's' : ''} in Available Slots.`
         )
+
         return // Don't save, show error
       }
     }
@@ -470,19 +472,8 @@ export function StaffEditDialog({
             </div>
             {(fteRemaining < 0 || fteRemaining > maxFTE) && (
               <p className="text-sm text-red-500">
-                {totalSpecialProgramFTE > 0 
-                  ? `FTE must be between 0 and ${maxFTE.toFixed(2)} (1.0 - ${totalSpecialProgramFTE.toFixed(2)} special program FTE)`
-                  : 'FTE must be between 0 and 1'}
+                FTE must be between 0 and 1
               </p>
-            )}
-            {specialProgramFTEInfo.length > 0 && (
-              <div className="space-y-1">
-                {specialProgramFTEInfo.map((info, index) => (
-                  <p key={index} className="text-sm text-foreground">
-                    There is an FTE cost {info.fteSubtraction.toFixed(2)} due to {info.name} for this staff.
-                  </p>
-                ))}
-              </div>
             )}
             {leaveType && leaveType !== 'others' && LEAVE_TYPE_FTE_MAP[leaveType as Exclude<LeaveType, null | 'others' | 'medical follow-up'>] !== undefined && (
               <p className="text-xs text-muted-foreground">

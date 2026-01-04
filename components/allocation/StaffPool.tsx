@@ -39,16 +39,31 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
 
   // Helper function to calculate Base_FTE-remaining (after leave, excluding special program)
   const getBaseFTERemaining = (staffId: string, staff?: Staff): number => {
+    const override = staffOverrides[staffId]
+
+    // For floating PCA, the outer border should reflect the "base on-duty FTE" (capacity),
+    // which is driven by the explicit Step 1/Step 3 override.fteRemaining when present.
+    // This avoids incorrectly deriving baseFTE from fteSubtraction (which can leave a misleading 0.25 remainder).
+    if (staff?.rank === 'PCA' && staff.floating) {
+      if (typeof override?.fteRemaining === 'number') {
+        return Math.max(0, Math.min(1.0, override.fteRemaining))
+      }
+      // Fallback: derive from available slots (capacity), defaulting to whole-day.
+      const slots =
+        Array.isArray(override?.availableSlots)
+          ? override!.availableSlots
+          : [1, 2, 3, 4]
+      return Math.max(0, Math.min(1.0, slots.length * 0.25))
+    }
+
     // For buffer staff, use buffer_fte as base
     if (staff?.status === 'buffer' && staff.buffer_fte !== undefined) {
-      const override = staffOverrides[staffId]
       if (override?.fteSubtraction !== undefined) {
         return Math.max(0, staff.buffer_fte - override.fteSubtraction)
       }
       return staff.buffer_fte
     }
     // For regular staff
-    const override = staffOverrides[staffId]
     if (override?.fteSubtraction !== undefined) {
       return Math.max(0, 1.0 - override.fteSubtraction)
     }
@@ -75,6 +90,10 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
     // For buffer PCA, use buffer_fte to determine available slots if not overridden
     let availableSlots = override?.availableSlots
     if (!availableSlots) {
+      // If explicitly set to 0 FTE, treat as no availability
+      if (override?.fteRemaining === 0) {
+        availableSlots = []
+      }
       if (staff.status === 'buffer' && staff.buffer_fte !== undefined) {
         // Calculate slots from buffer_fte (e.g., 0.5 FTE = 2 slots)
         const numSlots = Math.round(staff.buffer_fte / 0.25)
@@ -84,29 +103,32 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
       }
     }
     
-    // Initial True-FTE = available slots * 0.25
-    let trueFTE = availableSlots.length * 0.25
+    // Capacity FTE for the day:
+    // Prefer explicit override.fteRemaining (Step 1 leave/FTE), but cap to slot capacity.
+    const slotCapacityFTE = availableSlots.length * 0.25
+    const capacityFTE =
+      typeof override?.fteRemaining === 'number'
+        ? Math.max(0, Math.min(override.fteRemaining, slotCapacityFTE))
+        : slotCapacityFTE
     
     // Subtract already assigned slots (from pcaAllocations)
     // This includes both regular assignments and special program assignments
-    let assignedSlots = 0
+    const assignedSlotSet = new Set<number>()
     Object.values(pcaAllocations).forEach((teamAllocs: any[]) => {
       teamAllocs.forEach((alloc: any) => {
         if (alloc.staff_id === staffId) {
           // Count slots assigned to any team
-          if (alloc.slot1) assignedSlots++
-          if (alloc.slot2) assignedSlots++
-          if (alloc.slot3) assignedSlots++
-          if (alloc.slot4) assignedSlots++
+          if (alloc.slot1) assignedSlotSet.add(1)
+          if (alloc.slot2) assignedSlotSet.add(2)
+          if (alloc.slot3) assignedSlotSet.add(3)
+          if (alloc.slot4) assignedSlotSet.add(4)
         }
       })
     })
-    const assignedFTE = assignedSlots * 0.25
+    const assignedFTE = assignedSlotSet.size * 0.25
     
-    // Final True-FTE = initial - assigned slots
-    // Special program FTE is already accounted for in assigned slots, so we don't need to subtract it separately
-    // This fixes the double-subtraction bug where special program FTE was subtracted both from fte_subtraction and from assigned slots
-    return Math.max(0, trueFTE - assignedFTE)
+    // Final True-FTE = capacity - assigned slots
+    return Math.max(0, capacityFTE - assignedFTE)
   }
 
   // Filter staff by FTE if filter is active
@@ -373,6 +395,7 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
                 const shouldShowFTE = showFTE || (pca.status === 'buffer' && pca.buffer_fte !== undefined && pca.buffer_fte !== 1.0)
                 const isFloatingPCA = pca.floating === true
                 const isBufferStaff = pca.status === 'buffer'
+                
                 // Enable drag for floating PCA (slot transfer will be validated in handleDragStart)
                 // Apply border-green-700 to non-floating PCA (same as schedule page)
                 // For buffer floating PCA, also show green border
@@ -384,9 +407,9 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
                     key={pca.id}
                     staff={pca}
                     onEdit={() => onEditStaff?.(pca.id)}
-                    fteRemaining={shouldShowFTE ? baseFTE : undefined}
+                    fteRemaining={shouldShowFTE ? (isFloatingPCA ? trueFTE : baseFTE) : undefined}
                     showFTE={shouldShowFTE}
-                    baseFTE={isFloatingPCA ? baseFTE : undefined}
+                    baseFTE={isFloatingPCA ? Math.max(0, Math.min(baseFTE, 1.0)) : undefined}
                     trueFTE={isFloatingPCA ? trueFTE : undefined}
                     isFloatingPCA={isFloatingPCA}
                     currentStep={currentStep}

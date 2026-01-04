@@ -129,6 +129,17 @@ function SchedulePageContent() {
     tieBreakResolverRef.current = tieBreakResolver
   }, [tieBreakResolver])
   const [tieBreakDecisions, setTieBreakDecisions] = useState<Record<string, Team>>({}) // Store tie-breaker decisions: key = `${teams.sort().join(',')}:${pendingFTE}`, value = selected team
+
+  type SpecialProgramOverrideEntry = {
+    programId: string
+    therapistId?: string
+    pcaId?: string
+    slots?: number[]
+    therapistFTESubtraction?: number
+    pcaFTESubtraction?: number
+    drmAddOn?: number
+  }
+
   // Store staff leave/FTE overrides for the current date
   const [staffOverrides, setStaffOverrides] = useState<Record<string, {
     leaveType: LeaveType | null;
@@ -136,7 +147,10 @@ function SchedulePageContent() {
     team?: Team;
     fteSubtraction?: number;
     availableSlots?: number[];
-    // REMOVED: invalidSlot, leaveComebackTime, isLeave
+    // Backward-compatible leave/come-back fields (used by PCA allocation algorithm + DB columns)
+    invalidSlot?: number;
+    leaveComebackTime?: string;
+    isLeave?: boolean;
     // NEW: Invalid slots with time ranges
     invalidSlots?: Array<{
       slot: number  // 1, 2, 3, or 4
@@ -149,6 +163,8 @@ function SchedulePageContent() {
     amPmSelection?: 'AM' | 'PM'  // Only when fteRemaining = 0.5 or 0.25
     // NEW: Therapist special program availability
     specialProgramAvailable?: boolean  // Only for therapists with special_program (not DRO)
+    // Step 2.0: special program overrides
+    specialProgramOverrides?: SpecialProgramOverrideEntry[]
     slotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null };
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
   }>>({})
@@ -159,7 +175,10 @@ function SchedulePageContent() {
     team?: Team;
     fteSubtraction?: number;
     availableSlots?: number[];
-    // REMOVED: invalidSlot, leaveComebackTime, isLeave
+    // Backward-compatible leave/come-back fields (used by PCA allocation algorithm + DB columns)
+    invalidSlot?: number;
+    leaveComebackTime?: string;
+    isLeave?: boolean;
     // NEW: Invalid slots with time ranges
     invalidSlots?: Array<{
       slot: number  // 1, 2, 3, or 4
@@ -172,6 +191,8 @@ function SchedulePageContent() {
     amPmSelection?: 'AM' | 'PM'  // Only when fteRemaining = 0.5 or 0.25
     // NEW: Therapist special program availability
     specialProgramAvailable?: boolean  // Only for therapists with special_program (not DRO)
+    // Step 2.0: special program overrides
+    specialProgramOverrides?: SpecialProgramOverrideEntry[]
     slotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null };
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
   }>>({})
@@ -224,13 +245,97 @@ function SchedulePageContent() {
   
   // Step 2.0: Special Program Override Dialog state
   const [showSpecialProgramOverrideDialog, setShowSpecialProgramOverrideDialog] = useState(false)
-  const [specialProgramOverrideResolver, setSpecialProgramOverrideResolver] = useState<((overrides: Record<string, { specialProgramOverrides?: Array<{ programId: string; therapistId?: string; pcaId?: string; slots?: number[]; therapistFTESubtraction?: number; pcaFTESubtraction?: number; drmAddOn?: number }> }>) => void) | null>(null)
-  const specialProgramOverrideResolverRef = useRef<((overrides: Record<string, { specialProgramOverrides?: Array<{ programId: string; therapistId?: string; pcaId?: string; slots?: number[]; therapistFTESubtraction?: number; pcaFTESubtraction?: number; drmAddOn?: number }> }>) => void) | null>(null)
+  const [specialProgramOverrideResolver, setSpecialProgramOverrideResolver] = useState<((overrides: Record<string, { specialProgramOverrides?: SpecialProgramOverrideEntry[] }>) => void) | null>(null)
+  const specialProgramOverrideResolverRef = useRef<((overrides: Record<string, { specialProgramOverrides?: SpecialProgramOverrideEntry[] }>) => void) | null>(null)
   
   // Keep ref in sync with state
   useEffect(() => {
     specialProgramOverrideResolverRef.current = specialProgramOverrideResolver
   }, [specialProgramOverrideResolver])
+
+  // Step 2.0: If the user selects staff from the inactive pool as a special-program substitute,
+  // promote them to status='buffer' so they appear on the schedule page (active/buffer pool)
+  // and are included in Step 2/3 algorithms.
+  const [pendingStep2AfterInactivePromotion, setPendingStep2AfterInactivePromotion] = useState(false)
+  const pendingStep2OverridesFromDialogRef = useRef<Record<string, any> | null>(null)
+  const pendingStep2ResolveAfterPromotionRef = useRef<(() => void) | null>(null)
+  const pendingPromotedInactiveStaffIdsRef = useRef<string[] | null>(null)
+
+  useEffect(() => {
+    if (!pendingStep2AfterInactivePromotion) return
+
+    const overridesFromDialog = pendingStep2OverridesFromDialogRef.current
+    const resolveAfterPromotion = pendingStep2ResolveAfterPromotionRef.current
+    const promotedIds = pendingPromotedInactiveStaffIdsRef.current ?? []
+
+    if (!overridesFromDialog || !resolveAfterPromotion) return
+
+    // prevent re-entry
+    setPendingStep2AfterInactivePromotion(false)
+
+    ;(async () => {
+      try {
+        // Merge special program overrides into staffOverrides (same logic as in resolver)
+        const mergedOverrides = { ...staffOverrides }
+        Object.entries(overridesFromDialog).forEach(([staffId, override]) => {
+          if (mergedOverrides[staffId]) {
+            mergedOverrides[staffId] = {
+              ...mergedOverrides[staffId],
+              ...override,
+              specialProgramOverrides: (override as any).specialProgramOverrides,
+            }
+          } else {
+            const staffMember =
+              staff.find(s => s.id === staffId) ??
+              bufferStaff.find(s => s.id === staffId) ??
+              inactiveStaff.find(s => s.id === staffId)
+            const isBuffer = staffMember?.status === 'buffer'
+            const baseFTE =
+              isBuffer && typeof staffMember?.buffer_fte === 'number'
+                ? staffMember!.buffer_fte
+                : 1.0
+            mergedOverrides[staffId] = {
+              leaveType: null,
+              fteRemaining: (override as any).fteRemaining ?? baseFTE,
+              ...(override as any),
+            }
+          }
+        })
+
+        setStaffOverrides(mergedOverrides)
+
+        // Reset Step 2-related data: clear availableSlots for floating PCAs (preserve buffer PCA)
+        const cleanedOverrides = { ...mergedOverrides }
+        const floatingPCAIds = new Set(
+          staff
+            .filter(s => s.rank === 'PCA' && s.floating)
+            .map(s => s.id)
+        )
+        floatingPCAIds.forEach(pcaId => {
+          if (cleanedOverrides[pcaId]) {
+            const staffMember = staff.find(s => s.id === pcaId)
+            const isBuffer = staffMember?.status === 'buffer'
+            if (isBuffer) return
+            const { availableSlots, ...otherOverrides } = cleanedOverrides[pcaId]
+            cleanedOverrides[pcaId] = otherOverrides
+          }
+        })
+
+        setStaffOverrides(cleanedOverrides)
+
+        await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides)
+        setInitializedSteps(prev => new Set(prev).add('therapist-pca'))
+      } catch (e) {
+        console.error('Error running Step 2 after inactive->buffer promotion:', e)
+      } finally {
+        pendingStep2OverridesFromDialogRef.current = null
+        pendingStep2ResolveAfterPromotionRef.current = null
+        pendingPromotedInactiveStaffIdsRef.current = null
+        resolveAfterPromotion()
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingStep2AfterInactivePromotion, staff, inactiveStaff, bufferStaff])
   
   // Non-floating PCA substitution wizard state
   const [substitutionWizardOpen, setSubstitutionWizardOpen] = useState(false)
@@ -1694,7 +1799,7 @@ function SchedulePageContent() {
       // Generate PCA allocations, applying overrides if they exist
       // For PCA: fte_pca = Base_FTE_remaining = 1.0 - fteSubtraction (for display and team requirement calculation)
       // For buffer PCA: use buffer_fte as base
-      // True-FTE remaining for allocation = (availableSlots.length * 0.25) - specialProgramFTESubtraction (calculated during allocation)
+      // True-FTE remaining for allocation = (availableSlots.length * 0.25) (special program FTE is handled during allocation, not in leave edit)
       const pcaData: PCAData[] = staff
         .filter(s => s.rank === 'PCA')
         .map(s => {
@@ -2208,6 +2313,11 @@ function SchedulePageContent() {
           ? Math.max(0, baseFTE - override.fteSubtraction)
           : (override ? override.fteRemaining : baseFTE)
         
+        // Safety: buffer staff should never exceed its base FTE capacity.
+        const effectiveBaseFTERemaining = isBufferStaff
+          ? Math.min(baseFTE, baseFTERemaining)
+          : baseFTERemaining
+        
         // For floating PCAs, check if they have substitutionFor and exclude those slots from availableSlots
         let availableSlots = override?.availableSlots
         if (s.floating && override?.substitutionFor) {
@@ -2219,15 +2329,17 @@ function SchedulePageContent() {
           availableSlots = baseAvailableSlots.filter(slot => !substitutionSlots.includes(slot))
         }
         
+        
+        
         return {
           id: s.id,
           name: s.name,
           floating: s.floating || false,
           special_program: s.special_program as string[] | null,
           team: s.team,
-          fte_pca: baseFTERemaining,
+          fte_pca: effectiveBaseFTERemaining,
           leave_type: override?.leaveType || null,
-          is_available: baseFTERemaining > 0,
+          is_available: effectiveBaseFTERemaining > 0,
           availableSlots: availableSlots,
           invalidSlot: override?.invalidSlot,
           leaveComebackTime: override?.leaveComebackTime,
@@ -2338,6 +2450,8 @@ function SchedulePageContent() {
     try {
       const overridesBase = cleanedOverrides ?? staffOverrides
 
+      
+
       // Buffer non-floating PCA substitution (whole-day)
       // If a team has a non-floating PCA with FTE=0 (unavailable) AND there is a buffer PCA configured as non-floating for that team,
       // treat the buffer PCA as the whole-day substitute and prevent Step 2.1 from allocating an additional floating substitute.
@@ -2436,9 +2550,12 @@ function SchedulePageContent() {
         }
       })
 
-      // Apply special program overrides: add substituted therapists to program.staff_ids
+      // Apply special program overrides:
+      // - Therapists: add substituted therapists to program.staff_ids + fte_subtraction for this weekday
+      // - PCAs: force the user-selected PCA to the front of pca_preference_order so Step 2 respects the override
       const modifiedSpecialPrograms = specialPrograms.map(program => {
         const programOverrides: Array<{ staffId: string; therapistId?: string; therapistFTESubtraction?: number }> = []
+        const pcaOverrides: Array<{ pcaId: string }> = []
         
         // Find all staff with specialProgramOverrides for this program
         Object.entries(overrides).forEach(([staffId, override]) => {
@@ -2451,14 +2568,17 @@ function SchedulePageContent() {
                 therapistFTESubtraction: spOverride.therapistFTESubtraction,
               })
             }
+            if (spOverride && spOverride.pcaId && program.name !== 'DRM') {
+              pcaOverrides.push({ pcaId: spOverride.pcaId })
+            }
           }
         })
         
-        if (programOverrides.length === 0) {
-          return program // No substitutions for this program
+        // Create modified program (only when we have something to modify)
+        if (programOverrides.length === 0 && pcaOverrides.length === 0) {
+          return program
         }
-        
-        // Create modified program with substituted therapists added to staff_ids
+
         const modifiedProgram = { ...program }
         const weekday = getWeekday(selectedDate)
         
@@ -2470,12 +2590,26 @@ function SchedulePageContent() {
           
           // Add FTE subtraction for substituted therapist
           if (!modifiedProgram.fte_subtraction[override.therapistId!]) {
-            modifiedProgram.fte_subtraction[override.therapistId!] = {}
+            modifiedProgram.fte_subtraction[override.therapistId!] = { mon: 0, tue: 0, wed: 0, thu: 0, fri: 0 }
           }
           if (override.therapistFTESubtraction !== undefined) {
             modifiedProgram.fte_subtraction[override.therapistId!][weekday] = override.therapistFTESubtraction
           }
         })
+
+        // Force the selected PCA (from Step 2.0) to the front of preference order.
+        // This makes allocatePCA pick it first (CRP/Robotic and other programs).
+        if (pcaOverrides.length > 0) {
+          const chosenPcaId = pcaOverrides[0]?.pcaId
+          if (chosenPcaId) {
+            const existing = (modifiedProgram as any).pca_preference_order as string[] | undefined
+            const next = [
+              chosenPcaId,
+              ...((Array.isArray(existing) ? existing : []).filter(id => id !== chosenPcaId)),
+            ]
+            ;(modifiedProgram as any).pca_preference_order = next
+          }
+        }
         
         return modifiedProgram
       })
@@ -2763,7 +2897,7 @@ function SchedulePageContent() {
         totalPCAAvailable: totalPCA,
         pcaPool: pcaData,
         averagePCAPerTeam: rawAveragePCAPerTeam,
-        specialPrograms,
+        specialPrograms: modifiedSpecialPrograms,
         pcaPreferences,
         // gymSchedules removed - now comes from pcaPreferences
         phase: 'non-floating-with-special', // Non-floating + special program PCAs
@@ -2879,6 +3013,7 @@ function SchedulePageContent() {
       const { teamPCAAssigned, existingAllocations } = recalculateFromCurrentState()
       const pcaData = buildPCADataFromCurrentState()
       
+            
       // Calculate total PCA available from current state
       const totalPCAAvailable = pcaData
         .filter(p => p.is_available)
@@ -2937,7 +3072,8 @@ function SchedulePageContent() {
       }
 
       const pcaResult = await allocatePCA(pcaContext)
-
+      
+      
       // Note: Special program errors are now handled in Step 2, not here
       // Step 3 only handles floating PCA allocation errors (if any)
 
@@ -3094,24 +3230,60 @@ function SchedulePageContent() {
         // Check for active special programs - show override dialog if any exist
         const weekday = getWeekday(selectedDate)
         const activeSpecialPrograms = specialPrograms.filter(p => p.weekdays.includes(weekday))
+
+        
         
         if (activeSpecialPrograms.length > 0) {
           // Show special program override dialog and wait for user confirmation
           return new Promise<void>((resolve) => {
-            const resolver = (overrides: Record<string, { specialProgramOverrides?: Array<{ programId: string; therapistId?: string; pcaId?: string; slots?: number[]; therapistFTESubtraction?: number; pcaFTESubtraction?: number; drmAddOn?: number }> }>) => {
-              // #region agent log
-              try {
-                const pcaOverrideStaffIds = Object.entries(overrides)
-                  .filter(([, v]) => (v.specialProgramOverrides ?? []).some(o => !!o.pcaId))
-                  .map(([staffId]) => staffId)
-                const staffHas = pcaOverrideStaffIds.filter(id => staff.some(s => s.id === id))
-                const staffMeta = staffHas.slice(0, 5).map(id => {
-                  const s = staff.find(x => x.id === id)
-                  return { id, floating: s?.floating, status: (s as any)?.status }
-                })
-                fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'schedule/page.tsx:resolver',message:'SP overrides confirm (PCA) vs current staff state',data:{pcaOverrideStaffIdsCount:pcaOverrideStaffIds.length,staffHasCount:staffHas.length,staffMeta},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-              } catch {}
-              // #endregion
+            const resolver = (overrides: Record<string, {
+              fteRemaining?: number
+              availableSlots?: number[]
+              specialProgramOverrides?: Array<{
+                programId: string
+                therapistId?: string
+                pcaId?: string
+                slots?: number[]
+                therapistFTESubtraction?: number
+                pcaFTESubtraction?: number
+                drmAddOn?: number
+              }>
+            }>) => {
+              // If any selected substitute staff is currently in the inactive pool, promote them to 'buffer'
+              // so they are included in the schedule page (active/buffer staff pool) and algorithms.
+              const inactiveSelectedIds = Object.keys(overrides).filter((id) =>
+                inactiveStaff.some(s => s.id === id)
+              )
+              if (inactiveSelectedIds.length > 0) {
+                pendingStep2OverridesFromDialogRef.current = overrides as any
+                pendingStep2ResolveAfterPromotionRef.current = resolve
+                pendingPromotedInactiveStaffIdsRef.current = inactiveSelectedIds
+
+                ;(async () => {
+                  try {
+                    const { error } = await supabase
+                      .from('staff')
+                      .update({ status: 'buffer' })
+                      .in('id', inactiveSelectedIds)
+
+                    if (error) {
+                      // Fallback for legacy schema without 'status' column
+                      if (error.message?.includes('column') || (error as any).code === 'PGRST116') {
+                        await supabase.from('staff').update({ active: true }).in('id', inactiveSelectedIds)
+                      }
+                    }
+
+                    await loadStaff()
+                    await loadSPTAllocations()
+                  } catch (e) {
+                    console.error('Error promoting inactive staff to buffer:', e)
+                  } finally {
+                    setPendingStep2AfterInactivePromotion(true)
+                  }
+                })().catch(() => {})
+
+                return
+              }
 
               // Merge special program overrides into staffOverrides
               const mergedOverrides = { ...staffOverrides }
@@ -3119,16 +3291,28 @@ function SchedulePageContent() {
                 if (mergedOverrides[staffId]) {
                   mergedOverrides[staffId] = {
                     ...mergedOverrides[staffId],
+                    ...override,
                     specialProgramOverrides: override.specialProgramOverrides,
                   }
                 } else {
+                  const staffMember =
+                    staff.find(s => s.id === staffId) ??
+                    bufferStaff.find(s => s.id === staffId) ??
+                    inactiveStaff.find(s => s.id === staffId)
+                  const isBuffer = staffMember?.status === 'buffer'
+                  const baseFTE =
+                    isBuffer && typeof staffMember?.buffer_fte === 'number'
+                      ? staffMember!.buffer_fte
+                      : 1.0
                   mergedOverrides[staffId] = {
                     leaveType: null,
-                    fteRemaining: 1.0,
+                    fteRemaining: override.fteRemaining ?? baseFTE,
                     ...override,
                   }
                 }
               })
+
+              
               
               // Continue with Step 2 algorithm
               setStaffOverrides(mergedOverrides)
@@ -3145,17 +3329,23 @@ function SchedulePageContent() {
                   .map(s => s.id)
               )
               
+              
               // Clear availableSlots for floating PCAs, but preserve other override data (leaveType, fteRemaining, etc.)
               floatingPCAIds.forEach(pcaId => {
                 if (cleanedOverrides[pcaId]) {
+                  const staffMember = staff.find(s => s.id === pcaId)
+                  const isBuffer = staffMember?.status === 'buffer'
+                  if (isBuffer) return
                   const { availableSlots, ...otherOverrides } = cleanedOverrides[pcaId]
                   // Keep the override with other data (leaveType, fteRemaining, etc.)
                   cleanedOverrides[pcaId] = otherOverrides
                 }
               })
               
+              
               // Update state with cleaned overrides
               setStaffOverrides(cleanedOverrides)
+              
               
               // Run Step 2 algorithm with cleaned overrides - it will pause for substitution dialog if needed
               generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides).then(() => {
@@ -3207,6 +3397,8 @@ function SchedulePageContent() {
           alert('Step 2 must be completed before Step 3')
           return
         }
+
+        
         
         // RESET Step 3-related data when re-running the algorithm
         // This ensures the algorithm computes based on fresh state, not from previous Step 3 runs
@@ -3222,6 +3414,7 @@ function SchedulePageContent() {
           // Keep:
           // 1. Non-floating PCA allocations (from Step 2)
           // 2. Floating PCA allocations with special_program_ids (from Step 2 special program allocation)
+          // 3. Floating PCA allocations used as substitutions for non-floating missing slots (Step 2.1 / Step 2.0)
           const preservedAllocs = (pcaAllocations[team] || []).filter(alloc => {
             const staffMember = staff.find(s => s.id === alloc.staff_id)
             if (!staffMember) return false
@@ -3233,12 +3426,20 @@ function SchedulePageContent() {
             if (alloc.special_program_ids && alloc.special_program_ids.length > 0) {
               return true
             }
+
+            // Keep floating PCAs that are explicitly substituting for a non-floating PCA for THIS team
+            const sf = staffOverrides[alloc.staff_id]?.substitutionFor
+            if (sf && sf.team === team) {
+              return true
+            }
             
             // Remove other floating PCA allocations (will be re-allocated in Step 3)
             return false
           })
           cleanedPcaAllocations[team] = preservedAllocs
         })
+
+        
         
         // Now update state with cleaned allocations
         setPcaAllocations(cleanedPcaAllocations)
@@ -3288,19 +3489,21 @@ function SchedulePageContent() {
         // After reset, pcaAllocations no longer has floating PCAs, so buffer floating PCA count will be 0
         // This is correct - buffer floating PCA should be re-assigned by the algorithm
         
-        // Calculate non-floating PCA assigned per team from CLEANED allocations (not state)
-        // Only count non-floating PCA allocations (exclude floating PCA substitutions)
+        // Calculate assigned PCA per team from CLEANED allocations (not state)
+        // - nonFloatingPCAAssignedPerTeam: only non-floating PCAs
+        // - preservedFloatingAssignedPerTeam: preserved floating PCAs (special programs + substitutions)
         const nonFloatingPCAAssignedPerTeam: Record<Team, number> = {
+          FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
+        }
+        const preservedFloatingAssignedPerTeam: Record<Team, number> = {
           FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
         }
         
         Object.entries(cleanedPcaAllocations).forEach(([team, allocs]) => {
           allocs.forEach(alloc => {
-            // Only count non-floating PCA allocations
             const staffMember = staff.find(s => s.id === alloc.staff_id)
-            if (!staffMember || staffMember.floating) return
+            if (!staffMember) return
             
-            // Calculate slots assigned to this team for this non-floating PCA
             let slotsInTeam = 0
             if (alloc.slot1 === team) slotsInTeam++
             if (alloc.slot2 === team) slotsInTeam++
@@ -3317,7 +3520,18 @@ function SchedulePageContent() {
             }
             
             // Add FTE contribution (0.25 per slot)
-            nonFloatingPCAAssignedPerTeam[team as Team] += slotsInTeam * 0.25
+            if (!staffMember.floating) {
+              nonFloatingPCAAssignedPerTeam[team as Team] += slotsInTeam * 0.25
+              return
+            }
+
+            // Floating PCAs are only counted here if they are preserved (special programs or substitutions)
+            const hasSpecial = Array.isArray(alloc.special_program_ids) && alloc.special_program_ids.length > 0
+            const sf = staffOverrides[alloc.staff_id]?.substitutionFor
+            const isSubForThisTeam = !!sf && sf.team === (team as Team)
+            if (hasSpecial || isSubForThisTeam) {
+              preservedFloatingAssignedPerTeam[team as Team] += slotsInTeam * 0.25
+            }
           })
         })
         
@@ -3329,18 +3543,23 @@ function SchedulePageContent() {
           
           // Get non-floating PCA assigned (only non-floating, excluding floating substitutions)
           const nonFloatingPCAAssigned = nonFloatingPCAAssignedPerTeam[team] || 0
+
+          // Get preserved floating PCA assigned (special programs + non-floating substitutions)
+          const preservedFloatingAssigned = preservedFloatingAssignedPerTeam[team] || 0
           
           // Get buffer floating PCA slots assigned (manually assigned in Step 3)
           // After reset, this will be 0, which is correct
           const bufferFloatingFTE = bufferFloatingPCAFTEPerTeam[team] || 0
           
-          // Calculate pending: displayedAvg - nonFloating - bufferFloating (subtract FIRST, then round)
+          // Calculate pending: displayedAvg - nonFloating - preservedFloating - bufferFloating (subtract FIRST, then round)
           // This ensures mathematical consistency: rounding happens on the actual pending amount, not the requirement
-          const rawPending = Math.max(0, displayedAvgPCA - nonFloatingPCAAssigned - bufferFloatingFTE)
+          const rawPending = Math.max(0, displayedAvgPCA - nonFloatingPCAAssigned - preservedFloatingAssigned - bufferFloatingFTE)
           const pending = roundToNearestQuarterWithMidpoint(rawPending)
           
           recalculatedPendingFTE[team] = pending
         })
+
+        
         
         setPendingPCAFTEPerTeam(recalculatedPendingFTE)
         // Step 3.1: Open the configuration dialog instead of running algo directly
@@ -3513,6 +3732,9 @@ function SchedulePageContent() {
     })
 
     setStaffOverrides(newOverrides)
+
+    
+
     // Note: pcaAllocations will be updated by the algorithm after it receives the selections
   }
 
@@ -5573,36 +5795,6 @@ function SchedulePageContent() {
           // NEW: Special program availability
           let currentSpecialProgramAvailable = override?.specialProgramAvailable
 
-          // Calculate special program FTE subtraction for this staff on current weekday
-          // Also collect program names for display
-          let specialProgramFTESubtraction = 0
-          const specialProgramFTEInfo: { name: string; fteSubtraction: number }[] = []
-          const addedProgramIds = new Set<string>() // Track added programs to prevent duplicates
-          if (currentWeekday && specialPrograms.length > 0) {
-            // Check therapist allocations for special programs
-            for (const team of TEAMS) {
-              const alloc = therapistAllocations[team].find(a => a.staff_id === editingStaffId)
-              if (alloc && alloc.special_program_ids && alloc.special_program_ids.length > 0) {
-                alloc.special_program_ids.forEach(programId => {
-                  // Skip if we've already processed this program
-                  if (addedProgramIds.has(programId)) return
-                  
-                  const program = specialPrograms.find(p => p.id === programId)
-                  if (program && program.weekdays.includes(currentWeekday)) {
-                    const staffFTE = program.fte_subtraction[editingStaffId]
-                    const subtraction = staffFTE?.[currentWeekday] || 0
-                    if (subtraction > 0) {
-                      specialProgramFTESubtraction += subtraction
-                      specialProgramFTEInfo.push({ name: program.name, fteSubtraction: subtraction })
-                      addedProgramIds.add(programId) // Mark as added
-                    }
-                  }
-                })
-                break
-              }
-            }
-          }
-
           // If no override, check allocations
           if (!override) {
             // Check therapist allocations first
@@ -5680,8 +5872,6 @@ function SchedulePageContent() {
               staffRank={staffMember.rank}
               currentLeaveType={currentLeaveType}
               currentFTERemaining={currentFTERemaining}
-              specialProgramFTESubtraction={specialProgramFTESubtraction}
-              specialProgramFTEInfo={specialProgramFTEInfo}
               currentFTESubtraction={currentFTESubtraction}
               currentAvailableSlots={currentAvailableSlots}
               currentInvalidSlots={currentInvalidSlots}

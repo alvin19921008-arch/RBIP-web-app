@@ -36,6 +36,8 @@ interface SpecialProgramOverrideDialogProps {
   }>
   weekday: Weekday
   onConfirm: (overrides: Record<string, {
+    fteRemaining?: number
+    availableSlots?: number[]
     specialProgramOverrides?: Array<{
       programId: string
       therapistId?: string
@@ -109,6 +111,9 @@ export function SpecialProgramOverrideDialog({
   const [pendingProgramId, setPendingProgramId] = useState<string | null>(null)
   const [pendingRequiredSlots, setPendingRequiredSlots] = useState<number[] | null>(null)
   const [pendingMinRequiredFTE, setPendingMinRequiredFTE] = useState<number | null>(null)
+  
+  // Buffer staff meta captured at creation time (needed to preserve availability for Step 3)
+  const [createdBufferMetaByStaffId, setCreatedBufferMetaByStaffId] = useState<Record<string, { availableSlots?: number[]; fteRemaining?: number }>>({})
 
   // State for carousel navigation
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -535,10 +540,18 @@ export function SpecialProgramOverrideDialog({
   const isPCAAvailable = (staff: Staff, requiredSlots: number[]): boolean => {
     if (staff.rank !== 'PCA') return false
     if (!staff.special_program) return false
+
+    // IMPORTANT: This function is used for "existing staff" auto-pick + dropdown.
+    // Do NOT treat inactive/buffer staff as eligible here; they must be chosen via the
+    // substitution dialog sourceType ('buffer' / 'inactive').
+    if (staff.status === 'inactive' || staff.status === 'buffer') return false
+    if (staff.active === false) return false
     
     // Check if PCA has required slots available
     const availableSlots = staffOverrides[staff.id]?.availableSlots || [1, 2, 3, 4]
-    return requiredSlots.every(slot => availableSlots.includes(slot))
+    const ok = requiredSlots.every(slot => availableSlots.includes(slot))
+
+    return ok
   }
 
   // Helper: Get available PCAs for a program
@@ -688,7 +701,10 @@ export function SpecialProgramOverrideDialog({
   }
 
 
-  const handleBufferStaffCreated = async (createdStaff?: Staff) => {
+  const handleBufferStaffCreated = async (
+    createdStaff?: Staff,
+    meta?: { availableSlots?: number[]; bufferFTE?: number | null }
+  ) => {
     try {
       // Close buffer creation dialog
       setShowBufferCreateDialog(false)
@@ -696,6 +712,21 @@ export function SpecialProgramOverrideDialog({
       // Refresh staff list if callback provided
       if (onStaffRefresh) {
         await Promise.resolve(onStaffRefresh())
+      }
+
+      // Capture buffer staff availability meta for Step 3 (floating buffer PCA MUST respect available slots)
+      if (createdStaff && pendingSubstitutionType === 'pca') {
+        const fteRemaining =
+          typeof createdStaff.buffer_fte === 'number'
+            ? createdStaff.buffer_fte
+            : (typeof meta?.bufferFTE === 'number' ? meta?.bufferFTE : undefined)
+        setCreatedBufferMetaByStaffId(prev => ({
+          ...prev,
+          [createdStaff.id]: {
+            availableSlots: meta?.availableSlots,
+            fteRemaining,
+          }
+        }))
       }
 
       // Auto-select the newly created buffer staff (per requirement)
@@ -741,7 +772,7 @@ export function SpecialProgramOverrideDialog({
   const handleSubstitutionSelect = (selectedStaffId: string) => {
     if (!substitutionDialogConfig) return
 
-    const { programId, staffType } = substitutionDialogConfig
+    const { programId, staffType, sourceType } = substitutionDialogConfig
 
     if (staffType === 'therapist') {
       handleTherapistSelect(programId, selectedStaffId)
@@ -836,6 +867,8 @@ export function SpecialProgramOverrideDialog({
   const handleConfirm = () => {
     // Convert programOverrides to staffOverrides format
     const overrides: Record<string, {
+      fteRemaining?: number
+      availableSlots?: number[]
       specialProgramOverrides?: Array<{
         programId: string
         therapistId?: string
@@ -866,6 +899,16 @@ export function SpecialProgramOverrideDialog({
       if (override.pcaId) {
         if (!overrides[override.pcaId]) {
           overrides[override.pcaId] = { specialProgramOverrides: [] }
+        }
+        
+        // If this PCA was created as buffer staff in this dialog, persist its availability + base FTE into overrides.
+        // This prevents Step 3 from treating it as whole-day available or as 1.0 FTE.
+        const bufferMeta = createdBufferMetaByStaffId[override.pcaId]
+        if (bufferMeta?.availableSlots) {
+          overrides[override.pcaId].availableSlots = bufferMeta.availableSlots
+        }
+        if (typeof bufferMeta?.fteRemaining === 'number') {
+          overrides[override.pcaId].fteRemaining = bufferMeta.fteRemaining
         }
         
         // Auto-calculate PCA FTE for Robotic/CRP if not already set
@@ -959,7 +1002,19 @@ export function SpecialProgramOverrideDialog({
                         }
                       }
                     }
-                    const needsPCASubstitution = !pca && program.name !== 'DRM' && availablePCAs.length === 0
+                    const needsPCASubstitution_oldRule = !pca && program.name !== 'DRM' && availablePCAs.length === 0
+                    const availableFloatingPCAsCount = availablePCAs.filter(p => p.floating).length
+                    const availableNonFloatingPCAsCount = availablePCAs.filter(p => !p.floating).length
+                    const needsPCASubstitution_whenOnlyNonFloating =
+                      !pca && program.name !== 'DRM' && availablePCAs.length > 0 && availableFloatingPCAsCount === 0
+                    // New behavior (per user request):
+                    // If only NON-floating candidates remain, surface substitution controls so user can pick buffer instead.
+                    // Also show substitution controls when there are no candidates at all.
+                    const showPCASubstitutionControls =
+                      program.name !== 'DRM' &&
+                      availableFloatingPCAsCount === 0 &&
+                      !(pca && pca.floating)
+
                     const isEditingTherapist = editingTherapist?.programId === program.id
                     const isEditingPCA = editingPCA?.programId === program.id
                     const substitutionDropdownKey = `${program.id}-therapist`
@@ -1160,11 +1215,24 @@ export function SpecialProgramOverrideDialog({
                                 Edit
                               </Button>
                             </div>
-                          ) : needsPCASubstitution ? (
+                          ) : (
+                            <div className="flex items-center justify-between p-2 border rounded">
+                              <span className="text-muted-foreground">No PCA assigned</span>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handlePCAEdit(program.id)}
+                              >
+                                Select
+                              </Button>
+                            </div>
+                          )}
+
+                          {showPCASubstitutionControls && (
                             <div className="flex items-center gap-2 p-2 border border-yellow-200 bg-yellow-50 rounded">
                               <AlertCircle className="h-5 w-5 text-yellow-500" />
                               <span className="flex-1 text-sm">Substitution needed</span>
-                              <div 
+                              <div
                                 className="relative"
                                 ref={(el) => { dropdownRefs.current[`${program.id}-pca`] = el }}
                               >
@@ -1207,17 +1275,6 @@ export function SpecialProgramOverrideDialog({
                                   </div>
                                 )}
                               </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-center justify-between p-2 border rounded">
-                              <span className="text-muted-foreground">No PCA assigned</span>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handlePCAEdit(program.id)}
-                              >
-                                Select
-                              </Button>
                             </div>
                           )}
 

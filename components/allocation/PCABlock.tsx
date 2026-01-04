@@ -433,9 +433,17 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
       // Determine which floating PCA is actually occupying each slot in this team.
       // This prevents accidentally marking *other* floating PCAs green just because they
       // have slots and the team happens to have missing slots.
+      //
+      // IMPORTANT: Ignore special-program allocations here.
+      // Special-program PCAs (e.g. CRP slot 2) should NOT "steal" slot occupancy from the
+      // Step 2.1 substitute styling calculation. Otherwise a whole-day substitute can show as
+      // mixed (e.g. '0900-1030, PM, 1030-1200') instead of 'Whole day'.
       const floatingStaffIdsBySlot: Record<number, string[]> = { 1: [], 2: [], 3: [], 4: [] }
       for (const alloc of allPCAAllocations) {
         if (!alloc.staff?.floating) continue
+        const hasSpecialProgramAssignment =
+          Array.isArray((alloc as any).special_program_ids) && (alloc as any).special_program_ids.length > 0
+        if (hasSpecialProgramAssignment) continue
         if (alloc.slot1 === team) floatingStaffIdsBySlot[1].push(alloc.staff_id)
         if (alloc.slot2 === team) floatingStaffIdsBySlot[2].push(alloc.staff_id)
         if (alloc.slot3 === team) floatingStaffIdsBySlot[3].push(alloc.staff_id)

@@ -18,7 +18,10 @@ const SPECIALTY_OPTIONS = ['MSK/Ortho', 'Cardiac', 'Neuro', 'Cancer', 'nil']
 interface BufferStaffCreateDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSave: (createdStaff?: Staff) => void
+  onSave: (
+    createdStaff?: Staff,
+    meta?: { availableSlots?: number[]; bufferFTE?: number | null }
+  ) => void
   specialPrograms?: SpecialProgram[]
   minRequiredFTE?: number
 }
@@ -202,7 +205,10 @@ export function BufferStaffCreateDialog({
         if (sptError) throw sptError
       }
 
-      onSave(newStaff as Staff)
+      onSave(newStaff as Staff, {
+        availableSlots: rank === 'PCA' ? availableSlots : undefined,
+        bufferFTE: finalBufferFTE,
+      })
       onOpenChange(false)
     } catch (err) {
       console.error('Error creating buffer staff:', err)

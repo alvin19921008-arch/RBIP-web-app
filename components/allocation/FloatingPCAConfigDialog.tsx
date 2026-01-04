@@ -207,13 +207,35 @@ export function FloatingPCAConfigDialog({
       // Filter buffer staff to only PCA rank
       const bufferPCAs = bufferStaff.filter(s => s.rank === 'PCA' && s.status === 'buffer')
       
-      // Check which buffer PCAs have been assigned (appear in existingAllocations)
+      // Check which buffer PCAs have remaining capacity (need to be processed in Step 3)
       const assigned: Staff[] = []
       const unassigned: Staff[] = []
       
       bufferPCAs.forEach(pca => {
-        const isAssigned = existingAllocations.some(alloc => alloc.staff_id === pca.id)
-        if (isAssigned) {
+        const baseFTE = pca.buffer_fte || 0
+        
+        // Find all allocations for this buffer PCA
+        const allocations = existingAllocations.filter(alloc => alloc.staff_id === pca.id)
+        
+        // Calculate assigned slots from all allocations
+        const assignedSlots: number[] = []
+        allocations.forEach(alloc => {
+          if (alloc.slot1) assignedSlots.push(1)
+          if (alloc.slot2) assignedSlots.push(2)
+          if (alloc.slot3) assignedSlots.push(3)
+          if (alloc.slot4) assignedSlots.push(4)
+        })
+        
+        // Remove duplicates
+        const uniqueAssignedSlots = Array.from(new Set(assignedSlots))
+        
+        // Calculate remaining FTE
+        const assignedFTE = uniqueAssignedSlots.length * 0.25
+        const remainingFTE = Math.max(0, baseFTE - assignedFTE)
+        
+        // If fully assigned (remaining FTE <= 0), mark as assigned
+        // Otherwise, mark as unassigned (will show in Step 3.0 with remaining FTE)
+        if (remainingFTE <= 0.001) {
           assigned.push(pca)
         } else {
           unassigned.push(pca)
@@ -223,12 +245,12 @@ export function FloatingPCAConfigDialog({
       setBufferPCAAssigned(assigned)
       setBufferPCAUnassigned(unassigned)
       
-      // If all assigned or none exist, proceed to 3.1
-      if (assigned.length === bufferPCAs.length || bufferPCAs.length === 0) {
+      // If all assigned (no remaining capacity) or none exist, proceed to 3.1
+      if (unassigned.length === 0) {
         setCurrentMiniStep('3.1')
         setBufferPCAConfirmed(true)
       } else {
-        // Some unassigned - show Step 3.0 confirmation
+        // Some have remaining capacity - show Step 3.0 confirmation
         setCurrentMiniStep('3.0')
         setBufferPCAConfirmed(false)
       }
@@ -654,6 +676,36 @@ export function FloatingPCAConfigDialog({
       return null
     }
     
+    // Helper function to calculate remaining FTE and assigned slots for a buffer PCA
+    const getBufferPCAStatus = (pca: Staff) => {
+      const baseFTE = pca.buffer_fte || 0
+      
+      // Find all allocations for this buffer PCA
+      const allocations = existingAllocations.filter(alloc => alloc.staff_id === pca.id)
+      
+      // Calculate assigned slots from all allocations
+      const assignedSlots: number[] = []
+      allocations.forEach(alloc => {
+        if (alloc.slot1) assignedSlots.push(1)
+        if (alloc.slot2) assignedSlots.push(2)
+        if (alloc.slot3) assignedSlots.push(3)
+        if (alloc.slot4) assignedSlots.push(4)
+      })
+      
+      // Remove duplicates (in case of multiple allocations, though unlikely)
+      const uniqueAssignedSlots = Array.from(new Set(assignedSlots)).sort((a, b) => a - b)
+      
+      // Calculate remaining FTE
+      const assignedFTE = uniqueAssignedSlots.length * 0.25
+      const remainingFTE = Math.max(0, baseFTE - assignedFTE)
+      
+      return {
+        remainingFTE,
+        assignedSlots: uniqueAssignedSlots,
+        baseFTE
+      }
+    }
+    
     return (
       <div className="space-y-4">
         <DialogDescription>
@@ -663,11 +715,18 @@ export function FloatingPCAConfigDialog({
         <div className="space-y-2">
           <p className="text-sm font-medium">Unassigned Buffer PCA Staff:</p>
           <ul className="list-disc list-inside space-y-1 text-sm">
-            {bufferPCAUnassigned.map(pca => (
-              <li key={pca.id}>
-                {pca.name}* ({pca.buffer_fte ? `${pca.buffer_fte.toFixed(2)} FTE` : 'FTE not set'})
-              </li>
-            ))}
+            {bufferPCAUnassigned.map(pca => {
+              const status = getBufferPCAStatus(pca)
+              const assignedSlotsText = status.assignedSlots.length > 0
+                ? ` - Slot ${status.assignedSlots.join(',')} assigned`
+                : ''
+              
+              return (
+                <li key={pca.id}>
+                  {pca.name}* ({status.remainingFTE.toFixed(2)} FTE remaining{assignedSlotsText})
+                </li>
+              )
+            })}
           </ul>
         </div>
         

@@ -18,9 +18,15 @@ interface TherapistBlockProps {
   weekday?: 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
   currentStep?: string
   onEditStaff?: (staffId: string, event?: React.MouseEvent) => void
+  staffOverrides?: Record<string, {
+    leaveType?: any
+    fteRemaining?: number
+    amPmSelection?: 'AM' | 'PM'
+    // ... other fields
+  }>
 }
 
-export function TherapistBlock({ team, allocations, specialPrograms = [], weekday, onEditStaff, currentStep }: TherapistBlockProps) {
+export function TherapistBlock({ team, allocations, specialPrograms = [], weekday, onEditStaff, currentStep, staffOverrides }: TherapistBlockProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: `therapist-${team}`,
     data: { type: 'therapist', team },
@@ -116,13 +122,19 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
             // Display FTE remaining logic:
             // - If FTE subtraction is ONLY from special program (no leave), don't show FTE value
             // - If FTE subtraction is from BOTH special program + leave, show the final FTE (after both subtractions)
-            let displayFTE: number | undefined = undefined
+            let displayFTE: number | string | undefined = undefined
             if (hasLeave) {
               // There is leave - show the FTE (which includes both leave and special program deductions)
               displayFTE = allocationFTE
               // Only show FTE if it's not 1.0 and not 0
               if (displayFTE === 1.0 || displayFTE === 0) {
                 displayFTE = undefined
+              } else {
+                // Add AM/PM if applicable
+                const override = staffOverrides?.[allocation.staff_id]
+                if ((allocationFTE === 0.5 || allocationFTE === 0.25) && override?.amPmSelection) {
+                  displayFTE = `${allocationFTE} ${override.amPmSelection}`
+                }
               }
             }
             // If no leave but special program FTE subtraction exists, don't show FTE (displayFTE remains undefined)

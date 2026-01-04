@@ -256,20 +256,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
 
   // Get weekday for special program and floating PCA allocation
   const weekday = getWeekday(context.date)
-
-  // #region agent log
-  try {
-    const spSummary = context.specialPrograms
-      .filter(p => p.weekdays.includes(weekday) && p.name !== 'DRM')
-      .slice(0, 8)
-      .map(p => ({
-        name: p.name,
-        prefLen: p.pca_preference_order?.length ?? 0,
-        slotsLen: (p.slots as any)?.[weekday]?.length ?? null,
-      }))
-    fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:allocatePCA_entry',message:'allocatePCA entry',data:{phase,weekday,pcaPoolCount:context.pcaPool.length,floatingCount:floatingPCA.length,nonFloatingCount:nonFloatingPCA.length,spSummary},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-  } catch {}
-  // #endregion
+  
+  
 
   // If there are non-floating substitution needs, we must allocate special-program slots FIRST.
   // Otherwise, the substitution checkbox list will incorrectly include PCAs that will later be reserved
@@ -347,12 +335,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
 
       if (teamsNeedingProgram.length === 0) return
 
-      // #region agent log
-      try {
-        const floatingWithProgram = floatingPCA.filter(p => p.special_program?.includes(program.name))
-        fetch('http://127.0.0.1:7243/ingest/054248da-79b3-435d-a6ab-d8bae8859cea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'pcaAllocation.ts:runSpecialProgramAllocation_program',message:'Special-program allocation attempt',data:{phase,programName:program.name,programId:program.id,prefLen:program.pca_preference_order?.length ?? 0,programSlots,teamsNeedingProgram,floatingCandidates:floatingWithProgram.length,floatingCandidateFTEs:floatingWithProgram.slice(0,5).map(p=>p.fte_pca)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-      } catch {}
-      // #endregion
+      
 
       // Use PCA preference order if available, otherwise use any available PCA
       let pcaToAssign: PCAData | null = null

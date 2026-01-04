@@ -236,7 +236,7 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
     setSourceMode('select')
   }
 
-  const handleCreateDialogClose = () => {
+  const handleCreateDialogClose = (_createdStaff?: Staff) => {
     setShowCreateDialog(false)
     setSourceMode(null)
     onBufferStaffCreated?.()
@@ -471,7 +471,7 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
         <BufferStaffCreateDialog
           open={showCreateDialog}
           onOpenChange={handleCreateDialogClose}
-          onSave={handleCreateDialogClose}
+          onSave={(createdStaff) => handleCreateDialogClose(createdStaff)}
           specialPrograms={loadedSpecialPrograms}
         />
       )}

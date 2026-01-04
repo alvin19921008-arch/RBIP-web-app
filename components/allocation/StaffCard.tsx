@@ -13,7 +13,7 @@ import { Tooltip } from '@/components/ui/tooltip'
 interface StaffCardProps {
   staff: Staff
   allocation?: TherapistAllocation
-  fteRemaining?: number
+  fteRemaining?: number | string  // Can be number or string (e.g., "0.5 AM")
   sptDisplay?: string
   slotDisplay?: ReactNode // Optional: slot display with leave/come back times
   onEdit?: (event?: React.MouseEvent) => void
@@ -103,9 +103,13 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
   const fteDisplay = showFTE && fteRemaining !== undefined
     ? fteRemaining === 0
       ? '0'
-      : formatFTE(fteRemaining)
+      : typeof fteRemaining === 'string'
+        ? fteRemaining  // Already formatted string (e.g., "0.5 AM")
+        : formatFTE(fteRemaining)
     : fteRemaining !== undefined && fteRemaining !== 1.0 && fteRemaining !== 0
-    ? formatFTE(fteRemaining)
+    ? typeof fteRemaining === 'string'
+      ? fteRemaining  // Already formatted string (e.g., "0.5 AM")
+      : formatFTE(fteRemaining)
     : undefined
 
   const [isHoveringCard, setIsHoveringCard] = useState(false)
