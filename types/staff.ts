@@ -2,7 +2,7 @@ export type StaffRank = 'SPT' | 'APPT' | 'RPT' | 'PCA' | 'workman'
 export type Team = 'FO' | 'SMM' | 'SFM' | 'CPPC' | 'MC' | 'GMC' | 'NSM' | 'DRO'
 export type SpecialProgram = 'CRP' | 'DRM' | 'Robotic' | 'Ortho' | 'Neuro' | 'Cardiac' | 'DRO'
 export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
-export type LeaveType = 'VL' | 'half day VL' | 'TIL' | 'SDO' | 'sick leave' | 'study leave' | 'medical follow-up' | 'others' | string | null
+export type LeaveType = 'VL' | 'half day VL' | 'TIL' | 'half day TIL' | 'SDO' | 'sick leave' | 'study leave' | 'medical follow-up' | 'others' | string | null
 export type StaffStatus = 'active' | 'inactive' | 'buffer'
 
 // Mapping of leave types to default FTE remaining
@@ -10,6 +10,7 @@ export const LEAVE_TYPE_FTE_MAP: Record<Exclude<LeaveType, null | 'others' | 'me
   'VL': 0,
   'half day VL': 0.5,
   'TIL': 0,
+  'half day TIL': 0.5,
   'SDO': 0,
   'sick leave': 0,
   'study leave': 0,

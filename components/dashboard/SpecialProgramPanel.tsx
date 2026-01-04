@@ -550,11 +550,21 @@ export function SpecialProgramPanel() {
                                     <p>PCA would not carry DRM as special program property, therefore N/A to choose from. User can still choose PCA to assign into DRO in PCA Preference Dashboard.</p>
                                   </div>
                                 )}
+                                {editingStaffProgram.name === 'Robotic' && (
+                                  <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+                                    <p className="font-medium mb-1">Robotic Note:</p>
+                                    <p>The allocation algorithm would only assign PCA to Robotic, so only PCA is needed to be included here.</p>
+                                  </div>
+                                )}
                                 <div className="max-h-40 overflow-y-auto border rounded p-2">
                                   {staff
                                     .filter(s => {
                                       // For DRM, filter out PCA staff
                                       if (editingStaffProgram.name === 'DRM' && s.rank === 'PCA') {
+                                        return false
+                                      }
+                                      // For Robotic, filter to only show PCA staff
+                                      if (editingStaffProgram.name === 'Robotic' && s.rank !== 'PCA') {
                                         return false
                                       }
                                       // Filter out staff already in program

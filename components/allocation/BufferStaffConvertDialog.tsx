@@ -83,6 +83,14 @@ export function BufferStaffConvertDialog({
     }
   }, [staff])
 
+  // Enforce: non-floating buffer PCA must be whole-day (all 4 slots)
+  useEffect(() => {
+    if (!staff || staff.rank !== 'PCA') return
+    if (!floating) {
+      setAvailableSlots([1, 2, 3, 4])
+    }
+  }, [staff, floating])
+
   // Get available special program names
   const availableProgramNames = specialPrograms.map((p) => p.name as StaffSpecialProgram).sort()
 
@@ -92,6 +100,8 @@ export function BufferStaffConvertDialog({
   }
 
   const handleSlotToggle = (slot: number) => {
+    // Non-floating buffer PCA is always whole-day; don't allow changing slots.
+    if (staff?.rank === 'PCA' && !floating) return
     setAvailableSlots(prev => {
       if (prev.includes(slot)) {
         return prev.filter(s => s !== slot)
@@ -114,6 +124,12 @@ export function BufferStaffConvertDialog({
 
     if (staff.rank === 'PCA' && availableSlots.length === 0) {
       alert('At least one slot must be selected for PCA staff')
+      return
+    }
+
+    // Buffer non-floating PCA: must be full-day only (whole-day substitute intent).
+    if (staff.rank === 'PCA' && !floating && availableSlots.length !== 4) {
+      alert('Non-floating buffer PCA must be whole day (all 4 slots).')
       return
     }
 
@@ -333,7 +349,9 @@ export function BufferStaffConvertDialog({
               <div>
                 <Label>Available Slots <span className="text-destructive">*</span></Label>
                 <p className="text-xs text-muted-foreground mb-2">
-                  Select which slots this buffer PCA is available for. Buffer FTE will be calculated from selected slots.
+                  {floating
+                    ? 'Select which slots this buffer PCA is available for. Buffer FTE will be calculated from selected slots.'
+                    : 'Non-floating buffer PCA must be whole day (all 4 slots).'}
                 </p>
                 <div className="grid grid-cols-4 gap-2 mt-2">
                   {[1, 2, 3, 4].map((slot) => {
@@ -352,12 +370,14 @@ export function BufferStaffConvertDialog({
                             ? 'border-primary bg-primary/10'
                             : 'border-border hover:border-primary/50'
                           }
+                          ${!floating ? 'opacity-60 cursor-not-allowed' : ''}
                         `}
                       >
                         <input
                           type="checkbox"
                           checked={availableSlots.includes(slot)}
                           onChange={() => handleSlotToggle(slot)}
+                          disabled={!floating}
                           className="sr-only"
                         />
                         <span className="text-sm font-semibold">Slot {slot}</span>

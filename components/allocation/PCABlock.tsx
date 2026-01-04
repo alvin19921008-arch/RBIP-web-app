@@ -1,5 +1,6 @@
 'use client'
 
+import React from 'react'
 import { Team } from '@/types/staff'
 import { PCAAllocation, TeamAllocationLog } from '@/types/schedule'
 import { Staff } from '@/types/staff'
@@ -131,7 +132,10 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     // Step 1 (leave-fte): For NON-floating PCA, show the a/v slots from staffOverrides early,
     // so the staff card updates immediately when user edits leave/FTE/slots.
     const override = staffOverrides[allocation.staff_id]
-    const effectiveInvalidSlot = override?.invalidSlot ?? (allocation as any).invalid_slot
+    // NEW: Check for invalidSlots array first, fallback to old invalidSlot for backward compatibility
+    const invalidSlotsArray = override?.invalidSlots || []
+    const hasInvalidSlots = invalidSlotsArray.length > 0
+    const effectiveInvalidSlot = hasInvalidSlots ? null : (override?.invalidSlot ?? (allocation as any).invalid_slot)
     const effectiveLeaveComebackTime = override?.leaveComebackTime ?? (allocation as any).leave_comeback_time
     const leaveMode = (allocation as any).leave_mode
     const effectiveIsLeave =
@@ -140,7 +144,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
         : leaveMode === 'come_back'
           ? false
           : true
-
+    
     let effectiveSlotsToInclude = slotsToInclude
     if (!effectiveSlotsToInclude && currentStep === 'leave-fte' && !allocation.staff.floating) {
       const overrideAvailable = override?.availableSlots
@@ -162,8 +166,11 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     const leaveComebackTime = effectiveLeaveComebackTime
     const isLeave = effectiveIsLeave
     
-    // Get available slots (excluding invalid slot) from filtered slots
-    const availableSlots = filteredSlots.filter(slot => slot !== invalidSlot)
+    // Get available slots (excluding invalid slots) from filtered slots
+    const invalidSlotNumbers = hasInvalidSlots 
+      ? invalidSlotsArray.map(is => is.slot)
+      : (invalidSlot ? [invalidSlot] : [])
+    const availableSlots = filteredSlots.filter(slot => !invalidSlotNumbers.includes(slot))
     
     // Rule 1: If all filtered slots 1-4 assigned to this team only: show "Whole day"
     // BUT: exclude invalid slots from this check - if there's an invalid slot, don't show "Whole day"
@@ -172,7 +179,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
         filteredSlots.includes(2) && 
         filteredSlots.includes(3) && 
         filteredSlots.includes(4) &&
-        !invalidSlot) { // FIX: Only show whole day if no invalid slot
+        !hasInvalidSlots && !invalidSlot) { // FIX: Only show whole day if no invalid slots (new or old system)
       // Check if there's a leave/come back time
       if (invalidSlot && leaveComebackTime) {
         const time4Digit = formatTime4Digit(leaveComebackTime)
@@ -190,110 +197,124 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
       return 'Whole day'
     }
     
-    // Rule 2: Check for slot pairs (1&2 -> AM, 3&4 -> PM) when both are available (not invalid)
+    // Rule 2: Build display parts in slot order (1, 2, 3, 4)
+    // Invalid slots appear in their natural position with time ranges in brackets
+    const parts: string[] = []
+    
+    // Get invalid slot time ranges from new system (invalidSlots array)
+    const invalidSlot1 = invalidSlotsArray.find(is => is.slot === 1)
+    const invalidSlot2 = invalidSlotsArray.find(is => is.slot === 2)
+    const invalidSlot3 = invalidSlotsArray.find(is => is.slot === 3)
+    const invalidSlot4 = invalidSlotsArray.find(is => is.slot === 4)
+    
+    // Check which slots are available (not invalid)
     const hasSlot1 = availableSlots.includes(1)
     const hasSlot2 = availableSlots.includes(2)
     const hasSlot3 = availableSlots.includes(3)
     const hasSlot4 = availableSlots.includes(4)
     
-    const hasAM = hasSlot1 && hasSlot2
-    const hasPM = hasSlot3 && hasSlot4
-    
-    // Build display parts in slot order (1, 2, 3, 4)
-    const parts: string[] = []
-    
-    // Process slots 1 and 2
-    if (hasAM) {
-      // Both slot 1 and 2 are available - show as "AM"
-      parts.push('AM')
-    } else {
-      // Show slots 1 and 2 individually
-      if (hasSlot1) {
+    // Process slots in order: 1, 2, 3, 4
+    // Slot 1
+    if (invalidSlot1) {
+      // Slot 1 is invalid - show invalid time range
+      parts.push(`(${invalidSlot1.timeRange.start}-${invalidSlot1.timeRange.end})`)
+    } else if (hasSlot1) {
+      // Slot 1 is available - check if we can show as "AM" with slot 2
+      if (hasSlot2 && !invalidSlot2) {
+        // Both slot 1 and 2 are available - show as "AM" (will be added when processing slot 2)
+      } else {
+        // Only slot 1 is available - show individual time range
         parts.push(formatTimeRange(getSlotTime(1)))
       }
-      if (hasSlot2) {
+    }
+    
+    // Slot 2
+    if (invalidSlot2) {
+      // Slot 2 is invalid - show invalid time range
+      parts.push(`(${invalidSlot2.timeRange.start}-${invalidSlot2.timeRange.end})`)
+    } else if (hasSlot2) {
+      // Slot 2 is available - check if we can show as "AM" with slot 1
+      if (hasSlot1 && !invalidSlot1) {
+        // Both slot 1 and 2 are available - show as "AM"
+        // Check if we already added slot 1 individually, if so replace it with "AM"
+        const slot1Index = parts.findIndex(p => p === formatTimeRange(getSlotTime(1)))
+        if (slot1Index >= 0) {
+          parts[slot1Index] = 'AM'
+        } else {
+          parts.push('AM')
+        }
+      } else {
+        // Only slot 2 is available - show individual time range
         parts.push(formatTimeRange(getSlotTime(2)))
       }
     }
     
-    // Handle invalid slot in slot 1 or 2
-    if (invalidSlot === 1 && leaveComebackTime) {
-        const time4Digit = formatTime4Digit(leaveComebackTime)
-      const slotTime = getSlotTime(1)
-      const slotStart = slotTime.split('-')[0].replace(':', '')
-      const slotEnd = slotTime.split('-')[1].replace(':', '')
-        if (isLeave) {
-        // Leave: (slot_start-leave_time) - Eg: (0900-0930) for slot 1
-        parts.push(`(${slotStart}-${time4Digit})`)
-        } else {
-        // Come back: (come_back_time-slot_end) - Eg: (0930-1030) for slot 1
-        parts.push(`(${time4Digit}-${slotEnd})`)
-      }
-    } else if (invalidSlot === 2 && leaveComebackTime) {
-      const time4Digit = formatTime4Digit(leaveComebackTime)
-      const slotTime = getSlotTime(2)
-          const slotStart = slotTime.split('-')[0].replace(':', '')
-          const slotEnd = slotTime.split('-')[1].replace(':', '')
-      if (isLeave) {
-        // Leave: (slot_start-leave_time) - Eg: (1030-1100) for slot 2
-        parts.push(`(${slotStart}-${time4Digit})`)
-          } else {
-        // Come back: (come_back_time-slot_end) - Eg: (1100-1200) for slot 2
-        parts.push(`(${time4Digit}-${slotEnd})`)
+    // Slot 3
+    if (invalidSlot3) {
+      // Slot 3 is invalid - show invalid time range
+      parts.push(`(${invalidSlot3.timeRange.start}-${invalidSlot3.timeRange.end})`)
+    } else if (hasSlot3) {
+      // Slot 3 is available - check if we can show as "PM" with slot 4
+      if (hasSlot4 && !invalidSlot4) {
+        // Both slot 3 and 4 are available - show as "PM" (will be added when processing slot 4)
+      } else {
+        // Only slot 3 is available - show individual time range
+        parts.push(formatTimeRange(getSlotTime(3)))
       }
     }
     
-    // Process slots 3 and 4
-    if (hasPM) {
-      // Both slot 3 and 4 are available - show as "PM"
-      parts.push('PM')
-    } else {
-      // Show slots 3 and 4 individually
-      if (hasSlot3) {
-        parts.push(formatTimeRange(getSlotTime(3)))
-      }
-      if (hasSlot4) {
+    // Slot 4
+    if (invalidSlot4) {
+      // Slot 4 is invalid - show invalid time range
+      parts.push(`(${invalidSlot4.timeRange.start}-${invalidSlot4.timeRange.end})`)
+    } else if (hasSlot4) {
+      // Slot 4 is available - check if we can show as "PM" with slot 3
+      if (hasSlot3 && !invalidSlot3) {
+        // Both slot 3 and 4 are available - show as "PM"
+        // Check if we already added slot 3 individually, if so replace it with "PM"
+        const slot3Index = parts.findIndex(p => p === formatTimeRange(getSlotTime(3)))
+        if (slot3Index >= 0) {
+          parts[slot3Index] = 'PM'
+        } else {
+          parts.push('PM')
+        }
+      } else {
+        // Only slot 4 is available - show individual time range
         parts.push(formatTimeRange(getSlotTime(4)))
       }
     }
     
-    // Handle invalid slot in slot 3 or 4
-    if (invalidSlot === 3 && leaveComebackTime) {
+    // Handle invalid slot in old system (for backward compatibility)
+    if (!hasInvalidSlots) {
+      if (invalidSlot === 1 && leaveComebackTime) {
         const time4Digit = formatTime4Digit(leaveComebackTime)
-      const slotTime = getSlotTime(3)
-      const slotStart = slotTime.split('-')[0].replace(':', '')
-      const slotEnd = slotTime.split('-')[1].replace(':', '')
-        if (isLeave) {
-        // Leave: (slot_start-leave_time) - Eg: (1330-1400) for slot 3
+        const slotTime = getSlotTime(1)
+        const slotStart = slotTime.split('-')[0].replace(':', '')
+        const slotEnd = slotTime.split('-')[1].replace(':', '')
         parts.push(`(${slotStart}-${time4Digit})`)
-        } else {
-        // Come back: (come_back_time-slot_end) - Eg: (1400-1500) for slot 3
-        parts.push(`(${time4Digit}-${slotEnd})`)
-      }
-    } else if (invalidSlot === 4 && leaveComebackTime) {
-      const time4Digit = formatTime4Digit(leaveComebackTime)
-      const slotTime = getSlotTime(4)
-          const slotStart = slotTime.split('-')[0].replace(':', '')
-          const slotEnd = slotTime.split('-')[1].replace(':', '')
-      if (isLeave) {
-        // Leave: (slot_start-leave_time) - Eg: (1500-1600) for slot 4
+      } else if (invalidSlot === 2 && leaveComebackTime) {
+        const time4Digit = formatTime4Digit(leaveComebackTime)
+        const slotTime = getSlotTime(2)
+        const slotStart = slotTime.split('-')[0].replace(':', '')
+        const slotEnd = slotTime.split('-')[1].replace(':', '')
         parts.push(`(${slotStart}-${time4Digit})`)
-          } else {
-        // Come back: (come_back_time-slot_end) - Eg: (1600-1630) for slot 4
-        parts.push(`(${time4Digit}-${slotEnd})`)
-          }
-        }
-    
-    // For come back, we want the come back time to appear first
-    if (!isLeave && invalidSlot && leaveComebackTime) {
-      const time4Digit = formatTime4Digit(leaveComebackTime)
-      // Find the come back time part and move it to the beginning
-      const comeBackIndex = parts.findIndex(p => p.startsWith('(') && p.includes(time4Digit))
-      if (comeBackIndex > 0) {
-        const comeBackTime = parts.splice(comeBackIndex, 1)[0]
-        parts.unshift(comeBackTime)
+      } else if (invalidSlot === 3 && leaveComebackTime) {
+        const time4Digit = formatTime4Digit(leaveComebackTime)
+        const slotTime = getSlotTime(3)
+        const slotStart = slotTime.split('-')[0].replace(':', '')
+        const slotEnd = slotTime.split('-')[1].replace(':', '')
+        parts.push(`(${slotStart}-${time4Digit})`)
+      } else if (invalidSlot === 4 && leaveComebackTime) {
+        const time4Digit = formatTime4Digit(leaveComebackTime)
+        const slotTime = getSlotTime(4)
+        const slotStart = slotTime.split('-')[0].replace(':', '')
+        const slotEnd = slotTime.split('-')[1].replace(':', '')
+        parts.push(`(${slotStart}-${time4Digit})`)
       }
     }
+    
+    // Note: New system (invalidSlots array) positions invalid slots in natural slot order (1->2->3->4)
+    // Old system "come back" reordering is no longer needed - invalid slots appear in their natural position
     
     const result = parts.length > 0 ? parts.join(', ') : null
     return result
@@ -310,9 +331,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     isWholeDaySubstitution: boolean
     substitutedSlots: number[] // Slots that are being substituted
   } => {
-    if (!floatingAlloc.staff.floating) {
-      return { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
-    }
+    const override = staffOverrides[floatingAlloc.staff_id]
     
     // Get slots assigned to this team for the floating PCA
     const floatingSlotsForTeam: number[] = []
@@ -325,8 +344,10 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
       return { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
     }
     
-    // FIRST: Check if this floating PCA has substitutionFor in staffOverrides (user-selected substitution)
-    const override = staffOverrides[floatingAlloc.staff_id]
+    // FIRST: Check if this PCA has substitutionFor in staffOverrides (user-selected substitution)
+    // NOTE: This can apply to BOTH:
+    // - floating PCAs (classic Step 2.1 substitution)
+    // - buffer non-floating PCAs that are explicitly marked as whole-day substitutes
     if (override?.substitutionFor && override.substitutionFor.team === team) {
       const substitutedSlots = override.substitutionFor.slots
       const isWholeDay = substitutedSlots.length === 4 && 
@@ -342,6 +363,17 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
       }
     }
 
+    // IMPORTANT: If this floating PCA is assigned to a special program (Step 2),
+    // do NOT infer substitution styling from missing non-floating slots.
+    // Otherwise, special-program slots (e.g. CRP slot 2) can be incorrectly colored green.
+    if (floatingAlloc.staff.floating) {
+      const hasSpecialProgramAssignment =
+        Array.isArray(floatingAlloc.special_program_ids) && floatingAlloc.special_program_ids.length > 0
+      if (hasSpecialProgramAssignment) {
+        return { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
+      }
+    }
+
     // SECOND: Derive substitution slots from the *non-floating* PCA's overrides (survives refresh/load).
     // - If a non-floating PCA has fteRemaining=0, they need whole-day substitution (slots 1-4).
     // - If a non-floating PCA has availableSlots, missing slots are ([1..4] \ availableSlots).
@@ -351,11 +383,26 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     // - subbing for specific slot(s) AND
     // - assigned regular slots in Step 3 to the same team.
     try {
+      // If a whole-day buffer/non-floating substitute exists for a missing non-floating PCA in this team,
+      // we should NOT mark unrelated floating allocations as "substituting" for that missing PCA.
+      const bufferWholeDayTargets = new Set(
+        Object.values(staffOverrides)
+          .map((o: any) => o?.substitutionFor)
+          .filter((sf: any) => sf && sf.team === team && Array.isArray(sf.slots) && sf.slots.length === 4)
+          .map((sf: any) => sf.nonFloatingPCAId)
+      )
+
       const nonFloatingStaffInTeam = allPCAStaff.filter(s => !s.floating && s.team === team)
       const missingSlotsNeeded: number[] = []
       const sources: Array<{ nonFloatingId: string; kind: 'fte0' | 'availableSlots' | 'invalidSlot'; slots: number[]; availableSlots?: number[] }> = []
 
       for (const nf of nonFloatingStaffInTeam) {
+        // If this non-floating PCA is already covered by a whole-day substitute (e.g. buffer non-floating),
+        // do not derive substitution needs from it. Otherwise, floating PCAs assigned in Step 3 can be
+        // incorrectly marked green as "substituting" even though substitution was already satisfied.
+        if (bufferWholeDayTargets.has(nf.id)) {
+          continue
+        }
         const nfOverride = staffOverrides[nf.id]
         if (!nfOverride) continue
 
@@ -617,9 +664,13 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
   // Now handles separation of substituting slots from regular slots
   const renderSlotDisplay = (displayText: string | null, allocation: PCAAllocation & { staff: Staff }): React.ReactNode => {
     if (!displayText) return null
-    
+
     const invalidSlot = (allocation as any).invalid_slot
     const leaveComebackTime = (allocation as any).leave_comeback_time
+
+    // NEW: Check for invalid slots from staffOverrides (new system)
+    const override = staffOverrides[allocation.staff_id]
+    const invalidSlots = override?.invalidSlots || []
     
     // Check if this is a floating PCA substituting slots (only in Step 2+)
     const substitutionInfo = showSubstitutionStyling ? getSubstitutionInfo(allocation) : { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
@@ -658,13 +709,48 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
       )
     }
     
-    // If no substitution, return normal display
+    // If no substitution, return display text (invalid slots are already integrated into displayText)
     if (!isSubstituting || substitutedSlots.length === 0) {
+      // Invalid slot time ranges are now part of displayText, so we need to highlight them in blue
+      const invalidSlotTimeRanges = invalidSlots
+        .filter(is => allSlotsForTeam.includes(is.slot))
+        .map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
+      
+      if (invalidSlotTimeRanges.length > 0) {
+        // Split displayText by invalid slot time ranges and highlight them
+        const regex = new RegExp(`(${invalidSlotTimeRanges.map(tr => tr.replace(/[()]/g, '\\$&')).join('|')})`, 'g')
+        const parts = displayText.split(regex)
+        return (
+          <span>
+            {parts.map((part, index) => {
+              if (invalidSlotTimeRanges.includes(part)) {
+                return <span key={index} className="text-blue-600">{part}</span>
+              }
+              return <span key={index}>{part}</span>
+            })}
+          </span>
+        )
+      }
+      
       return <span>{displayText}</span>
     }
     
     // Case 1: Whole day substitution (all 4 slots are substituting)
     if (substitutedSlots.length === 4 && displayText === 'Whole day') {
+      // Add invalid slot time ranges if any
+      const invalidSlotTimeRanges = invalidSlots
+        .filter(is => allSlotsForTeam.includes(is.slot))
+        .map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
+        .join('')
+      
+      if (invalidSlotTimeRanges) {
+        return (
+          <span>
+            <span className="text-green-700 font-medium">Whole day</span>
+            <span className="text-blue-600">{invalidSlotTimeRanges}</span>
+          </span>
+        )
+      }
       return <span className="text-green-700 font-medium">Whole day</span>
     }
     
@@ -696,6 +782,16 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
         )
       }
       
+      // Add invalid slot time ranges if any
+      const invalidSlotTimeRanges = invalidSlots
+        .filter(is => allSlotsForTeam.includes(is.slot))
+        .map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
+        .join('')
+      
+      if (invalidSlotTimeRanges) {
+        parts.push(<span key="invalid" className="text-blue-600">{invalidSlotTimeRanges}</span>)
+      }
+      
       return <span>{parts}</span>
     }
     
@@ -704,10 +800,19 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     if (substitutedSlots.length > 0 && regularSlots.length === 0) {
       const substitutingDisplay = formatSlotGroup(substitutedSlots)
       
+      // Add invalid slot time ranges if any
+      const invalidSlotTimeRanges = invalidSlots
+        .filter(is => allSlotsForTeam.includes(is.slot))
+        .map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
+        .join('')
+      
       // Show substituting slots in green
       return (
-        <span className="text-green-700 font-medium">
-          {substitutingDisplay || displayText}
+        <span>
+          <span className="text-green-700 font-medium">
+            {substitutingDisplay || displayText}
+          </span>
+          {invalidSlotTimeRanges && <span className="text-blue-600">{invalidSlotTimeRanges}</span>}
         </span>
       )
     }
@@ -730,6 +835,13 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     }
     
     const parts = displayText.split(/(AM|PM|\d{4}-\d{4})/g)
+    
+    // Add invalid slot time ranges if any
+    const invalidSlotTimeRanges = invalidSlots
+      .filter(is => allSlotsForTeam.includes(is.slot))
+      .map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
+      .join('')
+    
     return (
       <span>
         {parts.map((part, index) => {
@@ -742,6 +854,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
           }
           return <span key={index}>{part}</span>
         })}
+        {invalidSlotTimeRanges && <span className="text-blue-600">{invalidSlotTimeRanges}</span>}
       </span>
     )
   }
@@ -917,14 +1030,16 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
             // Check substitution info (only apply styling in Step 2+)
             const substitutionInfo = showSubstitutionStyling ? getSubstitutionInfo(allocation) : { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
             const isWholeDaySub = substitutionInfo.isWholeDaySubstitution
+          const isSubstituting = substitutionInfo.isSubstituting
             
             // Set border color: green for non-floating PCA, or for whole day substituting floating PCA (Step 2+ only)
             const borderColor = (!allocation.staff.floating || (showSubstitutionStyling && isWholeDaySub)) 
               ? 'border-green-700' 
               : undefined
             
-            // Underline name for whole day substituting floating PCA (Step 2+ only)
-            const nameStyle = (showSubstitutionStyling && allocation.staff.floating && isWholeDaySub) ? 'underline' : undefined
+            // Underline name for whole day substitution (Step 2+ only)
+            // Includes buffer non-floating substitutes when they are explicitly marked via staffOverrides.substitutionFor.
+            const nameStyle = (showSubstitutionStyling && isSubstituting && isWholeDaySub) ? 'underline' : undefined
             
             // Buffer floating PCA: transferrable in Step 3 only
             // Regular floating PCA: transferrable in Step 3 only

@@ -10,6 +10,7 @@ import { Staff, StaffRank, Team, StaffStatus, SpecialProgram as StaffSpecialProg
 import { SpecialProgram } from '@/types/allocation'
 import { TEAMS } from '@/lib/utils/types'
 import { X, Info } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 const RANKS: StaffRank[] = ['SPT', 'APPT', 'RPT', 'PCA']
 const SPECIALTY_OPTIONS = ['MSK/Ortho', 'Cardiac', 'Neuro', 'Cancer', 'nil']
@@ -17,15 +18,17 @@ const SPECIALTY_OPTIONS = ['MSK/Ortho', 'Cardiac', 'Neuro', 'Cancer', 'nil']
 interface BufferStaffCreateDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSave: () => void
+  onSave: (createdStaff?: Staff) => void
   specialPrograms?: SpecialProgram[]
+  minRequiredFTE?: number
 }
 
 export function BufferStaffCreateDialog({ 
   open, 
   onOpenChange, 
   onSave,
-  specialPrograms = []
+  specialPrograms = [],
+  minRequiredFTE
 }: BufferStaffCreateDialogProps) {
   const supabase = createClientComponentClient()
 
@@ -68,6 +71,14 @@ export function BufferStaffCreateDialog({
     }
   }, [rank])
 
+  // Enforce: non-floating buffer PCA must be whole-day (all 4 slots)
+  useEffect(() => {
+    if (rank !== 'PCA') return
+    if (!floating) {
+      setAvailableSlots([1, 2, 3, 4])
+    }
+  }, [rank, floating])
+
   // Get available special program names
   const availableProgramNames = specialPrograms.map((p) => p.name as StaffSpecialProgram).sort()
 
@@ -77,6 +88,8 @@ export function BufferStaffCreateDialog({
   }
 
   const handleSlotToggle = (slot: number) => {
+    // Non-floating buffer PCA is always whole-day; don't allow changing slots.
+    if (rank === 'PCA' && !floating) return
     setAvailableSlots(prev => {
       if (prev.includes(slot)) {
         return prev.filter(s => s !== slot)
@@ -105,6 +118,12 @@ export function BufferStaffCreateDialog({
       return
     }
 
+    // Buffer non-floating PCA: must be full-day only (whole-day substitute intent).
+    if (rank === 'PCA' && !floating && availableSlots.length !== 4) {
+      alert('Non-floating buffer PCA must be whole day (all 4 slots).')
+      return
+    }
+
     // Convert floor_pca to array format
     let floorPCAArray: ('upper' | 'lower')[] | null = null
     if (rank === 'PCA' && floorPCA) {
@@ -121,6 +140,18 @@ export function BufferStaffCreateDialog({
       finalBufferFTE = calculatePCAFTE(availableSlots)
     } else {
       finalBufferFTE = bufferFTE
+    }
+
+    // If this buffer staff is being created specifically to cover a special program,
+    // ensure the buffer has enough FTE to cover the required special-program cost.
+    if (typeof minRequiredFTE === 'number' && minRequiredFTE > 0) {
+      const effective = finalBufferFTE ?? 0
+      if (effective < minRequiredFTE) {
+        alert(
+          `Insufficient FTE for special program.\n\nRequired: ${minRequiredFTE.toFixed(2)}\nThis buffer staff: ${effective.toFixed(2)}`
+        )
+        return
+      }
     }
 
     // Prepare staff data
@@ -171,7 +202,7 @@ export function BufferStaffCreateDialog({
         if (sptError) throw sptError
       }
 
-      onSave()
+      onSave(newStaff as Staff)
       onOpenChange(false)
     } catch (err) {
       console.error('Error creating buffer staff:', err)
@@ -205,6 +236,12 @@ export function BufferStaffCreateDialog({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {typeof minRequiredFTE === 'number' && minRequiredFTE > 0 && (
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+              <p className="font-medium mb-1">Special program requirement</p>
+              <p>This buffer staff must have FTE ≥ {minRequiredFTE.toFixed(2)}.</p>
+            </div>
+          )}
           {/* Staff Name */}
           <div>
             <Label htmlFor="name">
@@ -371,38 +408,33 @@ export function BufferStaffCreateDialog({
               <div>
                 <Label>Available Slots <span className="text-destructive">*</span></Label>
                 <p className="text-xs text-muted-foreground mb-2">
-                  Select which slots this buffer PCA is available for. Buffer FTE will be calculated from selected slots.
+                  {floating
+                    ? 'Select which slots this buffer PCA is available for. Buffer FTE will be calculated from selected slots.'
+                    : 'Non-floating buffer PCA must be whole day (all 4 slots).'}
                 </p>
-                <div className="grid grid-cols-4 gap-2 mt-2">
-                  {[1, 2, 3, 4].map((slot) => {
-                    const slotTimes = {
-                      1: '0900-1030',
-                      2: '1030-1200',
-                      3: '1330-1500',
-                      4: '1500-1630',
-                    }
-                    return (
-                      <label
-                        key={slot}
-                        className={`
-                          flex flex-col items-center justify-center p-3 border-2 rounded-md cursor-pointer transition-colors
-                          ${availableSlots.includes(slot)
-                            ? 'border-primary bg-primary/10'
-                            : 'border-border hover:border-primary/50'
-                          }
-                        `}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={availableSlots.includes(slot)}
-                          onChange={() => handleSlotToggle(slot)}
-                          className="sr-only"
-                        />
-                        <span className="text-sm font-semibold">Slot {slot}</span>
-                        <span className="text-xs text-muted-foreground">{slotTimes[slot as keyof typeof slotTimes]}</span>
-                      </label>
-                    )
-                  })}
+                <div className="flex gap-2 mt-2">
+                  {[
+                    { slot: 1, time: '0900-1030' },
+                    { slot: 2, time: '1030-1200' },
+                    { slot: 3, time: '1330-1500' },
+                    { slot: 4, time: '1500-1630' },
+                  ].map(({ slot, time }) => (
+                    <Button
+                      key={slot}
+                      type="button"
+                      onClick={() => handleSlotToggle(slot)}
+                      disabled={!floating}
+                      className={cn(
+                        'px-3 py-2 rounded text-sm font-medium',
+                        availableSlots.includes(slot)
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+                        !floating && 'opacity-60 cursor-not-allowed hover:bg-gray-100'
+                      )}
+                    >
+                      {time}
+                    </Button>
+                  ))}
                 </div>
                 {availableSlots.length > 0 && (
                   <p className="text-xs text-muted-foreground mt-2">

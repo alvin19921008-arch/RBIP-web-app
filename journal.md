@@ -2,7 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
-**Last Updated**: 2025-01-27  
+**Last Updated**: 2026-01-03  
+**Latest Phase**: Phase 12 - Special Program Overrides Dialog (Step 2.0)  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -36,11 +37,14 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
 - **Step-wise allocation workflow** (5 main steps with sub-steps)
   - Step 1: Leave & FTE management
   - Step 2: Therapist & Non-Floating PCA allocation
+    - **Step 2.0**: Special Program Overrides Dialog (ad-hoc/urgent changes to special program allocations)
+    - **Step 2.1**: Non-Floating PCA Substitution Dialog (when non-floating PCAs need substitution)
   - Step 3: Floating PCA allocation with interactive wizard (3.0 → 3.1 → 3.2 → 3.3 → 3.4)
   - Step 4: Bed relieving calculation
   - Step 5: Review and finalization
 - **Interactive Step 3 Wizard** for floating PCA allocation:
   - **Step 3.0**: Wizard entry point with workflow overview
+    - Buffer PCA behavior: if user does not pre-assign buffer PCA, Step 3 algo may assign it; if user pre-assigns before Step 3 algo run, it is treated as `staffOverrides` and the algo preserves that allocation pattern
   - **Step 3.1**: Adjust pending FTE per team and set team priority order
   - **Step 3.2**: Preferred slot reservation and assignment
   - **Step 3.3**: Adjacent slot assignment from special program PCAs
@@ -255,7 +259,81 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Solution: Destructured `onClick` from props and merged handlers to call both `onCheckedChange` and prop's `onClick`
   - Excluded `onClick` from spread props using `Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'>`
 
-### Phase 10: Non-Floating PCA Substitution & Team Transfer Features (Latest)
+### Phase 12: Special Program Overrides Dialog (Step 2.0) (Latest)
+- ✅ **Special Program Overrides Dialog**
+  - New dialog appears before Step 2 algorithm execution (Step 2.0)
+  - Enables ad-hoc/urgent changes to special program allocations for current day only
+  - Horizontal card carousel layout with responsive fixed widths (`min-w-[390px] max-w-[450px]`)
+  - CSS scroll snapping for smooth card-to-card transitions
+  - Navigation controls: arrow buttons and dot indicators
+  - Vertical scrolling within cards when content overflows
+  - Shows all special programs active on current weekday (not just those with staff assigned)
+  - Always appears, loading existing `staffOverrides` as candidates
+- ✅ **Program-Specific Features**
+  - **Robotic**: No therapist section (therapist field and FTE subtraction removed); only PCA fields
+  - **CRP**: Thursday toggle for therapist FTE subtraction (0.25 or 0.4) - replaces input field with button group
+  - **DRM**: "PCA FTE Add-on" (renamed from "FTE Add-on"); "Therapist FTE Subtraction by Special Program" (separate from other programs)
+  - **All Programs**: "FTE Subtraction" → "FTE Subtraction by Special Program"
+- ✅ **PCA FTE Auto-Calculation**
+  - For Robotic and CRP: FTE subtraction auto-calculated as `0.25 × number of slots selected` (read-only, no "Auto:" prefix)
+  - User cannot manually input PCA FTE subtraction for these programs
+- ✅ **Substitution & Buffer Staff Integration**
+  - "Substitution needed" alert with dropdown menu (next to alert icon)
+  - Dropdown includes "Create a buffer staff" option
+  - Substitution auto-fill: When substitution selected, configured slot time (PCA) or FTE subtraction (therapist) automatically populates
+  - Substitution validation: Staff must have `FTE-remaining >= FTE required` by special program
+  - Buffer staff creation: `minRequiredFTE` validation prevents creation if `buffer FTE < FTE required`
+  - Auto-selection: Newly created buffer staff automatically selected after creation
+- ✅ **Helper Functions for Configured Baselines**
+  - `getProgramSlotsForWeekday()`: Derives configured slots from dashboard configuration
+  - `getConfiguredTherapistFTESubtractionForWeekday()`: Derives therapist FTE subtraction baseline
+  - `getConfiguredPCAFTESubtractionForWeekday()`: Derives PCA FTE subtraction baseline
+  - `getConfiguredProgramSlotsForWeekday()`: Gets configured slots for a program
+  - `getMinRequiredFTEForProgram()`: Calculates minimum required FTE for substitution/buffer creation
+  - Ensures consistent application of dashboard configurations
+- ✅ **Data Structure Extensions**
+  - Extended `staffOverrides` type to include:
+    - `specialProgramOverrides?: Array<{ programId, therapistId?, pcaId?, slots?, therapistFTESubtraction?, pcaFTESubtraction?, drmAddOn? }>`
+  - Overrides stored per staff member, scoped to current day only
+- ✅ **Algorithm Integration**
+  - Selected buffer PCAs injected into `specialPrograms.pca_preference_order` before `allocatePCA` runs
+  - Ensures algorithm recognizes and allocates buffer PCAs in Step 2
+  - Therapist SP override processing: Modified `specialPrograms` array before `allocateTherapists` to include substituted therapists
+
+### Phase 11: Enhanced Leave Edit Dialog Features
+- ✅ **Half Day TIL Support**
+  - Added "half day TIL" leave type option (maps to 0.5 FTE, same as "half day VL")
+  - AM/PM selection automatically appears for therapists when FTE = 0.5 or 0.25 (applies to both half day VL and half day TIL)
+  - AM/PM selection stored in `staffOverrides.amPmSelection` and displayed on schedule page (e.g., "0.5 AM")
+- ✅ **Special Program Availability Checkbox for Therapists**
+  - Therapists with special program property (excluding DRO) can indicate availability during special program slot
+  - Checkbox displays program name in bold brackets and slot time in bold quotation marks (e.g., "Available during special program **(Robotic)** slot **"1030-1200"**?")
+  - Slot time calculated from `specialProgram.slots[staffId][weekday]` structure
+  - Stored in `staffOverrides.specialProgramAvailable` for algorithm integration
+  - Slot time display uses `whitespace-nowrap` to prevent breaking in the middle (wraps to next line as whole if needed)
+- ✅ **Enhanced PCA Slot Management**
+  - Available slots selection uses blue button styling per design guidelines (time ranges only, e.g., "0900-1030")
+  - Unavailable slots section auto-populates immediately (no 2s delay) based on non-selected slots
+  - Invalid slots feature: PCAs can mark specific unavailable slots as "Partially present (not counted as FTE)"
+  - Time interval slider for invalid slots: 15-minute interval selection with instructional text ("Slide the bar to indicate which time interval the PCA would be present")
+  - Invalid slots stored as array: `staffOverrides.invalidSlots: Array<{ slot: number; timeRange: { start: string; end: string } }>`
+  - Invalid slot time ranges displayed in blue brackets on schedule page (e.g., "(1030-1100)")
+  - Invalid slots are display-only and do not affect FTE calculations (only available slots count toward FTE)
+  - Removed legacy inputs: "What time to leave/come back", "Leave or Come Back" radio buttons, "Slot to Leave/Come Back" radio buttons
+- ✅ **FTE Validation System**
+  - Validates that rounded FTE remaining (to nearest 0.25) matches available slots FTE
+  - Catches both directions: rounded FTE > slots FTE OR slots FTE > rounded FTE (any difference > 0.01)
+  - Error message indicates direction (greater than/less than) and suggests correct number of slots
+  - Validation error clears when user changes FTE input or available slots
+  - "FTE must be between 0 and 1" message only shows when FTE is actually out of range, not for far off cases
+- ✅ **Data Structure Extensions**
+  - Extended `staffOverrides` type to include:
+    - `invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>`
+    - `amPmSelection?: 'AM' | 'PM'`
+    - `specialProgramAvailable?: boolean`
+  - Backward compatibility: Old single `invalidSlot` system converted to new array format when loading
+
+### Phase 10: Non-Floating PCA Substitution & Team Transfer Features
 - ✅ **Interactive Non-Floating PCA Substitution Dialog**
   - Dialog appears during Step 2 algorithm execution when non-floating PCAs with FTE ≠ 1 need substitution
   - Wizard-style dialog if >1 teams need substitution; simple dialog for single team
@@ -358,6 +436,7 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - `rank`: `staff_rank` enum ('SPT', 'APPT', 'RPT', 'PCA', 'workman')
   - `team`: `team` enum (nullable - default team assignment)
   - `floating`: BOOLEAN (for PCA - indicates floating vs non-floating)
+  - `floor_pca`: TEXT[] (PCA only - floor eligibility: 'upper', 'lower', or both)
   - `special_program`: TEXT[] (program NAMES, not UUIDs - see below)
   - `status`: TEXT enum ('active', 'inactive', 'buffer') - buffer staff for temporary assignments
   - `buffer_fte`: DECIMAL (nullable - FTE value for buffer staff, used instead of default 1.0)
@@ -366,6 +445,7 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
 - **Type**: `Team` enum
 - **Values**: `'FO' | 'SMM' | 'SFM' | 'CPPC' | 'MC' | 'GMC' | 'NSM' | 'DRO'`
 - Used throughout the system for team assignments
+- **Floor PCA preference (team-level)**: stored in `pca_preferences.floor_pca_selection` ('upper' | 'lower' | null) and used for floor-matching heuristics (e.g., substitution candidate sorting)
 
 #### Special Programs
 - **Table**: `special_programs`
@@ -495,11 +575,12 @@ The system uses three different PCA total values for different purposes. Underst
 **Critical**: The application uses TypeScript types that are WIDER than database types. Always use conversion utilities from `lib/db/types.ts`.
 
 **Leave Types**:
-- **TypeScript**: `'VL' | 'half day VL' | 'TIL' | 'SDO' | 'sick leave' | 'study leave' | 'medical follow-up' | 'others' | string | null`
+- **TypeScript**: `'VL' | 'half day VL' | 'TIL' | 'half day TIL' | 'SDO' | 'sick leave' | 'study leave' | 'medical follow-up' | 'others' | string | null`
 - **Database**: `'VL' | 'SL' | 'TIL' | 'study leave' | 'conference'` (enum)
 - **Mapping**:
   - `'VL'` → `'VL'`
   - `'half day VL'` → `'VL'` (half-day info via `fte_remaining = 0.5`)
+  - `'half day TIL'` → `'TIL'` (half-day info via `fte_remaining = 0.5`)
   - `'SDO'` → `'VL'`
   - `'sick leave'` → `'SL'`
   - `'TIL'` → `'TIL'`
@@ -672,10 +753,15 @@ The schedule page uses a three-layer state management pattern:
 ### Key State Variables
 
 #### `staffOverrides`
-- **Type**: `Record<string, { leaveType, fteRemaining, fteSubtraction?, availableSlots?, invalidSlot?, leaveComebackTime?, isLeave?, slotOverrides? }>`
+- **Type**: `Record<string, { leaveType, fteRemaining, fteSubtraction?, availableSlots?, invalidSlots?, amPmSelection?, specialProgramAvailable?, slotOverrides?, substitutionFor?, specialProgramOverrides? }>`
 - **Purpose**: Single source of truth for staff modifications
 - **Updated**: When user edits staff in Step 1, manually reallocates after algorithm, or performs slot transfers
+- **invalidSlots**: Array of invalid slot objects with time ranges: `Array<{ slot: number; timeRange: { start: string; end: string } }>` (display-only, does not affect FTE)
+- **amPmSelection**: Therapist AM/PM selection for FTE = 0.5 or 0.25: `'AM' | 'PM'` (AM = slots 1-2 range, PM = slots 3-4 range)
+- **specialProgramAvailable**: Therapist special program availability flag: `boolean` (indicates if therapist is available during special program slot)
 - **slotOverrides**: Stores manual slot transfer assignments: `{ slot1?, slot2?, slot3?, slot4? }` (Team | null per slot)
+- **substitutionFor**: Non-floating PCA substitution override: `{ nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }`
+- **specialProgramOverrides**: Special program assignment overrides (Step 2.0): `Array<{ programId: string; therapistId?, pcaId?, slots?, therapistFTESubtraction?, pcaFTESubtraction?, drmAddOn? }>` (scoped to current day only)
 
 #### `pcaAllocations`
 - **Type**: `Record<Team, (PCAAllocation & { staff: Staff })[]>`
@@ -708,14 +794,45 @@ The schedule page uses a three-layer state management pattern:
 
 ### Step 2: Therapist & Non-Floating PCA
 - **Purpose**: Generate therapist and non-floating PCA allocations
+- **Structure**: Special Program Overrides Dialog (2.0) → Algorithm Execution → Non-Floating PCA Substitution Dialog (2.1)
 - **Algorithm**: `generateStep2_TherapistAndNonFloatingPCA()`
+
+#### Step 2.0: Special Program Overrides Dialog
+- **Purpose**: Allow ad-hoc/urgent changes to special program allocations before algorithm execution
+- **Component**: `SpecialProgramOverrideDialog`
+- **Features**:
+  - Horizontal card carousel layout showing all active special programs
+  - Displays/edit assigned therapist/PCA per program
+  - Displays/change slots (skip for DRM)
+  - Displays/change FTE subtraction/add-on
+  - Substitution dropdown with "Create a buffer staff" option
+  - Auto-fills configured slot time/FTE when substitution selected
+  - Always appears, loading existing `staffOverrides` as candidates
+- **User Actions**: Edit special program assignments, select substitutions, create buffer staff
+- **State Updates**: Updates `staffOverrides.specialProgramOverrides`
+- **Integration**: Selected buffer PCAs injected into `specialPrograms.pca_preference_order` before algorithm
+
+#### Step 2 Algorithm Execution
 - **Phases**:
-  1. Therapist allocation (SPT, APPT, RPT)
+  1. Therapist allocation (SPT, APPT, RPT) - includes special program overrides
   2. Non-floating PCA allocation
-  3. Special program PCA allocation (except DRM)
-  4. Non-floating PCA substitution (when non-floating has leave)
+  3. Special program PCA allocation (except DRM) - includes Step 2.0 overrides
+  4. Non-floating PCA substitution (Step 2.1) - when non-floating has leave / FTE ≠ 1
 - **Key Function**: `allocatePCA()` with `phase: 'non-floating-with-special'`
 - **State Updates**: Updates `therapistAllocations`, `pcaAllocations`, `calculations`
+
+#### Step 2.1: Non-Floating PCA Substitution Dialog
+- **Purpose**: Select floating PCAs to substitute for non-floating PCAs with FTE ≠ 1
+- **Component**: `NonFloatingSubstitutionDialog`
+- **Features**:
+  - Wizard-style dialog if >1 teams need substitution; simple dialog for single team
+  - Pre-detects existing `staffOverrides.substitutionFor` entries (from Step 1 or Step 2.0 buffer non-floating PCAs)
+  - Infers already-allocated floating PCAs from saved allocations to prevent duplicates
+  - Floating PCA candidates sorted by: preferred PCA → floor PCA matching team → non-floor PCA
+  - Excludes non-floating PCAs of other teams and PCAs assigned to special programs with overlapping slots
+- **User Actions**: Select floating PCA substitutes, skip (let algo allocate automatically)
+- **State Updates**: Updates `staffOverrides.substitutionFor` with `nonFloatingPCAId`, `team`, and `slots`
+- **Integration**: Substitution slots excluded from Step 3.2 slot selection (via `computeReservations`)
 
 ### Step 3: Floating PCA (Multi-Step Wizard)
 - **Purpose**: Distribute floating PCAs to teams based on pending FTE with proactive user adjustments
@@ -726,6 +843,7 @@ The schedule page uses a three-layer state management pattern:
 - **Purpose**: Initial overview and workflow introduction
 - **Features**: Instructional dialog explaining the Step 3 workflow
 - **User Actions**: Navigate to Step 3.1 to begin adjustments
+- **Buffer PCA behavior**: if user skips pre-assigning buffer PCA, Step 3 algo may allocate it; if user pre-assigns buffer PCA before Step 3 algo run, it is treated as `staffOverrides` and preserved by the algo
 
 #### Step 3.1: Adjust Pending FTE & Team Order
 - **Purpose**: Allow users to adjust pending PCA-FTE values per team and set team priority order
@@ -918,13 +1036,13 @@ adjustedFTE, teamOrder
   ↓
 Step 3.2 (Preferred Slots)
   ↓
-step32Assignments → executeSlotAssignments()
+step3.2 Assignments → executeSlotAssignments()
   ↓
 currentPendingFTE (updated), pcaAllocations (updated)
   ↓
 Step 3.3 (Adjacent Slots)
   ↓
-step33Selections → executeSlotAssignments()
+step3.3 Selections → executeSlotAssignments()
   ↓
 currentPendingFTE (updated), pcaAllocations (updated)
   ↓
@@ -932,6 +1050,8 @@ Step 3.4 (Final Algorithm)
   ↓
 generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 ```
+
+**Buffer PCA note (Step 3.0 → Step 3.4)**: buffer PCA can be pre-assigned before Step 3 algo run (preserved via `staffOverrides`), or left unassigned and allocated by the Step 3 algorithm.
 
 ### Reservation Logic
 - **Preferred Slots (3.2)**: Identifies PCA + slot combinations where:
@@ -967,23 +1087,11 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 **Problem**: Recalculating `average_pca_per_team` in Steps 2-4, changing the target  
 **Solution**: Only calculate in Step 1, persist as target through Steps 2-4
 
-### Pitfall 4: Infinite Loop in Floating PCA Allocation
-**Problem**: Raw pending > 0 but rounded pending = 0, causing infinite loop  
-**Solution**: Use `roundToNearestQuarterWithMidpoint()` consistently in both `getNextHighestPendingTeam()` and inner while loops
-
-### Pitfall 5: Duplicate Slot Assignments
-**Problem**: Step 3 assigning to slots already covered by Step 2 substitutions  
-**Solution**: Track `slotsTakenByOtherFloating` and exclude them when assigning
-
-### Pitfall 6: DRM Special Program Error
+### Pitfall 4: DRM Special Program Error
 **Problem**: Algorithm trying to find designated PCA for DRM  
 **Solution**: Skip DRM during special program allocation phase (it's only an FTE add-on)
 
-### Pitfall 7: Step 3.3 Adjacent Slot Logic Error
-**Problem**: Step 3.2 assigned slots incorrectly treated as special program slots  
-**Solution**: Use `isSlotFromSpecialProgram()` helper to distinguish special program slots from other assignments
-
-### Pitfall 8: TypeScript Strict Mode Errors
+### Pitfall 5: TypeScript Strict Mode Errors
 **Problem**: Build fails with type errors that pass in dev mode  
 **Solution**: 
 - Use `createEmptyTeamRecord<T>()` for Record initialization
@@ -991,22 +1099,7 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 - Use `PromiseLike<any>[]` for Supabase query builders in `Promise.all()`
 - Always run `npm run build` before committing
 
-### Pitfall 9: Manual Slot Transfer Step Validation
-**Problem**: Users attempting slot transfers in wrong step  
-**Solution**: 
-- Floating PCA slot transfer only allowed in Step 3 onwards (validated with warning popover)
-- Validation triggers when card is dragged OUT of original team column
-- Warning popover appears near original card, auto-dismisses after 5 seconds
-
-### Pitfall 10: SPT Allocation Running in Step 1
-**Problem**: SPT allocation logic (including RBIP supervisor) was running automatically in Step 1  
-**Solution**: 
-- Added `includeSPTAllocation` flag to `AllocationContext`
-- Set to `false` in `generateAllocationsWithOverrides` (Step 1) and `useAllocationSync` hook
-- Set to `true` only in `generateStep2_TherapistAndNonFloatingPCA` (Step 2 initialization)
-- SPT allocations now only appear when Step 2 "Initialize Algo" button is clicked
-
-### Pitfall 11: Avg PCA/Team Fluctuation During Step Transitions
+### Pitfall 6: Avg PCA/Team Fluctuation During Step Transitions
 **Problem**: `avg PCA/team` was fluctuating during step transitions (e.g., Step 2 → Step 3)  
 **Root Cause**: 
 - `recalculateScheduleCalculations()` was using `totalPCAFromAllocations` (unstable, changes with allocations)
@@ -1018,34 +1111,7 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 - Formula: `averagePCAPerTeam = (ptPerTeam * totalPCAOnDuty) / totalPTOnDutyAllTeams`
 - Ensures displayed requirement is stable regardless of allocation state
 
-### Pitfall 12: SPT Allocations Disappearing on Step Transition
-**Problem**: SPT allocations created in Step 2 disappeared when transitioning to Step 3  
-**Root Cause**: 
-- `useAllocationSync` was regenerating therapist allocations without preserving SPT allocations
-- `syncTherapistAllocations()` with `includeSPTAllocation: false` didn't preserve existing SPT allocations  
-**Solution**: 
-- Modified `syncTherapistAllocations()` to preserve existing SPT allocations from `therapistAllocations` state
-- Added optimization to skip full therapist regeneration during Step 2+ → Step 3+ transitions
-- When skipping regeneration, only updates FTE/leave from `staffOverrides` on existing allocations
-- Preserves Step 2's SPT team assignments while allowing FTE/leave updates
-
-### Pitfall 13: SPT Duplicate When Dragging Between Teams
-**Problem**: Dragging SPT to another team caused it to appear in both old and new teams  
-**Root Cause**: 
-- Preserve logic in `syncTherapistAllocations()` checked only within the same team
-- When SPT moved from Team A to Team B:
-  - New allocation created in Team B (correct)
-  - Preserve logic found old allocation in Team A
-  - Checked if SPT exists in Team A's new result (it didn't, because new one is in Team B)
-  - Re-added old allocation to Team A (bug!)  
-**Solution**: 
-- Updated preserve logic to check across ALL teams before preserving SPT allocations
-- Collect all existing SPT allocations from all teams first
-- Check if SPT exists in ANY team in the new result before preserving
-- If not found, preserve it but update team from `staffOverrides.team` or original team
-- Prevents duplicates when SPTs are moved between teams
-
-### Pitfall 14: Over-Fill Team Pending PCA/Team Issue
+### Pitfall 7: Over-Fill Team Pending PCA/Team Issue
 **Problem**: Users could adjust pending FTE values in Step 3.1 to exceed available floating PCA capacity, causing over-allocation  
 **Root Cause**: 
 - Step 3.1 allowed manual FTE adjustments without validation against total available floating PCA FTE
@@ -1056,7 +1122,7 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 - Step 3.2/3.3 assignments reduce available capacity for final algorithm, preventing over-allocation
 - **Critical**: Adjusted FTE values are targets, but actual allocation is limited by available floating PCA pool
 
-### Pitfall 15: Pending FTE Overwrite Bug (Critical Allocation Bug)
+### Pitfall 8: Pending FTE Overwrite Bug (Critical Allocation Bug)
 **Problem**: Teams with pending FTE > 0.25 (e.g., 1.0) would only receive 0.25 FTE (one slot) instead of their full requirement  
 **Root Cause**: 
 - When `assignSlotsToTeam()` was called with `pendingFTE: 0.25` (local request for one slot), the code incorrectly overwrote global `pendingFTE[team]` with `result.newPendingFTE`
@@ -1074,27 +1140,27 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 - Condition B preferred-slot attempts (floor/non-floor with `pendingFTE: 0.25`)
 - Cycle 3 cleanup (one-slot-at-a-time with `pendingFTE: 0.25`)
 
-### Pitfall 16: Non-Floating PCA Duplication After Substitution
+### Pitfall 9: Non-Floating PCA Duplication After Substitution
 **Problem**: Non-floating PCAs appeared twice on schedule page with 2.0 FTE after substitution  
 **Root Cause**: `allocatePCA` was seeding existing non-floating allocations for Step 2 and then re-allocating them, causing duplicates  
 **Solution**: Changed `allocatePCA` to only seed `existingAllocations` for the `'floating'` phase. For `'non-floating-with-special'`, it starts with an empty `allocations` array
 
-### Pitfall 17: Special Program PCA Conflict with Substitution
+### Pitfall 10: Special Program PCA Conflict with Substitution
 **Problem**: Special program allocation picked a floating PCA even if it was selected as a substitute and its slots were occupied  
 **Root Cause**: Special program allocation ran after substitution needs were collected, and didn't check if substitute PCA's slots were already taken  
 **Solution**: Extracted special program allocation into `runSpecialProgramAllocation` and reordered to run *before* substitution needs are collected. Added `anyAllocationHasRequiredSlotsOccupied` check to prevent overwrites
 
-### Pitfall 18: Step 3.2 Substitution Slot Exclusion Bug
+### Pitfall 11: Step 3.2 Substitution Slot Exclusion Bug
 **Problem**: In Step 3.2, slots used for substitution (from Step 2) were still appearing as available for selection  
 **Root Cause**: `handleSubstitutionWizardConfirm` was incorrectly parsing `nonFloatingPCAId` from key by splitting on `-`, which truncated UUIDs containing hyphens. This led to `substitutionFor` not being saved into `staffOverrides`  
 **Solution**: Modified parsing to use `indexOf('-')` and `slice()` to correctly parse team and UUID. Ensured `staffOverrides` with `substitutionFor` is correctly passed to `computeReservations`
 
-### Pitfall 19: SPT Slot Discard Using Wrong Behavior
+### Pitfall 12: SPT Slot Discard Using Wrong Behavior
 **Problem**: SPT slot discard was showing slot selection popover (like floating PCA) instead of removing entire allocation (like buffer therapist)  
 **Root Cause**: SPT slot discard logic was checking for multiple slots and showing selection popover, rather than immediately removing the allocation  
 **Solution**: Refactored to use shared `removeTherapistAllocationFromTeam()` function. SPT slot discard now immediately removes entire allocation from team regardless of slot count, matching buffer therapist behavior
 
-### Pitfall 20: Battery Bar FTE Display Bug for Special Program PCAs
+### Pitfall 13: Battery Bar FTE Display Bug for Special Program PCAs
 **Problem**: Battery bars in Staff Pool showed incorrect FTE for CRP-candidate PCAs:
 - Assigned PCA (君): showed 0.5 instead of 0.75
 - Unassigned PCA (淑貞): showed 0.75 instead of 1.0  
@@ -1103,23 +1169,45 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 2. Double-subtracting for assigned PCAs: once from `program.fte_subtraction[staffId][weekday]` and again from assigned slots in `pcaAllocations`  
 **Solution**: Removed special program FTE subtraction logic. Function now only subtracts assigned slots from `pcaAllocations`, which already includes special program assignments. This ensures only actually assigned PCAs have FTE reduced and no double-subtraction occurs
 
-### Pitfall 15: Pending FTE Overwrite Bug (Critical Allocation Bug)
-**Problem**: Teams with pending FTE > 0.25 (e.g., 1.0) would only receive 0.25 FTE (one slot) instead of their full requirement  
+### Pitfall 14: Buffer PCA Not Appearing in Step 2 After Creation (Critical)
+**Problem**: Floating buffer PCA created for special program (e.g., CRP) in Step 2.0 would not appear in Block 1 after Step 2 algorithm run, only after Step 3  
+**Root Cause**: Selected buffer PCA was not injected into `specialPrograms.pca_preference_order` before `allocatePCA` runs, so algorithm didn't recognize it as a candidate  
+**Solution**: Modified `schedule/page.tsx` to inject selected buffer PCA into `specialPrograms.pca_preference_order` before `allocatePCA` runs, ensuring algorithm recognizes and allocates it in Step 2
+
+### Pitfall 15: Special Program PCA Incorrectly Styled as Substitution (Critical)
+**Problem**: Special program slots of buffer PCA were incorrectly displayed in green, which should indicate substitution for a non-floating PCA, not special program assignment  
+**Root Cause**: `PCABlock.tsx`'s `getSubstitutionInfo` function was deriving substitution styling for any floating PCA with slots matching missing non-floating slots, without checking if the PCA was assigned to a special program  
+**Solution**: Modified `getSubstitutionInfo` to explicitly return `isSubstituting: false` if a `floatingAlloc` has `special_program_ids` (i.e., it's assigned to a special program). This prevents special-program-assigned PCAs from being incorrectly styled as non-floating substitutions (green slots)
+
+### Pitfall 16: Step 2.1 Substitution Detection Failure (Critical)
+**Problem**: Step 2.1 (non-floating PCA substitution) dialog failed to detect an already indicated buffer PCA meant to substitute a non-floating PCA (e.g., set up in Step 1). This led to the algorithm allocating a second floating PCA for the same substitution  
 **Root Cause**: 
-- When `assignSlotsToTeam()` was called with `pendingFTE: 0.25` (local request for one slot), the code incorrectly overwrote global `pendingFTE[team]` with `result.newPendingFTE`
-- `result.newPendingFTE` is only the remaining of the local 0.25 request (often 0), NOT the team's global pending FTE
-- This caused the algorithm to think the team was satisfied after just one slot, stopping further assignments
+- Pre-selection detection was reading from global `staffOverrides` state instead of local `overrides` object (current Step 2 context)
+- No inference logic to detect already-allocated floating PCAs from saved allocations
+- Resolver would use empty selections if user skipped/cancelled, even when pre-selections existed  
 **Solution**: 
-- Changed all one-slot calls to subtract `0.25 * slotsAssigned.length` from global pending instead of overwriting
-- Implemented safe wrapper system (`assignOneSlotAndUpdatePending` and `assignUpToPendingAndUpdatePending`) that automatically handles correct pending updates
-- Wrappers read/write `pendingFTEByTeam` directly, preventing manual update errors
-- Refactored entire `pcaAllocation.ts` to use wrappers exclusively, making the bug impossible to regress
-- Added optional `context` parameter to wrappers for debugging (human-readable labels)
-**Fixed Locations**:
-- Condition A Step 1/2/3 (preferred slot attempts with `pendingFTE: 0.25`)
-- Condition A Step 4 (fill remaining from preferred PCA - one-slot loop)
-- Condition B preferred-slot attempts (floor/non-floor with `pendingFTE: 0.25`)
-- Cycle 3 cleanup (one-slot-at-a-time with `pendingFTE: 0.25`)
+- Pre-detect existing `staffOverrides.substitutionFor` entries by reading from local `overrides` object (current Step 2 context)
+- Added inference logic to detect already-allocated floating PCAs from `existingAllocsRaw` (saved allocations) if `staffOverrides.substitutionFor` doesn't exist
+- Modified resolver: if user skips/cancels (empty selections) but `preSelections` exist, use `preSelections` instead of empty object
+- Prevents algorithm from assigning duplicate substitutes
+
+### Pitfall 17: Buffer Non-Floating PCA Not Recognized as Substitute (Critical)
+**Problem**: Buffer PCA created as "non-floating" and assigned to a team was treated as a regular non-floating staff member, not as a substitute. This led to Step 2.1 generating an additional floating substitute, resulting in duplicates and incorrect display (not underlined, not green slots)  
+**Root Cause**: 
+- No logic to detect full-day non-floating buffer PCAs as substitutes for missing regular non-floating PCAs
+- Missing regular non-floating PCA still had `team` set in `pcaData`, causing algorithm to generate substitution need
+- Buffer PCA didn't have `substitutionFor` override set  
+**Solution**: 
+- Implemented logic in `generateStep2_TherapistAndNonFloatingPCA` to identify missing regular non-floating PCAs (FTE=0) and available full-day non-floating buffer PCAs for the same team
+- Sets `staffOverrides.substitutionFor` on buffer PCA and sets `team` of missing regular non-floating PCA to `null` in `pcaData` passed to `allocatePCA`
+- Prevents algorithm from creating a new substitution need
+- Modified `PCABlock.tsx` to allow `substitutionFor` styling for non-floating PCAs when explicitly marked in `staffOverrides`
+- Enforced that non-floating buffer PCAs must be full-day (all 4 slots) in `BufferStaffCreateDialog` and `BufferStaffConvertDialog`
+
+### Pitfall 18: Floating PCA Incorrect Green Slots After Step 3 (Critical)
+**Problem**: Floating PCA (`淑貞`) was still incorrectly marked with green slots (e.g., slots 1, 4) and out-of-order display after Step 3, even when a buffer non-floating PCA was properly substituting  
+**Root Cause**: Derived substitution logic in `PCABlock.tsx` was still marking floating PCAs as "substituting" even when the non-floating PCA they would be covering was already designated as covered by a whole-day buffer substitute  
+**Solution**: Modified `getSubstitutionInfo_derived` to prevent marking floating PCAs as substituting if the non-floating PCA they would be covering is already covered by a whole-day buffer substitute (identified via `bufferWholeDayTargets`). This prevents unrelated floating PCAs from being incorrectly marked green
 
 ---
 
@@ -1139,7 +1227,11 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 ### Component Files
 - `components/allocation/PCABlock.tsx` - PCA allocation display
 - `components/allocation/TherapistBlock.tsx` - Therapist allocation display
-- `components/allocation/StaffEditDialog.tsx` - Staff editing dialog
+- `components/allocation/StaffEditDialog.tsx` - Staff editing dialog (leave/FTE, available slots, invalid slots, AM/PM selection, special program availability)
+- `components/allocation/SpecialProgramOverrideDialog.tsx` - Special program overrides dialog (Step 2.0) with horizontal card carousel
+- `components/allocation/SpecialProgramSubstitutionDialog.tsx` - Staff substitution dialog for special programs
+- `components/allocation/NonFloatingSubstitutionDialog.tsx` - Non-floating PCA substitution dialog (Step 2.1)
+- `components/allocation/TimeIntervalSlider.tsx` - Time interval slider component for invalid slot time range selection
 - `components/allocation/TieBreakDialog.tsx` - Tie-breaker dialog
 - `components/allocation/FloatingPCAConfigDialog.tsx` - Step 3 wizard dialog (3.1, 3.2, 3.3)
 - `components/allocation/TeamPendingCard.tsx` - Team card for Step 3.1 (pending FTE adjustment)
@@ -1194,6 +1286,36 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 21. **Over-Fill Prevention**: Step 3.1 adjustments have upper limits; Step 3.4 algorithm respects available floating PCA capacity to prevent over-allocation
 22. **Pending FTE Update Safety**: Always use `assignOneSlotAndUpdatePending()` for one-slot calls and `assignUpToPendingAndUpdatePending()` for global pending calls - never manually update `pendingFTE[team]` after calling these wrappers
 23. **"Remaining" Slot Tag**: Slots assigned as "fill remaining from same PCA" are automatically tagged with `assignmentTag: 'remaining'` and displayed in tooltip
+24. **Leave Edit Dialog Enhancements**: 
+    - Half day TIL supported with AM/PM selection (same as half day VL)
+    - Therapists with special programs can indicate availability during special program slot
+    - PCA invalid slots: Array-based system with time interval slider (display-only, does not affect FTE)
+    - FTE validation: Validates rounded FTE matches available slots FTE (catches both directions)
+    - Invalid slots auto-populate immediately when available slots change (no delay)
+    - Special program slot time display uses `whitespace-nowrap` to prevent breaking
+25. **Special Program Overrides Dialog (Step 2.0)**: 
+    - Horizontal card carousel layout with scroll snapping
+    - Shows all active special programs on current weekday
+    - Auto-calculates PCA FTE for Robotic/CRP (0.25 × slots)
+    - CRP Thursday toggle for therapist FTE (0.25/0.4)
+    - Substitution dropdown with buffer staff creation
+    - Auto-fills configured slot time/FTE when substitution selected
+    - Always appears, loading existing `staffOverrides` as candidates
+    - Selected buffer PCAs injected into algorithm before Step 2 execution
+26. **Step 2.1 Substitution Detection**: 
+    - Pre-detects existing `staffOverrides.substitutionFor` from current Step 2 context
+    - Infers already-allocated floating PCAs from saved allocations
+    - Prevents duplicate allocations when buffer substitutes already exist
+    - Resolver preserves pre-selections if user skips/cancels
+27. **Buffer Non-Floating PCA Substitution**: 
+    - Auto-detects full-day non-floating buffer PCAs as substitutes for missing regular non-floating PCAs
+    - Sets `substitutionFor` override and nullifies missing PCA's team in algorithm input
+    - Prevents Step 2.1 from generating duplicate substitutes
+    - Enforced full-day requirement (all 4 slots) for non-floating buffer PCAs
+28. **Substitution Styling Logic**: 
+    - Special program PCAs explicitly excluded from substitution styling (check `special_program_ids`)
+    - Derived substitution logic skips non-floating PCAs already covered by whole-day buffer substitutes
+    - Prevents unrelated floating PCAs from being incorrectly marked green
 
 ---
 

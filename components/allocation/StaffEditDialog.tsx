@@ -6,6 +6,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
+import { SpecialProgram } from '@/types/allocation'
+import { TimeIntervalSlider } from './TimeIntervalSlider'
+import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
+import { roundToNearestQuarter } from '@/lib/utils/rounding'
 
 interface SpecialProgramFTEInfo {
   name: string
@@ -24,13 +29,27 @@ interface StaffEditDialogProps {
   specialProgramFTEInfo?: SpecialProgramFTEInfo[] // Special programs causing FTE subtraction with program names
   currentFTESubtraction?: number
   currentAvailableSlots?: number[]
-  currentInvalidSlot?: number
-  currentLeaveComebackTime?: string
-  currentIsLeave?: boolean
-  onSave: (staffId: string, leaveType: LeaveType | null, fteRemaining: number, fteSubtraction?: number, availableSlots?: number[], invalidSlot?: number, leaveComebackTime?: string, isLeave?: boolean) => void
+  // REMOVED: currentInvalidSlot, currentLeaveComebackTime, currentIsLeave
+  // NEW:
+  currentInvalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
+  currentAmPmSelection?: 'AM' | 'PM' | ''
+  currentSpecialProgramAvailable?: boolean
+  specialPrograms?: SpecialProgram[]  // To get slot times
+  weekday?: 'mon' | 'tue' | 'wed' | 'thu' | 'fri'  // Current weekday
+
+  onSave: (
+    staffId: string,
+    leaveType: LeaveType | null,
+    fteRemaining: number,
+    fteSubtraction?: number,
+    availableSlots?: number[],
+    invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>,  // NEW
+    amPmSelection?: 'AM' | 'PM',  // NEW
+    specialProgramAvailable?: boolean  // NEW
+  ) => void
 }
 
-const LEAVE_TYPES: Exclude<LeaveType, null>[] = ['VL', 'half day VL', 'TIL', 'SDO', 'sick leave', 'study leave', 'medical follow-up', 'others']
+const LEAVE_TYPES: Exclude<LeaveType, null>[] = ['VL', 'half day VL', 'TIL', 'half day TIL', 'SDO', 'sick leave', 'study leave', 'medical follow-up', 'others']
 
 // Helper function to check if a number is a multiple of 0.25
 const isMultipleOfQuarter = (value: number): boolean => {
@@ -55,9 +74,13 @@ export function StaffEditDialog({
   specialProgramFTEInfo = [],
   currentFTESubtraction,
   currentAvailableSlots,
-  currentInvalidSlot,
-  currentLeaveComebackTime,
-  currentIsLeave,
+  // REMOVED: currentInvalidSlot, currentLeaveComebackTime, currentIsLeave
+  // NEW:
+  currentInvalidSlots,
+  currentAmPmSelection,
+  currentSpecialProgramAvailable,
+  specialPrograms = [],
+  weekday,
   onSave,
 }: StaffEditDialogProps) {
   // Calculate total special program FTE subtraction (use specialProgramFTEInfo if available, fallback to specialProgramFTESubtraction)
@@ -72,15 +95,25 @@ export function StaffEditDialog({
   const [fteRemainingInput, setFteRemainingInput] = useState<string>(currentFTERemaining.toFixed(2))
   const [fteSubtractionInput, setFteSubtractionInput] = useState<string>((currentFTESubtraction ?? (1.0 - currentFTERemaining - totalSpecialProgramFTE)).toFixed(2))
   const [availableSlots, setAvailableSlots] = useState<number[]>(currentAvailableSlots ?? [])
-  const [invalidSlot, setInvalidSlot] = useState<number | undefined>(currentInvalidSlot)
-  const [leaveComebackTime, setLeaveComebackTime] = useState<string>(currentLeaveComebackTime || '')
-  const [timeInputValue, setTimeInputValue] = useState<string>('')
-  const [timePeriod, setTimePeriod] = useState<'AM' | 'PM'>('AM')
-  const [isLeave, setIsLeave] = useState<boolean>(currentIsLeave ?? true)
+  // REMOVED: invalidSlot, leaveComebackTime, timeInputValue, timePeriod, isLeave
+  // NEW: Invalid slots with time ranges
+  const [invalidSlots, setInvalidSlots] = useState<Array<{
+    slot: number
+    timeRange: { start: string; end: string }
+  }>>(currentInvalidSlots ?? [])
   const [showCustomInput, setShowCustomInput] = useState(false)
+  // NEW: Therapist AM/PM selection
+  const [amPmSelection, setAmPmSelection] = useState<'AM' | 'PM' | ''>(currentAmPmSelection ?? '')
+  // NEW: Therapist special program availability
+  const [specialProgramAvailable, setSpecialProgramAvailable] = useState<boolean>(currentSpecialProgramAvailable ?? false)
+  // NEW: Unavailable slots (auto-populated from available slots)
+  const [unavailableSlots, setUnavailableSlots] = useState<number[]>([])
+  // FTE validation error state
+  const [fteValidationError, setFteValidationError] = useState<string | null>(null)
 
   useEffect(() => {
     if (open) {
+      // Reset all state when dialog opens
       setLeaveType(currentLeaveType)
       setFteRemaining(roundTo2Decimals(currentFTERemaining))
       const calculatedSubtraction = currentFTESubtraction ?? (1.0 - currentFTERemaining - totalSpecialProgramFTE)
@@ -88,40 +121,34 @@ export function StaffEditDialog({
       setFteRemainingInput(roundTo2Decimals(currentFTERemaining).toFixed(2))
       setFteSubtractionInput(roundTo2Decimals(Math.max(0, calculatedSubtraction)).toFixed(2))
       setAvailableSlots(currentAvailableSlots ?? [])
-      setInvalidSlot(currentInvalidSlot)
-      setLeaveComebackTime(currentLeaveComebackTime || '')
-      // Parse time input from stored time (HH:MM format)
-      if (currentLeaveComebackTime) {
-        const [hours, minutes] = currentLeaveComebackTime.split(':').map(Number)
-        const hour24 = hours
-        let hour12 = hour24
-        let period: 'AM' | 'PM' = 'AM'
-        
-        if (hour24 === 0) {
-          hour12 = 12
-          period = 'AM'
-        } else if (hour24 === 12) {
-          hour12 = 12
-          period = 'PM'
-        } else if (hour24 > 12) {
-          hour12 = hour24 - 12
-          period = 'PM'
-        } else {
-          hour12 = hour24
-          period = 'AM'
-        }
-        
-        setTimeInputValue(`${String(hour12).padStart(2, '0')}${String(minutes).padStart(2, '0')}`)
-        setTimePeriod(period)
-      } else {
-        setTimeInputValue('')
-        setTimePeriod('AM')
-      }
-      setIsLeave(currentIsLeave ?? true)
+      // NEW: Reset invalid slots - only keep those that are still valid (in currentInvalidSlots)
+      setInvalidSlots(currentInvalidSlots ?? [])
+      // NEW: Reset AM/PM selection
+      setAmPmSelection(currentAmPmSelection ?? '')
+      // NEW: Reset special program availability
+      setSpecialProgramAvailable(currentSpecialProgramAvailable ?? false)
       setShowCustomInput(currentLeaveType === 'others')
       setCustomLeaveType('')
+      // Reset unavailable slots - will be auto-populated after 2 seconds
+      setUnavailableSlots([])
     }
-  }, [open, currentLeaveType, currentFTERemaining, currentFTESubtraction, currentAvailableSlots, currentInvalidSlot, currentLeaveComebackTime, currentIsLeave, totalSpecialProgramFTE])
+  }, [open, currentLeaveType, currentFTERemaining, currentFTESubtraction, currentAvailableSlots, currentInvalidSlots, currentAmPmSelection, currentSpecialProgramAvailable, totalSpecialProgramFTE])
+
+  // Auto-populate unavailable slots immediately when available slots change
+  useEffect(() => {
+    if (availableSlots.length > 0) {
+      const unavailable = [1, 2, 3, 4].filter(s => !availableSlots.includes(s))
+      setUnavailableSlots(unavailable)
+      
+      // CRITICAL: Remove invalid slots that are no longer in unavailable slots
+      // If a slot becomes available again, it shouldn't be marked as invalid
+      setInvalidSlots(prev => prev.filter(is => unavailable.includes(is.slot)))
+    } else {
+      setUnavailableSlots([])
+      // If no available slots, clear all invalid slots
+      setInvalidSlots([])
+    }
+  }, [availableSlots])
 
   const maxFTE = 1.0 - totalSpecialProgramFTE
   const fteIsMultipleOfQuarter = isMultipleOfQuarter(fteRemaining)
@@ -129,9 +156,40 @@ export function StaffEditDialog({
   const isTherapistRank = staffRank && ['RPT', 'APPT', 'SPT'].includes(staffRank)
   const showSlotFields = !isTherapistRank
 
+  // Determine if staff has special programs (for therapist special program availability)
+  const staffHasSpecialProgram = isTherapistRank && specialPrograms.some(p =>
+    p.staff_ids.includes(staffId) && p.weekdays.includes(weekday || 'mon') && p.name !== 'DRO'
+  )
+
+  // Get special program name and slot time for display
+  const specialProgram = staffHasSpecialProgram ?
+    specialPrograms.find(p =>
+      p.staff_ids.includes(staffId) && p.weekdays.includes(weekday || 'mon') && p.name !== 'DRO'
+    ) : null
+
+  const programName = specialProgram?.name || ''
+  const currentWeekday = weekday || 'mon'
+  // CRITICAL: Slots structure is Record<staffId, Record<Weekday, number[]>>, not Record<Weekday, number[]>
+  // So we need to access slots by staffId first, then by weekday
+  const staffSlots = specialProgram?.slots?.[staffId]
+  const programSlots = staffSlots?.[currentWeekday]
+  const slotTime = specialProgram && programSlots && Array.isArray(programSlots) && programSlots.length > 0 ?
+    (() => {
+      const firstSlot = programSlots[0]
+      if (firstSlot && [1, 2, 3, 4].includes(firstSlot)) {
+        // Use helper function to get slot time and format it
+        const timeRange = getSlotTime(firstSlot)
+        return formatTimeRange(timeRange)  // Converts "09:00-10:30" to "0900-1030"
+      }
+      return '0900-1030'  // Fallback
+    })()
+    : ''
+
   const handleFTESubtractionInputChange = (value: string) => {
     // Allow free typing - only update the input string
     setFteSubtractionInput(value)
+    // Clear validation error when user changes input
+    setFteValidationError(null)
   }
 
   const handleFTESubtractionBlur = () => {
@@ -158,17 +216,17 @@ export function StaffEditDialog({
       }
     }
     
-    // Clear invalid slot if FTE becomes multiple of 0.25
+    // Clear invalid slots if FTE becomes multiple of 0.25
     if (isMultipleOfQuarter(calculatedRemaining)) {
-      setInvalidSlot(undefined)
-      setLeaveComebackTime('')
-      setTimeInputValue('')
+      setInvalidSlots([])
     }
   }
 
   const handleFTERemainingInputChange = (value: string) => {
     // Allow free typing - only update the input string
     setFteRemainingInput(value)
+    // Clear validation error when user changes input
+    setFteValidationError(null)
   }
 
   const handleFTERemainingBlur = () => {
@@ -195,11 +253,9 @@ export function StaffEditDialog({
       }
     }
     
-    // Clear invalid slot if FTE becomes multiple of 0.25
+    // Clear invalid slots if FTE becomes multiple of 0.25
     if (isMultipleOfQuarter(newRemaining)) {
-      setInvalidSlot(undefined)
-      setLeaveComebackTime('')
-      setTimeInputValue('')
+      setInvalidSlots([])
     }
   }
 
@@ -212,14 +268,8 @@ export function StaffEditDialog({
         return [...prev, slot].sort((a, b) => a - b)
       }
     })
-  }
-
-  const handleInvalidSlotToggle = (slot: number) => {
-    if (invalidSlot === slot) {
-      setInvalidSlot(undefined)
-    } else {
-      setInvalidSlot(slot)
-    }
+    // Clear validation error when slots change
+    setFteValidationError(null)
   }
 
   const handleLeaveTypeChange = (value: string) => {
@@ -232,9 +282,7 @@ export function StaffEditDialog({
       setFteRemainingInput(newRemaining.toFixed(2))
       setFteSubtractionInput(newSubtraction.toFixed(2))
       setAvailableSlots([1, 2, 3, 4])
-      setInvalidSlot(undefined)
-      setLeaveComebackTime('')
-      setTimeInputValue('')
+      setInvalidSlots([])
       setShowCustomInput(false)
       setCustomLeaveType('')
     } else if (value === 'others') {
@@ -267,72 +315,9 @@ export function StaffEditDialog({
       const expectedSlots = Math.round(adjustedFTE / 0.25)
       setAvailableSlots(expectedSlots > 0 && expectedSlots <= 4 ? [1, 2, 3, 4].slice(0, expectedSlots) : [])
       
-      // Clear invalid slot if FTE is multiple of 0.25
+      // Clear invalid slots if FTE is multiple of 0.25
       if (isMultipleOfQuarter(adjustedFTE)) {
-        setInvalidSlot(undefined)
-        setLeaveComebackTime('')
-        setTimeInputValue('')
-      }
-    }
-  }
-
-  // Convert time input (e.g., "0815") to 24-hour format (e.g., "08:15")
-  const convertTimeInputTo24Hour = (input: string, period: 'AM' | 'PM'): string => {
-    if (!input || input.length < 3) return ''
-    
-    // Parse input: "0815" -> hours: 08, minutes: 15
-    let hours = 0
-    let minutes = 0
-    
-    if (input.length === 3) {
-      // "815" -> 8 hours, 15 minutes
-      hours = parseInt(input[0]) || 0
-      minutes = parseInt(input.slice(1)) || 0
-    } else if (input.length === 4) {
-      // "0815" -> 08 hours, 15 minutes
-      hours = parseInt(input.slice(0, 2)) || 0
-      minutes = parseInt(input.slice(2)) || 0
-    }
-    
-    // Validate hours and minutes
-    if (hours < 1 || hours > 12 || minutes < 0 || minutes > 59) {
-      return ''
-    }
-    
-    // Convert to 24-hour format
-    let hour24 = hours
-    if (period === 'AM') {
-      if (hours === 12) hour24 = 0
-    } else { // PM
-      if (hours !== 12) hour24 = hours + 12
-    }
-    
-    return `${String(hour24).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
-  }
-
-  const handleTimeInputChange = (value: string) => {
-    // Only allow digits, max 4 characters
-    const digitsOnly = value.replace(/\D/g, '').slice(0, 4)
-    setTimeInputValue(digitsOnly)
-    
-    // Auto-update leaveComebackTime if valid
-    if (digitsOnly.length >= 3) {
-      const time24 = convertTimeInputTo24Hour(digitsOnly, timePeriod)
-      if (time24) {
-        setLeaveComebackTime(time24)
-      }
-    } else {
-      setLeaveComebackTime('')
-    }
-  }
-
-  const handleTimePeriodChange = (period: 'AM' | 'PM') => {
-    setTimePeriod(period)
-    // Update leaveComebackTime with new period
-    if (timeInputValue.length >= 3) {
-      const time24 = convertTimeInputTo24Hour(timeInputValue, period)
-      if (time24) {
-        setLeaveComebackTime(time24)
+        setInvalidSlots([])
       }
     }
   }
@@ -366,18 +351,13 @@ export function StaffEditDialog({
     // Available slots represent which slots the staff is actually available for
     const finalRemaining = roundTo2Decimals(Math.max(0, Math.min(fteRemainingNum, maxFTE)))
     let finalSlots: number[] | undefined = availableSlots
-    let finalInvalidSlot: number | undefined = invalidSlot
-    let finalTime: string | undefined = leaveComebackTime
-    let finalIsLeave: boolean | undefined = isLeave
-    
-    // Convert time input to 24-hour format if provided
-    if (showSlotFields && timeInputValue.length >= 3) {
-      const time24 = convertTimeInputTo24Hour(timeInputValue, timePeriod)
-      if (time24) {
-        finalTime = time24
-      }
-    }
-    
+    // NEW: Final invalid slots array
+    let finalInvalidSlots: Array<{ slot: number; timeRange: { start: string; end: string } }> | undefined = invalidSlots
+    // NEW: Final AM/PM selection
+    let finalAmPmSelection: 'AM' | 'PM' | undefined = amPmSelection || undefined
+    // NEW: Final special program availability
+    let finalSpecialProgramAvailable: boolean | undefined = specialProgramAvailable
+
     // If leave type is 'others', use custom leave type text if provided
     let finalLeaveType: LeaveType | null = leaveType
     if (leaveType === 'others') {
@@ -387,20 +367,40 @@ export function StaffEditDialog({
         finalLeaveType = 'others'
       }
     }
-    
+
     // For therapist ranks, don't include slot-related fields
     if (!showSlotFields) {
       finalSlots = undefined
-      finalInvalidSlot = undefined
-      finalTime = undefined
-      finalIsLeave = undefined
+      finalInvalidSlots = undefined
+    }
+
+    // FTE Validation: Check if rounded FTE remaining is far off from available slots FTE
+    if (showSlotFields && finalSlots && finalSlots.length > 0) {
+      const roundedFTE = roundToNearestQuarter(finalRemaining)
+      const trueFTEFromSlots = finalSlots.length * 0.25
+      const difference = Math.abs(roundedFTE - trueFTEFromSlots)
+      
+      // Consider it "far off" if there's any difference (tolerance for floating point: 0.01)
+      if (difference > 0.01) {
+        // Calculate suggested number of slots based on rounded FTE
+        const suggestedSlots = Math.round(roundedFTE / 0.25)
+        const direction = roundedFTE > trueFTEFromSlots ? 'greater than' : 'less than'
+        setFteValidationError(
+          `FTE remaining (${finalRemaining.toFixed(2)}) rounded to ${roundedFTE.toFixed(2)} is ${direction} available slots FTE (${trueFTEFromSlots.toFixed(2)}). ` +
+          `Please select ${suggestedSlots} slot${suggestedSlots !== 1 ? 's' : ''} in Available Slots.`
+        )
+        return // Don't save, show error
+      }
     }
     
-    onSave(staffId, finalLeaveType, finalRemaining, roundTo2Decimals(maxFTE - finalRemaining), finalSlots, finalInvalidSlot, finalTime, finalIsLeave)
+    // Clear validation error if validation passes
+    setFteValidationError(null)
+
+    onSave(staffId, finalLeaveType, finalRemaining, roundTo2Decimals(maxFTE - finalRemaining), finalSlots, finalInvalidSlots, finalAmPmSelection, finalSpecialProgramAvailable)
     onOpenChange(false)
   }
 
-  const isValid = fteRemaining >= 0 && fteRemaining <= maxFTE
+  const isValid = fteRemaining >= 0 && fteRemaining <= maxFTE && !fteValidationError
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -468,7 +468,7 @@ export function StaffEditDialog({
                 />
               </div>
             </div>
-            {!isValid && (
+            {(fteRemaining < 0 || fteRemaining > maxFTE) && (
               <p className="text-sm text-red-500">
                 {totalSpecialProgramFTE > 0 
                   ? `FTE must be between 0 and ${maxFTE.toFixed(2)} (1.0 - ${totalSpecialProgramFTE.toFixed(2)} special program FTE)`
@@ -491,109 +491,160 @@ export function StaffEditDialog({
             )}
           </div>
 
+          {/* AM/PM Selection for therapists when FTE = 0.5 or 0.25 */}
+          {isTherapistRank && (fteRemaining === 0.5 || fteRemaining === 0.25) && (
+            <div className="space-y-2">
+              <Label htmlFor="am-pm-selection">AM/PM Selection</Label>
+              <select
+                id="am-pm-selection"
+                value={amPmSelection}
+                onChange={(e) => setAmPmSelection(e.target.value as 'AM' | 'PM' | '')}
+                className="w-full px-3 py-2 border rounded-md"
+              >
+                <option value="">Select...</option>
+                <option value="AM">AM</option>
+                <option value="PM">PM</option>
+              </select>
+            </div>
+          )}
+
+          {/* Special Program Availability for therapists */}
+          {isTherapistRank && staffHasSpecialProgram && slotTime && (
+            <div className="space-y-2">
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={specialProgramAvailable}
+                  onChange={(e) => setSpecialProgramAvailable(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                <span className="text-sm">
+                  Available during special program <strong>({programName})</strong> slot{' '}
+                  <strong className="whitespace-nowrap">"{slotTime}"</strong>?
+                </span>
+              </label>
+            </div>
+          )}
+
           {/* Show slot fields only for non-therapist ranks */}
           {showSlotFields && fteRemaining > 0 && fteRemaining < maxFTE && (
             <div className="space-y-2">
               <Label>
                 Available Slots
               </Label>
-              <div className="flex gap-4">
-                {[1, 2, 3, 4].map(slot => (
-                  <label key={slot} className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={availableSlots.includes(slot)}
-                      onChange={() => handleSlotToggle(slot)}
-                      className="h-4 w-4"
-                    />
-                    <span className="text-sm">Slot {slot}</span>
-                  </label>
+              <div className="flex gap-2">
+                {[
+                  { slot: 1, time: '0900-1030' },
+                  { slot: 2, time: '1030-1200' },
+                  { slot: 3, time: '1330-1500' },
+                  { slot: 4, time: '1500-1630' },
+                ].map(({ slot, time }) => (
+                  <Button
+                    key={slot}
+                    type="button"
+                    onClick={() => handleSlotToggle(slot)}
+                    className={cn(
+                      'px-3 py-2 rounded text-sm font-medium',
+                      availableSlots.includes(slot)
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    )}
+                  >
+                    {time}
+                  </Button>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Always show time picker and leave/come back slot selection for non-therapist ranks */}
-          {showSlotFields && fteRemaining > 0 && fteRemaining < maxFTE && (
-            <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="leave-comeback-time">What time to leave/come back</Label>
-              <div className="flex gap-2 items-center">
-                <Input
-                  id="leave-comeback-time"
-                  type="text"
-                  inputMode="numeric"
-                  value={timeInputValue}
-                  onChange={(e) => handleTimeInputChange(e.target.value)}
-                  placeholder="0815"
-                  maxLength={4}
-                  className="flex-1"
-                />
-                <select
-                  value={timePeriod}
-                  onChange={(e) => handleTimePeriodChange(e.target.value as 'AM' | 'PM')}
-                  className="px-3 py-2 border rounded-md"
-                >
-                  <option value="AM">AM</option>
-                  <option value="PM">PM</option>
-                </select>
-              </div>
-              {timeInputValue && timeInputValue.length >= 3 && (
-                <p className="text-xs text-muted-foreground">
-                  {timeInputValue.length === 3 
-                    ? `Time: ${timeInputValue[0]}:${timeInputValue.slice(1)} ${timePeriod}`
-                    : `Time: ${timeInputValue.slice(0, 2)}:${timeInputValue.slice(2)} ${timePeriod}`
-                  }
-                </p>
-              )}
-              
+          {/* Unavailable Slots (auto-populated after available slot selection) */}
+          {showSlotFields && unavailableSlots.length > 0 && (
+            <div className="space-y-2">
+              <Label>
+                Unavailable Slots
+              </Label>
               <div className="space-y-2">
-                <Label>Leave or Come Back</Label>
-                <div className="flex gap-4">
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="leave-comeback"
-                      checked={isLeave}
-                      onChange={() => setIsLeave(true)}
-                      className="h-4 w-4"
-                    />
-                    <span className="text-sm">Leave</span>
-                  </label>
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="leave-comeback"
-                      checked={!isLeave}
-                      onChange={() => setIsLeave(false)}
-                      className="h-4 w-4"
-                    />
-                    <span className="text-sm">Come Back</span>
-                  </label>
-                </div>
-              </div>
+                {unavailableSlots.map(slot => {
+                  const slotTime = (() => {
+                    const ranges: Record<number, string> = {
+                      1: '0900-1030',
+                      2: '1030-1200',
+                      3: '1330-1500',
+                      4: '1500-1630',
+                    }
+                    return ranges[slot] || '0900-1030'
+                  })()
 
-              <div className="space-y-2">
-                <Label>Slot to Leave/Come Back</Label>
-                <div className="flex gap-4">
-                  {[1, 2, 3, 4].map(slot => (
-                    <label key={slot} className="flex items-center space-x-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="invalid-slot"
-                        checked={invalidSlot === slot}
-                        onChange={() => handleInvalidSlotToggle(slot)}
-                        className="h-4 w-4"
-                      />
-                      <span className="text-sm">Slot {slot}</span>
-                    </label>
-                  ))}
-                </div>
-                {invalidSlot && (
-                  <p className="text-xs text-muted-foreground">
-                    Slot {invalidSlot} will still be assigned but not counted as a valid slot allocation to the team.
-                  </p>
-                )}
+                  const isInvalid = invalidSlots.some(is => is.slot === slot)
+                  const invalidSlotData = invalidSlots.find(is => is.slot === slot)
+
+                  return (
+                    <div key={slot} className="border rounded-lg p-4 space-y-2">
+                      <div className="font-medium">{slotTime}</div>
+                      <label className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          checked={isInvalid}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              // Add or update invalid slot with default time range (full slot)
+                              const newInvalidSlot = {
+                                slot,
+                                timeRange: {
+                                  start: slotTime.split('-')[0],
+                                  end: slotTime.split('-')[1]
+                                }
+                              }
+                              setInvalidSlots(prev => {
+                                // Check if slot already exists, replace it; otherwise add it
+                                const existingIndex = prev.findIndex(is => is.slot === slot)
+                                if (existingIndex >= 0) {
+                                  // Replace existing entry
+                                  const updated = [...prev]
+                                  updated[existingIndex] = newInvalidSlot
+                                  return updated
+                                } else {
+                                  // Add new entry
+                                  return [...prev, newInvalidSlot]
+                                }
+                              })
+                            } else {
+                              // Remove invalid slot
+                              setInvalidSlots(prev => prev.filter(is => is.slot !== slot))
+                            }
+                          }}
+                          className="h-4 w-4"
+                        />
+                        <span className="text-sm">Partially present (not counted as FTE)</span>
+                      </label>
+                      {isInvalid && (
+                        <TimeIntervalSlider
+                          slot={slot}
+                          startTime={slotTime.split('-')[0]}
+                          endTime={slotTime.split('-')[1]}
+                          value={invalidSlotData?.timeRange}
+                          onChange={(timeRange) => {
+                            setInvalidSlots(prev =>
+                              prev.map(is =>
+                                is.slot === slot
+                                  ? { ...is, timeRange }
+                                  : is
+                              )
+                            )
+                          }}
+                        />
+                      )}
+                    </div>
+                  )
+                })}
               </div>
+            </div>
+          )}
+
+          {/* FTE Validation Error */}
+          {fteValidationError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-md">
+              <p className="text-sm text-red-800">{fteValidationError}</p>
             </div>
           )}
         </div>

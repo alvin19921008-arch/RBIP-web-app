@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { Team } from '@/types/staff'
 import { PCAAllocation } from '@/types/schedule'
 import { PCAPreference, SpecialProgram } from '@/types/allocation'
@@ -39,6 +39,7 @@ interface NonFloatingSubstitutionDialogProps {
   weekday: string
   currentAllocations: PCAAllocation[]
   staffOverrides: Record<string, { availableSlots?: number[] }>
+  initialSelections?: Record<string, { floatingPCAId: string; slots: number[] }>
   onConfirm: (selections: Record<string, { floatingPCAId: string; slots: number[] }>) => void
   onCancel: () => void
   onSkip: () => void
@@ -64,12 +65,22 @@ export function NonFloatingSubstitutionDialog({
   weekday,
   currentAllocations,
   staffOverrides,
+  initialSelections,
   onConfirm,
   onCancel,
   onSkip,
 }: NonFloatingSubstitutionDialogProps) {
   const [currentTeamIndex, setCurrentTeamIndex] = useState(0)
-  const [selections, setSelections] = useState<Record<string, { floatingPCAId: string; slots: number[] }>>({})
+  const [selections, setSelections] = useState<Record<string, { floatingPCAId: string; slots: number[] }>>(
+    () => initialSelections ?? {}
+  )
+
+  // When dialog opens, seed selections from initialSelections (if provided)
+  useEffect(() => {
+    if (!open) return
+    setCurrentTeamIndex(0)
+    setSelections(initialSelections ?? {})
+  }, [open, initialSelections])
 
   // For single team mode, always use the first (and only) team
   const currentTeam = isWizardMode ? teams[currentTeamIndex] : teams[0]
