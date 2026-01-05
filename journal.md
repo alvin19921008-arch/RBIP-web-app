@@ -1344,6 +1344,19 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
     - Special program PCAs explicitly excluded from substitution styling (check `special_program_ids`)
     - Derived substitution logic skips non-floating PCAs already covered by whole-day buffer substitutes
     - Prevents unrelated floating PCAs from being incorrectly marked green
+29. **Buffer Staff Edit**: 
+    - Edit icon on buffer staff cards opens BufferStaffCreateDialog in edit mode
+    - Dialog pre-populates all buffer properties (rank, team, special program, floating, floor PCA, buffer FTE, available slots)
+    - Uses database `update` operation when editing existing buffer staff
+30. **SPT FTE Edit Model**: 
+    - SPT uses additive FTE model: "FTE" (base, overrideable 0.25-1.0 step=0.25), "FTE Cost due to Leave" (user input), "FTE Remaining on Duty" (auto-calculated)
+    - Step 2 allocation applies SPT overrides to `sptAllocations.fte_addon`
+    - StaffPool displays SPT FTE when SPT has duty on current weekday
+    - Schedule page SPT display: Shows "AM/PM" only when FTE = 0.25/0.5 AND slot pattern matches; otherwise shows number only
+31. **Step Dialog Badges**: 
+    - Step 2.0, 2.1, and Step 3.0-3.3 dialogs display step badges in titles
+    - Consistent badge styling across all step dialogs
+    - Step 2.1 "Skip" button includes hover tooltip (consistent with Step 2.0)
 
 ---
 
