@@ -5,6 +5,167 @@ Your repository is connected to: `https://github.com/alvin19921008-arch/RBIP-web
 
 ---
 
+## 💻 Working on Multiple Machines (Day 1: Laptop A, Day 2: Laptop B)
+
+### 🆕 Setting Up the Project on a New Laptop
+
+If you're working on a different laptop for the first time:
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/alvin19921008-arch/RBIP-web-app.git
+   cd RBIP-web-app
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+3. **Set up environment variables:**
+   - Create `.env.local` file in the project root
+   - Add your Supabase credentials:
+     ```
+     NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url_here
+     NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key_here
+     ```
+   - Get these values from: https://supabase.com/dashboard/project/YOUR_PROJECT_ID/settings/api
+
+4. **Verify setup:**
+   ```bash
+   npm run dev
+   ```
+   Then visit http://localhost:3000 to confirm everything works.
+
+---
+
+### 🔄 Daily Workflow: Always Pull Latest Before Starting Work
+
+**⚠️ CRITICAL: Always pull the latest changes before you start working!**
+
+This prevents merge conflicts when you work on different machines.
+
+#### Step 1: Check for Updates (Before Starting Work)
+
+Every time you start working (especially on a different machine), check if there are new changes:
+
+```bash
+# Fetch the latest information from GitHub (doesn't change your files)
+git fetch origin
+
+# Check if your local branch is behind the remote
+git status
+```
+
+If you see "Your branch is behind 'origin/main'", you need to pull updates.
+
+#### Step 2: Pull the Latest Changes
+
+**If you have NO uncommitted changes:**
+```bash
+# Simple pull (fast-forward merge)
+git pull origin main
+```
+
+**If you have uncommitted changes:**
+```bash
+# Option 1: Commit your changes first, then pull
+git add .
+git commit -m "WIP: temporary save before pulling latest"
+git pull origin main
+
+# Option 2: Stash your changes, pull, then reapply them
+git stash                    # Save your uncommitted changes temporarily
+git pull origin main         # Get latest changes
+git stash pop               # Reapply your changes (may have conflicts to resolve)
+```
+
+#### Step 3: Resolve Any Merge Conflicts (if they occur)
+
+If git can't automatically merge, you'll see a conflict message:
+
+```bash
+# Git will show which files have conflicts
+git status
+
+# Open the conflicted files in your editor
+# Look for conflict markers: <<<<<<< HEAD, =======, >>>>>>>
+# Edit to resolve conflicts, then:
+git add .
+git commit -m "Merge latest changes and resolve conflicts"
+```
+
+#### Step 4: Verify Everything Works
+
+After pulling:
+```bash
+# Make sure dependencies are up to date
+npm install
+
+# Test that everything works
+npm run dev
+```
+
+---
+
+### 📊 How to Check What's Changed on GitHub
+
+Before pulling, you can see what changes are on GitHub:
+
+```bash
+# Fetch latest info (doesn't change your files)
+git fetch origin
+
+# See commits on GitHub that you don't have locally
+git log HEAD..origin/main --oneline
+
+# See what files changed
+git diff HEAD..origin/main --name-only
+
+# See detailed changes (in a readable format)
+git log HEAD..origin/main --stat
+```
+
+---
+
+### ✅ Safe Multi-Machine Workflow Checklist
+
+**Before starting work each day:**
+
+- [ ] Open terminal in project folder
+- [ ] Run `git fetch origin` to check for updates
+- [ ] Run `git status` to see if you're behind
+- [ ] If behind, run `git pull origin main`
+- [ ] If conflicts occur, resolve them before starting
+- [ ] Run `npm install` if package.json changed
+- [ ] Test with `npm run dev`
+
+**Before ending work each day:**
+
+- [ ] Commit all your changes: `git add .` then `git commit -m "Your message"`
+- [ ] Push to GitHub: `git push origin main`
+- [ ] Verify push succeeded: `git status` (should say "Your branch is up to date")
+
+---
+
+### 🛡️ Best Practices to Prevent Version Conflicts
+
+1. **Always pull before starting work** - This is the #1 rule!
+2. **Commit and push at end of day** - Don't leave uncommitted work
+3. **Pull before pushing** - Even if you just pulled, pull again before pushing:
+   ```bash
+   git pull origin main  # Get any changes that happened while you were working
+   git push origin main  # Now push your changes
+   ```
+4. **Use descriptive commit messages** - Helps track what changed on which machine
+5. **Don't work on the same file simultaneously** - Coordinate with yourself if needed
+6. **If unsure, check status first:**
+   ```bash
+   git status  # Always safe to run, shows current state
+   ```
+
+---
+
 ## 📤 How to Push Updates to Main Branch
 
 ### Method 1: Using Terminal (Recommended)
