@@ -1,7 +1,11 @@
 import { format, isWeekend, addDays, startOfWeek, isSameDay } from 'date-fns'
+import { isHongKongHoliday } from './hongKongHolidays'
 
 export function isWorkingDay(date: Date): boolean {
-  return !isWeekend(date)
+  // Working day = Mon–Fri AND not a Hong Kong public holiday (including Sundays)
+  if (isWeekend(date)) return false
+  const { isHoliday } = isHongKongHoliday(date)
+  return !isHoliday
 }
 
 export function getNextWorkingDay(date: Date): Date {
@@ -10,6 +14,14 @@ export function getNextWorkingDay(date: Date): Date {
     nextDay = addDays(nextDay, 1)
   }
   return nextDay
+}
+
+export function getPreviousWorkingDay(date: Date): Date {
+  let prevDay = addDays(date, -1)
+  while (!isWorkingDay(prevDay)) {
+    prevDay = addDays(prevDay, -1)
+  }
+  return prevDay
 }
 
 export function getLast5WorkingDays(date: Date = new Date()): Date[] {

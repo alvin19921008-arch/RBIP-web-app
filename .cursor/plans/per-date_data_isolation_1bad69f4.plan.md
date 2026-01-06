@@ -1,27 +1,3 @@
----
-name: Per-date data isolation
-overview: Introduce per-schedule baseline snapshots and per-schedule staff overrides to stop cross-date contamination, while enabling user-selectable copy modes (Full vs Hybrid) when rolling schedules forward.
-todos:
-  - id: audit-current-persistence
-    content: Audit which staffOverrides fields are currently persistable via allocation columns vs currently lost; define the canonical staff_overrides JSON schema for per-schedule persistence.
-    status: pending
-  - id: design-schedule-snapshot
-    content: Define the baseline_snapshot JSON schema (staff roster + team settings + wards + special programs + SPT allocations + PCA preferences) and how schedule page/algorithms will read from it instead of global tables.
-    status: pending
-    dependencies:
-      - audit-current-persistence
-  - id: define-clone-modes
-    content: Specify exact Full vs Hybrid clone semantics (including which PCA allocations count as Step 2 substitutions) and how to implement consistent filtering using staff_overrides + allocation fields.
-    status: pending
-    dependencies:
-      - design-schedule-snapshot
-  - id: backward-compat-strategy
-    content: Plan backward compatibility for existing schedules without snapshots/overrides, including one-time snapshot creation for existing dates if needed.
-    status: pending
-    dependencies:
-      - define-clone-modes
----
-
 # Per-date Snapshot + Clone Modes Plan
 
 ## Goals

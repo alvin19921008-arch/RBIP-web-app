@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, Fragment, useCallback, Suspense } from 'react'
 import { DndContext, DragOverlay, DragEndEvent, DragStartEvent, DragMoveEvent, Active } from '@dnd-kit/core'
 import { Team, Weekday, LeaveType } from '@/types/staff'
-import { TherapistAllocation, PCAAllocation, BedAllocation, ScheduleCalculations, AllocationTracker } from '@/types/schedule'
+import { TherapistAllocation, PCAAllocation, BedAllocation, ScheduleCalculations, AllocationTracker, WorkflowState, BaselineSnapshot } from '@/types/schedule'
 import { Staff } from '@/types/staff'
 import { TeamColumn } from '@/components/allocation/TeamColumn'
 import { StaffPool } from '@/components/allocation/StaffPool'
@@ -14,6 +14,7 @@ import { LeaveBlock } from '@/components/allocation/LeaveBlock'
 import { CalculationBlock } from '@/components/allocation/CalculationBlock'
 import { PCACalculationBlock } from '@/components/allocation/PCACalculationBlock'
 import { SummaryColumn } from '@/components/allocation/SummaryColumn'
+import { ScheduleCopyWizard } from '@/components/allocation/ScheduleCopyWizard'
 import { Button } from '@/components/ui/button'
 import { StaffEditDialog } from '@/components/allocation/StaffEditDialog'
 import { TieBreakDialog } from '@/components/allocation/TieBreakDialog'
@@ -22,10 +23,11 @@ import { FloatingPCAConfigDialog } from '@/components/allocation/FloatingPCAConf
 import { NonFloatingSubstitutionDialog } from '@/components/allocation/NonFloatingSubstitutionDialog'
 import { SpecialProgramOverrideDialog } from '@/components/allocation/SpecialProgramOverrideDialog'
 import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopover'
-import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X, ArrowLeft } from 'lucide-react'
+import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X, ArrowLeft, Copy } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { CalendarGrid } from '@/components/ui/calendar-grid'
 import { getHongKongHolidays } from '@/lib/utils/hongKongHolidays'
+import { getNextWorkingDay, getPreviousWorkingDay } from '@/lib/utils/dateHelpers'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { allocateTherapists, StaffData, AllocationContext } from '@/lib/algorithms/therapistAllocation'
@@ -210,6 +212,15 @@ function SchedulePageContent() {
   const [holidays, setHolidays] = useState<Map<string, string>>(new Map())
   const calendarButtonRef = useRef<HTMLButtonElement>(null)
   const calendarPopoverRef = useRef<HTMLDivElement>(null)
+  // Copy wizard state
+  const [copyMenuOpen, setCopyMenuOpen] = useState(false)
+  const [copyWizardConfig, setCopyWizardConfig] = useState<{
+    sourceDate: Date
+    targetDate: Date | null
+    flowType: 'next-working-day' | 'last-working-day' | 'specific-date'
+    direction: 'to' | 'from'
+  } | null>(null)
+  const [copyWizardOpen, setCopyWizardOpen] = useState(false)
   const [savedEditableBeds, setSavedEditableBeds] = useState<Record<Team, number>>({
     FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
   })
@@ -222,6 +233,10 @@ function SchedulePageContent() {
     'bed-relieving': 'pending',
     'review': 'pending',
   })
+  // Persisted workflow state from database (daily_schedules.workflow_state)
+  const [persistedWorkflowState, setPersistedWorkflowState] = useState<WorkflowState | null>(null)
+  // Baseline snapshot for this schedule date (daily_schedules.baseline_snapshot)
+  const [baselineSnapshot, setBaselineSnapshot] = useState<BaselineSnapshot | null>(null)
   // Intermediate state for step-wise allocation (passed between steps)
   const [step2Result, setStep2Result] = useState<{
     pcaData: PCAData[]
@@ -572,33 +587,44 @@ function SchedulePageContent() {
             // Mark steps as initialized if data exists
             setInitializedSteps(new Set(['therapist-pca', 'floating-pca', 'bed-relieving']))
             
-            // Determine which steps are completed based on data existence
+            // Determine which steps are completed based on data existence,
+            // then overlay any persisted workflow_state from DB if available.
             const hasLeaveData = resultAny.overrides && Object.keys(resultAny.overrides).length > 0
             const hasTherapistData = resultAny.therapistAllocs && resultAny.therapistAllocs.length > 0
             const hasPCAData = resultAny.pcaAllocs && resultAny.pcaAllocs.length > 0
-            
-            // Mark steps as completed if we have saved data
-            const newStepStatus = {
-              'leave-fte': hasLeaveData ? 'completed' as const : 'pending' as const,
-              'therapist-pca': hasTherapistData ? 'completed' as const : 'pending' as const,
-              'floating-pca': hasPCAData ? 'completed' as const : 'pending' as const,
-              'bed-relieving': 'completed' as const, // Bed allocations are always calculated
-              'review': 'pending' as const,
+
+            let newStepStatus: Record<string, 'pending' | 'completed' | 'modified'> = {
+              'leave-fte': hasLeaveData ? 'completed' : 'pending',
+              'therapist-pca': hasTherapistData ? 'completed' : 'pending',
+              'floating-pca': hasPCAData ? 'completed' : 'pending',
+              'bed-relieving': 'completed',
+              'review': 'pending',
             }
-            
+
+            const workflowState: WorkflowState | null = resultAny.workflowState ?? persistedWorkflowState
+            if (workflowState && Array.isArray(workflowState.completedSteps)) {
+              workflowState.completedSteps.forEach(stepId => {
+                if (newStepStatus[stepId]) {
+                  newStepStatus[stepId] = 'completed'
+                }
+              })
+              if (workflowState.currentStep) {
+                setCurrentStep(workflowState.currentStep)
+              }
+            } else {
+              // Fallback: if all steps have data, go directly to review
+              const allStepsCompleted =
+                hasLeaveData &&
+                hasTherapistData &&
+                hasPCAData
+
+              if (allStepsCompleted) {
+                setCurrentStep('review')
+                newStepStatus = { ...newStepStatus, review: 'completed' }
+              }
+            }
+
             setStepStatus(newStepStatus)
-            
-            // Check if all steps are completed
-            const allStepsCompleted = 
-              hasLeaveData &&
-              hasTherapistData &&
-              hasPCAData
-            
-            if (allStepsCompleted) {
-              // Go directly to Review step
-              setCurrentStep('review')
-              setStepStatus(prev => ({ ...prev, 'review': 'completed' }))
-            }
           } else if (result && result.overrides) {
             // No saved PCA allocations, generate new ones
             generateAllocationsWithOverrides(result.overrides)
@@ -684,20 +710,90 @@ function SchedulePageContent() {
     }
   }
 
-  // Load holidays when calendar opens
+  // Load holidays when calendar or copy wizard opens (reuses same CalendarGrid UI)
   useEffect(() => {
-    if (calendarOpen) {
+    if (calendarOpen || copyWizardOpen) {
       loadDatesWithData()
-      // Generate holidays for current year and next year
-      const currentYear = new Date().getFullYear()
+      // Generate holidays for selected year and next year
+      const baseYear = selectedDate.getFullYear()
       const holidaysMap = new Map<string, string>()
-      const currentYearHolidays = getHongKongHolidays(currentYear)
-      const nextYearHolidays = getHongKongHolidays(currentYear + 1)
-      currentYearHolidays.forEach((value, key) => holidaysMap.set(key, value))
+      const yearHolidays = getHongKongHolidays(baseYear)
+      const nextYearHolidays = getHongKongHolidays(baseYear + 1)
+      yearHolidays.forEach((value, key) => holidaysMap.set(key, value))
       nextYearHolidays.forEach((value, key) => holidaysMap.set(key, value))
       setHolidays(holidaysMap)
     }
-  }, [calendarOpen])
+  }, [calendarOpen, copyWizardOpen, selectedDate])
+
+  const applyBaselineSnapshot = (snapshot: BaselineSnapshot) => {
+    setBaselineSnapshot(snapshot)
+
+    // Derive staff pools from snapshot staff list
+    if (snapshot.staff && Array.isArray(snapshot.staff)) {
+      const activeStaff: Staff[] = []
+      const inactiveStaffList: Staff[] = []
+      const bufferStaffList: Staff[] = []
+
+      snapshot.staff.forEach((raw: any) => {
+        const status = (raw.status as any) ?? 'active'
+        const staffMember: Staff = {
+          ...raw,
+          status,
+        }
+        if (status === 'buffer') {
+          bufferStaffList.push(staffMember)
+        } else if (status === 'inactive') {
+          inactiveStaffList.push(staffMember)
+        } else {
+          activeStaff.push(staffMember)
+        }
+      })
+
+      // Main staff array used for allocations: active + buffer (matches loadStaff behavior)
+      setStaff([...activeStaff, ...bufferStaffList])
+      setInactiveStaff(inactiveStaffList)
+      setBufferStaff(bufferStaffList)
+    }
+
+    if (snapshot.specialPrograms) {
+      setSpecialPrograms(snapshot.specialPrograms as any)
+    }
+    if (snapshot.sptAllocations) {
+      setSptAllocations(snapshot.sptAllocations as any)
+    }
+    if (snapshot.wards) {
+      setWards(
+        snapshot.wards.map((ward: any) => ({
+          name: ward.name,
+          total_beds: ward.total_beds,
+          team_assignments: ward.team_assignments || {},
+          team_assignment_portions: ward.team_assignment_portions || {},
+        }))
+      )
+    }
+    if (snapshot.pcaPreferences) {
+      setPcaPreferences(snapshot.pcaPreferences as any)
+    }
+  }
+
+  const buildBaselineSnapshotFromCurrentState = (): BaselineSnapshot => {
+    // Include all staff pools (active + buffer + inactive) and dedupe by id
+    const all = [...staff, ...inactiveStaff, ...bufferStaff]
+    const byId = new Map<string, any>()
+    all.forEach(s => {
+      if (!s?.id) return
+      const status = (s as any).status ?? (bufferStaff.some(b => b.id === s.id) ? 'buffer' : 'active')
+      byId.set(s.id, { ...(byId.get(s.id) || {}), ...s, status })
+    })
+
+    return {
+      staff: Array.from(byId.values()) as any,
+      specialPrograms: specialPrograms as any,
+      sptAllocations: sptAllocations as any,
+      wards: wards as any,
+      pcaPreferences: pcaPreferences as any,
+    }
+  }
 
   const loadAllData = async () => {
     setLoading(true)
@@ -841,8 +937,23 @@ function SchedulePageContent() {
     }
   }
 
-  // Load schedule for date and restore saved overrides
-  const loadScheduleForDate = async (date: Date): Promise<{ scheduleId: string; overrides: Record<string, { leaveType: LeaveType | null; fteRemaining: number; fteSubtraction?: number; availableSlots?: number[] }> } | null> => {
+  // Load schedule for date and restore saved overrides / metadata
+  const loadScheduleForDate = async (date: Date): Promise<{
+    scheduleId: string
+    overrides: Record<string, {
+      leaveType: LeaveType | null
+      fteRemaining: number
+      fteSubtraction?: number
+      availableSlots?: number[]
+      invalidSlot?: number
+      leaveComebackTime?: string
+      isLeave?: boolean
+    }>
+    pcaAllocs: any[]
+    therapistAllocs: any[]
+    baselineSnapshot?: BaselineSnapshot | null
+    workflowState?: WorkflowState | null
+  } | null> => {
     // Use local date components to avoid timezone issues
     const year = date.getFullYear()
     const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -850,37 +961,80 @@ function SchedulePageContent() {
     const dateStr = `${year}-${month}-${day}`
     
     // Get or create schedule for this date
-    // First try with tie_break_decisions column, fall back to without it if column doesn't exist
+    // First try with extended columns (including JSONB metadata), fall back to minimal selection if columns don't exist
     let { data: scheduleData, error: queryError } = await supabase
       .from('daily_schedules')
-      .select('id, is_tentative, tie_break_decisions')
+      .select('id, is_tentative, tie_break_decisions, baseline_snapshot, staff_overrides, workflow_state')
       .eq('date', dateStr)
-      .maybeSingle() as { data: { id: string; is_tentative: boolean; tie_break_decisions?: Record<string, string> } | null; error: any }
+      .maybeSingle() as {
+        data: {
+          id: string
+          is_tentative: boolean
+          tie_break_decisions?: Record<string, string>
+          baseline_snapshot?: BaselineSnapshot
+          staff_overrides?: Record<string, any>
+          workflow_state?: WorkflowState
+        } | null
+        error: any
+      }
     
-    // If query failed due to missing column, retry without tie_break_decisions
-    if (queryError && queryError.message?.includes('tie_break_decisions')) {
+    // If query failed due to missing columns (older schema), retry with minimal selection
+    if (queryError && queryError.message?.includes('column')) {
       const fallbackResult = await supabase
         .from('daily_schedules')
         .select('id, is_tentative')
         .eq('date', dateStr)
         .maybeSingle()
-      scheduleData = fallbackResult.data as { id: string; is_tentative: boolean; tie_break_decisions?: Record<string, string> } | null
+      scheduleData = fallbackResult.data as { id: string; is_tentative: boolean } | null
       queryError = fallbackResult.error
     }
     
     let scheduleId: string
     if (!scheduleData) {
       // Create new schedule if it doesn't exist
-      const { data: newSchedule, error } = await supabase
+      // Immediately snapshot current dashboard state for this new schedule to prevent cross-date contamination.
+      // If DB schema doesn't have the new columns yet (legacy), fall back to minimal insert.
+      const baselineSnapshotToSave = buildBaselineSnapshotFromCurrentState()
+      const initialWorkflowState: WorkflowState = { currentStep: 'leave-fte', completedSteps: [] }
+
+      let newSchedule: { id: string } | null = null
+      let error: any = null
+
+      const attempt = await supabase
         .from('daily_schedules')
-        .insert({ date: dateStr, is_tentative: true })
+        .insert({
+          date: dateStr,
+          is_tentative: true,
+          baseline_snapshot: baselineSnapshotToSave as any,
+          staff_overrides: {} as any,
+          workflow_state: initialWorkflowState as any,
+        })
         .select('id')
         .single()
+
+      newSchedule = attempt.data
+      error = attempt.error
+
+      if (error && error.message?.includes('column')) {
+        const fallback = await supabase
+          .from('daily_schedules')
+          .insert({ date: dateStr, is_tentative: true })
+          .select('id')
+          .single()
+        newSchedule = fallback.data
+        error = fallback.error
+      }
+
       if (error) {
         console.error('Error creating schedule:', error)
         return null
       }
+
       scheduleId = newSchedule?.id || ''
+
+      // Apply snapshot locally so UI uses it immediately
+      applyBaselineSnapshot(baselineSnapshotToSave)
+      setPersistedWorkflowState(initialWorkflowState)
     } else {
       scheduleId = scheduleData.id
       // Ensure schedule is tentative (required by RLS policy)
@@ -903,10 +1057,26 @@ function SchedulePageContent() {
     setCurrentScheduleId(scheduleId)
     
     // Load tie-breaker decisions if they exist
-    if (scheduleData?.tie_break_decisions) {
-      setTieBreakDecisions(scheduleData.tie_break_decisions as Record<string, Team>)
+    if ((scheduleData as any)?.tie_break_decisions) {
+      setTieBreakDecisions((scheduleData as any).tie_break_decisions as Record<string, Team>)
     } else {
       setTieBreakDecisions({})
+    }
+
+    // Load and apply baseline snapshot if present
+    const rawBaselineSnapshot = (scheduleData as any)?.baseline_snapshot as BaselineSnapshot | undefined
+    const hasBaselineSnapshot =
+      rawBaselineSnapshot && typeof rawBaselineSnapshot === 'object' && Object.keys(rawBaselineSnapshot as any).length > 0
+    if (hasBaselineSnapshot) {
+      applyBaselineSnapshot(rawBaselineSnapshot as BaselineSnapshot)
+    }
+
+    // Load workflow state if present
+    const rawWorkflowState = (scheduleData as any)?.workflow_state as WorkflowState | undefined
+    if (rawWorkflowState && typeof rawWorkflowState === 'object') {
+      setPersistedWorkflowState(rawWorkflowState)
+    } else {
+      setPersistedWorkflowState(null)
     }
     
     // Load therapist allocations
@@ -920,83 +1090,141 @@ function SchedulePageContent() {
       .from('schedule_pca_allocations')
       .select('*')
       .eq('schedule_id', scheduleId)
+
+    // If this is a legacy/blank schedule with no snapshot yet, create snapshot once.
+    // Do NOT overwrite if the schedule already has a snapshot (e.g., created via copy API).
+    const existingSnapshot = (scheduleData as any)?.baseline_snapshot as BaselineSnapshot | undefined
+    const hasSnapshot =
+      existingSnapshot && typeof existingSnapshot === 'object' && Object.keys(existingSnapshot as any).length > 0
+    const hasAnyAllocations = (therapistAllocs?.length || 0) > 0 || (pcaAllocs?.length || 0) > 0
+    const persistedOverridesCandidate = (scheduleData as any)?.staff_overrides
+    const hasPersistedOverrides =
+      persistedOverridesCandidate &&
+      typeof persistedOverridesCandidate === 'object' &&
+      Object.keys(persistedOverridesCandidate as any).length > 0
+
+    if (!hasSnapshot && !hasAnyAllocations && !hasPersistedOverrides) {
+      const baselineSnapshotToSave = buildBaselineSnapshotFromCurrentState()
+      const initialWorkflowState: WorkflowState = { currentStep: 'leave-fte', completedSteps: [] }
+      const { error: snapshotError } = await supabase
+        .from('daily_schedules')
+        .update({
+          baseline_snapshot: baselineSnapshotToSave as any,
+          workflow_state: (scheduleData as any)?.workflow_state || (initialWorkflowState as any),
+        })
+        .eq('id', scheduleId)
+      if (!snapshotError) {
+        applyBaselineSnapshot(baselineSnapshotToSave)
+        setPersistedWorkflowState((scheduleData as any)?.workflow_state || initialWorkflowState)
+      }
+    }
     
     
-    // Build overrides from saved allocations
+    // Build overrides from saved allocations or use persisted staff_overrides if present
     // Use centralized fromDbLeaveType from lib/db/types.ts for type conversion
-    const overrides: Record<string, { leaveType: LeaveType | null; fteRemaining: number; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean }> = {}
-    
-    therapistAllocs?.forEach(alloc => {
-      if (alloc.leave_type !== null || alloc.fte_therapist !== 1) {
-        const fte = parseFloat(alloc.fte_therapist.toString())
-        // Use centralized type conversion that handles manual_override_note
-        const leaveType = fromDbLeaveType(alloc.leave_type as any, fte, alloc.manual_override_note)
-        overrides[alloc.staff_id] = {
-          leaveType: leaveType,
-          fteRemaining: fte
+    const persistedOverrides = (scheduleData as any)?.staff_overrides as Record<string, any> | undefined
+    const overrides: Record<string, {
+      leaveType: LeaveType | null
+      fteRemaining: number
+      fteSubtraction?: number
+      availableSlots?: number[]
+      invalidSlot?: number
+      leaveComebackTime?: string
+      isLeave?: boolean
+    }> = {}
+
+    if (persistedOverrides && Object.keys(persistedOverrides).length > 0) {
+      // Use staff_overrides JSON from database as single source of truth
+      Object.assign(overrides, persistedOverrides)
+    } else {
+      // Legacy path: derive overrides from saved allocations
+      therapistAllocs?.forEach(alloc => {
+        if (alloc.leave_type !== null || alloc.fte_therapist !== 1) {
+          const fte = parseFloat(alloc.fte_therapist.toString())
+          // Use centralized type conversion that handles manual_override_note
+          const leaveType = fromDbLeaveType(alloc.leave_type as any, fte, alloc.manual_override_note)
+          overrides[alloc.staff_id] = {
+            leaveType: leaveType,
+            fteRemaining: fte,
+          }
         }
-      }
-    })
-    
-    pcaAllocs?.forEach(alloc => {
-      if (alloc.leave_type !== null || alloc.fte_pca !== 1) {
-        if (!overrides[alloc.staff_id]) {
-          // For PCA: determine the correct FTE to use
-          // If PCA is on leave (leave_type !== null), use fte_pca
-          // If PCA is NOT on leave but is special program PCA, use 1.0 (base FTE)
-          // This fixes a bug where special program PCAs had fte_pca set to their assigned slots FTE (e.g., 0.25) instead of base FTE
-          const isOnLeave = alloc.leave_type !== null
-          const isSpecialProgramPCA = alloc.special_program_ids && alloc.special_program_ids.length > 0
-          const fte = isOnLeave 
-            ? parseFloat(alloc.fte_pca.toString())  // On leave: use stored FTE
-            : (isSpecialProgramPCA ? 1.0 : parseFloat(alloc.fte_pca.toString()))  // Special program: use base FTE 1.0
-          // Use centralized type conversion from lib/db/types.ts
-          const override: { leaveType: LeaveType | null; fteRemaining: number; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean } = {
-            leaveType: fromDbLeaveType(alloc.leave_type as any, fte, null),
-            fteRemaining: fte
+      })
+
+      pcaAllocs?.forEach(alloc => {
+        if (alloc.leave_type !== null || alloc.fte_pca !== 1) {
+          if (!overrides[alloc.staff_id]) {
+            // For PCA: determine the correct FTE to use
+            // If PCA is on leave (leave_type !== null), use fte_pca
+            // If PCA is NOT on leave but is special program PCA, use 1.0 (base FTE)
+            // This fixes a bug where special program PCAs had fte_pca set to their assigned slots FTE (e.g., 0.25) instead of base FTE
+            const isOnLeave = alloc.leave_type !== null
+            const isSpecialProgramPCA = alloc.special_program_ids && alloc.special_program_ids.length > 0
+            const fte = isOnLeave
+              ? parseFloat(alloc.fte_pca.toString()) // On leave: use stored FTE
+              : (isSpecialProgramPCA ? 1.0 : parseFloat(alloc.fte_pca.toString())) // Special program: use base FTE 1.0
+            // Use centralized type conversion from lib/db/types.ts
+            const override: {
+              leaveType: LeaveType | null
+              fteRemaining: number
+              fteSubtraction?: number
+              availableSlots?: number[]
+              invalidSlot?: number
+              leaveComebackTime?: string
+              isLeave?: boolean
+            } = {
+              leaveType: fromDbLeaveType(alloc.leave_type as any, fte, null),
+              fteRemaining: fte,
+            }
+
+            // Load new fields if they exist
+            if (alloc.invalid_slot !== null && alloc.invalid_slot !== undefined) {
+              override.invalidSlot = alloc.invalid_slot
+            }
+            if (alloc.leave_comeback_time) {
+              override.leaveComebackTime = alloc.leave_comeback_time
+            }
+            if (alloc.leave_mode) {
+              override.isLeave = alloc.leave_mode === 'leave'
+            }
+            // Note: fte_subtraction is not stored in database - it's calculated from staffOverrides when needed
+            // If the column exists in future migrations, we can load it here
+            // For now, fteSubtraction is calculated from fte_pca and other fields when needed
+
+            // Reconstruct available slots from slot assignments (exclude invalid slot)
+            const invalidSlot = (alloc as any).invalid_slot
+            const availableSlots: number[] = []
+            if (alloc.slot1 && (invalidSlot !== 1 || alloc.slot1 === alloc.team)) availableSlots.push(1)
+            if (alloc.slot2 && (invalidSlot !== 2 || alloc.slot2 === alloc.team)) availableSlots.push(2)
+            if (alloc.slot3 && (invalidSlot !== 3 || alloc.slot3 === alloc.team)) availableSlots.push(3)
+            if (alloc.slot4 && (invalidSlot !== 4 || alloc.slot4 === alloc.team)) availableSlots.push(4)
+            // Actually, invalid slot is still assigned to team, so we need to include it but mark it separately
+            // The availableSlots should be all slots assigned to team, and invalidSlot is separate
+            const allSlots: number[] = []
+            if (alloc.slot1 === alloc.team) allSlots.push(1)
+            if (alloc.slot2 === alloc.team) allSlots.push(2)
+            if (alloc.slot3 === alloc.team) allSlots.push(3)
+            if (alloc.slot4 === alloc.team) allSlots.push(4)
+            // Available slots = all slots minus invalid slot
+            override.availableSlots = invalidSlot ? allSlots.filter(s => s !== invalidSlot) : allSlots
+
+            overrides[alloc.staff_id] = override
           }
-          
-          // Load new fields if they exist
-          if (alloc.invalid_slot !== null && alloc.invalid_slot !== undefined) {
-            override.invalidSlot = alloc.invalid_slot
-          }
-          if (alloc.leave_comeback_time) {
-            override.leaveComebackTime = alloc.leave_comeback_time
-          }
-          if (alloc.leave_mode) {
-            override.isLeave = alloc.leave_mode === 'leave'
-          }
-          // Note: fte_subtraction is not stored in database - it's calculated from staffOverrides when needed
-          // If the column exists in future migrations, we can load it here
-          // For now, fteSubtraction is calculated from fte_pca and other fields when needed
-          
-          // Reconstruct available slots from slot assignments (exclude invalid slot)
-          const invalidSlot = (alloc as any).invalid_slot
-          const availableSlots: number[] = []
-          if (alloc.slot1 && (invalidSlot !== 1 || alloc.slot1 === alloc.team)) availableSlots.push(1)
-          if (alloc.slot2 && (invalidSlot !== 2 || alloc.slot2 === alloc.team)) availableSlots.push(2)
-          if (alloc.slot3 && (invalidSlot !== 3 || alloc.slot3 === alloc.team)) availableSlots.push(3)
-          if (alloc.slot4 && (invalidSlot !== 4 || alloc.slot4 === alloc.team)) availableSlots.push(4)
-          // Actually, invalid slot is still assigned to team, so we need to include it but mark it separately
-          // The availableSlots should be all slots assigned to team, and invalidSlot is separate
-          const allSlots: number[] = []
-          if (alloc.slot1 === alloc.team) allSlots.push(1)
-          if (alloc.slot2 === alloc.team) allSlots.push(2)
-          if (alloc.slot3 === alloc.team) allSlots.push(3)
-          if (alloc.slot4 === alloc.team) allSlots.push(4)
-          // Available slots = all slots minus invalid slot
-          override.availableSlots = invalidSlot ? allSlots.filter(s => s !== invalidSlot) : allSlots
-          
-          overrides[alloc.staff_id] = override
         }
-      }
-    })
+      })
+    }
     
     setStaffOverrides(overrides)
     setSavedOverrides(overrides) // Track what's saved
     
-    // Return pcaAllocs so we can use saved allocations directly instead of regenerating
-    return { scheduleId, overrides, pcaAllocs: pcaAllocs || [], therapistAllocs: therapistAllocs || [] } as any
+    // Return allocations and metadata so we can use saved allocations directly instead of regenerating
+    return {
+      scheduleId,
+      overrides,
+      pcaAllocs: pcaAllocs || [],
+      therapistAllocs: therapistAllocs || [],
+      baselineSnapshot: hasBaselineSnapshot ? (rawBaselineSnapshot as BaselineSnapshot) : null,
+      workflowState: rawWorkflowState ?? null,
+    } as any
   }
 
   const handleEditStaff = (staffId: string, clickEvent?: React.MouseEvent) => {
@@ -1731,18 +1959,30 @@ function SchedulePageContent() {
     try {
       // Check if we have existing allocations (loaded data) - if so, we're just recalculating, not doing fresh allocation
       const hasExistingAllocations = Object.values(pcaAllocations).some(teamAllocs => teamAllocs.length > 0)
+      const weekday = getWeekday(selectedDate)
+      const sptAddonByStaffId = new Map<string, number>()
+      for (const a of sptAllocations) {
+        if (a.weekdays?.includes(weekday)) {
+          const raw = (a as any).fte_addon
+          const fte = typeof raw === 'number' ? raw : raw != null ? parseFloat(String(raw)) : NaN
+          if (Number.isFinite(fte)) sptAddonByStaffId.set(a.staff_id, fte)
+        }
+      }
+
       // Transform staff data for algorithms, applying overrides if they exist
       const staffData: StaffData[] = staff.map(s => {
         const override = overrides[s.id]
+        const defaultTherapistFTE = s.rank === 'SPT' ? (sptAddonByStaffId.get(s.id) ?? 1.0) : 1.0
+        const effectiveFTE = override ? override.fteRemaining : defaultTherapistFTE
         const transformed = {
           id: s.id,
           name: s.name,
           rank: s.rank,
           team: override?.team ?? s.team, // Use team from override if present, otherwise use staff's default team
           special_program: s.special_program,
-          fte_therapist: override ? override.fteRemaining : 1, // Default to 1 if no override
+          fte_therapist: effectiveFTE,
           leave_type: override ? override.leaveType : null,
-          is_available: override ? (override.fteRemaining > 0) : true, // Default to available
+          is_available: override ? (override.fteRemaining > 0) : (effectiveFTE > 0), // Default to available if has FTE
           availableSlots: override?.availableSlots,
         }
         return transformed
@@ -1883,7 +2123,6 @@ function SchedulePageContent() {
       // DRM Program: Add PCA FTE add-on to DRO team (before allocation algorithm)
       // This is a FORCE ADD-ON (0.4 FTE) to DRO team's required PCA, not a subtraction from any PCA staff
       // This add-on is independent of which PCA staff are assigned to DRM or DRO team
-      const weekday = getWeekday(selectedDate)
       const drmProgram = specialPrograms.find(p => p.name === 'DRM')
       const drmPcaFteAddon = 0.4 // Fixed add-on value for DRM program
       
@@ -2532,20 +2771,34 @@ function SchedulePageContent() {
       } as typeof staffOverrides
 
       // Transform staff data for algorithms
+      const weekday = getWeekday(selectedDate)
+      const sptAddonByStaffId = new Map<string, number>()
+      for (const a of sptAllocations) {
+        if (a.weekdays?.includes(weekday)) {
+          const raw = (a as any).fte_addon
+          const fte = typeof raw === 'number' ? raw : raw != null ? parseFloat(String(raw)) : NaN
+          if (Number.isFinite(fte)) sptAddonByStaffId.set(a.staff_id, fte)
+        }
+      }
+
       const staffData: StaffData[] = staff.map(s => {
         const override = overrides[s.id]
         // For buffer staff, use buffer_fte as base FTE
         const isBufferStaff = s.status === 'buffer'
-        const baseFTE = isBufferStaff && s.buffer_fte !== undefined ? s.buffer_fte : 1.0
+        const baseFTE =
+          s.rank === 'SPT'
+            ? (sptAddonByStaffId.get(s.id) ?? 1.0)
+            : (isBufferStaff && s.buffer_fte !== undefined ? s.buffer_fte : 1.0)
+        const effectiveFTE = override ? override.fteRemaining : baseFTE
         return {
           id: s.id,
           name: s.name,
           rank: s.rank,
           team: override?.team ?? s.team, // Use team from override if present
           special_program: s.special_program,
-          fte_therapist: override ? override.fteRemaining : baseFTE,
+          fte_therapist: effectiveFTE,
           leave_type: override ? override.leaveType : null,
-          is_available: override ? (override.fteRemaining > 0) : true,
+          is_available: override ? (override.fteRemaining > 0) : (effectiveFTE > 0),
           availableSlots: override?.availableSlots,
         }
       })
@@ -2580,7 +2833,6 @@ function SchedulePageContent() {
         }
 
         const modifiedProgram = { ...program }
-        const weekday = getWeekday(selectedDate)
         
         // Add substituted therapists to staff_ids if not already present
         programOverrides.forEach(override => {
@@ -2621,7 +2873,14 @@ function SchedulePageContent() {
         previousSchedule: null,
         staff: staffData,
         specialPrograms: modifiedSpecialPrograms, // Use modified programs with substitutions
-        sptAllocations,
+        // Apply SPT leave/FTE overrides by overriding fte_addon with the edited remaining FTE (Step 1).
+        sptAllocations: sptAllocations.map(a => {
+          const o = overrides[a.staff_id]
+          if (!o) return a
+          const staffMember = staff.find(s => s.id === a.staff_id)
+          if (staffMember?.rank !== 'SPT') return a
+          return { ...a, fte_addon: o.fteRemaining }
+        }),
         manualOverrides: {},
         includeSPTAllocation: true, // Include SPT allocation in step 2
       }
@@ -2739,7 +2998,6 @@ function SchedulePageContent() {
       })
 
       // DRM Program add-on
-      const weekday = getWeekday(selectedDate)
       const drmProgram = specialPrograms.find(p => p.name === 'DRM')
       if (drmProgram && drmProgram.weekdays.includes(weekday)) {
         rawAveragePCAPerTeam['DRO'] += 0.4
@@ -4107,17 +4365,85 @@ function SchedulePageContent() {
       setSavedOverrides({ ...overridesToSave })
       setStaffOverrides({ ...overridesToSave }) // Also update staffOverrides with the merged data
       setSavedEditableBeds({ ...editableBeds }) // Save current bed edits
-      
-      // Save tie-breaker decisions to database
-      if (Object.keys(tieBreakDecisions).length > 0) {
-        const { error: tieBreakError } = await supabase
+
+      // Persist schedule-level metadata (tie-break decisions, staff_overrides, workflow_state)
+      const completedStepsForWorkflow = ALLOCATION_STEPS
+        .filter(step => stepStatus[step.id] === 'completed')
+        .map(step => step.id) as WorkflowState['completedSteps']
+
+      const workflowStateToSave: WorkflowState = {
+        currentStep: currentStep as WorkflowState['currentStep'],
+        completedSteps: completedStepsForWorkflow,
+      }
+
+      // Ensure baseline_snapshot includes any newly-used staff (especially buffer staff created later),
+      // so per-date isolation remains stable for future loads and copy operations.
+      try {
+        const referencedIds = new Set<string>()
+        allocationsToSave.forEach(item => referencedIds.add(item.staffId))
+        Object.keys(overridesToSave || {}).forEach(id => referencedIds.add(id))
+
+        const { data: existingScheduleRow } = await supabase
           .from('daily_schedules')
-          .update({ tie_break_decisions: tieBreakDecisions })
+          .select('baseline_snapshot')
           .eq('id', scheduleId)
-        
-        if (tieBreakError) {
-          console.error('Error saving tie-breaker decisions:', tieBreakError)
+          .maybeSingle()
+
+        const existingBaseline = (existingScheduleRow as any)?.baseline_snapshot as BaselineSnapshot | undefined
+        const hasExistingBaseline =
+          existingBaseline &&
+          typeof existingBaseline === 'object' &&
+          Object.keys(existingBaseline as any).length > 0
+
+        const baselineToMerge = hasExistingBaseline ? (existingBaseline as any) : buildBaselineSnapshotFromCurrentState()
+        const baselineStaff: any[] = (baselineToMerge as any).staff || []
+        const baselineStaffById = new Map<string, any>()
+        baselineStaff.forEach(s => s?.id && baselineStaffById.set(s.id, s))
+
+        const missingIds: string[] = []
+        referencedIds.forEach(id => {
+          if (!baselineStaffById.has(id)) missingIds.push(id)
+        })
+
+        if (missingIds.length > 0) {
+          const { data: liveStaff } = await supabase
+            .from('staff')
+            .select('*')
+            .in('id', missingIds)
+          ;(liveStaff || []).forEach((s: any) => {
+            if (s?.id) baselineStaffById.set(s.id, s)
+          })
         }
+
+        const mergedBaseline: BaselineSnapshot = {
+          ...(baselineToMerge as any),
+          staff: Array.from(baselineStaffById.values()),
+        }
+
+        // Persist baseline snapshot back (append-only style; no removals)
+        await supabase
+          .from('daily_schedules')
+          .update({ baseline_snapshot: mergedBaseline as any })
+          .eq('id', scheduleId)
+
+        setBaselineSnapshot(mergedBaseline)
+      } catch (e) {
+        console.warn('Failed to update baseline snapshot during save:', e)
+      }
+
+      const { error: scheduleMetaError } = await supabase
+        .from('daily_schedules')
+        .update({
+          tie_break_decisions: tieBreakDecisions,
+          staff_overrides: overridesToSave,
+          workflow_state: workflowStateToSave,
+        })
+        .eq('id', scheduleId)
+
+      if (scheduleMetaError) {
+        console.error('Error saving schedule metadata:', scheduleMetaError)
+      } else {
+        setPersistedWorkflowState(workflowStateToSave)
       }
       
       // Log unmet PCA needs (only for past schedules)
@@ -4193,6 +4519,56 @@ function SchedulePageContent() {
     }
   }
 
+  // Handle confirmed copy from ScheduleCopyWizard by calling the copy API
+  const handleConfirmCopy = async ({
+    fromDate,
+    toDate,
+    mode,
+    includeBufferStaff,
+  }: {
+    fromDate: Date
+    toDate: Date
+    mode: 'full' | 'hybrid'
+    includeBufferStaff: boolean
+  }): Promise<{ copiedUpToStep?: string }> => {
+    const res = await fetch('/api/schedules/copy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        fromDate: formatDateForInput(fromDate),
+        toDate: formatDateForInput(toDate),
+        mode,
+        includeBufferStaff,
+      }),
+    })
+
+    if (!res.ok) {
+      let message = 'Failed to copy schedule.'
+      try {
+        const data = await res.json()
+        if (data?.error) {
+          message = data.error
+        }
+      } catch {
+        // Ignore JSON parse errors
+      }
+      throw new Error(message)
+    }
+
+    const data = await res.json()
+
+    // Navigate to copied schedule date and reload schedule metadata
+    setSelectedDate(toDate)
+    setScheduleLoadedForDate(null)
+    await loadDatesWithData()
+
+    return {
+      copiedUpToStep: (data as any).copiedUpToStep as string | undefined,
+    }
+  }
+
   // Check if there are unsaved changes (staff overrides or bed edits)
   const hasUnsavedChanges = JSON.stringify(staffOverrides) !== JSON.stringify(savedOverrides) ||
     JSON.stringify(editableBeds) !== JSON.stringify(savedEditableBeds)
@@ -4207,6 +4583,103 @@ function SchedulePageContent() {
 
   const currentWeekday = getWeekday(selectedDate)
   const weekdayName = WEEKDAY_NAMES[WEEKDAYS.indexOf(currentWeekday)]
+
+  // ---------------------------------------------------------------------------
+  // Copy button helpers (dynamic labels and source/target resolution)
+  // ---------------------------------------------------------------------------
+  const selectedDateStr = formatDateForInput(selectedDate)
+  const currentHasData = datesWithData.has(selectedDateStr)
+
+  let nextWorkingLabel = 'Copy to next working day'
+  let nextWorkingEnabled = false
+  let nextWorkingSourceDate: Date | null = null
+  let nextWorkingTargetDate: Date | null = null
+  let nextWorkingDirection: 'to' | 'from' = 'to'
+
+  try {
+    const nextWorkingDay = getNextWorkingDay(selectedDate)
+    const nextWorkingStr = formatDateForInput(nextWorkingDay)
+    const nextHasData = datesWithData.has(nextWorkingStr)
+
+    if (currentHasData && !nextHasData) {
+      nextWorkingLabel = 'Copy to next working day'
+      nextWorkingEnabled = true
+      nextWorkingSourceDate = selectedDate
+      nextWorkingTargetDate = nextWorkingDay
+      nextWorkingDirection = 'to'
+    } else if (!currentHasData) {
+      // Try copying FROM the last working day that has data
+      const prevWorkingDay = getPreviousWorkingDay(selectedDate)
+      const prevWorkingStr = formatDateForInput(prevWorkingDay)
+      const prevHasData = datesWithData.has(prevWorkingStr)
+      nextWorkingLabel = 'Copy from last working day'
+      if (prevHasData) {
+        nextWorkingEnabled = true
+        nextWorkingSourceDate = prevWorkingDay
+        nextWorkingTargetDate = selectedDate
+        nextWorkingDirection = 'from'
+      } else {
+        nextWorkingEnabled = false
+      }
+    } else {
+      // Both current and next working day have data – keep label but disable
+      nextWorkingLabel = 'Copy to next working day'
+      nextWorkingEnabled = false
+    }
+  } catch {
+    // If working-day helpers throw (should be rare), keep option disabled
+    nextWorkingEnabled = false
+  }
+
+  const specificLabel = currentHasData ? 'Copy to a specific date' : 'Copy from a specific date'
+  const specificDirection: 'to' | 'from' = currentHasData ? 'to' : 'from'
+  const specificEnabled = datesWithData.size > 0 || currentHasData
+
+  // SPT leave edit enhancement:
+  // Nullify legacy auto-filled "FTE Cost due to Leave" for SPT where it was derived from (1.0 - remaining),
+  // even when there is no real leave. New model:
+  // - Base SPT FTE comes from spt_allocations.fte_addon (dashboard) unless overridden.
+  // - Leave cost is user input (stored in staffOverrides[staffId].fteSubtraction).
+  // - Remaining on duty is derived (stored in staffOverrides[staffId].fteRemaining).
+  useEffect(() => {
+    if (staff.length === 0) return
+    if (sptAllocations.length === 0) return
+    if (Object.keys(staffOverrides).length === 0) return
+
+    let changed = false
+    const next = { ...staffOverrides }
+
+    for (const s of staff) {
+      if (s.rank !== 'SPT') continue
+      const cfg = sptAllocations.find(a => a.staff_id === s.id && a.weekdays?.includes(currentWeekday))
+      const cfgFTEraw = (cfg as any)?.fte_addon
+      const cfgFTE =
+        typeof cfgFTEraw === 'number'
+          ? cfgFTEraw
+          : cfgFTEraw != null
+            ? parseFloat(String(cfgFTEraw))
+            : NaN
+      if (!Number.isFinite(cfgFTE)) continue
+
+      const o = next[s.id]
+      if (!o) continue
+
+      const legacyAutoFilled =
+        (o.leaveType == null) &&
+        typeof o.fteSubtraction === 'number' &&
+        Math.abs((o.fteRemaining ?? 0) - cfgFTE) < 0.01 &&
+        Math.abs((o.fteSubtraction ?? 0) - (1.0 - (o.fteRemaining ?? 0))) < 0.01
+
+      if (legacyAutoFilled && (o.fteSubtraction ?? 0) !== 0) {
+        next[s.id] = { ...o, fteSubtraction: 0 }
+        changed = true
+      }
+    }
+
+    if (changed) {
+      setStaffOverrides(next)
+    }
+  }, [staff, sptAllocations, staffOverrides, currentWeekday])
 
   // Filter out buffer staff from regular pools (they appear in Buffer Staff Pool)
   const therapists = staff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank) && s.status !== 'buffer')
@@ -5444,6 +5917,61 @@ function SchedulePageContent() {
               )
             })()}
             <div className="flex items-center space-x-2">
+              {/* Copy dropdown button */}
+              <div className="relative">
+                <Button
+                  variant="outline"
+                  onClick={() => setCopyMenuOpen(prev => !prev)}
+                  type="button"
+                  className="flex items-center"
+                >
+                  <Copy className="h-4 w-4 mr-2" />
+                  Copy
+                </Button>
+                {copyMenuOpen && (
+                  <div className="absolute right-0 top-full mt-1 w-64 bg-background border border-border rounded-md shadow-lg z-50">
+                    <div className="p-1">
+                      <button
+                        type="button"
+                        className="w-full flex items-center px-3 py-2 text-xs text-left hover:bg-muted rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={!nextWorkingEnabled}
+                        onClick={() => {
+                          setCopyMenuOpen(false)
+                          if (!nextWorkingEnabled || !nextWorkingSourceDate || !nextWorkingTargetDate) {
+                            return
+                          }
+                          setCopyWizardConfig({
+                            sourceDate: nextWorkingSourceDate,
+                            targetDate: nextWorkingTargetDate,
+                            flowType: nextWorkingDirection === 'from' ? 'last-working-day' : 'next-working-day',
+                            direction: nextWorkingDirection,
+                          })
+                          setCopyWizardOpen(true)
+                        }}
+                      >
+                        {nextWorkingLabel}
+                      </button>
+                      <button
+                        type="button"
+                        className="w-full flex items-center px-3 py-2 text-xs text-left hover:bg-muted rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={!specificEnabled}
+                        onClick={() => {
+                          setCopyMenuOpen(false)
+                          setCopyWizardConfig({
+                            sourceDate: selectedDate,
+                            targetDate: null,
+                            flowType: 'specific-date',
+                            direction: specificDirection,
+                          })
+                          setCopyWizardOpen(true)
+                        }}
+                      >
+                        {specificLabel}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
               <Button 
                 onClick={saveScheduleToDatabase} 
                 disabled={saving || !hasUnsavedChanges}
@@ -5566,6 +6094,7 @@ function SchedulePageContent() {
             initializedSteps={initializedSteps}
             weekday={selectedDate ? getWeekday(selectedDate) : undefined}
             onBufferStaffCreated={loadStaff}
+            sptAllocations={sptAllocations}
             onSlotTransfer={(staffId: string, targetTeam: string, slots: number[]) => {
               // Find source team from allocations
               let sourceTeam: Team | null = null
@@ -5794,6 +6323,9 @@ function SchedulePageContent() {
           let currentAmPmSelection = override?.amPmSelection
           // NEW: Special program availability
           let currentSpecialProgramAvailable = override?.specialProgramAvailable
+          // SPT-specific: dashboard-configured base FTE and current base FTE used for leave calculations
+          let sptConfiguredFTE: number | undefined = undefined
+          let currentSPTBaseFTE: number | undefined = undefined
 
           // If no override, check allocations
           if (!override) {
@@ -5863,6 +6395,45 @@ function SchedulePageContent() {
             }
           }
 
+          // SPT leave edit enhancement:
+          // - Base SPT FTE comes from spt_allocations.fte_addon (dashboard)
+          // - "FTE Cost due to Leave" is user-input (stored in staffOverrides[staffId].fteSubtraction)
+          // - "FTE Remaining on Duty" = baseFTE - leaveCost (stored in staffOverrides[staffId].fteRemaining)
+          if (staffMember.rank === 'SPT') {
+            const cfg = sptAllocations.find(a => a.staff_id === editingStaffId && a.weekdays?.includes(currentWeekday))
+            const cfgFTEraw = (cfg as any)?.fte_addon
+            const cfgFTE =
+              typeof cfgFTEraw === 'number'
+                ? cfgFTEraw
+                : cfgFTEraw != null
+                  ? parseFloat(String(cfgFTEraw))
+                  : NaN
+            sptConfiguredFTE = Number.isFinite(cfgFTE) ? Math.max(0, Math.min(cfgFTE, 1.0)) : undefined
+
+            const o = staffOverrides[editingStaffId]
+            const legacyAutoFilled =
+              !!o &&
+              (o.leaveType == null) &&
+              typeof o.fteSubtraction === 'number' &&
+              typeof sptConfiguredFTE === 'number' &&
+              Math.abs((o.fteRemaining ?? 0) - sptConfiguredFTE) < 0.01 &&
+              Math.abs((o.fteSubtraction ?? 0) - (1.0 - (o.fteRemaining ?? 0))) < 0.01
+
+            const leaveCost = legacyAutoFilled
+              ? 0
+              : (typeof o?.fteSubtraction === 'number' ? o.fteSubtraction : 0)
+
+            // Base FTE: prefer (remaining + leaveCost) if user has ever saved a leave cost; otherwise use dashboard.
+            const derivedBase =
+              typeof o?.fteSubtraction === 'number'
+                ? (o.fteRemaining ?? (sptConfiguredFTE ?? currentFTERemaining)) + leaveCost
+                : (sptConfiguredFTE ?? (o?.fteRemaining ?? currentFTERemaining))
+
+            currentSPTBaseFTE = Math.max(0, Math.min(derivedBase, 1.0))
+            currentFTESubtraction = leaveCost
+            currentFTERemaining = Math.max(0, currentSPTBaseFTE - leaveCost)
+          }
+
           return (
             <StaffEditDialog
               open={editDialogOpen}
@@ -5873,6 +6444,8 @@ function SchedulePageContent() {
               currentLeaveType={currentLeaveType}
               currentFTERemaining={currentFTERemaining}
               currentFTESubtraction={currentFTESubtraction}
+              sptConfiguredFTE={sptConfiguredFTE}
+              currentSPTBaseFTE={currentSPTBaseFTE}
               currentAvailableSlots={currentAvailableSlots}
               currentInvalidSlots={currentInvalidSlots}
               currentAmPmSelection={currentAmPmSelection}
@@ -5898,6 +6471,27 @@ function SchedulePageContent() {
             setTieBreakDialogOpen(false)
           }}
         />
+
+        {copyWizardConfig && (
+          <ScheduleCopyWizard
+            open={copyWizardOpen}
+            onOpenChange={(open) => {
+              if (!open) {
+                setCopyWizardOpen(false)
+                setCopyWizardConfig(null)
+              } else {
+                setCopyWizardOpen(true)
+              }
+            }}
+            sourceDate={copyWizardConfig.sourceDate}
+            initialTargetDate={copyWizardConfig.targetDate}
+            flowType={copyWizardConfig.flowType}
+            direction={copyWizardConfig.direction}
+            datesWithData={datesWithData}
+            holidays={holidays}
+            onConfirmCopy={handleConfirmCopy}
+          />
+        )}
 
         {/* Step 3.1-3.2: Floating PCA Configuration Dialog (Wizard) */}
         <FloatingPCAConfigDialog

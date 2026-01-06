@@ -50,6 +50,41 @@ export interface Database {
           updated_at?: string
         }
       }
+      daily_schedules: {
+        Row: {
+          id: string
+          date: string
+          is_tentative: boolean
+          tie_break_decisions: Json | null
+          baseline_snapshot: Json | null
+          staff_overrides: Json | null
+          workflow_state: Json | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          date: string
+          is_tentative?: boolean
+          tie_break_decisions?: Json | null
+          baseline_snapshot?: Json | null
+          staff_overrides?: Json | null
+          workflow_state?: Json | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          date?: string
+          is_tentative?: boolean
+          tie_break_decisions?: Json | null
+          baseline_snapshot?: Json | null
+          staff_overrides?: Json | null
+          workflow_state?: Json | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
       // Add other table types as needed
     }
   }

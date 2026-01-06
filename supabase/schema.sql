@@ -103,6 +103,9 @@ CREATE TABLE daily_schedules (
   date DATE NOT NULL UNIQUE,
   is_tentative BOOLEAN DEFAULT false,
   tie_break_decisions JSONB DEFAULT '{}',
+  baseline_snapshot JSONB DEFAULT '{}',
+  staff_overrides JSONB DEFAULT '{}',
+  workflow_state JSONB DEFAULT '{}',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

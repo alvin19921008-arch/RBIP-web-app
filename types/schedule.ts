@@ -141,3 +141,32 @@ export interface TeamAllocationLog {
  */
 export type AllocationTracker = Record<Team, TeamAllocationLog>
 
+// ============================================================================
+// Per-schedule snapshot & workflow state
+// ============================================================================
+
+export type ScheduleStepId =
+  | 'leave-fte'
+  | 'therapist-pca'
+  | 'floating-pca'
+  | 'bed-relieving'
+  | 'review'
+
+export interface WorkflowState {
+  currentStep?: ScheduleStepId
+  completedSteps?: ScheduleStepId[]
+}
+
+/**
+ * Baseline snapshot of dashboard-derived data for a given schedule date.
+ * Stored in daily_schedules.baseline_snapshot as JSONB.
+ */
+export interface BaselineSnapshot {
+  staff: import('./staff').Staff[]
+  specialPrograms: import('./allocation').SpecialProgram[]
+  sptAllocations: import('./allocation').SPTAllocation[]
+  wards: import('./allocation').Ward[]
+  pcaPreferences: import('./allocation').PCAPreference[]
+  // Optional map of custom team display names (from team_settings)
+  teamDisplayNames?: Record<Team, string>
+}

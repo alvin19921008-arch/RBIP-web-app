@@ -10,9 +10,16 @@ interface CalendarGridProps {
   onDateSelect: (date: Date) => void
   datesWithData?: Set<string> // Set of date strings in YYYY-MM-DD format
   holidays?: Map<string, string> // Map of date strings to holiday names
+  isDateDisabled?: (date: Date) => boolean
 }
 
-export function CalendarGrid({ selectedDate, onDateSelect, datesWithData = new Set(), holidays = new Map() }: CalendarGridProps) {
+export function CalendarGrid({
+  selectedDate,
+  onDateSelect,
+  datesWithData = new Set(),
+  holidays = new Map(),
+  isDateDisabled,
+}: CalendarGridProps) {
   const [currentMonth, setCurrentMonth] = useState(selectedDate.getMonth())
   const [currentYear, setCurrentYear] = useState(selectedDate.getFullYear())
 
@@ -108,6 +115,7 @@ export function CalendarGrid({ selectedDate, onDateSelect, datesWithData = new S
   }
 
   const handleDateClick = (date: Date) => {
+    if (isDateDisabled?.(date)) return
     onDateSelect(date)
   }
 
@@ -153,6 +161,7 @@ export function CalendarGrid({ selectedDate, onDateSelect, datesWithData = new S
           const hasData = datesWithData.has(dateStr)
           const holidayName = holidays.get(dateStr)
           const isHoliday = !!holidayName
+          const disabled = isDateDisabled?.(date) ?? false
           
           // Build className for the button
           let buttonClasses = 'h-10 w-10 rounded-md text-sm transition-colors flex flex-col items-center justify-center'
@@ -182,6 +191,10 @@ export function CalendarGrid({ selectedDate, onDateSelect, datesWithData = new S
           } else if (isCurrentMonth && !selected) {
             buttonClasses += ' hover:bg-accent'
           }
+
+          if (disabled && !selected) {
+            buttonClasses += ' opacity-40 cursor-not-allowed hover:bg-transparent'
+          }
           
           // Wrap in Tooltip if it's a holiday
           if (isHoliday) {
@@ -191,6 +204,7 @@ export function CalendarGrid({ selectedDate, onDateSelect, datesWithData = new S
                   <button
                     onClick={() => handleDateClick(date)}
                     className={buttonClasses}
+                    disabled={disabled}
                   >
                     <span>{day}</span>
                     {hasData && (
@@ -207,6 +221,7 @@ export function CalendarGrid({ selectedDate, onDateSelect, datesWithData = new S
               key={index}
               onClick={() => handleDateClick(date)}
               className={buttonClasses}
+              disabled={disabled}
             >
               <span>{day}</span>
               {hasData && (
