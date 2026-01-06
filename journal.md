@@ -3,7 +3,7 @@
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
 **Last Updated**: 2026-01-03  
-**Latest Phase**: Phase 12 - Special Program Overrides Dialog (Step 2.0)  
+**Latest Phase**: Phase 13 - Buffer Staff Edit & SPT FTE Enhancement  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -259,7 +259,35 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Solution: Destructured `onClick` from props and merged handlers to call both `onCheckedChange` and prop's `onClick`
   - Excluded `onClick` from spread props using `Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'>`
 
-### Phase 12: Special Program Overrides Dialog (Step 2.0) (Latest)
+### Phase 13: Buffer Staff Edit & SPT FTE Enhancement (Latest)
+- ✅ **Buffer Staff Edit Functionality**
+  - Added edit icon (pencil) next to delete icon on buffer staff cards
+  - Opens BufferStaffCreateDialog in edit mode with pre-populated properties
+  - Dialog title changes to "Edit Buffer Staff" when editing
+  - Supports editing all buffer staff properties: rank, team, special program, floating status, floor PCA, buffer FTE, available slots
+  - Uses `update` instead of `insert` when saving edits
+- ✅ **SPT FTE Edit Enhancement in Step 1**
+  - Added "FTE" field (not "Add-on") before "FTE Cost due to Leave" and "FTE Remaining on Duty"
+  - Shows SPT configured FTE from dashboard with override capability (multiples of 0.25, 0.25-1.0)
+  - Number input with step=0.25 (similar to buffer FTE dialog)
+  - "FTE Cost due to Leave" no longer auto-fills from dashboard FTE (reflects true user input)
+  - "FTE Remaining on Duty" auto-calculated as "SPT FTE - Leave Cost" (read-only)
+  - Legacy auto-filled "FTE Cost due to Leave" values automatically nullified
+  - Step 2 therapist allocation respects SPT FTE overrides by updating `sptAllocations.fte_addon`
+  - SPT allocation skipped when staff is unavailable/0 FTE
+- ✅ **SPT Display Fixes**
+  - Fixed SPT FTE display in StaffPool: Shows FTE remaining when SPT has duty on current weekday (from `sptAllocations`)
+  - Fixed schedule page SPT display: Only shows "AM/PM" suffix when FTE = 0.25 or 0.5 AND slot pattern matches
+  - When SPT override FTE (e.g., 0.75) doesn't match slot pattern, displays just the number (no AM/PM)
+  - Slot-based breakdown logic: Groups slots 1-2 (AM) and 3-4 (PM) separately for display
+- ✅ **Step Dialog Badges**
+  - Added "Step 2.0" badge to Special Program Overrides dialog title
+  - Added "Step 2.1" badge to Non-Floating PCA Substitution dialog title
+  - Updated Floating PCA Configuration dialog to dynamically display "Step 3.0", "3.1", "3.2", "3.3" badges
+  - Added hover tooltip to "Skip" button in Step 2.1 dialog (consistent with Step 2.0)
+  - Consistent badge styling across all step dialogs
+
+### Phase 12: Special Program Overrides Dialog (Step 2.0)
 - ✅ **Special Program Overrides Dialog**
   - New dialog appears before Step 2 algorithm execution (Step 2.0)
   - Enables ad-hoc/urgent changes to special program allocations for current day only
@@ -1316,6 +1344,19 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
     - Special program PCAs explicitly excluded from substitution styling (check `special_program_ids`)
     - Derived substitution logic skips non-floating PCAs already covered by whole-day buffer substitutes
     - Prevents unrelated floating PCAs from being incorrectly marked green
+29. **Buffer Staff Edit**: 
+    - Edit icon on buffer staff cards opens BufferStaffCreateDialog in edit mode
+    - Dialog pre-populates all buffer properties (rank, team, special program, floating, floor PCA, buffer FTE, available slots)
+    - Uses database `update` operation when editing existing buffer staff
+30. **SPT FTE Edit Model**: 
+    - SPT uses additive FTE model: "FTE" (base, overrideable 0.25-1.0 step=0.25), "FTE Cost due to Leave" (user input), "FTE Remaining on Duty" (auto-calculated)
+    - Step 2 allocation applies SPT overrides to `sptAllocations.fte_addon`
+    - StaffPool displays SPT FTE when SPT has duty on current weekday
+    - Schedule page SPT display: Shows "AM/PM" only when FTE = 0.25/0.5 AND slot pattern matches; otherwise shows number only
+31. **Step Dialog Badges**: 
+    - Step 2.0, 2.1, and Step 3.0-3.3 dialogs display step badges in titles
+    - Consistent badge styling across all step dialogs
+    - Step 2.1 "Skip" button includes hover tooltip (consistent with Step 2.0)
 
 ---
 
