@@ -67,6 +67,13 @@ If you see "Your branch is behind 'origin/main'", you need to pull updates.
 git pull origin main
 ```
 
+**If you get "divergent branches" error:**
+This means you have local commits AND GitHub has different commits. Use merge:
+```bash
+git pull origin main --no-rebase
+# This will merge both histories together
+```
+
 **If you have uncommitted changes:**
 ```bash
 # Option 1: Commit your changes first, then pull
@@ -316,6 +323,54 @@ This means the remote has changes you don't have. Pull first:
 git pull origin main
 ```
 Then resolve any conflicts and push again.
+
+### If you get "divergent branches" or "Need to specify how to reconcile divergent branches":
+
+This happens when:
+- You have local commits that GitHub doesn't have
+- GitHub has commits that you don't have locally
+- Both branches diverged from the same point
+
+**Solution: Merge the branches**
+
+```bash
+# Option 1: Merge (recommended - preserves both histories)
+git pull origin main --no-rebase
+
+# This will create a merge commit combining both branches
+# If there are conflicts, resolve them, then:
+git add .
+git commit -m "Merge latest changes from GitHub"
+git push origin main
+```
+
+**Alternative: Rebase (creates linear history, but rewrites commits)**
+
+```bash
+# Option 2: Rebase (if you prefer a cleaner linear history)
+git pull origin main --rebase
+
+# If conflicts occur, resolve them, then:
+git add .
+git rebase --continue
+git push origin main
+```
+
+**To prevent this in the future:**
+- Always pull before starting work: `git pull origin main`
+- Always pull before pushing: `git pull origin main && git push origin main`
+
+**To see what's happening:**
+```bash
+# See the divergence visually
+git log --oneline --graph --all -10
+
+# See commits you have that GitHub doesn't
+git log origin/main..main --oneline
+
+# See commits GitHub has that you don't
+git log main..origin/main --oneline
+```
 
 ### If you want to see what's on GitHub vs local:
 ```bash
