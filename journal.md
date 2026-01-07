@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
-**Last Updated**: 2026-01-03  
-**Latest Phase**: Phase 13 - Buffer Staff Edit & SPT FTE Enhancement  
+**Last Updated**: 2026-01-07  
+**Latest Phase**: Phase 14 - Per-Date Data Isolation & Snapshot Validation  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -707,9 +707,39 @@ const dbData = prepareTherapistAllocationForDb({
 await supabase.from('schedule_therapist_allocations').upsert(dbData)
 ```
 
+#### Rule 5: Snapshot Envelope & Validation
+- **ALWAYS** use envelope utilities for baseline snapshots:
+```typescript
+import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
+import { validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
+
+// ✅ CORRECT - wrap snapshot in envelope before saving
+const envelope = buildBaselineSnapshotEnvelope({
+  data: baselineSnapshot,
+  source: 'save',  // or 'copy' | 'migration'
+})
+await supabase.from('daily_schedules').update({ baseline_snapshot: envelope })
+
+// ✅ CORRECT - unwrap and validate on load
+const { envelope, data } = unwrapBaselineSnapshotStored(storedSnapshot)
+const result = await validateAndRepairBaselineSnapshot({
+  storedSnapshot,
+  referencedStaffIds,
+  fetchLiveStaffByIds: async (ids) => {
+    const { data } = await supabase.from('staff').select('id, name, rank, team, floating, status, buffer_fte, floor_pca, special_program').in('id', ids)
+    return data || []
+  },
+  buildFallbackBaseline: () => buildBaselineSnapshotFromCurrentState(),
+  sourceForNewEnvelope: 'save',
+})
+```
+
+- **NEVER** save raw snapshot objects directly (always use envelope)
+- **ALWAYS** validate snapshots on load to handle corrupted/incomplete data gracefully
+
 ### State Management Rules
 
-#### Rule 5: staffOverrides is Single Source of Truth
+#### Rule 6: staffOverrides is Single Source of Truth
 - `staffOverrides` is the **single source of truth** for all staff modifications
 - Any manual edits after algorithm runs should update `staffOverrides`
 - Subsequent algorithm runs should use `staffOverrides` to build input data
@@ -725,13 +755,13 @@ setStaffOverrides(prev => ({
 const pcaData = buildPCADataFromCurrentState(staffOverrides)
 ```
 
-#### Rule 6: Average PCA/Team Persistence
+#### Rule 7: Average PCA/Team Persistence
 - `average_pca_per_team` is calculated in Step 1 (after staff overrides)
 - This value is a **target** and should **persist unchanged** through Steps 2-4
 - Do NOT recalculate it based on actual allocations
 - Floating PCA substitutions should NOT change this target
 
-#### Rule 7: Step Initialization
+#### Rule 8: Step Initialization
 - Steps are marked as "initialized" after algorithm runs
 - When `staffOverrides` changes, clear initialized steps to force re-run:
 ```typescript
@@ -740,18 +770,18 @@ setInitializedSteps(new Set())  // Clear when staff edited
 
 ### Algorithm Rules
 
-#### Rule 8: Rounding Consistency
+#### Rule 9: Rounding Consistency
 - Use `roundToNearestQuarterWithMidpoint()` for pending FTE checks
 - Both `getNextHighestPendingTeam()` and inner while loops must use the same rounding
 - Prevents infinite loops when raw pending > 0 but rounded pending = 0
 
-#### Rule 9: DRM Special Program
+#### Rule 10: DRM Special Program
 - DRM is **NOT** a special program that requires designated PCA staff
 - DRM only adds +0.4 FTE to DRO team's `average_pca_per_team`
 - Skip DRM during special program PCA allocation phase
 - Still respect the higher DRO requirement during floating PCA allocation
 
-#### Rule 10: Floating PCA Substitution
+#### Rule 11: Floating PCA Substitution
 - Step 2: Non-floating PCA substitution (when non-floating has leave)
 - Step 3: Additional floating PCA allocation (based on pending FTE)
 - Step 3 should NOT assign to slots already covered by Step 2 substitutions
@@ -761,17 +791,44 @@ setInitializedSteps(new Set())  // Clear when staff edited
 
 ## State Management
 
+### Per-Date Data Isolation Architecture
+
+**Core Principle**: Each schedule date has its own isolated snapshot of dashboard state to prevent cross-date contamination.
+
+**Snapshot System**:
+- `baseline_snapshot` (JSONB): Frozen snapshot of dashboard state (staff, special programs, wards, etc.) at schedule creation
+- `staff_overrides` (JSONB): Per-schedule staff modifications (single source of truth)
+- `workflow_state` (JSONB): Current step and completed steps tracking
+
+**Versioned Envelope Format**:
+```typescript
+{
+  schemaVersion: 1
+  createdAt: string  // ISO timestamp
+  source: 'save' | 'copy' | 'migration'
+  data: BaselineSnapshot  // Actual snapshot payload
+}
+```
+
+**Validation & Auto-Repair**:
+- Runtime validation on load: checks structure, deduplicates staff, normalizes invalid fields
+- Auto-repair: merges missing referenced staff from live DB into snapshot
+- Persists repaired snapshot on save if validation reports issues
+
+**Isolation Guarantee**: Once a schedule has a non-empty `baseline_snapshot`, dashboard edits do NOT affect that schedule. Only explicit copy operations update snapshots.
+
 ### Three-Layer State Architecture
 
 The schedule page uses a three-layer state management pattern:
 
 1. **Layer 1: Saved State** (from database)
    - Loaded on initial render
+   - Includes `baseline_snapshot`, `staff_overrides`, `workflow_state`
    - Persisted to database on save
 
-2. **Layer 2: Algorithm State** (generated from staff + overrides)
+2. **Layer 2: Algorithm State** (generated from snapshot + overrides)
    - Generated by allocation algorithms
-   - Based on current `staffOverrides`
+   - Based on `baselineSnapshot` (frozen) + current `staffOverrides`
 
 3. **Layer 3: Override State** (user modifications)
    - `staffOverrides`: Staff leave/FTE edits
@@ -808,6 +865,19 @@ The schedule page uses a three-layer state management pattern:
 - **Type**: `Set<string>`
 - **Purpose**: Tracks which steps have run their algorithms
 - **Cleared**: When `staffOverrides` changes (forces re-run)
+
+#### `baselineSnapshot`
+- **Type**: `BaselineSnapshot | null`
+- **Purpose**: Frozen snapshot of dashboard state for current schedule date
+- **Source**: Loaded from `daily_schedules.baseline_snapshot` (versioned envelope)
+- **Updated**: Only on schedule load or explicit copy operation
+- **Isolation**: Prevents cross-date contamination from dashboard edits
+
+#### `snapshotHealthReport`
+- **Type**: `SnapshotHealthReport | null`
+- **Purpose**: Runtime validation status (ok/repaired/fallback, issues list, staff coverage)
+- **Updated**: On schedule load via `validateAndRepairBaselineSnapshot()`
+- **Usage**: Admin diagnostics tooltip, conditional snapshot refresh on save
 
 ---
 
@@ -1111,131 +1181,34 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 **Problem**: Passing TypeScript leave types directly to database  
 **Solution**: Always use `toDbLeaveType()` before saving
 
-### Pitfall 3: Average PCA/Team Recalculation
+### Pitfall 3: Snapshot Envelope Missing
+**Problem**: Saving raw snapshot objects without envelope wrapper  
+**Solution**: Always use `buildBaselineSnapshotEnvelope()` before saving to `baseline_snapshot`
+
+### Pitfall 4: Snapshot Validation Skipped
+**Problem**: Loading snapshots without validation, causing crashes on corrupted data  
+**Solution**: Always use `validateAndRepairBaselineSnapshot()` on load to handle incomplete/corrupted snapshots gracefully
+
+### Pitfall 5: Average PCA/Team Recalculation
 **Problem**: Recalculating `average_pca_per_team` in Steps 2-4, changing the target  
 **Solution**: Only calculate in Step 1, persist as target through Steps 2-4
 
-### Pitfall 4: DRM Special Program Error
-**Problem**: Algorithm trying to find designated PCA for DRM  
-**Solution**: Skip DRM during special program allocation phase (it's only an FTE add-on)
+### Pitfall 6: Pending FTE Overwrite Bug (Critical Allocation Bug)
+**Problem**: Teams with pending FTE > 0.25 (e.g., 1.0) would only receive 0.25 FTE (one slot) instead of their full requirement  
+**Root Cause**: When `assignSlotsToTeam()` was called with `pendingFTE: 0.25` (local request), code incorrectly overwrote global `pendingFTE[team]` with `result.newPendingFTE` (often 0)  
+**Solution**: Use safe wrapper system (`assignOneSlotAndUpdatePending`, `assignUpToPendingAndUpdatePending`) that subtracts from global pending instead of overwriting
 
-### Pitfall 5: TypeScript Strict Mode Errors
+### Pitfall 7: Buffer Non-Floating PCA Not Recognized as Substitute (Critical)
+**Problem**: Buffer PCA created as "non-floating" was treated as regular staff, causing Step 2.1 to generate duplicate substitutes  
+**Solution**: Detect missing regular non-floating PCAs and available full-day buffer PCAs, set `staffOverrides.substitutionFor` on buffer PCA, set missing PCA's `team` to `null` in `pcaData`
+
+### Pitfall 8: TypeScript Strict Mode Errors
 **Problem**: Build fails with type errors that pass in dev mode  
 **Solution**: 
 - Use `createEmptyTeamRecord<T>()` for Record initialization
 - Use guard clauses instead of non-null assertions
 - Use `PromiseLike<any>[]` for Supabase query builders in `Promise.all()`
 - Always run `npm run build` before committing
-
-### Pitfall 6: Avg PCA/Team Fluctuation During Step Transitions
-**Problem**: `avg PCA/team` was fluctuating during step transitions (e.g., Step 2 → Step 3)  
-**Root Cause**: 
-- `recalculateScheduleCalculations()` was using `totalPCAFromAllocations` (unstable, changes with allocations)
-- This caused the requirement to change as floating PCAs were assigned/unassigned
-- Also, `recalculateScheduleCalculations()` wasn't being called automatically when allocations changed  
-**Solution**: 
-- Use `totalPCAOnDuty` (stable, from staff database) instead of `totalPCAFromAllocations` for requirement calculation
-- Added `useEffect` to auto-recalculate `scheduleCalculations` when `therapistAllocations` or `pcaAllocations` change
-- Formula: `averagePCAPerTeam = (ptPerTeam * totalPCAOnDuty) / totalPTOnDutyAllTeams`
-- Ensures displayed requirement is stable regardless of allocation state
-
-### Pitfall 7: Over-Fill Team Pending PCA/Team Issue
-**Problem**: Users could adjust pending FTE values in Step 3.1 to exceed available floating PCA capacity, causing over-allocation  
-**Root Cause**: 
-- Step 3.1 allowed manual FTE adjustments without validation against total available floating PCA FTE
-- Upper limit constraint only prevented exceeding original pre-adjusted value, not total system capacity
-**Solution**: 
-- Upper limit constraint in Step 3.1 prevents adjustments beyond original pre-adjusted pending FTE
-- Final algorithm (Step 3.4) respects total floating PCA capacity and assigns based on available FTE
-- Step 3.2/3.3 assignments reduce available capacity for final algorithm, preventing over-allocation
-- **Critical**: Adjusted FTE values are targets, but actual allocation is limited by available floating PCA pool
-
-### Pitfall 8: Pending FTE Overwrite Bug (Critical Allocation Bug)
-**Problem**: Teams with pending FTE > 0.25 (e.g., 1.0) would only receive 0.25 FTE (one slot) instead of their full requirement  
-**Root Cause**: 
-- When `assignSlotsToTeam()` was called with `pendingFTE: 0.25` (local request for one slot), the code incorrectly overwrote global `pendingFTE[team]` with `result.newPendingFTE`
-- `result.newPendingFTE` is only the remaining of the local 0.25 request (often 0), NOT the team's global pending FTE
-- This caused the algorithm to think the team was satisfied after just one slot, stopping further assignments
-**Solution**: 
-- Changed all one-slot calls to subtract `0.25 * slotsAssigned.length` from global pending instead of overwriting
-- Implemented safe wrapper system (`assignOneSlotAndUpdatePending` and `assignUpToPendingAndUpdatePending`) that automatically handles correct pending updates
-- Wrappers read/write `pendingFTEByTeam` directly, preventing manual update errors
-- Refactored entire `pcaAllocation.ts` to use wrappers exclusively, making the bug impossible to regress
-- Added optional `context` parameter to wrappers for debugging (human-readable labels)
-**Fixed Locations**:
-- Condition A Step 1/2/3 (preferred slot attempts with `pendingFTE: 0.25`)
-- Condition A Step 4 (fill remaining from preferred PCA - one-slot loop)
-- Condition B preferred-slot attempts (floor/non-floor with `pendingFTE: 0.25`)
-- Cycle 3 cleanup (one-slot-at-a-time with `pendingFTE: 0.25`)
-
-### Pitfall 9: Non-Floating PCA Duplication After Substitution
-**Problem**: Non-floating PCAs appeared twice on schedule page with 2.0 FTE after substitution  
-**Root Cause**: `allocatePCA` was seeding existing non-floating allocations for Step 2 and then re-allocating them, causing duplicates  
-**Solution**: Changed `allocatePCA` to only seed `existingAllocations` for the `'floating'` phase. For `'non-floating-with-special'`, it starts with an empty `allocations` array
-
-### Pitfall 10: Special Program PCA Conflict with Substitution
-**Problem**: Special program allocation picked a floating PCA even if it was selected as a substitute and its slots were occupied  
-**Root Cause**: Special program allocation ran after substitution needs were collected, and didn't check if substitute PCA's slots were already taken  
-**Solution**: Extracted special program allocation into `runSpecialProgramAllocation` and reordered to run *before* substitution needs are collected. Added `anyAllocationHasRequiredSlotsOccupied` check to prevent overwrites
-
-### Pitfall 11: Step 3.2 Substitution Slot Exclusion Bug
-**Problem**: In Step 3.2, slots used for substitution (from Step 2) were still appearing as available for selection  
-**Root Cause**: `handleSubstitutionWizardConfirm` was incorrectly parsing `nonFloatingPCAId` from key by splitting on `-`, which truncated UUIDs containing hyphens. This led to `substitutionFor` not being saved into `staffOverrides`  
-**Solution**: Modified parsing to use `indexOf('-')` and `slice()` to correctly parse team and UUID. Ensured `staffOverrides` with `substitutionFor` is correctly passed to `computeReservations`
-
-### Pitfall 12: SPT Slot Discard Using Wrong Behavior
-**Problem**: SPT slot discard was showing slot selection popover (like floating PCA) instead of removing entire allocation (like buffer therapist)  
-**Root Cause**: SPT slot discard logic was checking for multiple slots and showing selection popover, rather than immediately removing the allocation  
-**Solution**: Refactored to use shared `removeTherapistAllocationFromTeam()` function. SPT slot discard now immediately removes entire allocation from team regardless of slot count, matching buffer therapist behavior
-
-### Pitfall 13: Battery Bar FTE Display Bug for Special Program PCAs
-**Problem**: Battery bars in Staff Pool showed incorrect FTE for CRP-candidate PCAs:
-- Assigned PCA (君): showed 0.5 instead of 0.75
-- Unassigned PCA (淑貞): showed 0.75 instead of 1.0  
-**Root Cause**: `getTrueFTERemaining` was:
-1. Subtracting special program FTE based on `staff.special_program` property (affiliation) rather than actual assignment
-2. Double-subtracting for assigned PCAs: once from `program.fte_subtraction[staffId][weekday]` and again from assigned slots in `pcaAllocations`  
-**Solution**: Removed special program FTE subtraction logic. Function now only subtracts assigned slots from `pcaAllocations`, which already includes special program assignments. This ensures only actually assigned PCAs have FTE reduced and no double-subtraction occurs
-
-### Pitfall 14: Buffer PCA Not Appearing in Step 2 After Creation (Critical)
-**Problem**: Floating buffer PCA created for special program (e.g., CRP) in Step 2.0 would not appear in Block 1 after Step 2 algorithm run, only after Step 3  
-**Root Cause**: Selected buffer PCA was not injected into `specialPrograms.pca_preference_order` before `allocatePCA` runs, so algorithm didn't recognize it as a candidate  
-**Solution**: Modified `schedule/page.tsx` to inject selected buffer PCA into `specialPrograms.pca_preference_order` before `allocatePCA` runs, ensuring algorithm recognizes and allocates it in Step 2
-
-### Pitfall 15: Special Program PCA Incorrectly Styled as Substitution (Critical)
-**Problem**: Special program slots of buffer PCA were incorrectly displayed in green, which should indicate substitution for a non-floating PCA, not special program assignment  
-**Root Cause**: `PCABlock.tsx`'s `getSubstitutionInfo` function was deriving substitution styling for any floating PCA with slots matching missing non-floating slots, without checking if the PCA was assigned to a special program  
-**Solution**: Modified `getSubstitutionInfo` to explicitly return `isSubstituting: false` if a `floatingAlloc` has `special_program_ids` (i.e., it's assigned to a special program). This prevents special-program-assigned PCAs from being incorrectly styled as non-floating substitutions (green slots)
-
-### Pitfall 16: Step 2.1 Substitution Detection Failure (Critical)
-**Problem**: Step 2.1 (non-floating PCA substitution) dialog failed to detect an already indicated buffer PCA meant to substitute a non-floating PCA (e.g., set up in Step 1). This led to the algorithm allocating a second floating PCA for the same substitution  
-**Root Cause**: 
-- Pre-selection detection was reading from global `staffOverrides` state instead of local `overrides` object (current Step 2 context)
-- No inference logic to detect already-allocated floating PCAs from saved allocations
-- Resolver would use empty selections if user skipped/cancelled, even when pre-selections existed  
-**Solution**: 
-- Pre-detect existing `staffOverrides.substitutionFor` entries by reading from local `overrides` object (current Step 2 context)
-- Added inference logic to detect already-allocated floating PCAs from `existingAllocsRaw` (saved allocations) if `staffOverrides.substitutionFor` doesn't exist
-- Modified resolver: if user skips/cancels (empty selections) but `preSelections` exist, use `preSelections` instead of empty object
-- Prevents algorithm from assigning duplicate substitutes
-
-### Pitfall 17: Buffer Non-Floating PCA Not Recognized as Substitute (Critical)
-**Problem**: Buffer PCA created as "non-floating" and assigned to a team was treated as a regular non-floating staff member, not as a substitute. This led to Step 2.1 generating an additional floating substitute, resulting in duplicates and incorrect display (not underlined, not green slots)  
-**Root Cause**: 
-- No logic to detect full-day non-floating buffer PCAs as substitutes for missing regular non-floating PCAs
-- Missing regular non-floating PCA still had `team` set in `pcaData`, causing algorithm to generate substitution need
-- Buffer PCA didn't have `substitutionFor` override set  
-**Solution**: 
-- Implemented logic in `generateStep2_TherapistAndNonFloatingPCA` to identify missing regular non-floating PCAs (FTE=0) and available full-day non-floating buffer PCAs for the same team
-- Sets `staffOverrides.substitutionFor` on buffer PCA and sets `team` of missing regular non-floating PCA to `null` in `pcaData` passed to `allocatePCA`
-- Prevents algorithm from creating a new substitution need
-- Modified `PCABlock.tsx` to allow `substitutionFor` styling for non-floating PCAs when explicitly marked in `staffOverrides`
-- Enforced that non-floating buffer PCAs must be full-day (all 4 slots) in `BufferStaffCreateDialog` and `BufferStaffConvertDialog`
-
-### Pitfall 18: Floating PCA Incorrect Green Slots After Step 3 (Critical)
-**Problem**: Floating PCA (`淑貞`) was still incorrectly marked with green slots (e.g., slots 1, 4) and out-of-order display after Step 3, even when a buffer non-floating PCA was properly substituting  
-**Root Cause**: Derived substitution logic in `PCABlock.tsx` was still marking floating PCAs as "substituting" even when the non-floating PCA they would be covering was already designated as covered by a whole-day buffer substitute  
-**Solution**: Modified `getSubstitutionInfo_derived` to prevent marking floating PCAs as substituting if the non-floating PCA they would be covering is already covered by a whole-day buffer substitute (identified via `bufferWholeDayTargets`). This prevents unrelated floating PCAs from being incorrectly marked green
 
 ---
 
