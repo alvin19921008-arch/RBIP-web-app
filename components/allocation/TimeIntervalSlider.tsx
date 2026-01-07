@@ -35,7 +35,7 @@ export function TimeIntervalSlider({
   const totalMinutes = endMinutes - startMinutes
 
   // Generate 15-minute intervals
-  const intervals = []
+  const intervals: number[] = []
   for (let i = 0; i <= totalMinutes; i += 15) {
     intervals.push(startMinutes + i)
   }

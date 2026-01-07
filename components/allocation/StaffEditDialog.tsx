@@ -21,6 +21,13 @@ interface StaffEditDialogProps {
   currentLeaveType: LeaveType | null
   currentFTERemaining: number
   currentFTESubtraction?: number
+  /**
+   * SPT enhancement:
+   * - sptConfiguredFTE: dashboard-configured base FTE for this weekday (read-only hint)
+   * - currentSPTBaseFTE: current editable base FTE (remaining + leave cost)
+   */
+  sptConfiguredFTE?: number
+  currentSPTBaseFTE?: number
   currentAvailableSlots?: number[]
   // REMOVED: currentInvalidSlot, currentLeaveComebackTime, currentIsLeave
   // NEW:
@@ -64,6 +71,8 @@ export function StaffEditDialog({
   currentLeaveType,
   currentFTERemaining,
   currentFTESubtraction,
+  sptConfiguredFTE,
+  currentSPTBaseFTE,
   currentAvailableSlots,
   // REMOVED: currentInvalidSlot, currentLeaveComebackTime, currentIsLeave
   // NEW:
@@ -74,12 +83,27 @@ export function StaffEditDialog({
   weekday,
   onSave,
 }: StaffEditDialogProps) {
+  const isSPT = staffRank === 'SPT'
+  const initialBaseFTE = isSPT
+    ? roundTo2Decimals(
+        currentSPTBaseFTE ??
+          sptConfiguredFTE ??
+          (currentFTERemaining + (currentFTESubtraction ?? 0))
+      )
+    : 1.0
+  const [sptBaseFTE, setSptBaseFTE] = useState<number>(initialBaseFTE)
+  const [sptBaseFTEInput, setSptBaseFTEInput] = useState<string>(initialBaseFTE.toFixed(2))
+
   const [leaveType, setLeaveType] = useState<LeaveType | null>(currentLeaveType)
   const [customLeaveType, setCustomLeaveType] = useState<string>('')
   const [fteRemaining, setFteRemaining] = useState<number>(currentFTERemaining)
-  const [fteSubtraction, setFteSubtraction] = useState<number>(currentFTESubtraction ?? (1.0 - currentFTERemaining))
+  const [fteSubtraction, setFteSubtraction] = useState<number>(
+    isSPT ? (currentFTESubtraction ?? 0) : (currentFTESubtraction ?? (1.0 - currentFTERemaining))
+  )
   const [fteRemainingInput, setFteRemainingInput] = useState<string>(currentFTERemaining.toFixed(2))
-  const [fteSubtractionInput, setFteSubtractionInput] = useState<string>((currentFTESubtraction ?? (1.0 - currentFTERemaining)).toFixed(2))
+  const [fteSubtractionInput, setFteSubtractionInput] = useState<string>(
+    (isSPT ? (currentFTESubtraction ?? 0) : (currentFTESubtraction ?? (1.0 - currentFTERemaining))).toFixed(2)
+  )
   const [availableSlots, setAvailableSlots] = useState<number[]>(currentAvailableSlots ?? [])
   // REMOVED: invalidSlot, leaveComebackTime, timeInputValue, timePeriod, isLeave
   // NEW: Invalid slots with time ranges
@@ -103,11 +127,26 @@ export function StaffEditDialog({
     if (open) {
       // Reset all state when dialog opens
       setLeaveType(currentLeaveType)
-      setFteRemaining(roundTo2Decimals(currentFTERemaining))
-      const calculatedSubtraction = currentFTESubtraction ?? (1.0 - currentFTERemaining)
-      setFteSubtraction(roundTo2Decimals(Math.max(0, calculatedSubtraction)))
-      setFteRemainingInput(roundTo2Decimals(currentFTERemaining).toFixed(2))
-      setFteSubtractionInput(roundTo2Decimals(Math.max(0, calculatedSubtraction)).toFixed(2))
+      const base = isSPT
+        ? roundTo2Decimals(
+            currentSPTBaseFTE ??
+              sptConfiguredFTE ??
+              (currentFTERemaining + (currentFTESubtraction ?? 0))
+          )
+        : 1.0
+      setSptBaseFTE(base)
+      setSptBaseFTEInput(base.toFixed(2))
+
+      const subtraction = isSPT ? (currentFTESubtraction ?? 0) : (currentFTESubtraction ?? (1.0 - currentFTERemaining))
+      const clampedSubtraction = roundTo2Decimals(Math.max(0, Math.min(subtraction, base)))
+      const remaining = isSPT
+        ? roundTo2Decimals(Math.max(0, base - clampedSubtraction))
+        : roundTo2Decimals(currentFTERemaining)
+
+      setFteRemaining(remaining)
+      setFteSubtraction(clampedSubtraction)
+      setFteRemainingInput(remaining.toFixed(2))
+      setFteSubtractionInput(clampedSubtraction.toFixed(2))
       setAvailableSlots(currentAvailableSlots ?? [])
       // NEW: Reset invalid slots - only keep those that are still valid (in currentInvalidSlots)
       setInvalidSlots(currentInvalidSlots ?? [])
@@ -121,7 +160,19 @@ export function StaffEditDialog({
       setUnavailableSlots([])
       setHasStartedEditingFTE(false)
     }
-  }, [open, currentLeaveType, currentFTERemaining, currentFTESubtraction, currentAvailableSlots, currentInvalidSlots, currentAmPmSelection, currentSpecialProgramAvailable])
+  }, [
+    open,
+    currentLeaveType,
+    currentFTERemaining,
+    currentFTESubtraction,
+    currentAvailableSlots,
+    currentInvalidSlots,
+    currentAmPmSelection,
+    currentSpecialProgramAvailable,
+    isSPT,
+    currentSPTBaseFTE,
+    sptConfiguredFTE,
+  ])
 
   // Bug 2 Fix: Auto-populate unavailable slots only when user has started editing FTE
   useEffect(() => {
@@ -141,7 +192,7 @@ export function StaffEditDialog({
     }
   }, [availableSlots, hasStartedEditingFTE])
 
-  const maxFTE = 1.0
+  const maxFTE = isSPT ? sptBaseFTE : 1.0
   const fteIsMultipleOfQuarter = isMultipleOfQuarter(fteRemaining)
   // Hide slot-related fields for therapist ranks (RPT, APPT, SPT)
   const isTherapistRank = staffRank && ['RPT', 'APPT', 'SPT'].includes(staffRank)
@@ -162,7 +213,10 @@ export function StaffEditDialog({
   const currentWeekday = weekday || 'mon'
   // CRITICAL: Slots structure is Record<staffId, Record<Weekday, number[]>>, not Record<Weekday, number[]>
   // So we need to access slots by staffId first, then by weekday
-  const staffSlots = specialProgram?.slots?.[staffId]
+  const staffSlots = (specialProgram as any)?.slots?.[staffId] as Record<
+    'mon' | 'tue' | 'wed' | 'thu' | 'fri',
+    number[]
+  > | undefined
   const programSlots = staffSlots?.[currentWeekday]
   const slotTime = specialProgram && programSlots && Array.isArray(programSlots) && programSlots.length > 0 ?
     (() => {
@@ -298,23 +352,55 @@ export function StaffEditDialog({
       setLeaveType(selectedType)
       setShowCustomInput(false)
       setCustomLeaveType('')
-      // Apply default FTE mapping
-      const defaultFTE = LEAVE_TYPE_FTE_MAP[selectedType] ?? 0
-      const adjustedFTE = roundTo2Decimals(Math.min(defaultFTE, maxFTE))
-      const newSubtraction = roundTo2Decimals(maxFTE - adjustedFTE)
-      setFteRemaining(adjustedFTE)
-      setFteSubtraction(newSubtraction)
-      setFteRemainingInput(adjustedFTE.toFixed(2))
-      setFteSubtractionInput(newSubtraction.toFixed(2))
-      // Auto-select slots based on FTE
-      const expectedSlots = Math.round(adjustedFTE / 0.25)
-      setAvailableSlots(expectedSlots > 0 && expectedSlots <= 4 ? [1, 2, 3, 4].slice(0, expectedSlots) : [])
-      
-      // Clear invalid slots if FTE is multiple of 0.25
-      if (isMultipleOfQuarter(adjustedFTE)) {
-        setInvalidSlots([])
+      let nextRemaining: number
+      if (isSPT) {
+        const isHalfDay = selectedType === 'half day VL' || selectedType === 'half day TIL'
+        nextRemaining = isHalfDay ? roundTo2Decimals(maxFTE * 0.5) : 0
+      } else {
+        const defaultFTE = LEAVE_TYPE_FTE_MAP[selectedType] ?? 0
+        nextRemaining = roundTo2Decimals(Math.min(defaultFTE, maxFTE))
+      }
+
+      const nextSubtraction = roundTo2Decimals(maxFTE - nextRemaining)
+      setFteRemaining(nextRemaining)
+      setFteSubtraction(nextSubtraction)
+      setFteRemainingInput(nextRemaining.toFixed(2))
+      setFteSubtractionInput(nextSubtraction.toFixed(2))
+
+      // Only slot-auto-fill for non-therapist ranks (PCA/workman)
+      if (showSlotFields) {
+        const expectedSlots = Math.round(nextRemaining / 0.25)
+        setAvailableSlots(expectedSlots > 0 && expectedSlots <= 4 ? [1, 2, 3, 4].slice(0, expectedSlots) : [])
+        if (isMultipleOfQuarter(nextRemaining)) {
+          setInvalidSlots([])
+        }
       }
     }
+  }
+
+  const handleSPTBaseFTEInputChange = (value: string) => {
+    setSptBaseFTEInput(value)
+    setHasStartedEditingFTE(true)
+    setFteValidationError(null)
+  }
+
+  const handleSPTBaseFTEBlur = () => {
+    const numValue = parseFloat(sptBaseFTEInput) || 0
+    // Clamp to 0-1 and snap to nearest 0.25
+    const clamped = Math.max(0, Math.min(numValue, 1.0))
+    const snapped = Math.round(clamped / 0.25) * 0.25
+    const newBase = roundTo2Decimals(Math.max(0, Math.min(snapped, 1.0)))
+
+    setSptBaseFTE(newBase)
+    setSptBaseFTEInput(newBase.toFixed(2))
+
+    // Re-derive remaining from base - leave cost (clamp leave cost to base)
+    const currentCost = roundTo2Decimals(Math.max(0, Math.min(fteSubtraction, newBase)))
+    const newRemaining = roundTo2Decimals(Math.max(0, newBase - currentCost))
+    setFteSubtraction(currentCost)
+    setFteSubtractionInput(currentCost.toFixed(2))
+    setFteRemaining(newRemaining)
+    setFteRemainingInput(newRemaining.toFixed(2))
   }
 
   const handleSave = () => {
@@ -398,7 +484,16 @@ export function StaffEditDialog({
     // Clear validation error if validation passes
     setFteValidationError(null)
 
-    onSave(staffId, finalLeaveType, finalRemaining, roundTo2Decimals(maxFTE - finalRemaining), finalSlots, finalInvalidSlots, finalAmPmSelection, finalSpecialProgramAvailable)
+    onSave(
+      staffId,
+      finalLeaveType,
+      finalRemaining,
+      roundTo2Decimals(maxFTE - finalRemaining),
+      finalSlots,
+      finalInvalidSlots,
+      finalAmPmSelection,
+      finalSpecialProgramAvailable
+    )
     onOpenChange(false)
   }
 
@@ -442,7 +537,26 @@ export function StaffEditDialog({
           )}
 
           <div className="space-y-2">
-            <div className="grid grid-cols-2 gap-4">
+            <div className={cn('grid gap-4', isSPT ? 'grid-cols-3' : 'grid-cols-2')}>
+              {isSPT && (
+                <div className="space-y-1">
+                  <Label htmlFor="spt-base-fte">FTE</Label>
+                  <Input
+                    id="spt-base-fte"
+                    type="text"
+                    inputMode="decimal"
+                    value={sptBaseFTEInput}
+                    onChange={(e) => handleSPTBaseFTEInputChange(e.target.value)}
+                    onBlur={handleSPTBaseFTEBlur}
+                    placeholder="0.00"
+                  />
+                  {typeof sptConfiguredFTE === 'number' && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Configured: {roundTo2Decimals(sptConfiguredFTE).toFixed(2)}
+                    </p>
+                  )}
+                </div>
+              )}
               <div className="space-y-1">
                 <Label htmlFor="fte-subtraction">FTE Cost due to Leave</Label>
                 <Input
@@ -467,6 +581,7 @@ export function StaffEditDialog({
                   onBlur={handleFTERemainingBlur}
                   className={!isValid ? 'border-red-500' : ''}
                   placeholder="0.00"
+                  disabled={isSPT}
                 />
               </div>
             </div>

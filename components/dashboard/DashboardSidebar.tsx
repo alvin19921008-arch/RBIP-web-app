@@ -8,7 +8,7 @@ import type { LucideIcon } from 'lucide-react'
 import { UserGearIcon } from '@/components/icons/UserGear'
 import React from 'react'
 
-export type CategoryId = 'special-programs' | 'spt-allocations' | 'pca-preferences' | 'pca-unmet-needs' | 'staff-profile' | 'ward-config' | 'team-configuration' | null
+export type CategoryId = 'special-programs' | 'spt-allocations' | 'pca-preferences' | 'staff-profile' | 'ward-config' | 'team-configuration' | null
 
 interface Category {
   id: CategoryId
@@ -38,11 +38,6 @@ const categories: Category[] = [
     id: 'pca-preferences',
     label: 'PCA Preferences',
     icon: Settings,
-  },
-  {
-    id: 'pca-unmet-needs',
-    label: 'PCA Unmet Needs Tracking',
-    icon: AlertCircle,
   },
   {
     id: 'staff-profile',

@@ -3,7 +3,7 @@
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
 **Last Updated**: 2026-01-07  
-**Latest Phase**: Phase 14 - Per-Date Data Isolation & Snapshot Validation  
+**Latest Phase**: Phase 14 - Performance Optimization & Step Validation  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -259,7 +259,42 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Solution: Destructured `onClick` from props and merged handlers to call both `onCheckedChange` and prop's `onClick`
   - Excluded `onClick` from spread props using `Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'>`
 
-### Phase 13: Buffer Staff Edit & SPT FTE Enhancement (Latest)
+### Phase 14: Performance Optimization & Step Validation (Latest)
+- ✅ **Snapshot Size Reduction**
+  - Implemented sparse `specialPrograms` serialization (`minifySpecialProgramsForSnapshot`)
+  - Only essential fields stored in `baseline_snapshot` JSONB
+  - Versioned envelope format (`schemaVersion`, `source`, `createdAt`)
+  - Snapshot validation & auto-repair on load
+- ✅ **Batch Upsert Operations**
+  - Consolidated multiple individual database writes into batch operations
+  - Reduced database round-trips during save/copy operations
+- ✅ **Server-Side RPC Functions**
+  - `save_schedule_v1`: Transactional save (allocation upserts + metadata update)
+  - `copy_schedule_v1`: Transactional copy (clone allocations + metadata)
+  - Falls back to client-side JS if RPC unavailable
+  - Improves data consistency and reduces race conditions
+- ✅ **Save & Copy Performance Optimization**
+  - Conditional snapshot refresh (only when staff/program changes detected)
+  - Timing instrumentation for admin diagnostics
+  - Dramatic reduction in save/copy execution time
+- ✅ **Universal Loading Bar**
+  - Thin top loading bar visible to all users during save/copy operations
+  - Stage-driven progress (0-100%) for visual feedback
+  - Admin-only detailed timing tooltips on Copy/Save buttons
+- ✅ **Date Navigation Controls**
+  - 3-button navigation block (Previous / Today / Next working day)
+  - Hover tooltips showing exact target dates
+  - Hover enlarge/pre-select effects
+  - Calendar icon repositioned to right of date label
+- ✅ **Step Validation & Data Population Fixes**
+  - Partial copy correctly resets Steps 3-5 to pending state
+  - Step-gated bed allocation computation (only when Step 4 active/completed)
+  - Blank schedules start at Step 1 with no auto-population of later steps
+  - Workflow state properly applied on load (prevents stale "review" UI)
+  - Fixed "step 4 data in block 3" issue by gating bed allocation display
+  - Fixed blank schedule auto-running Step 2 algorithm (now waits for user initialization)
+
+### Phase 13: Buffer Staff Edit & SPT FTE Enhancement
 - ✅ **Buffer Staff Edit Functionality**
   - Added edit icon (pencil) next to delete icon on buffer staff cards
   - Opens BufferStaffCreateDialog in edit mode with pre-populated properties

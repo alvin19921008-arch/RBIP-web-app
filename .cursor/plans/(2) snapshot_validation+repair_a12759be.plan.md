@@ -1,30 +1,3 @@
----
-name: Snapshot validation+repair
-overview: Add versioned baseline snapshots with runtime validation/repair, persist repaired snapshots on save, integrate workflow_state into History page badges, and expose admin-only dev diagnostics in a hover panel under the Copy button.
-todos:
-  - id: snapshot-envelope
-    content: Implement BaselineSnapshotEnvelope (schemaVersion/createdAt/source/data) and backward-compatible wrapping for existing raw snapshots.
-    status: completed
-  - id: snapshot-validation-lib
-    content: Add shared validate/repair utilities (validate structure, normalize fields, merge missing referenced staff from live DB, produce SnapshotHealthReport).
-    status: completed
-    dependencies:
-      - snapshot-envelope
-  - id: auto-repair-on-save
-    content: Wire validator into schedule load + save so repaired snapshot is persisted on Save (append-only merge into envelope.data.staff).
-    status: completed
-    dependencies:
-      - snapshot-validation-lib
-  - id: history-workflow-badges
-    content: Update history page to derive completion badges from workflow_state.completedSteps with legacy fallback.
-    status: completed
-  - id: admin-dev-hover-panel
-    content: Add admin-only diagnostics panel under Copy menu showing runtime SnapshotHealthReport + snapshot metadata.
-    status: completed
-    dependencies:
-      - snapshot-validation-lib
----
-
 # Snapshot validation, auto-repair, and history integration
 
 ## Outcomes
@@ -49,7 +22,7 @@ todos:
 
 ### Where
 
-- Schedule creation/load path: `[app/(dashboard)/schedule/page.tsx](app/\\\\\(dashboard)/schedule/page.tsx)`
+- Schedule creation/load path: `[app/(dashboard)/schedule/page.tsx](app/\\\\\\\\\\(dashboard)/schedule/page.tsx)`
 - Copy path: [`app/api/schedules/copy/route.ts`](app/api/schedules/copy/route.ts)
 
 ### Backward compatibility
@@ -83,7 +56,7 @@ Create a utility (e.g. [`lib/utils/snapshotValidation.ts`](lib/utils/snapshotVal
 
 ### Where it runs
 
-- On schedule load in `[app/(dashboard)/schedule/page.tsx](app/\\\\\(dashboard)/schedule/page.tsx) `before `applyBaselineSnapshot(...)`.
+- On schedule load in `[app/(dashboard)/schedule/page.tsx](app/\\\\\\\\\\(dashboard)/schedule/page.tsx) `before `applyBaselineSnapshot(...)`.
 - In APIs that depend on snapshot content (copy/buffer detection) to avoid brittle assumptions:
 - [`app/api/schedules/copy/route.ts`](app/api/schedules/copy/route.ts)
 - [`app/api/schedules/buffer-staff/route.ts`](app/api/schedules/buffer-staff/route.ts)
@@ -99,7 +72,7 @@ Create a utility (e.g. [`lib/utils/snapshotValidation.ts`](lib/utils/snapshotVal
 
 ### Where
 
-- `[app/(dashboard)/schedule/page.tsx](app/\\\\\(dashboard)/schedule/page.tsx) `in `saveScheduleToDatabase()` (this already does a baseline merge; we’ll adapt it to the new envelope + validator report and make it consistent).
+- `[app/(dashboard)/schedule/page.tsx](app/\\\\\\\\\\(dashboard)/schedule/page.tsx) `in `saveScheduleToDatabase()` (this already does a baseline merge; we’ll adapt it to the new envelope + validator report and make it consistent).
 
 ---
 
@@ -112,7 +85,7 @@ Create a utility (e.g. [`lib/utils/snapshotValidation.ts`](lib/utils/snapshotVal
 
 ### Where
 
-- `[app/(dashboard)/history/page.tsx](app/\\\\\(dashboard)/history/page.tsx) `(query needs to include `workflow_state`)
+- `[app/(dashboard)/history/page.tsx](app/\\\\\\\\\\(dashboard)/history/page.tsx) `(query needs to include `workflow_state`)
 - [`components/history/ScheduleHistoryList.tsx`](components/history/ScheduleHistoryList.tsx) or wherever status badge is derived
 - [`lib/utils/scheduleHistory.ts`](lib/utils/scheduleHistory.ts) (centralize badge logic)
 
@@ -136,7 +109,7 @@ Show a compact diagnostic block in the Copy dropdown (styled like your existing 
 
 ### Where
 
-- Copy/Reset menu UI in `[app/(dashboard)/schedule/page.tsx](app/\\\\\(dashboard)/schedule/page.tsx)`
+- Copy/Reset menu UI in `[app/(dashboard)/schedule/page.tsx](app/\\\\\\\\\\(dashboard)/schedule/page.tsx)`
 - Likely reuse the same dropdown container that already renders “Reset to Baseline” and add a border-t section for diagnostics.
 
 ---

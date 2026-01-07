@@ -27,6 +27,7 @@ interface PCABlockProps {
     fteSubtraction?: number
     availableSlots?: number[]
     invalidSlot?: number
+    invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
     leaveComebackTime?: string
     isLeave?: boolean
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
@@ -1003,24 +1004,6 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
   // Round to nearest 0.25 using the same rounding logic as pending values
   const assignedPcaFteRounded = roundToNearestQuarterWithMidpoint(assignedPcaFteRaw)
 
-  // Get original calculated PCA for tooltip
-  // For DRO: use averagePCAPerTeam (which includes DRM add-on)
-  // For others: use requiredPCA (raw calculated value)
-  const originalCalculatedPCA = team === 'DRO' && averagePCAPerTeam !== undefined
-    ? averagePCAPerTeam
-    : (requiredPCA ?? 0)
-
-  // Calculate rounding interval details for tooltip
-  const getRoundingDetails = (value: number) => {
-    const lower = Math.floor(value / 0.25) * 0.25
-    const upper = lower + 0.25
-    const midpoint = (lower + upper) / 2
-    const rounded = roundToNearestQuarterWithMidpoint(value)
-    return { lower, upper, midpoint, rounded }
-  }
-  
-  const roundingDetails = getRoundingDetails(originalCalculatedPCA)
-
   return (
     <Card ref={setNodeRef} className={showHoverEffect ? 'border-2 border-slate-900 dark:border-slate-100' : ''} data-pca-team={team}>
       <CardContent className="p-2 pt-1 flex flex-col min-h-full">
@@ -1235,9 +1218,33 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
               // This happens when buffer assignments cover all the team's needs and no algorithm ran
               const fulfilledByBufferOnly = hasBufferAssignments && !hasAllocationLog && bufferFloatingSlots.length > 0
               
-              // Get allocation order (if available)
-              const allocationOrder = hasAllocationLog && allocationLog.assignments.length > 0
+              // Get allocation order for each cycle (if available)
+              // Cycle 1 order is always available (from step 3.1 teamOrder) - all teams are processed in cycle 1
+              // Cycle 2/3 orders are only shown if the team received assignments in those cycles
+              const cycle1Assignments = hasAllocationLog 
+                ? allocationLog.assignments.filter(a => a.cycle === 1)
+                : []
+              const cycle2Assignments = hasAllocationLog 
+                ? allocationLog.assignments.filter(a => a.cycle === 2)
+                : []
+              const cycle3Assignments = hasAllocationLog 
+                ? allocationLog.assignments.filter(a => a.cycle === 3)
+                : []
+              
+              // Cycle 1 order: Get from any assignment (all should have the same allocationOrder based on teamOrder from step 3.1)
+              // Always show cycle 1 order since all teams are processed in cycle 1
+              const allocationOrderCycle1 = hasAllocationLog && allocationLog.assignments.length > 0 && allocationLog.assignments[0].allocationOrder !== undefined
                 ? allocationLog.assignments[0].allocationOrder
+                : undefined
+              
+              // Cycle 2 order: Only show if team received assignments in cycle 2
+              const allocationOrderCycle2 = cycle2Assignments.length > 0 && cycle2Assignments[0].allocationOrder !== undefined
+                ? cycle2Assignments[0].allocationOrder
+                : undefined
+              
+              // Cycle 3 order: Only show if team received assignments in cycle 3
+              const allocationOrderCycle3 = cycle3Assignments.length > 0 && cycle3Assignments[0].allocationOrder !== undefined
+                ? cycle3Assignments[0].allocationOrder
                 : undefined
               
               // Condition descriptions
@@ -1268,10 +1275,24 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                           Allocation Tracking - {team}
                         </div>
                         
-                        {/* Allocation Order - show before total slots */}
-                        {allocationOrder !== undefined && (
-                          <div className="text-[10px] text-gray-300">
-                            {allocationOrder === 1 ? '1st' : allocationOrder === 2 ? '2nd' : allocationOrder === 3 ? '3rd' : `${allocationOrder}th`} in allocation order during algo run
+                        {/* Allocation Order by Cycle - show before total slots */}
+                        {/* Cycle 1 order is always shown (all teams processed in cycle 1, order from step 3.1 teamOrder) */}
+                        {/* Cycle 2/3 orders shown on top if team received assignments in those cycles */}
+                        {allocationOrderCycle1 !== undefined && (
+                          <div className="text-[10px] text-gray-300 space-y-0.5">
+                            {allocationOrderCycle3 !== undefined && (
+                              <div>
+                                {allocationOrderCycle3 === 1 ? '1st' : allocationOrderCycle3 === 2 ? '2nd' : allocationOrderCycle3 === 3 ? '3rd' : `${allocationOrderCycle3}th`} in cycle 3
+                              </div>
+                            )}
+                            {allocationOrderCycle2 !== undefined && (
+                              <div>
+                                {allocationOrderCycle2 === 1 ? '1st' : allocationOrderCycle2 === 2 ? '2nd' : allocationOrderCycle2 === 3 ? '3rd' : `${allocationOrderCycle2}th`} in cycle 2
+                              </div>
+                            )}
+                            <div>
+                              {allocationOrderCycle1 === 1 ? '1st' : allocationOrderCycle1 === 2 ? '2nd' : allocationOrderCycle1 === 3 ? '3rd' : `${allocationOrderCycle1}th`} in cycle 1
+                            </div>
                           </div>
                         )}
                         
@@ -1360,15 +1381,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                           </div>
                         )}
                       </div>
-                    ) : (
-                      <div className="space-y-1">
-                        <div>Original calculated PCA: {originalCalculatedPCA.toFixed(2)}</div>
-                        <div>Expected to assign PCA: {originalCalculatedPCA.toFixed(2)} → {roundingDetails.rounded.toFixed(2)}</div>
-                        <div>in interval of {roundingDetails.lower.toFixed(2)} - ({roundingDetails.midpoint.toFixed(3)}) - {roundingDetails.upper.toFixed(2)} (rounded to nearest 0.25)</div>
-                        <div>Finally assigned with a/v PCA: {assignedPcaFteRounded.toFixed(2)}</div>
-                        <div className="text-gray-400 mt-2 text-[10px]">Run Step 3 algorithm to see detailed tracking.</div>
-                      </div>
-                    )}
+                    ) : null}
                     {/* Arrow pointing down */}
                     <div className={`absolute top-full ${showOnLeft ? 'right-4' : 'left-4'} w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900`}></div>
                   </div>

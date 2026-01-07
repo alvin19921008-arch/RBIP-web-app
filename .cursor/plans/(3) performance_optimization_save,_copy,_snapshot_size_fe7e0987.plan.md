@@ -1,34 +1,3 @@
----
-name: "Performance optimization: save, copy, snapshot size"
-overview: Optimize save/copy performance by skipping unnecessary snapshot refreshes, batching allocation writes, using RPC transactions, reducing duplicate queries, and minimizing snapshot payload size.
-todos:
-  - id: save-conditional-snapshot
-    content: "Add conditional snapshot refresh logic: skip if health is ok, no missing referenced staff, and no team changes via staff_overrides for RPT/APPT."
-    status: pending
-  - id: save-batch-writes
-    content: Refactor save to use bulk upsert() per table (therapist, PCA, bed, calculations) instead of per-row update/insert.
-    status: pending
-  - id: save-rpc-function
-    content: Create Postgres RPC function save_schedule_v1() for atomic server-side transaction; update saveScheduleToDatabase() to call RPC.
-    status: pending
-    dependencies:
-      - save-batch-writes
-  - id: copy-eliminate-duplicates
-    content: Load allocations once in copy API, derive referenced staff IDs from arrays instead of separate query.
-    status: pending
-  - id: copy-non-blocking-dates
-    content: Update handleConfirmCopy() to update datesWithData locally and call loadDatesWithData() without await.
-    status: pending
-  - id: copy-sql-clone
-    content: Create Postgres RPC function copy_schedule_v1() using INSERT ... SELECT ... for server-side cloning; update copy API to use RPC.
-    status: pending
-    dependencies:
-      - copy-eliminate-duplicates
-  - id: snapshot-minimal-projections
-    content: Update buildBaselineSnapshotFromCurrentState() and fetchLiveStaffByIds to store/select only required fields (id, name, rank, team, floating, status, buffer_fte, floor_pca, special_program for staff).
-    status: pending
----
-
 # Performance optimization: save, copy, snapshot size
 
 ## Outcomes

@@ -993,7 +993,7 @@ export function FloatingPCAConfigDialog({
       <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>
-            Configure Floating PCA Allocation - Step {currentMiniStep}
+            Configure Floating PCA Allocation – Step {currentMiniStep}
           </DialogTitle>
         </DialogHeader>
         

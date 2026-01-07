@@ -1,23 +1,21 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { SpecialProgramPanel } from '@/components/dashboard/SpecialProgramPanel'
 import { SPTAllocationPanel } from '@/components/dashboard/SPTAllocationPanel'
 import { PCAPreferencePanel } from '@/components/dashboard/PCAPreferencePanel'
-import { UnmetPCANeedsCard } from '@/components/dashboard/UnmetPCANeedsCard'
 import { StaffProfilePanel } from '@/components/dashboard/StaffProfilePanel'
 import { WardConfigPanel } from '@/components/dashboard/WardConfigPanel'
 import { TeamConfigurationPanel } from '@/components/dashboard/TeamConfigurationPanel'
 import { DashboardSidebar, type CategoryId } from '@/components/dashboard/DashboardSidebar'
 
-type PanelType = 'special-programs' | 'spt-allocations' | 'pca-preferences' | 'pca-unmet-needs' | 'staff-profile' | 'ward-config' | 'team-configuration' | null
+type PanelType = 'special-programs' | 'spt-allocations' | 'pca-preferences' | 'staff-profile' | 'ward-config' | 'team-configuration' | null
 type PanelKey = Exclude<PanelType, null>
 
 const categoryLabels: Record<PanelKey, string> = {
   'special-programs': 'Special Programs',
   'spt-allocations': 'SPT Allocations',
   'pca-preferences': 'PCA Preferences',
-  'pca-unmet-needs': 'PCA Unmet Needs Tracking',
   'staff-profile': 'Staff Profile',
   'ward-config': 'Ward Config and Bed Stat',
   'team-configuration': 'Team Configuration',
@@ -27,7 +25,6 @@ const categoryDescriptions: Record<PanelKey, string> = {
   'special-programs': 'Manage special program configurations',
   'spt-allocations': 'Configure SPT allocation settings',
   'pca-preferences': 'Manage PCA preference settings',
-  'pca-unmet-needs': 'Track and view unmet PCA needs',
   'staff-profile': 'Manage staff records and configurations',
   'ward-config': 'Manage ward names and bed counts',
   'team-configuration': 'Manage team staffing and ward responsibilities',
@@ -36,13 +33,99 @@ const categoryDescriptions: Record<PanelKey, string> = {
 export default function DashboardPage() {
   const [activePanel, setActivePanel] = useState<PanelType>(null)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [topLoadingVisible, setTopLoadingVisible] = useState(false)
+  const [topLoadingProgress, setTopLoadingProgress] = useState(0)
+  const loadingBarIntervalRef = useRef<number | null>(null)
+  const loadingBarHideTimeoutRef = useRef<number | null>(null)
+
+  const startTopLoading = (initialProgress: number = 0.05) => {
+    if (loadingBarHideTimeoutRef.current) {
+      window.clearTimeout(loadingBarHideTimeoutRef.current)
+      loadingBarHideTimeoutRef.current = null
+    }
+    if (loadingBarIntervalRef.current) {
+      window.clearInterval(loadingBarIntervalRef.current)
+      loadingBarIntervalRef.current = null
+    }
+    setTopLoadingVisible(true)
+    setTopLoadingProgress(Math.max(0, Math.min(1, initialProgress)))
+  }
+
+  const bumpTopLoadingTo = (target: number) => {
+    setTopLoadingProgress(prev => Math.max(prev, Math.max(0, Math.min(1, target))))
+  }
+
+  const startSoftAdvance = (cap: number = 0.9) => {
+    if (loadingBarIntervalRef.current) return
+    loadingBarIntervalRef.current = window.setInterval(() => {
+      setTopLoadingProgress(prev => {
+        const max = Math.max(prev, Math.min(0.98, cap))
+        if (prev >= max) return prev
+        const step = Math.min(0.015 + Math.random() * 0.02, max - prev)
+        return prev + step
+      })
+    }, 180)
+  }
+
+  const stopSoftAdvance = () => {
+    if (loadingBarIntervalRef.current) {
+      window.clearInterval(loadingBarIntervalRef.current)
+      loadingBarIntervalRef.current = null
+    }
+  }
+
+  const finishTopLoading = () => {
+    stopSoftAdvance()
+    bumpTopLoadingTo(1)
+    loadingBarHideTimeoutRef.current = window.setTimeout(() => {
+      setTopLoadingVisible(false)
+      setTopLoadingProgress(0)
+      loadingBarHideTimeoutRef.current = null
+    }, 350)
+  }
+
+  useEffect(() => {
+    // Show loading bar on initial page load
+    startTopLoading(0.1)
+    startSoftAdvance(0.6)
+    // Simulate page initialization
+    const timer = setTimeout(() => {
+      stopSoftAdvance()
+      bumpTopLoadingTo(0.95)
+      finishTopLoading()
+    }, 300)
+
+    return () => {
+      clearTimeout(timer)
+      if (loadingBarIntervalRef.current) window.clearInterval(loadingBarIntervalRef.current)
+      if (loadingBarHideTimeoutRef.current) window.clearTimeout(loadingBarHideTimeoutRef.current)
+    }
+  }, [])
 
   const handleCategoryChange = (category: CategoryId) => {
+    // Show loading bar when switching panels
+    startTopLoading(0.1)
+    startSoftAdvance(0.7)
     setActivePanel(category)
+    // Finish loading after a brief delay (panels handle their own loading states)
+    setTimeout(() => {
+      stopSoftAdvance()
+      bumpTopLoadingTo(0.95)
+      finishTopLoading()
+    }, 200)
   }
 
   return (
     <div className="flex h-[calc(100vh-4rem)]">
+      {/* Thin top loading bar */}
+      {topLoadingVisible && (
+        <div className="fixed top-0 left-0 right-0 h-[3px] z-[99999] bg-transparent">
+          <div
+            className="h-full bg-sky-500 transition-[width] duration-200 ease-out"
+            style={{ width: `${Math.round(topLoadingProgress * 100)}%` }}
+          />
+        </div>
+      )}
       <DashboardSidebar
         activeCategory={activePanel}
         onCategoryChange={handleCategoryChange}
@@ -66,11 +149,6 @@ export default function DashboardPage() {
             {activePanel === 'special-programs' && <SpecialProgramPanel />}
             {activePanel === 'spt-allocations' && <SPTAllocationPanel />}
             {activePanel === 'pca-preferences' && <PCAPreferencePanel />}
-            {activePanel === 'pca-unmet-needs' && (
-              <div>
-                <UnmetPCANeedsCard />
-              </div>
-            )}
             {activePanel === 'staff-profile' && <StaffProfilePanel />}
             {activePanel === 'ward-config' && <WardConfigPanel />}
             {activePanel === 'team-configuration' && <TeamConfigurationPanel />}

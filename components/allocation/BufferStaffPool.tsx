@@ -424,7 +424,7 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
                             }}
                           />
                         )
-
+                        
                         // Add tooltip for buffer floating PCA when not in correct step
                         // Tooltip only shows when dragging is detected (not on hover)
                         if (isFloatingPCA && !isInCorrectStep) {
@@ -470,7 +470,9 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
       {showCreateDialog && (
         <BufferStaffCreateDialog
           open={showCreateDialog}
-          onOpenChange={handleCreateDialogClose}
+          onOpenChange={(open) => {
+            if (!open) handleCreateDialogClose()
+          }}
           onSave={(createdStaff) => handleCreateDialogClose(createdStaff)}
           specialPrograms={loadedSpecialPrograms}
         />

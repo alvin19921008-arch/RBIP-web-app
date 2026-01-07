@@ -942,7 +942,7 @@ export function SpecialProgramOverrideDialog({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-[95vw] max-h-[90vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Special Program Overrides</DialogTitle>
+            <DialogTitle>Special Program Overrides – Step 2.0</DialogTitle>
             <DialogDescription>
               Configure special program assignments before algorithm runs
             </DialogDescription>

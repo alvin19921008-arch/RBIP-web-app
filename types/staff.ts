@@ -28,8 +28,12 @@ export interface Staff {
   status?: StaffStatus  // Staff status: active, inactive, or buffer
   active?: boolean // Legacy/DB column support (some panels still reference s.active)
   buffer_fte?: number  // FTE value for buffer staff (determined by slots for PCA)
-  created_at: string
-  updated_at: string
+  /**
+   * Timestamps exist on live DB rows, but schedule snapshots intentionally store
+   * a minimal projection and may omit them to reduce payload size.
+   */
+  created_at?: string
+  updated_at?: string
 }
 
 export interface StaffPreferences {

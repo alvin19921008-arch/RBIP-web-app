@@ -5,6 +5,8 @@ import { formatDate } from '@/lib/utils/dateHelpers'
 import { BaselineSnapshot, BaselineSnapshotStored } from '@/types/schedule'
 import { Team } from '@/types/staff'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
+import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
+import { createTimingCollector } from '@/lib/utils/timing'
 
 type CopyMode = 'full' | 'hybrid'
 
@@ -16,21 +18,37 @@ interface CopyScheduleRequest {
 }
 
 async function buildBaselineSnapshot(supabase: any): Promise<BaselineSnapshot> {
-  const [
-    staffRes,
-    specialProgramsRes,
-    sptAllocationsRes,
-    wardsRes,
-    pcaPreferencesRes,
-    teamSettingsRes,
-  ] = await Promise.all([
-    supabase.from('staff').select('*'),
-    supabase.from('special_programs').select('*'),
-    supabase.from('spt_allocations').select('*'),
-    supabase.from('wards').select('*'),
-    supabase.from('pca_preferences').select('*'),
-    supabase.from('team_settings').select('*'),
-  ])
+  const safeSelect = async (table: string, columns: string) => {
+    const res = await supabase.from(table).select(columns)
+    if (res.error && (res.error.message?.includes('column') || (res.error as any)?.code === '42703')) {
+      return await supabase.from(table).select('*')
+    }
+    return res
+  }
+
+  const staffPromise = safeSelect(
+    'staff',
+    'id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program'
+  )
+
+  const [staffRes, specialProgramsRes, sptAllocationsRes, wardsRes, pcaPreferencesRes, teamSettingsRes] =
+    await Promise.all([
+      staffPromise,
+      safeSelect(
+        'special_programs',
+        'id,name,staff_ids,weekdays,slots,fte_subtraction,pca_required,therapist_preference_order,pca_preference_order'
+      ),
+      safeSelect(
+        'spt_allocations',
+        'id,staff_id,specialty,teams,weekdays,slots,slot_modes,fte_addon,substitute_team_head,is_rbip_supervisor,active'
+      ),
+      safeSelect('wards', 'id,name,total_beds,team_assignments,team_assignment_portions'),
+      safeSelect(
+        'pca_preferences',
+        'id,team,preferred_pca_ids,preferred_slots,avoid_gym_schedule,gym_schedule,floor_pca_selection'
+      ),
+      safeSelect('team_settings', 'team,display_name'),
+    ])
 
   if (staffRes.error) {
     throw new Error(`Failed to load staff for baseline snapshot: ${staffRes.error.message}`)
@@ -48,7 +66,7 @@ async function buildBaselineSnapshot(supabase: any): Promise<BaselineSnapshot> {
     throw new Error(`Failed to load PCA preferences for baseline snapshot: ${pcaPreferencesRes.error.message}`)
   }
 
-  let teamDisplayNames: Record<Team, string> | undefined = undefined
+  let teamDisplayNames: Partial<Record<Team, string>> | undefined = undefined
   if (!teamSettingsRes.error && teamSettingsRes.data) {
     teamDisplayNames = {}
     for (const row of teamSettingsRes.data as any[]) {
@@ -60,7 +78,7 @@ async function buildBaselineSnapshot(supabase: any): Promise<BaselineSnapshot> {
 
   return {
     staff: (staffRes.data || []) as any,
-    specialPrograms: (specialProgramsRes.data || []) as any,
+    specialPrograms: minifySpecialProgramsForSnapshot(specialProgramsRes.data || []) as any,
     sptAllocations: (sptAllocationsRes.data || []) as any,
     wards: (wardsRes.data || []) as any,
     pcaPreferences: (pcaPreferencesRes.data || []) as any,
@@ -70,34 +88,6 @@ async function buildBaselineSnapshot(supabase: any): Promise<BaselineSnapshot> {
 
 function isNonEmptyObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value as any).length > 0
-}
-
-async function getReferencedStaffIdsForSchedule(
-  supabase: any,
-  scheduleId: string,
-  staffOverrides: unknown
-): Promise<Set<string>> {
-  const referencedIds = new Set<string>()
-
-  const [{ data: therapist }, { data: pca }] = await Promise.all([
-    supabase
-      .from('schedule_therapist_allocations')
-      .select('staff_id')
-      .eq('schedule_id', scheduleId),
-    supabase
-      .from('schedule_pca_allocations')
-      .select('staff_id')
-      .eq('schedule_id', scheduleId),
-  ])
-
-  ;(therapist || []).forEach((a: any) => a?.staff_id && referencedIds.add(a.staff_id))
-  ;(pca || []).forEach((a: any) => a?.staff_id && referencedIds.add(a.staff_id))
-
-  if (isNonEmptyObject(staffOverrides)) {
-    Object.keys(staffOverrides).forEach(id => referencedIds.add(id))
-  }
-
-  return referencedIds
 }
 
 async function resolveBufferStaffIdsFromLatestState(
@@ -144,6 +134,7 @@ function inferCopiedUpToStep(
 
 export async function POST(request: NextRequest) {
   try {
+    const timer = createTimingCollector({ now: () => Date.now() })
     await requireAuth()
     const supabase = await createServerComponentClient()
     const body: CopyScheduleRequest = await request.json()
@@ -167,6 +158,7 @@ export async function POST(request: NextRequest) {
     if (fromError || !fromSchedule) {
       return NextResponse.json({ error: 'Source schedule not found' }, { status: 404 })
     }
+    timer.stage('loadSourceSchedule')
 
     // Load or create target schedule
     let { data: toSchedule, error: toError } = await supabase
@@ -178,6 +170,7 @@ export async function POST(request: NextRequest) {
     if (toError) {
       return NextResponse.json({ error: 'Failed to load target schedule' }, { status: 500 })
     }
+    timer.stage('loadTargetSchedule')
 
     if (!toSchedule) {
       const { data: created, error: createError } = await supabase
@@ -191,6 +184,7 @@ export async function POST(request: NextRequest) {
       }
       toSchedule = created
     }
+    timer.stage('ensureTargetSchedule')
 
     const fromScheduleId = fromSchedule.id
     const toScheduleId = toSchedule.id
@@ -213,20 +207,21 @@ export async function POST(request: NextRequest) {
       sourceBaselineData = data
       // If the source schedule still stores the legacy raw shape, upgrade it opportunistically.
       if (wasWrapped) {
+        const upgraded: BaselineSnapshot = {
+          ...(sourceBaselineData as any),
+          specialPrograms: minifySpecialProgramsForSnapshot((sourceBaselineData as any).specialPrograms || []),
+        } as any
         await supabase
           .from('daily_schedules')
-          .update({ baseline_snapshot: buildBaselineSnapshotEnvelope({ data: sourceBaselineData, source: 'copy' }) as any })
+          .update({ baseline_snapshot: buildBaselineSnapshotEnvelope({ data: upgraded, source: 'copy' }) as any })
           .eq('id', fromScheduleId)
+        sourceBaselineData = upgraded
       }
     }
+    timer.stage('resolveSourceBaseline')
 
     const sourceOverrides = (fromSchedule as any).staff_overrides || {}
     const sourceWorkflowState = (fromSchedule as any).workflow_state || null
-
-    // Determine buffer staff based on the latest saved state for this schedule:
-    // - staff referenced by allocations and staff_overrides
-    // - use baseline_snapshot when it contains the staff row, otherwise fall back to live staff.status
-    const referencedIds = await getReferencedStaffIdsForSchedule(supabase, fromScheduleId, sourceOverrides)
 
     // Load allocations to clone
     const [
@@ -240,8 +235,19 @@ export async function POST(request: NextRequest) {
       supabase.from('schedule_bed_allocations').select('*').eq('schedule_id', fromScheduleId),
       supabase.from('schedule_calculations').select('*').eq('schedule_id', fromScheduleId),
     ])
+    timer.stage('loadSourceAllocations')
 
     const copiedUpToStep = inferCopiedUpToStep(therapistAllocations, pcaAllocations, bedAllocations)
+
+    // Determine buffer staff based on the latest saved state for this schedule:
+    // - staff referenced by allocations and staff_overrides
+    // - use baseline_snapshot when it contains the staff row, otherwise fall back to live staff.status
+    const referencedIds = new Set<string>()
+    ;(therapistAllocations || []).forEach((a: any) => a?.staff_id && referencedIds.add(a.staff_id))
+    ;(pcaAllocations || []).forEach((a: any) => a?.staff_id && referencedIds.add(a.staff_id))
+    if (isNonEmptyObject(sourceOverrides)) {
+      Object.keys(sourceOverrides).forEach(id => referencedIds.add(id))
+    }
 
     // Buffer staff sets (based on latest source schedule state)
     const bufferStaffIds = await resolveBufferStaffIdsFromLatestState(
@@ -249,6 +255,7 @@ export async function POST(request: NextRequest) {
       sourceBaselineData,
       referencedIds
     )
+    timer.stage('resolveBufferStaff')
 
     // Build target baseline (adjusting buffer staff if needed)
     const snapshotStaff: any[] = (sourceBaselineData as any).staff || []
@@ -259,7 +266,59 @@ export async function POST(request: NextRequest) {
       )
       targetBaselineData = { ...(sourceBaselineData as any), staff: updatedStaff }
     }
+    // Always minify special programs when writing target baseline snapshot to reduce JSONB payload size.
+    targetBaselineData = {
+      ...(targetBaselineData as any),
+      specialPrograms: minifySpecialProgramsForSnapshot((targetBaselineData as any).specialPrograms || []),
+    } as any
     const targetBaselineEnvelope = buildBaselineSnapshotEnvelope({ data: targetBaselineData, source: 'copy' })
+    timer.stage('buildTargetBaseline')
+
+    // Approx snapshot size diagnostics (useful for performance analysis)
+    let baselineBytes: number | null = null
+    let specialProgramsBytes: number | null = null
+    try {
+      specialProgramsBytes = JSON.stringify((targetBaselineData as any).specialPrograms || []).length
+      baselineBytes = JSON.stringify(targetBaselineEnvelope as any).length
+    } catch {
+      // ignore
+    }
+
+    // Prepare workflow_state for target
+    let targetWorkflowState: any = sourceWorkflowState
+    if (mode === 'hybrid') {
+      const completed: string[] = []
+      if (Object.keys(sourceOverrides || {}).length > 0) completed.push('leave-fte')
+      if ((therapistAllocations || []).length > 0) completed.push('therapist-pca')
+      targetWorkflowState = {
+        currentStep: 'floating-pca',
+        completedSteps: completed,
+      }
+    }
+
+    // Fast path: SQL-based clone (RPC) if available. Falls back to JS copy if function isn't installed.
+    const rpcAttempt = await supabase.rpc('copy_schedule_v1', {
+      from_schedule_id: fromScheduleId,
+      to_schedule_id: toScheduleId,
+      mode,
+      include_buffer_staff: includeBufferStaff,
+      baseline_snapshot: targetBaselineEnvelope as any,
+      staff_overrides: sourceOverrides,
+      workflow_state: targetWorkflowState,
+      tie_break_decisions: (fromSchedule as any).tie_break_decisions || {},
+    })
+
+    if (!rpcAttempt.error) {
+      return NextResponse.json({
+        success: true,
+        mode,
+        fromDate: fromDateStr,
+        toDate: toDateStr,
+        copiedUpToStep,
+        timings: timer.finalize({ rpcUsed: true, baselineBytes, specialProgramsBytes }),
+      })
+    }
+    timer.stage('rpcCopyFallback')
 
     // Clear target allocations and calculations
     await Promise.all([
@@ -343,18 +402,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Prepare workflow_state for target
-    let targetWorkflowState: any = sourceWorkflowState
-    if (mode === 'hybrid') {
-      const completed: string[] = []
-      if (Object.keys(sourceOverrides || {}).length > 0) completed.push('leave-fte')
-      if ((therapistAllocations || []).length > 0) completed.push('therapist-pca')
-      targetWorkflowState = {
-        currentStep: 'floating-pca',
-        completedSteps: completed,
-      }
-    }
-
     // Update daily_schedules metadata for target
     const { error: updateError } = await supabase
       .from('daily_schedules')
@@ -377,6 +424,7 @@ export async function POST(request: NextRequest) {
       fromDate: fromDateStr,
       toDate: toDateStr,
       copiedUpToStep,
+      timings: timer.finalize({ rpcUsed: false, baselineBytes, specialProgramsBytes }),
     })
   } catch (error) {
     console.error('Error copying schedule:', error)

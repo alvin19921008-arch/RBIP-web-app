@@ -168,7 +168,7 @@ export interface BaselineSnapshot {
   wards: import('./allocation').Ward[]
   pcaPreferences: import('./allocation').PCAPreference[]
   // Optional map of custom team display names (from team_settings)
-  teamDisplayNames?: Record<Team, string>
+  teamDisplayNames?: Partial<Record<Team, string>>
 }
 
 export type BaselineSnapshotSource = 'save' | 'copy' | 'migration'

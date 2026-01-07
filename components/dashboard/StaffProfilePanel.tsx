@@ -369,6 +369,35 @@ export function StaffProfilePanel() {
     }
   }
 
+  const handleDeleteSingle = async (staffId: string, staffName: string) => {
+    if (!confirm(`Are you sure you want to delete ${staffName}? This action is irreversible.`)) {
+      return
+    }
+
+    try {
+      const { error } = await supabase
+        .from('staff')
+        .delete()
+        .eq('id', staffId)
+
+      if (error) {
+        console.error('Error deleting staff:', error)
+        alert('Failed to delete staff. Please try again.')
+      } else {
+        await loadData()
+        // Remove from selection if selected
+        setSelectedStaffIds(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(staffId)
+          return newSet
+        })
+      }
+    } catch (err) {
+      console.error('Error deleting staff:', err)
+      alert('Failed to delete staff. Please try again.')
+    }
+  }
+
   const handleSaveStaff = async (staffData: Partial<Staff> & { isRbipSupervisor?: boolean; specialty?: string | null }) => {
     try {
       const { isRbipSupervisor, specialty, ...staffFields } = staffData
@@ -580,12 +609,14 @@ export function StaffProfilePanel() {
     return (
       <tr key={staffMember.id} className={cn('border-b hover:bg-accent/50', (staffMember.status ?? 'active') === 'inactive' && 'opacity-60')}>
         <td className="p-2">
-          <input
-            type="checkbox"
-            checked={isSelected}
-            onChange={() => toggleStaffSelection(staffMember.id)}
-            className="h-4 w-4"
-          />
+          <div className={cn((staffMember.status ?? 'active') === 'inactive' && 'opacity-100')}>
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => toggleStaffSelection(staffMember.id)}
+              className="h-4 w-4"
+            />
+          </div>
         </td>
         <td className="p-2">
           {isEditingName ? (
@@ -664,13 +695,22 @@ export function StaffProfilePanel() {
           })()}
         </td>
         <td className="p-2">
-          <button
-            onClick={() => setEditingStaff(staffMember)}
-            className="p-1 hover:bg-accent rounded"
-            title="Edit staff"
-          >
-            <Edit2 className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setEditingStaff(staffMember)}
+              className="p-1 hover:bg-accent rounded"
+              title="Edit staff"
+            >
+              <Edit2 className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => handleDeleteSingle(staffMember.id, staffMember.name)}
+              className="p-1 hover:bg-accent rounded text-destructive hover:text-destructive"
+              title="Delete staff"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
         </td>
       </tr>
     )

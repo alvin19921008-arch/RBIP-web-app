@@ -166,8 +166,8 @@ export function NonFloatingSubstitutionDialog({
         <DialogHeader>
           <DialogTitle>
             {isWizardMode 
-              ? 'Non-Floating PCA Substitution' 
-              : `Non-Floating PCA Substitution - ${currentTeam} Team`}
+              ? 'Non-Floating PCA Substitution – Step 2.1' 
+              : `Non-Floating PCA Substitution – Step 2.1 - ${currentTeam} Team`}
           </DialogTitle>
           <DialogDescription>
             {isWizardMode 
@@ -337,9 +337,21 @@ export function NonFloatingSubstitutionDialog({
         </div>
 
         <DialogFooter className="flex justify-between">
-          <Button variant="outline" onClick={onSkip}>
-            {isWizardMode ? 'Skip All' : 'Skip'}
-          </Button>
+          <div className="relative inline-block group">
+            <Button variant="outline" onClick={onSkip}>
+              {isWizardMode ? 'Skip All' : 'Skip'}
+            </Button>
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-80 p-3 bg-popover border border-border rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none whitespace-normal">
+              <p className="text-xs text-popover-foreground mb-2 font-medium">
+                Should the algorithm automatically assign floating PCAs to substitute for non-floating PCAs?
+              </p>
+              <ul className="text-xs text-popover-foreground space-y-1 list-disc list-inside">
+                <li><strong>Skip:</strong> Algorithm will automatically assign floating PCAs based on preferences and availability</li>
+                <li><strong>Cancel:</strong> Exit dialog without changes</li>
+                <li><strong>Confirm:</strong> Apply your manual substitution selections</li>
+              </ul>
+            </div>
+          </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={onCancel}>
               Cancel

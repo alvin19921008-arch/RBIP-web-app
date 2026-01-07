@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -22,8 +22,65 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true)
   const [selectedScheduleIds, setSelectedScheduleIds] = useState<Set<string>>(new Set())
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [topLoadingVisible, setTopLoadingVisible] = useState(false)
+  const [topLoadingProgress, setTopLoadingProgress] = useState(0)
+  const loadingBarIntervalRef = useRef<number | null>(null)
+  const loadingBarHideTimeoutRef = useRef<number | null>(null)
   const router = useRouter()
   const supabase = createClientComponentClient()
+
+  const startTopLoading = (initialProgress: number = 0.05) => {
+    if (loadingBarHideTimeoutRef.current) {
+      window.clearTimeout(loadingBarHideTimeoutRef.current)
+      loadingBarHideTimeoutRef.current = null
+    }
+    if (loadingBarIntervalRef.current) {
+      window.clearInterval(loadingBarIntervalRef.current)
+      loadingBarIntervalRef.current = null
+    }
+    setTopLoadingVisible(true)
+    setTopLoadingProgress(Math.max(0, Math.min(1, initialProgress)))
+  }
+
+  const bumpTopLoadingTo = (target: number) => {
+    setTopLoadingProgress(prev => Math.max(prev, Math.max(0, Math.min(1, target))))
+  }
+
+  const startSoftAdvance = (cap: number = 0.9) => {
+    if (loadingBarIntervalRef.current) return
+    loadingBarIntervalRef.current = window.setInterval(() => {
+      setTopLoadingProgress(prev => {
+        const max = Math.max(prev, Math.min(0.98, cap))
+        if (prev >= max) return prev
+        const step = Math.min(0.015 + Math.random() * 0.02, max - prev)
+        return prev + step
+      })
+    }, 180)
+  }
+
+  const stopSoftAdvance = () => {
+    if (loadingBarIntervalRef.current) {
+      window.clearInterval(loadingBarIntervalRef.current)
+      loadingBarIntervalRef.current = null
+    }
+  }
+
+  const finishTopLoading = () => {
+    stopSoftAdvance()
+    bumpTopLoadingTo(1)
+    loadingBarHideTimeoutRef.current = window.setTimeout(() => {
+      setTopLoadingVisible(false)
+      setTopLoadingProgress(0)
+      loadingBarHideTimeoutRef.current = null
+    }, 350)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (loadingBarIntervalRef.current) window.clearInterval(loadingBarIntervalRef.current)
+      if (loadingBarHideTimeoutRef.current) window.clearTimeout(loadingBarHideTimeoutRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     loadSchedules()
@@ -31,15 +88,18 @@ export default function HistoryPage() {
 
   const loadSchedules = async () => {
     setLoading(true)
+    startTopLoading(0.05)
     try {
       // Query all schedules that have any allocation data
       // Prefer workflow_state for completion badges when available (legacy-safe fallback).
+      bumpTopLoadingTo(0.15)
       let { data: scheduleData, error: scheduleError } = await supabase
         .from('daily_schedules')
         .select('id, date, workflow_state')
         .order('date', { ascending: false })
 
       if (scheduleError && scheduleError.message?.includes('column')) {
+        bumpTopLoadingTo(0.2)
         const fallback = await supabase
           .from('daily_schedules')
           .select('id, date')
@@ -50,18 +110,22 @@ export default function HistoryPage() {
 
       if (scheduleError) {
         console.error('Error loading schedules:', scheduleError)
+        finishTopLoading()
         setLoading(false)
         return
       }
 
       if (!scheduleData || scheduleData.length === 0) {
         setSchedules([])
+        finishTopLoading()
         setLoading(false)
         return
       }
 
       // For each schedule, check which allocation tables have data
       const scheduleIds = scheduleData.map(s => s.id)
+      bumpTopLoadingTo(0.3)
+      startSoftAdvance(0.7)
       
       const [therapistData, pcaData, bedData] = await Promise.all([
         supabase
@@ -78,6 +142,9 @@ export default function HistoryPage() {
           .in('schedule_id', scheduleIds)
       ])
 
+      stopSoftAdvance()
+      bumpTopLoadingTo(0.85)
+
       // Create sets of schedule IDs that have each type of allocation
       const hasTherapist = new Set(therapistData.data?.map(a => a.schedule_id) || [])
       const hasPCA = new Set(pcaData.data?.map(a => a.schedule_id) || [])
@@ -87,6 +154,8 @@ export default function HistoryPage() {
       const schedulesWithData = scheduleData.filter(s => 
         hasTherapist.has(s.id) || hasPCA.has(s.id) || hasBed.has(s.id)
       )
+
+      bumpTopLoadingTo(0.92)
 
       // Build schedule entries
       const entries: ScheduleHistoryEntry[] = schedulesWithData.map(schedule => {
@@ -114,9 +183,12 @@ export default function HistoryPage() {
         }
       })
 
+      bumpTopLoadingTo(0.98)
       setSchedules(entries)
+      finishTopLoading()
     } catch (error) {
       console.error('Error loading schedule history:', error)
+      finishTopLoading()
     } finally {
       setLoading(false)
     }
@@ -141,14 +213,21 @@ export default function HistoryPage() {
     
     try {
       // Delete schedules (cascade will handle related allocations)
-      const { error } = await supabase
+      const { error, data } = await supabase
         .from('daily_schedules')
         .delete()
         .in('id', scheduleIds)
+        .select()
 
       if (error) {
         console.error('Error deleting schedules:', error)
-        alert('Failed to delete schedules. Please try again.')
+        alert(`Failed to delete schedules: ${error.message}`)
+        return
+      }
+
+      // Check if any rows were actually deleted (RLS might silently block)
+      if (!data || data.length === 0) {
+        alert('Failed to delete schedules: Permission denied. Only admins can delete schedules.')
         return
       }
 
@@ -172,6 +251,15 @@ export default function HistoryPage() {
 
   return (
     <div className="container mx-auto p-4">
+      {/* Thin top loading bar */}
+      {topLoadingVisible && (
+        <div className="fixed top-0 left-0 right-0 h-[3px] z-[99999] bg-transparent">
+          <div
+            className="h-full bg-sky-500 transition-[width] duration-200 ease-out"
+            style={{ width: `${Math.round(topLoadingProgress * 100)}%` }}
+          />
+        </div>
+      )}
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-bold">Schedule History</h1>
         {selectedScheduleIds.size > 0 && (

@@ -33,12 +33,12 @@ import { FloatingPCAConfigDialog } from '@/components/allocation/FloatingPCAConf
 import { NonFloatingSubstitutionDialog } from '@/components/allocation/NonFloatingSubstitutionDialog'
 import { SpecialProgramOverrideDialog } from '@/components/allocation/SpecialProgramOverrideDialog'
 import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopover'
-import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X, ArrowLeft, Copy } from 'lucide-react'
+import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X, ArrowLeft, Copy, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { CalendarGrid } from '@/components/ui/calendar-grid'
 import { Tooltip } from '@/components/ui/tooltip'
 import { getHongKongHolidays } from '@/lib/utils/hongKongHolidays'
-import { getNextWorkingDay, getPreviousWorkingDay } from '@/lib/utils/dateHelpers'
+import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { allocateTherapists, StaffData, AllocationContext } from '@/lib/algorithms/therapistAllocation'
@@ -57,15 +57,22 @@ import {
   programNamesToIds,
   assertValidSpecialProgramIds,
   SpecialProgramRef,
+  prepareTherapistAllocationForDb,
+  preparePCAAllocationForDb,
 } from '@/lib/db/types'
 import { useAllocationSync } from '@/lib/hooks/useAllocationSync'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
+import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
+import { createTimingCollector, type TimingReport } from '@/lib/utils/timing'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 const WEEKDAYS: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri']
 const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+
+// Cache RPC availability to avoid repeated failing calls when migrations aren't applied yet.
+let cachedSaveScheduleRpcAvailable: boolean | null = null
 
 // Step definitions for step-wise allocation workflow
 const ALLOCATION_STEPS = [
@@ -113,6 +120,24 @@ function SchedulePageContent() {
   const searchParams = useSearchParams()
   const supabase = createClientComponentClient()
   const [selectedDate, setSelectedDate] = useState<Date>(DEFAULT_DATE)
+  
+  // Read date from URL query parameter on mount and when searchParams change
+  useEffect(() => {
+    const dateParam = searchParams.get('date')
+    
+    if (dateParam) {
+      try {
+        const parsedDate = parseDateFromInput(dateParam)
+        
+        // Only update if the date is different to avoid infinite loops
+        if (parsedDate.getTime() !== selectedDate.getTime()) {
+          setSelectedDate(parsedDate)
+        }
+      } catch (error) {
+        console.error('Error parsing date from URL:', error)
+      }
+    }
+  }, [searchParams]) // Only depend on searchParams, not selectedDate to avoid loops
   const [showBackButton, setShowBackButton] = useState(false)
   const [therapistAllocations, setTherapistAllocations] = useState<Record<Team, (TherapistAllocation & { staff: Staff })[]>>({
     FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
@@ -138,6 +163,13 @@ function SchedulePageContent() {
   const [actionToast, setActionToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null)
   const [highlightDateKey, setHighlightDateKey] = useState<string | null>(null)
   const [isDateHighlighted, setIsDateHighlighted] = useState(false)
+  const [lastSaveTiming, setLastSaveTiming] = useState<TimingReport | null>(null)
+  const [lastCopyTiming, setLastCopyTiming] = useState<TimingReport | null>(null)
+  const [topLoadingVisible, setTopLoadingVisible] = useState(false)
+  const [topLoadingProgress, setTopLoadingProgress] = useState(0)
+  const loadingBarIntervalRef = useRef<number | null>(null)
+  const loadingBarHideTimeoutRef = useRef<number | null>(null)
+  const [copying, setCopying] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [editingStaffId, setEditingStaffId] = useState<string | null>(null)
   const [tieBreakDialogOpen, setTieBreakDialogOpen] = useState(false)
@@ -644,6 +676,25 @@ function SchedulePageContent() {
         if (staff.length > 0 && specialPrograms.length >= 0 && sptAllocations.length >= 0) {
           // If we have saved PCA allocations, use them directly instead of regenerating
           const resultAny = result as any
+          const loadedWorkflowState: WorkflowState | null = (resultAny?.workflowState ?? null) as any
+          if (loadedWorkflowState && typeof loadedWorkflowState === 'object') {
+            if (loadedWorkflowState.currentStep) {
+              setCurrentStep(loadedWorkflowState.currentStep)
+            }
+            if (Array.isArray(loadedWorkflowState.completedSteps)) {
+              const baseStatus: Record<string, 'pending' | 'completed' | 'modified'> = {
+                'leave-fte': 'pending',
+                'therapist-pca': 'pending',
+                'floating-pca': 'pending',
+                'bed-relieving': 'pending',
+                'review': 'pending',
+              }
+              loadedWorkflowState.completedSteps.forEach((stepId: string) => {
+                if (baseStatus[stepId]) baseStatus[stepId] = 'completed'
+              })
+              setStepStatus(baseStatus)
+            }
+          }
           if (resultAny && resultAny.pcaAllocs && resultAny.pcaAllocs.length > 0) {
             // Use saved allocations directly - no need to re-run algorithm
             useSavedAllocations(resultAny.therapistAllocs, resultAny.pcaAllocs, resultAny.overrides)
@@ -656,15 +707,14 @@ function SchedulePageContent() {
             const hasTherapistData = resultAny.therapistAllocs && resultAny.therapistAllocs.length > 0
             const hasPCAData = resultAny.pcaAllocs && resultAny.pcaAllocs.length > 0
 
+            const workflowState: WorkflowState | null = resultAny.workflowState ?? persistedWorkflowState
             let newStepStatus: Record<string, 'pending' | 'completed' | 'modified'> = {
               'leave-fte': hasLeaveData ? 'completed' : 'pending',
               'therapist-pca': hasTherapistData ? 'completed' : 'pending',
-              'floating-pca': hasPCAData ? 'completed' : 'pending',
-              'bed-relieving': 'completed',
+              'floating-pca': 'pending',
+              'bed-relieving': 'pending',
               'review': 'pending',
             }
-
-            const workflowState: WorkflowState | null = resultAny.workflowState ?? persistedWorkflowState
             if (workflowState && Array.isArray(workflowState.completedSteps)) {
               workflowState.completedSteps.forEach(stepId => {
                 if (newStepStatus[stepId]) {
@@ -675,6 +725,11 @@ function SchedulePageContent() {
                 setCurrentStep(workflowState.currentStep)
               }
             } else {
+              // Legacy fallback: infer completion from data presence.
+              newStepStatus = {
+                ...newStepStatus,
+                'floating-pca': hasPCAData ? 'completed' : 'pending',
+              }
               // Fallback: if all steps have data, go directly to review
               const allStepsCompleted =
                 hasLeaveData &&
@@ -689,10 +744,132 @@ function SchedulePageContent() {
 
             setStepStatus(newStepStatus)
           } else if (result && result.overrides) {
-            // No saved PCA allocations, generate new ones
-            generateAllocationsWithOverrides(result.overrides)
+            // No saved allocations: do NOT auto-run algorithms.
+            // Show step-gated baseline view (Step 1) and wait for user to initialize algorithms.
+            const overrides = (result as any).overrides || {}
+
+            // Baseline therapist allocations (by team) for display only (no SPT allocation logic).
+            const baselineTherapistByTeam: Record<Team, (TherapistAllocation & { staff: Staff })[]> = {
+              FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
+            }
+            staff.forEach(s => {
+              if (!s.team) return
+              if (!['SPT', 'APPT', 'RPT'].includes(s.rank)) return
+              const o = overrides[s.id]
+              const fte = typeof o?.fteRemaining === 'number' ? o.fteRemaining : 1.0
+              const leaveType = (o?.leaveType ?? null) as any
+              // Filter out full-leave therapists from therapist block (they show in leave block)
+              if (fte <= 0) return
+              baselineTherapistByTeam[s.team as Team].push({
+                id: '',
+                schedule_id: '',
+                staff_id: s.id,
+                team: s.team as Team,
+                fte_therapist: fte,
+                fte_remaining: Math.max(0, 1.0 - fte),
+                slot_whole: null,
+                slot1: null,
+                slot2: null,
+                slot3: null,
+                slot4: null,
+                leave_type: leaveType,
+                special_program_ids: null,
+                is_substitute_team_head: false,
+                spt_slot_display: null,
+                is_manual_override: false,
+                manual_override_note: null,
+                staff: s,
+              } as any)
+            })
+            setTherapistAllocations(baselineTherapistByTeam)
+
+            // Baseline PCA allocations: show non-floating PCAs in their home team only.
+            const baselinePCAByTeam: Record<Team, (PCAAllocation & { staff: Staff })[]> = {
+              FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
+            }
+            staff.forEach(s => {
+              if (!s.team) return
+              if (s.rank !== 'PCA') return
+              if (s.floating) return
+              const o = overrides[s.id]
+              const fte = typeof o?.fteRemaining === 'number' ? o.fteRemaining : (s.status === 'buffer' && s.buffer_fte != null ? (s.buffer_fte as any) : 1.0)
+              if (fte <= 0) return
+              baselinePCAByTeam[s.team as Team].push({
+                id: '',
+                schedule_id: '',
+                staff_id: s.id,
+                team: s.team as Team,
+                fte_pca: fte,
+                fte_remaining: fte,
+                slot_assigned: 0,
+                slot_whole: null,
+                slot1: null,
+                slot2: null,
+                slot3: null,
+                slot4: null,
+                leave_type: (o?.leaveType ?? null) as any,
+                special_program_ids: null,
+                invalid_slot: null,
+                leave_comeback_time: null,
+                leave_mode: null,
+                staff: s,
+              } as any)
+            })
+            TEAMS.forEach(team => {
+              baselinePCAByTeam[team].sort((a, b) => {
+                const aName = a.staff?.name ?? ''
+                const bName = b.staff?.name ?? ''
+                return aName.localeCompare(bName)
+              })
+            })
+            setPcaAllocations(baselinePCAByTeam)
+            setPendingPCAFTEPerTeam({ FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 })
+            setBedAllocations([])
+            setInitializedSteps(new Set())
+
+            // Re-apply workflow state deterministically for this load (prevents transient stale "review" UI)
+            const ws: WorkflowState = (loadedWorkflowState && typeof loadedWorkflowState === 'object')
+              ? loadedWorkflowState
+              : { currentStep: 'leave-fte', completedSteps: [] }
+            setCurrentStep(ws.currentStep ?? 'leave-fte')
+            const nextStatus: Record<string, 'pending' | 'completed' | 'modified'> = {
+              'leave-fte': 'pending',
+              'therapist-pca': 'pending',
+              'floating-pca': 'pending',
+              'bed-relieving': 'pending',
+              'review': 'pending',
+            }
+            if (Array.isArray(ws.completedSteps)) {
+              ws.completedSteps.forEach(stepId => {
+                if (nextStatus[stepId]) nextStatus[stepId] = 'completed'
+              })
+            }
+            setStepStatus(nextStatus)
           } else {
-            generateAllocations()
+            // No overrides and no saved allocations: stay in baseline view (do not auto-run algorithms).
+            setTherapistAllocations({ FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: [] })
+            setPcaAllocations({ FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: [] })
+            setBedAllocations([])
+            setPendingPCAFTEPerTeam({ FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 })
+            setInitializedSteps(new Set())
+
+            const ws: WorkflowState = (loadedWorkflowState && typeof loadedWorkflowState === 'object')
+              ? loadedWorkflowState
+              : { currentStep: 'leave-fte', completedSteps: [] }
+            setCurrentStep(ws.currentStep ?? 'leave-fte')
+            const nextStatus: Record<string, 'pending' | 'completed' | 'modified'> = {
+              'leave-fte': 'pending',
+              'therapist-pca': 'pending',
+              'floating-pca': 'pending',
+              'bed-relieving': 'pending',
+              'review': 'pending',
+            }
+            if (Array.isArray(ws.completedSteps)) {
+              ws.completedSteps.forEach(stepId => {
+                if (nextStatus[stepId]) nextStatus[stepId] = 'completed'
+              })
+            }
+            setStepStatus(nextStatus)
           }
         }
       })
@@ -712,8 +889,8 @@ function SchedulePageContent() {
     // Only regenerate if schedule for this date has been loaded AND no saved allocations
     // AND staffOverrides is empty (initial load only, not user edits)
     if (staff.length > 0 && specialPrograms.length >= 0 && sptAllocations.length >= 0 && scheduleLoadedForDate === dateStr && !hasSavedAllocations && Object.keys(staffOverrides).length === 0) {
-      // For fresh schedules with no overrides, auto-generate using old method (backward compatible)
-      generateAllocationsWithOverrides(staffOverrides)
+      // Step-wise workflow: do NOT auto-run algorithms on load.
+      // User must explicitly initialize Step 2/3/4.
     }
   }, [staff, specialPrograms, sptAllocations, wards, pcaPreferences, scheduleLoadedForDate, hasSavedAllocations])
   // NOTE: staffOverrides intentionally removed from dependencies - step-wise workflow controls regeneration
@@ -788,6 +965,62 @@ function SchedulePageContent() {
     }
   }, [calendarOpen, copyWizardOpen, selectedDate])
 
+  // -----------------------------------------------------------------------------
+  // Thin top loading bar (stage-driven, shown for everyone during Save/Copy)
+  // -----------------------------------------------------------------------------
+  const startTopLoading = (initialProgress: number = 0.05) => {
+    if (loadingBarHideTimeoutRef.current) {
+      window.clearTimeout(loadingBarHideTimeoutRef.current)
+      loadingBarHideTimeoutRef.current = null
+    }
+    if (loadingBarIntervalRef.current) {
+      window.clearInterval(loadingBarIntervalRef.current)
+      loadingBarIntervalRef.current = null
+    }
+    setTopLoadingVisible(true)
+    setTopLoadingProgress(Math.max(0, Math.min(1, initialProgress)))
+  }
+
+  const bumpTopLoadingTo = (target: number) => {
+    setTopLoadingProgress(prev => Math.max(prev, Math.max(0, Math.min(1, target))))
+  }
+
+  const startSoftAdvance = (cap: number = 0.9) => {
+    if (loadingBarIntervalRef.current) return
+    loadingBarIntervalRef.current = window.setInterval(() => {
+      setTopLoadingProgress(prev => {
+        const max = Math.max(prev, Math.min(0.98, cap))
+        if (prev >= max) return prev
+        const step = Math.min(0.015 + Math.random() * 0.02, max - prev)
+        return prev + step
+      })
+    }, 180)
+  }
+
+  const stopSoftAdvance = () => {
+    if (loadingBarIntervalRef.current) {
+      window.clearInterval(loadingBarIntervalRef.current)
+      loadingBarIntervalRef.current = null
+    }
+  }
+
+  const finishTopLoading = () => {
+    stopSoftAdvance()
+    bumpTopLoadingTo(1)
+    loadingBarHideTimeoutRef.current = window.setTimeout(() => {
+      setTopLoadingVisible(false)
+      setTopLoadingProgress(0)
+      loadingBarHideTimeoutRef.current = null
+    }, 350)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (loadingBarIntervalRef.current) window.clearInterval(loadingBarIntervalRef.current)
+      if (loadingBarHideTimeoutRef.current) window.clearTimeout(loadingBarHideTimeoutRef.current)
+    }
+  }, [])
+
   const applyBaselineSnapshot = (snapshot: BaselineSnapshot) => {
     setBaselineSnapshot(snapshot)
 
@@ -846,12 +1079,25 @@ function SchedulePageContent() {
     all.forEach(s => {
       if (!s?.id) return
       const status = (s as any).status ?? (bufferStaff.some(b => b.id === s.id) ? 'buffer' : 'active')
-      byId.set(s.id, { ...(byId.get(s.id) || {}), ...s, status })
+      // Snapshot should be a minimal projection to reduce JSONB size.
+      // (DB rows may contain extra metadata fields we don't need in the schedule snapshot.)
+      byId.set(s.id, {
+        ...(byId.get(s.id) || {}),
+        id: s.id,
+        name: s.name,
+        rank: s.rank,
+        team: s.team ?? null,
+        floating: !!s.floating,
+        floor_pca: s.floor_pca ?? null,
+        special_program: s.special_program ?? null,
+        status,
+        buffer_fte: (s as any).buffer_fte ?? (s as any).bufferFte ?? undefined,
+      })
     })
 
     return {
       staff: Array.from(byId.values()) as any,
-      specialPrograms: specialPrograms as any,
+      specialPrograms: minifySpecialProgramsForSnapshot(specialPrograms) as any,
       sptAllocations: sptAllocations as any,
       wards: wards as any,
       pcaPreferences: pcaPreferences as any,
@@ -879,19 +1125,19 @@ function SchedulePageContent() {
     const [activeRes, inactiveRes, bufferRes] = await Promise.all([
       supabase
         .from('staff')
-        .select('*')
+        .select('id,name,rank,special_program,team,floating,floor_pca,status,buffer_fte')
         .eq('status', 'active')  // Load active staff for allocations
         .order('rank', { ascending: true })
         .order('name', { ascending: true }),
       supabase
         .from('staff')
-        .select('*')
+        .select('id,name,rank,special_program,team,floating,floor_pca,status,buffer_fte')
         .eq('status', 'inactive')  // Load inactive staff for inactive pool
         .order('rank', { ascending: true })
         .order('name', { ascending: true }),
       supabase
         .from('staff')
-        .select('*')
+        .select('id,name,rank,special_program,team,floating,floor_pca,status,buffer_fte')
         .eq('status', 'buffer')  // Load buffer staff
         .order('rank', { ascending: true })
         .order('name', { ascending: true })
@@ -963,7 +1209,9 @@ function SchedulePageContent() {
   }
 
   const loadSpecialPrograms = async () => {
-    const { data } = await supabase.from('special_programs').select('*')
+    const { data } = await supabase
+      .from('special_programs')
+      .select('id,name,staff_ids,weekdays,slots,fte_subtraction,pca_required,therapist_preference_order,pca_preference_order')
     if (data) {
       setSpecialPrograms(data as SpecialProgram[])
     }
@@ -1053,6 +1301,7 @@ function SchedulePageContent() {
     }
     
     let scheduleId: string
+    let effectiveWorkflowState: WorkflowState | null = null
     if (!scheduleData) {
       // Create new schedule if it doesn't exist
       // Immediately snapshot current dashboard state for this new schedule to prevent cross-date contamination.
@@ -1063,6 +1312,7 @@ function SchedulePageContent() {
         source: 'save',
       })
       const initialWorkflowState: WorkflowState = { currentStep: 'leave-fte', completedSteps: [] }
+      effectiveWorkflowState = initialWorkflowState
 
       let newSchedule: { id: string } | null = null
       let error: any = null
@@ -1141,13 +1391,16 @@ function SchedulePageContent() {
       applyBaselineSnapshot(data)
     }
 
-    // Load workflow state if present
+    // Load workflow state if present (for newly created schedules we already set effectiveWorkflowState above)
     const rawWorkflowState = (scheduleData as any)?.workflow_state as WorkflowState | undefined
-    if (rawWorkflowState && typeof rawWorkflowState === 'object') {
-      setPersistedWorkflowState(rawWorkflowState)
-    } else {
-      setPersistedWorkflowState(null)
+    if (!effectiveWorkflowState) {
+      if (rawWorkflowState && typeof rawWorkflowState === 'object') {
+        effectiveWorkflowState = rawWorkflowState
+      } else {
+        effectiveWorkflowState = { currentStep: 'leave-fte', completedSteps: [] }
+      }
     }
+    setPersistedWorkflowState(effectiveWorkflowState)
     
     // Load therapist allocations
     const { data: therapistAllocs } = await supabase
@@ -1160,6 +1413,14 @@ function SchedulePageContent() {
       .from('schedule_pca_allocations')
       .select('*')
       .eq('schedule_id', scheduleId)
+    
+    // Load bed allocations (step 4) so we don't leak state across dates.
+    // If none exist for this date, clear local bed allocations.
+    const { data: bedAllocs } = await supabase
+      .from('schedule_bed_allocations')
+      .select('*')
+      .eq('schedule_id', scheduleId)
+    setBedAllocations((bedAllocs || []) as any)
 
     // If this is a legacy/blank schedule with no snapshot yet, create snapshot once.
     // Do NOT overwrite if the schedule already has a snapshot (e.g., created via copy API).
@@ -1305,8 +1566,17 @@ function SchedulePageContent() {
           referencedStaffIds: referencedIds,
           fetchLiveStaffByIds: async (ids) => {
             if (ids.length === 0) return []
-            const { data } = await supabase.from('staff').select('*').in('id', ids)
-            return (data || []) as any[]
+            const attempt = await supabase
+              .from('staff')
+              .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program')
+              .in('id', ids)
+            if (!attempt.error) return (attempt.data || []) as any[]
+            // Legacy fallback: older schemas may not have status/buffer_fte columns
+            if (attempt.error.message?.includes('column') || (attempt.error as any)?.code === '42703') {
+              const fallback = await supabase.from('staff').select('*').in('id', ids)
+              return (fallback.data || []) as any[]
+            }
+            return (attempt.data || []) as any[]
           },
           buildFallbackBaseline: buildBaselineSnapshotFromCurrentState,
           sourceForNewEnvelope: 'save',
@@ -1340,7 +1610,7 @@ function SchedulePageContent() {
       baselineSnapshot: hasBaselineSnapshot
         ? unwrapBaselineSnapshotStored(rawBaselineSnapshotStored as BaselineSnapshotStored).data
         : null,
-      workflowState: rawWorkflowState ?? null,
+      workflowState: effectiveWorkflowState,
     } as any
   }
 
@@ -1760,13 +2030,20 @@ function SchedulePageContent() {
       bedsForRelieving[team] = expectedBeds - totalBedsDesignated
     })
     
-    const bedContext: BedAllocationContext = {
-      bedsForRelieving,
-      wards: wards.map(w => ({ name: w.name, team_assignments: w.team_assignments })),
+    const shouldComputeBeds =
+      stepStatus['bed-relieving'] === 'completed' || currentStep === 'bed-relieving' || currentStep === 'review'
+
+    if (shouldComputeBeds) {
+      const bedContext: BedAllocationContext = {
+        bedsForRelieving,
+        wards: wards.map(w => ({ name: w.name, team_assignments: w.team_assignments })),
+      }
+
+      const bedResult = allocateBeds(bedContext)
+      setBedAllocations(bedResult.allocations)
+    } else {
+      setBedAllocations([])
     }
-    
-    const bedResult = allocateBeds(bedContext)
-    setBedAllocations(bedResult.allocations)
     
     // Calculate schedule calculations for Block 5 and 6
     const scheduleCalcs: Record<Team, ScheduleCalculations | null> = {
@@ -2250,45 +2527,7 @@ function SchedulePageContent() {
         averagePCAPerTeam['DRO'] += drmPcaFteAddon
       }
 
-      // Tie-breaking callback for PCA allocation
-      const handleTieBreak = async (teams: Team[], pendingFTE: number): Promise<Team> => {
-        // Create a unique key for this tie-breaker situation
-        const sortedTeams = [...teams].sort().join(',')
-        const tieBreakKey = `${sortedTeams}:${pendingFTE.toFixed(4)}`
-        
-        // Check if we have a stored decision for this tie-breaker
-        if (tieBreakDecisions[tieBreakKey]) {
-          return tieBreakDecisions[tieBreakKey]
-        }
-        
-        // In step 1, we should NOT prompt for tie-breakers
-        // - With loaded data: allocations are already done, just recalculating values
-        // - With fresh data: allocation shouldn't run yet (wait until step 2)
-        // If no stored decision exists, use alphabetical order to avoid prompting user
-        if (currentStep === 'leave-fte') {
-          // Return first team alphabetically to avoid prompting
-          return sortedTeams.split(',')[0] as Team
-        }
-        
-        // No stored decision - ask the user
-        return new Promise((resolve) => {
-          setTieBreakTeams(teams)
-          setTieBreakPendingFTE(pendingFTE)
-          const resolver = (selectedTeam: Team) => {
-            // Store the decision using functional update to avoid stale closure
-            setTieBreakDecisions((prevDecisions) => {
-              const newDecisions = { ...prevDecisions, [tieBreakKey]: selectedTeam }
-              return newDecisions
-            })
-            resolve(selectedTeam)
-          }
-          // Wrap in arrow function to prevent React from treating resolver as a functional update
-          setTieBreakResolver(() => resolver)
-          tieBreakResolverRef.current = resolver
-          setTieBreakDialogOpen(true)
-        })
-      }
-
+      // Step 2 does NOT trigger tie-breakers - Step 3 handles them comprehensively
       // Use raw values (before rounding) for accurate pending calculation
       // Rounding is only for display/fair allocation, but pending calculation needs raw values
       const pcaContext: PCAAllocationContext = {
@@ -2299,7 +2538,7 @@ function SchedulePageContent() {
         specialPrograms,
         pcaPreferences,
         // gymSchedules removed - now comes from pcaPreferences
-        onTieBreak: handleTieBreak,
+        // onTieBreak removed - Step 2 does not trigger tie-breakers (handled in Step 3)
       }
 
       const pcaResult = await allocatePCA(pcaContext)
@@ -2363,7 +2602,7 @@ function SchedulePageContent() {
 
       setPcaAllocations(pcaByTeam)
 
-      // Store pending PCA FTE per team for unmet needs tracking
+      // Store pending PCA FTE per team (used for Step 3 dialog)
       // Apply custom rounding to initial pending values (raw values used for tie-breaking internally)
       const roundedPendingValues: Record<Team, number> = {
         FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
@@ -2420,13 +2659,20 @@ function SchedulePageContent() {
         bedsForRelieving[team] = expectedBeds - totalBedsDesignated
       })
 
-      const bedContext: BedAllocationContext = {
-        bedsForRelieving,
-        wards: wards.map(w => ({ name: w.name, team_assignments: w.team_assignments })),
-      }
+      const shouldComputeBeds =
+        stepStatus['bed-relieving'] === 'completed' || currentStep === 'bed-relieving' || currentStep === 'review'
 
-      const bedResult = allocateBeds(bedContext)
-      setBedAllocations(bedResult.allocations)
+      if (shouldComputeBeds) {
+        const bedContext: BedAllocationContext = {
+          bedsForRelieving,
+          wards: wards.map(w => ({ name: w.name, team_assignments: w.team_assignments })),
+        }
+
+        const bedResult = allocateBeds(bedContext)
+        setBedAllocations(bedResult.allocations)
+      } else {
+        setBedAllocations([])
+      }
 
       // Calculate schedule calculations for each team
       const scheduleCalculations: Record<Team, ScheduleCalculations | null> = {
@@ -4185,6 +4431,15 @@ function SchedulePageContent() {
 
   // Save all changes to database (batch save)
   const saveScheduleToDatabase = async () => {
+    const timer = createTimingCollector()
+    let usedRpc = false
+    let snapshotWritten = false
+    let snapshotBytes: number | null = null
+    let specialProgramsBytes: number | null = null
+    let saveError: unknown = null
+    startTopLoading(0.06)
+    bumpTopLoadingTo(0.12)
+
     // Get the latest overrides - use current state
     let overridesToSave = { ...staffOverrides }
     let scheduleId = currentScheduleId
@@ -4193,12 +4448,17 @@ function SchedulePageContent() {
       const result = await loadScheduleForDate(selectedDate)
       if (!result || !result.scheduleId) {
         alert('Error: Could not create schedule. Please try again.')
+        timer.stage('ensureScheduleRow')
+        setLastSaveTiming(timer.finalize({ ok: false }))
+        finishTopLoading()
         return
       }
       scheduleId = result.scheduleId
       // Merge loaded overrides with current overrides (current takes precedence)
       overridesToSave = { ...result.overrides, ...staffOverrides }
     }
+    timer.stage('ensureScheduleRow')
+    bumpTopLoadingTo(0.2)
 
     setSaving(true)
     try {
@@ -4321,167 +4581,117 @@ function SchedulePageContent() {
           fteSubtraction: override.fteSubtraction // Pass fteSubtraction to save function
         })
       })
-
-      // Save all allocations
-      const promises: PromiseLike<any>[] = []
+      timer.stage('collectAllocations')
+      bumpTopLoadingTo(0.32)
 
       // Build special programs reference for UUID conversion
       const specialProgramsRef: SpecialProgramRef[] = specialPrograms.map(sp => ({ id: sp.id, name: sp.name }))
 
+      // Prepare bulk rows for upsert/insert
+      const therapistRows: any[] = []
+      const pcaRows: any[] = []
+
       for (const item of allocationsToSave) {
         if (item.isTherapist) {
           const alloc = item.alloc as TherapistAllocation | null
-          
-          // Use centralized type conversion utilities from lib/db/types.ts
-          const dbLeaveType = toDbLeaveType(item.leaveType)
-          const customLeaveTypeNote = isCustomLeaveType(item.leaveType) ? item.leaveType : null
-          
-          // Convert special program names to UUIDs if needed
-          let programIds = alloc?.special_program_ids || []
-          if (programIds.length > 0) {
-            // Validate/convert to UUIDs
-            const converted = programNamesToIds(programIds, specialProgramsRef)
-            programIds = converted || []
-          }
-          
-          // Validate UUIDs before save
-          try {
-            assertValidSpecialProgramIds(programIds, `therapist ${item.staffId}`)
-          } catch (validationError) {
-            console.error('Validation error:', validationError)
-            programIds = [] // Reset to empty on validation failure
-          }
-          
-          const allocationData = {
+          const rawTherapist = {
             schedule_id: scheduleId,
             staff_id: item.staffId,
             team: item.team,
-            fte_therapist: normalizeFTE(item.fteRemaining),
-            fte_remaining: normalizeFTE(Math.max(0, 1 - item.fteRemaining)),
-            leave_type: dbLeaveType,
-            slot1: alloc?.slot1 || item.team,
-            slot2: alloc?.slot2 || item.team,
-            slot3: alloc?.slot3 || item.team,
-            slot4: alloc?.slot4 || item.team,
-            special_program_ids: programIds,
-            is_substitute_team_head: alloc?.is_substitute_team_head || false,
-            spt_slot_display: alloc?.spt_slot_display || null,
-            is_manual_override: alloc?.is_manual_override || !!customLeaveTypeNote,
-            manual_override_note: customLeaveTypeNote !== null ? customLeaveTypeNote : (alloc?.manual_override_note || null),
+            fte_therapist: item.fteRemaining,
+            fte_remaining: Math.max(0, 1 - item.fteRemaining),
+            slot_whole: (alloc as any)?.slot_whole ?? null,
+            slot1: alloc?.slot1 ?? item.team,
+            slot2: alloc?.slot2 ?? item.team,
+            slot3: alloc?.slot3 ?? item.team,
+            slot4: alloc?.slot4 ?? item.team,
+            leave_type: item.leaveType,
+            special_program_ids: alloc?.special_program_ids ?? null,
+            is_substitute_team_head: alloc?.is_substitute_team_head ?? false,
+            spt_slot_display: alloc?.spt_slot_display ?? null,
+            is_manual_override: alloc?.is_manual_override ?? false,
+            manual_override_note: alloc?.manual_override_note ?? null,
           }
 
-          // Check if exists
-          const { data: existing, error: checkError } = await supabase
-            .from('schedule_therapist_allocations')
-            .select('id')
-            .eq('schedule_id', scheduleId)
-            .eq('staff_id', item.staffId)
-            .maybeSingle()
-
-          if (existing) {
-            const updatePromise = supabase
-              .from('schedule_therapist_allocations')
-              .update(allocationData)
-              .eq('id', existing.id)
-              .select() // Add select to verify update persisted
-            promises.push(updatePromise)
-          } else {
-            const insertPromise = supabase
-              .from('schedule_therapist_allocations')
-              .insert(allocationData)
-              .select() // Add select to verify insert succeeded
-            promises.push(insertPromise)
-          }
+          therapistRows.push(
+            prepareTherapistAllocationForDb({
+              allocation: rawTherapist,
+              specialPrograms: specialProgramsRef,
+            })
+          )
         } else {
           const alloc = item.alloc as PCAAllocation | null
-          
-          // Use centralized type conversion utilities from lib/db/types.ts
-          const dbLeaveType = toDbLeaveType(item.leaveType)
-          
-          // Use actual fte_pca value (no longer rounded down) and calculate fte_remaining/slot_assigned
-          // Handle both slot_assigned (new) and fte_assigned (old) during migration transition
-          const baseFTEPCA = alloc?.fte_pca ?? item.fteRemaining
-          const slotAssigned = (alloc as any)?.slot_assigned ?? (alloc as any)?.fte_assigned ?? 0
-          const fteRemaining = alloc?.fte_remaining ?? Math.max(0, baseFTEPCA - slotAssigned)
 
-          // Convert special program names to UUIDs if needed
-          let programIds = alloc?.special_program_ids || []
-          if (programIds.length > 0) {
-            const converted = programNamesToIds(programIds, specialProgramsRef)
-            programIds = converted || []
-          }
-          
-          // Validate UUIDs before save
-          try {
-            assertValidSpecialProgramIds(programIds, `PCA ${item.staffId}`)
-          } catch (validationError) {
-            console.error('Validation error:', validationError)
-            programIds = [] // Reset to empty on validation failure
-          }
-          
+          // Base FTE comes from override (Step 1 single source of truth) if present,
+          // otherwise fall back to existing allocation value.
           const override = overridesToSave[item.staffId]
-          const allocationData: any = {
+          const baseFTEPCA = override?.fteRemaining ?? alloc?.fte_pca ?? item.fteRemaining
+          const slotAssigned = (alloc as any)?.slot_assigned ?? (alloc as any)?.fte_assigned ?? 0
+          const fteRemaining = Math.max(0, baseFTEPCA - slotAssigned)
+
+          const rawPCA = {
             schedule_id: scheduleId,
             staff_id: item.staffId,
             team: item.team,
-            fte_pca: normalizeFTE(baseFTEPCA), // Normalized to 2 decimal places
-            fte_remaining: normalizeFTE(fteRemaining),
-            slot_assigned: normalizeFTE(slotAssigned), // Renamed from fte_assigned - use batch migration to update DB
-            leave_type: dbLeaveType,
-            slot1: alloc?.slot1 || item.team,
-            slot2: alloc?.slot2 || item.team,
-            slot3: alloc?.slot3 || item.team,
-            slot4: alloc?.slot4 || item.team,
-            special_program_ids: programIds,
-            // Always include optional fields (null if not set)
-            invalid_slot: item.invalidSlot ?? alloc?.invalid_slot ?? null,
-            leave_comeback_time: item.leaveComebackTime ?? alloc?.leave_comeback_time ?? null,
-            leave_mode: item.isLeave !== undefined 
-              ? (item.isLeave ? 'leave' : 'come_back')
-              : (alloc?.leave_mode ?? null),
-            // Note: fte_subtraction is not stored in database - it's calculated from staffOverrides when needed
+            fte_pca: baseFTEPCA,
+            fte_remaining: fteRemaining,
+            slot_assigned: slotAssigned,
+            slot_whole: (alloc as any)?.slot_whole ?? null,
+            slot1: (alloc as any)?.slot1 ?? item.team,
+            slot2: (alloc as any)?.slot2 ?? item.team,
+            slot3: (alloc as any)?.slot3 ?? item.team,
+            slot4: (alloc as any)?.slot4 ?? item.team,
+            leave_type: item.leaveType,
+            special_program_ids: (alloc as any)?.special_program_ids ?? null,
+            invalid_slot: item.invalidSlot ?? (alloc as any)?.invalid_slot ?? null,
+            leave_comeback_time: item.leaveComebackTime ?? (alloc as any)?.leave_comeback_time ?? null,
+            leave_mode:
+              item.isLeave !== undefined
+                ? item.isLeave
+                  ? 'leave'
+                  : 'come_back'
+                : ((alloc as any)?.leave_mode ?? null),
           }
 
-          // Check if exists
-          const { data: existing, error: checkError } = await supabase
-            .from('schedule_pca_allocations')
-            .select('id')
-            .eq('schedule_id', scheduleId)
-            .eq('staff_id', item.staffId)
-            .maybeSingle()
-
-          if (existing) {
-            const updatePromise = supabase
-              .from('schedule_pca_allocations')
-              .update(allocationData)
-              .eq('id', existing.id)
-              .select()
-            promises.push(updatePromise)
-          } else {
-            const insertPromise = supabase
-              .from('schedule_pca_allocations')
-              .insert(allocationData)
-              .select()
-            promises.push(insertPromise)
-          }
+          pcaRows.push(
+            preparePCAAllocationForDb({
+              allocation: rawPCA,
+              specialPrograms: specialProgramsRef,
+            })
+          )
         }
       }
+      timer.stage('buildDbRows')
+      bumpTopLoadingTo(0.42)
 
-      const results = await Promise.all(promises)
-      
-      // Check for errors
-      const errors = results.filter(r => r.error)
-      if (errors.length > 0) {
-        console.error('Errors saving schedule:', errors)
-        showActionToast(`Error saving schedule: ${errors[0].error?.message || 'Unknown error'}`, 'error')
-        setSaving(false)
-        return
-      }
-      
-      // Update saved state
-      setSavedOverrides({ ...overridesToSave })
-      setStaffOverrides({ ...overridesToSave }) // Also update staffOverrides with the merged data
-      setSavedEditableBeds({ ...editableBeds }) // Save current bed edits
+      // Schedule calculations: upsert per (schedule_id, team) if available
+      const calcRows = TEAMS.map(team => calculations[team])
+        .filter((c): c is ScheduleCalculations => !!c)
+        .map(c => ({
+          schedule_id: scheduleId,
+          team: c.team,
+          designated_wards: c.designated_wards ?? [],
+          total_beds_designated: c.total_beds_designated,
+          total_beds: c.total_beds,
+          total_pt_on_duty: normalizeFTE(c.total_pt_on_duty),
+          beds_per_pt: normalizeFTE(c.beds_per_pt),
+          pt_per_team: normalizeFTE(c.pt_per_team),
+          beds_for_relieving: normalizeFTE(c.beds_for_relieving),
+          pca_on_duty: normalizeFTE(c.pca_on_duty),
+          total_pt_per_pca: normalizeFTE(c.total_pt_per_pca),
+          total_pt_per_team: normalizeFTE(c.total_pt_per_team),
+          average_pca_per_team: normalizeFTE(c.average_pca_per_team),
+        }))
+
+      // Bed allocations: replace as a whole (fast + avoids requiring extra unique constraints)
+      const bedRows = bedAllocations.map(b => ({
+        schedule_id: scheduleId,
+        from_team: b.from_team,
+        to_team: b.to_team,
+        ward: b.ward,
+        num_beds: b.num_beds,
+        slot: b.slot ?? null,
+      }))
 
       // Persist schedule-level metadata (tie-break decisions, staff_overrides, workflow_state)
       const completedStepsForWorkflow = ALLOCATION_STEPS
@@ -4493,8 +4703,103 @@ function SchedulePageContent() {
         completedSteps: completedStepsForWorkflow,
       }
 
-      // Ensure baseline_snapshot includes any newly-used staff (especially buffer staff created later),
-      // so per-date isolation remains stable for future loads and copy operations.
+      // Optional fast path: server-side RPC transaction (falls back to client-side batch writes)
+      if (cachedSaveScheduleRpcAvailable !== false) {
+        bumpTopLoadingTo(0.55)
+        startSoftAdvance(0.86)
+        const rpcRes = await supabase.rpc('save_schedule_v1', {
+          schedule_id: scheduleId,
+          therapist_allocations: therapistRows,
+          pca_allocations: pcaRows,
+          bed_allocations: bedRows,
+          calculations: calcRows,
+          tie_break_decisions: tieBreakDecisions,
+          staff_overrides: overridesToSave,
+          workflow_state: workflowStateToSave,
+        })
+
+        if (!rpcRes.error) {
+          cachedSaveScheduleRpcAvailable = true
+          usedRpc = true
+        } else {
+          // Cache "not available" only for "function missing" style errors.
+          const msg = rpcRes.error.message || ''
+          if (
+            msg.includes('save_schedule_v1') ||
+            msg.includes('Could not find the function') ||
+            (rpcRes.error as any)?.code === 'PGRST202'
+          ) {
+            cachedSaveScheduleRpcAvailable = false
+          }
+          console.warn('save_schedule_v1 RPC failed, falling back to client-side save:', rpcRes.error)
+        }
+      }
+
+      if (!usedRpc) {
+        bumpTopLoadingTo(0.55)
+        startSoftAdvance(0.82)
+        // Client-side bulk writes (dramatically fewer round-trips than per-row update/insert)
+        const upsertPromises: PromiseLike<any>[] = []
+        if (therapistRows.length > 0) {
+          upsertPromises.push(
+            supabase
+              .from('schedule_therapist_allocations')
+              .upsert(therapistRows, { onConflict: 'schedule_id,staff_id' })
+          )
+        }
+        if (pcaRows.length > 0) {
+          upsertPromises.push(
+            supabase
+              .from('schedule_pca_allocations')
+              .upsert(pcaRows, { onConflict: 'schedule_id,staff_id' })
+          )
+        }
+        if (calcRows.length > 0) {
+          upsertPromises.push(
+            supabase.from('schedule_calculations').upsert(calcRows, { onConflict: 'schedule_id,team' })
+          )
+        }
+
+        const bedDeletePromise = supabase.from('schedule_bed_allocations').delete().eq('schedule_id', scheduleId)
+        const [bedDeleteRes, ...upsertResults] = await Promise.all([bedDeletePromise, ...upsertPromises])
+
+        const firstWriteError =
+          (bedDeleteRes as any)?.error || upsertResults.find(r => (r as any)?.error)?.error
+        if (firstWriteError) {
+          console.error('Error saving schedule:', firstWriteError)
+          showActionToast(`Error saving schedule: ${firstWriteError.message || 'Unknown error'}`, 'error')
+          saveError = firstWriteError
+          timer.stage('writeAllocations.error')
+          return
+        }
+
+        if (bedRows.length > 0) {
+          const bedInsertRes = await supabase.from('schedule_bed_allocations').insert(bedRows)
+          if (bedInsertRes.error) {
+            console.error('Error saving bed allocations:', bedInsertRes.error)
+            showActionToast(
+              `Error saving bed allocations: ${bedInsertRes.error.message || 'Unknown error'}`,
+              'error'
+            )
+            saveError = bedInsertRes.error
+            timer.stage('writeAllocations.error')
+            return
+          }
+        }
+      }
+      stopSoftAdvance()
+      timer.stage('writeAllocations')
+      bumpTopLoadingTo(0.86)
+      
+      // Update saved state
+      setSavedOverrides({ ...overridesToSave })
+      setStaffOverrides({ ...overridesToSave }) // Also update staffOverrides with the merged data
+      setSavedEditableBeds({ ...editableBeds }) // Save current bed edits
+
+      // Conditional snapshot refresh:
+      // - Avoid rewriting baseline_snapshot on every save (large JSONB write).
+      // - Refresh only when snapshot health is not ok, referenced staff are missing, legacy/raw detected,
+      //   or when RPT/APPT team transfer overrides need to be reflected in snapshot staff.team.
       try {
         const referencedIds = extractReferencedStaffIds({
           therapistAllocs: allocationsToSave.filter(a => a.isTherapist).map(a => ({ staff_id: a.staffId })),
@@ -4502,123 +4807,173 @@ function SchedulePageContent() {
           staffOverrides: overridesToSave,
         })
 
-        const { data: existingScheduleRow } = await supabase
-          .from('daily_schedules')
-          .select('baseline_snapshot')
-          .eq('id', scheduleId)
-          .maybeSingle()
+        const baselineStaffById = new Map<string, any>()
+        ;(baselineSnapshot?.staff || []).forEach((s: any) => s?.id && baselineStaffById.set(s.id, s))
 
-        const existingBaselineStored = (existingScheduleRow as any)?.baseline_snapshot as BaselineSnapshotStored | undefined
-
-        const result = await validateAndRepairBaselineSnapshot({
-          storedSnapshot: existingBaselineStored,
-          referencedStaffIds: referencedIds,
-          fetchLiveStaffByIds: async (ids) => {
-            if (ids.length === 0) return []
-            const { data } = await supabase.from('staff').select('*').in('id', ids)
-            return (data || []) as any[]
-          },
-          buildFallbackBaseline: buildBaselineSnapshotFromCurrentState,
-          sourceForNewEnvelope: 'save',
+        const missingReferencedIds: string[] = []
+        referencedIds.forEach(id => {
+          if (!baselineStaffById.has(id)) missingReferencedIds.push(id)
         })
 
-        // Persist repaired snapshot back (auto-repair). Always store v1 envelope.
-        await supabase
-          .from('daily_schedules')
-          .update({ baseline_snapshot: result.envelope as any })
-          .eq('id', scheduleId)
+        const hasLegacyWrappedIssue = !!snapshotHealthReport?.issues?.includes('wrappedLegacySnapshot')
+        const needsRepairRefresh =
+          !baselineSnapshot ||
+          !snapshotHealthReport ||
+          snapshotHealthReport.status !== 'ok' ||
+          missingReferencedIds.length > 0 ||
+          hasLegacyWrappedIssue
 
-        setBaselineSnapshot(result.data)
-        setSnapshotHealthReport(result.report)
-      } catch (e) {
-        console.warn('Failed to update baseline snapshot during save:', e)
-      }
-
-      const { error: scheduleMetaError } = await supabase
-        .from('daily_schedules')
-        .update({
-          tie_break_decisions: tieBreakDecisions,
-          staff_overrides: overridesToSave,
-          workflow_state: workflowStateToSave,
-        })
-        .eq('id', scheduleId)
-
-      if (scheduleMetaError) {
-        console.error('Error saving schedule metadata:', scheduleMetaError)
-      } else {
-        setPersistedWorkflowState(workflowStateToSave)
-      }
-      
-      // Log unmet PCA needs (only for past schedules)
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-      const scheduleDate = new Date(selectedDate)
-      scheduleDate.setHours(0, 0, 0, 0)
-      
-      if (scheduleDate <= today) {
-        // Check which teams received floating PCA assignments
-        const teamsWithFloatingPCA = new Set<Team>()
-        
-        for (const item of allocationsToSave) {
-          if (!item.isTherapist && item.alloc) {
-            const alloc = item.alloc as PCAAllocation
-            const staffMember = staff.find(s => s.id === item.staffId)
-            if (staffMember && staffMember.floating) {
-              // This is a floating PCA allocation
-              // Add all teams where slots are assigned
-              if (alloc.slot1) teamsWithFloatingPCA.add(alloc.slot1)
-              if (alloc.slot2) teamsWithFloatingPCA.add(alloc.slot2)
-              if (alloc.slot3) teamsWithFloatingPCA.add(alloc.slot3)
-              if (alloc.slot4) teamsWithFloatingPCA.add(alloc.slot4)
+        // Team transfer overrides for fixed-team therapists (APPT/RPT) should be reflected in snapshot staff.team
+        // to keep per-date isolation consistent for subsequent loads/copies.
+        let hasTeamOverrideChange = false
+        if (baselineSnapshot?.staff && baselineSnapshot.staff.length > 0) {
+          for (const [staffId, o] of Object.entries(overridesToSave)) {
+            const nextTeam = (o as any)?.team as Team | undefined
+            if (!nextTeam) continue
+            const snapRow = baselineStaffById.get(staffId)
+            if (!snapRow) continue
+            const rank = snapRow?.rank
+            if (rank !== 'APPT' && rank !== 'RPT') continue
+            const snapTeam = snapRow?.team ?? null
+            if (snapTeam !== nextTeam) {
+              hasTeamOverrideChange = true
+              break
             }
           }
         }
-        
-        // Log teams with pending > 0 but no floating PCA assigned
-        const unmetNeedsPromises: Promise<any>[] = []
-        TEAMS.forEach(team => {
-          const pending = pendingPCAFTEPerTeam[team]
-          if (pending > 0 && !teamsWithFloatingPCA.has(team)) {
-            // Delete existing record for this schedule and team (if any)
-            const deletePromise = supabase
-              .from('pca_unmet_needs_tracking')
-              .delete()
-              .eq('schedule_id', scheduleId)
-              .eq('team', team)
-            
-            // Insert new record
-            const insertPromise = supabase
-              .from('pca_unmet_needs_tracking')
-              .insert({
-                schedule_id: scheduleId,
-                date: formatDateForInput(selectedDate),
-                team: team,
-                pending_pca_fte: pending,
-              })
-            
-            unmetNeedsPromises.push(deletePromise as unknown as Promise<any>, insertPromise as unknown as Promise<any>)
-          } else if (pending <= 0 || teamsWithFloatingPCA.has(team)) {
-            // Remove record if pending is now 0 or team received floating PCA
-            const deletePromise = supabase
-              .from('pca_unmet_needs_tracking')
-              .delete()
-              .eq('schedule_id', scheduleId)
-              .eq('team', team)
-            unmetNeedsPromises.push(deletePromise as unknown as Promise<any>)
+
+        if (needsRepairRefresh || hasTeamOverrideChange) {
+          let nextSnapshot: BaselineSnapshot
+          let nextReport: SnapshotHealthReport | null = snapshotHealthReport
+
+          if (needsRepairRefresh) {
+            const { data: existingScheduleRow } = await supabase
+              .from('daily_schedules')
+              .select('baseline_snapshot')
+              .eq('id', scheduleId)
+              .maybeSingle()
+
+            const existingBaselineStored = (existingScheduleRow as any)?.baseline_snapshot as
+              | BaselineSnapshotStored
+              | undefined
+
+            const result = await validateAndRepairBaselineSnapshot({
+              storedSnapshot: existingBaselineStored,
+              referencedStaffIds: referencedIds,
+              fetchLiveStaffByIds: async (ids) => {
+                if (ids.length === 0) return []
+                const attempt = await supabase
+                  .from('staff')
+                  .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program')
+                  .in('id', ids)
+                if (!attempt.error) return (attempt.data || []) as any[]
+                // Legacy fallback: older schemas may not have status/buffer_fte columns
+                if (attempt.error.message?.includes('column') || (attempt.error as any)?.code === '42703') {
+                  const fallback = await supabase.from('staff').select('*').in('id', ids)
+                  return (fallback.data || []) as any[]
+                }
+                return (attempt.data || []) as any[]
+              },
+              buildFallbackBaseline: buildBaselineSnapshotFromCurrentState,
+              sourceForNewEnvelope: 'save',
+            })
+
+            nextSnapshot = result.data
+            nextReport = result.report
+          } else {
+            nextSnapshot = baselineSnapshot
           }
-        })
-        
-        if (unmetNeedsPromises.length > 0) {
-          await Promise.all(unmetNeedsPromises)
+
+          // Apply APPT/RPT team overrides onto snapshot staff rows when needed
+          if (hasTeamOverrideChange && nextSnapshot?.staff) {
+            const patchedStaff = nextSnapshot.staff.map((s: any) => {
+              const o = overridesToSave[s.id]
+              const nextTeam = (o as any)?.team as Team | undefined
+              if (!nextTeam) return s
+              if (s.rank !== 'APPT' && s.rank !== 'RPT') return s
+              if ((s.team ?? null) === nextTeam) return s
+              return { ...s, team: nextTeam }
+            })
+            nextSnapshot = { ...(nextSnapshot as any), staff: patchedStaff }
+          }
+
+          // Persist updated snapshot back. Always store v1 envelope.
+          const minifiedSnapshot: BaselineSnapshot = {
+            ...(nextSnapshot as any),
+            specialPrograms: minifySpecialProgramsForSnapshot((nextSnapshot as any).specialPrograms || []) as any,
+          }
+          if (userRole === 'admin') {
+            try {
+              specialProgramsBytes = JSON.stringify((minifiedSnapshot as any).specialPrograms || []).length
+              snapshotBytes = JSON.stringify(buildBaselineSnapshotEnvelope({ data: minifiedSnapshot, source: 'save' }) as any).length
+            } catch {
+              // ignore
+            }
+          }
+          const envelopeToSave = buildBaselineSnapshotEnvelope({ data: minifiedSnapshot, source: 'save' })
+          await supabase.from('daily_schedules').update({ baseline_snapshot: envelopeToSave as any }).eq('id', scheduleId)
+          snapshotWritten = true
+
+          setBaselineSnapshot(minifiedSnapshot)
+          if (nextReport) setSnapshotHealthReport(nextReport)
         }
+      } catch (e) {
+        console.warn('Failed to refresh baseline snapshot during save (skipped):', e)
       }
+      timer.stage('snapshotRefresh')
+      bumpTopLoadingTo(0.92)
+
+      if (!usedRpc) {
+        const { error: scheduleMetaError } = await supabase
+          .from('daily_schedules')
+          .update({
+            tie_break_decisions: tieBreakDecisions,
+            staff_overrides: overridesToSave,
+            workflow_state: workflowStateToSave,
+          })
+          .eq('id', scheduleId)
+
+        if (scheduleMetaError) {
+          console.error('Error saving schedule metadata:', scheduleMetaError)
+        } else {
+          setPersistedWorkflowState(workflowStateToSave)
+        }
+      } else {
+        // RPC already persisted metadata transactionally.
+        setPersistedWorkflowState(workflowStateToSave)
+      }
+      timer.stage('metadata')
+      bumpTopLoadingTo(0.96)
+      
+      // Unmet PCA needs tracking removed - feature no longer used
       
       showActionToast('Saved successfully.', 'success')
     } catch (error) {
       console.error('Error saving schedule:', error)
+      saveError = error
       showActionToast('Failed to save. Please try again.', 'error')
     } finally {
       setSaving(false)
+      // Persist timing report (admin-only tooltip, but collection is cheap)
+      if (userRole === 'admin' && specialProgramsBytes == null) {
+        try {
+          const prog = baselineSnapshot?.specialPrograms ?? specialPrograms
+          specialProgramsBytes = JSON.stringify(minifySpecialProgramsForSnapshot(prog as any)).length
+        } catch {
+          // ignore
+        }
+      }
+      setLastSaveTiming(
+        timer.finalize({
+          ok: !saveError,
+          rpcUsed: usedRpc,
+          snapshotWritten,
+          snapshotHasMinifiedPrograms: true,
+          snapshotBytes,
+          specialProgramsBytes,
+        })
+      )
+      finishTopLoading()
     }
   }
 
@@ -4634,51 +4989,91 @@ function SchedulePageContent() {
     mode: 'full' | 'hybrid'
     includeBufferStaff: boolean
   }): Promise<{ copiedUpToStep?: string }> => {
-    const res = await fetch('/api/schedules/copy', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        fromDate: formatDateForInput(fromDate),
-        toDate: formatDateForInput(toDate),
-        mode,
-        includeBufferStaff,
-      }),
-    })
+    const timer = createTimingCollector()
+    let serverTiming: any = null
+    let copyError: unknown = null
 
-    if (!res.ok) {
-      let message = 'Failed to copy schedule.'
+    setCopying(true)
+    startTopLoading(0.06)
+    bumpTopLoadingTo(0.18)
+    startSoftAdvance(0.72)
+
+    try {
+      const res = await fetch('/api/schedules/copy', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fromDate: formatDateForInput(fromDate),
+          toDate: formatDateForInput(toDate),
+          mode,
+          includeBufferStaff,
+        }),
+      })
+      timer.stage('fetch')
+      bumpTopLoadingTo(0.72)
+
+      let data: any = null
       try {
-        const data = await res.json()
-        if (data?.error) {
-          message = data.error
-        }
+        data = await res.json()
       } catch {
-        // Ignore JSON parse errors
+        data = null
       }
-      throw new Error(message)
-    }
+      serverTiming = data?.timings ?? null
+      timer.stage('parseResponse')
+      stopSoftAdvance()
+      bumpTopLoadingTo(0.8)
 
-    const data = await res.json()
+      if (!res.ok) {
+        const message = data?.error ? String(data.error) : 'Failed to copy schedule.'
+        throw new Error(message)
+      }
 
-    // Close wizard after success (non-modal feedback will be shown via toast).
-    setCopyWizardOpen(false)
-    setCopyWizardConfig(null)
-    setCopyMenuOpen(false)
+      // Close wizard after success (non-modal feedback will be shown via toast).
+      setCopyWizardOpen(false)
+      setCopyWizardConfig(null)
+      setCopyMenuOpen(false)
+      timer.stage('closeWizard')
+      bumpTopLoadingTo(0.86)
 
-    // Highlight the newly-loaded date label briefly.
-    setHighlightDateKey(formatDateForInput(toDate))
+      // Highlight the newly-loaded date label briefly.
+      setHighlightDateKey(formatDateForInput(toDate))
 
-    // Navigate to copied schedule date and reload schedule metadata
-    setSelectedDate(toDate)
-    setScheduleLoadedForDate(null)
-    await loadDatesWithData()
+      // Navigate to copied schedule date and reload schedule metadata
+      setSelectedDate(toDate)
+      setScheduleLoadedForDate(null)
+      timer.stage('navigate')
+      bumpTopLoadingTo(0.92)
 
-    showActionToast(`Copied schedule to ${formatDateDDMMYYYY(toDate)}.`, 'success')
+      // Non-blocking refresh: optimistically mark the target date as having data,
+      // then refresh the full set in the background (no await).
+      setDatesWithData(prev => {
+        const next = new Set(prev)
+        next.add(formatDateForInput(toDate))
+        return next
+      })
+      loadDatesWithData()
+      timer.stage('refreshDates')
+      bumpTopLoadingTo(0.98)
 
-    return {
-      copiedUpToStep: (data as any).copiedUpToStep as string | undefined,
+      showActionToast(`Copied schedule to ${formatDateDDMMYYYY(toDate)}.`, 'success')
+
+      return {
+        copiedUpToStep: (data as any).copiedUpToStep as string | undefined,
+      }
+    } catch (e) {
+      copyError = e
+      throw e
+    } finally {
+      setCopying(false)
+      setLastCopyTiming(
+        timer.finalize({
+          ok: !copyError,
+          server: serverTiming,
+        })
+      )
+      finishTopLoading()
     }
   }
 
@@ -5896,6 +6291,15 @@ function SchedulePageContent() {
         onDragMove={handleDragMove}
         onDragEnd={handleDragEnd}
       >
+      {/* Thin top loading bar (Save/Copy). Shown for everyone. */}
+      {topLoadingVisible && (
+        <div className="fixed top-0 left-0 right-0 h-[3px] z-[99999] bg-transparent">
+          <div
+            className="h-full bg-sky-500 transition-[width] duration-200 ease-out"
+            style={{ width: `${Math.round(topLoadingProgress * 100)}%` }}
+          />
+        </div>
+      )}
       {/* PCA Slot Selection Popover */}
       {pcaDragState.showSlotSelection && pcaDragState.popoverPosition && pcaDragState.staffName && (
         <SlotSelectionPopover
@@ -6007,14 +6411,58 @@ function SchedulePageContent() {
           <div className="flex items-center space-x-4">
             <h1 className="text-2xl font-bold">Schedule Allocation</h1>
             <div className="flex items-center space-x-2 relative">
-              <button
-                ref={calendarButtonRef}
-                onClick={() => setCalendarOpen(!calendarOpen)}
-                className="cursor-pointer flex items-center"
-                type="button"
-              >
-                <Calendar className="h-5 w-5 text-muted-foreground hover:text-foreground transition-colors" />
-              </button>
+              {(() => {
+                const prevWorkingDay = getPreviousWorkingDay(selectedDate)
+                const nextWorkingDay = getNextWorkingDay(selectedDate)
+                const prevLabel = `${formatDateDDMMYYYY(prevWorkingDay)} (${WEEKDAY_NAMES[WEEKDAYS.indexOf(getWeekday(prevWorkingDay))]})`
+                const nextLabel = `${formatDateDDMMYYYY(nextWorkingDay)} (${WEEKDAY_NAMES[WEEKDAYS.indexOf(getWeekday(nextWorkingDay))]})`
+
+                return (
+                  <div className="inline-flex items-center border border-border rounded-md overflow-hidden bg-background shadow-sm">
+                    <Tooltip side="bottom" content={`Previous working day: ${prevLabel}`}>
+                      <button
+                        type="button"
+                        aria-label="Previous working day"
+                        onClick={() => {
+                          setCalendarOpen(false)
+                          setSelectedDate(prevWorkingDay)
+                        }}
+                        className="px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-110 active:scale-95 border-r border-border"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                    </Tooltip>
+
+                    <button
+                      type="button"
+                      aria-label="Go to today"
+                      onClick={() => {
+                        setCalendarOpen(false)
+                        const today = new Date()
+                        const target = isWorkingDay(today) ? today : getNextWorkingDay(today)
+                        setSelectedDate(target)
+                      }}
+                      className="px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-105 active:scale-95 border-r border-border"
+                    >
+                      Today
+                    </button>
+
+                    <Tooltip side="bottom" content={`Next working day: ${nextLabel}`}>
+                      <button
+                        type="button"
+                        aria-label="Next working day"
+                        onClick={() => {
+                          setCalendarOpen(false)
+                          setSelectedDate(nextWorkingDay)
+                        }}
+                        className="px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-110 active:scale-95"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </Tooltip>
+                  </div>
+                )
+              })()}
               <span
                 className={`text-lg font-semibold rounded px-2 py-1 transition-shadow transition-colors ${
                   isDateHighlighted
@@ -6024,66 +6472,121 @@ function SchedulePageContent() {
               >
                 {formatDateDDMMYYYY(selectedDate)} ({weekdayName})
               </span>
+              <button
+                ref={calendarButtonRef}
+                onClick={() => setCalendarOpen(!calendarOpen)}
+                className="cursor-pointer flex items-center"
+                type="button"
+                aria-label="Open date picker"
+              >
+                <Calendar className="h-5 w-5 text-muted-foreground hover:text-foreground transition-colors" />
+              </button>
             </div>
           </div>
-          <div className="flex items-center space-x-4">
-            {/* Summary Column */}
-            {(() => {
-              const totalBeds = wards.reduce((sum, ward) => sum + ward.total_beds, 0)
-              const totalPT = TEAMS.reduce((sum, team) => {
-                return sum + therapistAllocations[team].reduce((teamSum, alloc) => {
-                  // Only count therapists (SPT, APPT, RPT) with FTE > 0
-                  const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-                  const hasFTE = (alloc.fte_therapist || 0) > 0
-                  return teamSum + (isTherapist && hasFTE ? (alloc.fte_therapist || 0) : 0)
-                }, 0)
-              }, 0)
-              const bedsPerPT = totalPT > 0 ? totalBeds / totalPT : 0
-              
-              return (
-                <SummaryColumn
-                  totalBeds={totalBeds}
-                  totalPTOnDuty={totalPT}
-                  bedsPerPT={bedsPerPT}
-                />
-              )
-            })()}
-            <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2">
               {/* Copy dropdown button */}
               <div className="relative">
-                {userRole === 'admin' && snapshotHealthReport ? (
+                {userRole === 'admin' ? (
                   <Tooltip
                     side="bottom"
                     className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
                     content={
                       <div className="w-56 bg-slate-800 border border-slate-700 rounded-md shadow-lg">
-                        <div className="border-t border-slate-700 px-3 py-2 text-xs text-slate-500">
-                          Dev/Testing Options
+                        <div className="border-b border-slate-700 px-3 py-2 text-xs text-slate-500">
+                          Admin diagnostics
+                        </div>
+
+                        {snapshotHealthReport ? (
+                          <div className="px-3 pt-2 text-xs text-slate-200 space-y-1">
+                            <div>
+                              <span className="text-slate-400">snapshotHealth:</span>{' '}
+                              {snapshotHealthReport.status}
+                            </div>
+                            {snapshotHealthReport.issues?.length > 0 && (
+                              <div>
+                                <span className="text-slate-400">issues:</span>{' '}
+                                {snapshotHealthReport.issues.join(', ')}
+                              </div>
+                            )}
+                            <div>
+                              <span className="text-slate-400">staff:</span>{' '}
+                              {snapshotHealthReport.snapshotStaffCount} (missing referenced:{' '}
+                              {snapshotHealthReport.missingReferencedStaffCount})
+                            </div>
+                            {(snapshotHealthReport.schemaVersion || snapshotHealthReport.source) && (
+                              <div>
+                                <span className="text-slate-400">meta:</span>{' '}
+                                {snapshotHealthReport.schemaVersion
+                                  ? `v${snapshotHealthReport.schemaVersion}`
+                                  : 'v?'}
+                                {snapshotHealthReport.source ? `, ${snapshotHealthReport.source}` : ''}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="px-3 pt-2 text-xs text-slate-500">snapshotHealth: (none)</div>
+                        )}
+
+                        <div className="border-t border-slate-700 mt-2 px-3 py-2 text-[11px] text-slate-500">
+                          Copy timing
                         </div>
                         <div className="px-3 pb-3 text-xs text-slate-200 space-y-1">
-                          <div>
-                            <span className="text-slate-400">snapshotHealth:</span>{' '}
-                            {snapshotHealthReport.status}
-                          </div>
-                          {snapshotHealthReport.issues?.length > 0 && (
-                            <div>
-                              <span className="text-slate-400">issues:</span>{' '}
-                              {snapshotHealthReport.issues.join(', ')}
-                            </div>
-                          )}
-                          <div>
-                            <span className="text-slate-400">staff:</span>{' '}
-                            {snapshotHealthReport.snapshotStaffCount} (missing referenced:{' '}
-                            {snapshotHealthReport.missingReferencedStaffCount})
-                          </div>
-                          {(snapshotHealthReport.schemaVersion || snapshotHealthReport.source) && (
-                            <div>
-                              <span className="text-slate-400">meta:</span>{' '}
-                              {snapshotHealthReport.schemaVersion
-                                ? `v${snapshotHealthReport.schemaVersion}`
-                                : 'v?'}
-                              {snapshotHealthReport.source ? `, ${snapshotHealthReport.source}` : ''}
-                            </div>
+                          {lastCopyTiming ? (
+                            <>
+                              <div>
+                                <span className="text-slate-400">client total:</span>{' '}
+                                {Math.round(lastCopyTiming.totalMs)}ms
+                              </div>
+                              {lastCopyTiming.stages.length > 0 && (
+                                <div className="text-[11px] text-slate-300 space-y-0.5">
+                                  {lastCopyTiming.stages.map(s => (
+                                    <div key={`copy-client-${s.name}`}>
+                                      <span className="text-slate-400">{s.name}:</span>{' '}
+                                      {Math.round(s.ms)}ms
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {(() => {
+                                const server = (lastCopyTiming.meta as any)?.server
+                                if (!server) return null
+                                return (
+                                  <div className="pt-1">
+                                    <div>
+                                      <span className="text-slate-400">server total:</span>{' '}
+                                      {Math.round(server.totalMs ?? 0)}ms{' '}
+                                      {typeof server?.meta?.rpcUsed === 'boolean'
+                                        ? `(rpc:${server.meta.rpcUsed ? 'yes' : 'no'})`
+                                        : null}
+                                      {typeof server?.meta?.baselineBytes === 'number' ? (
+                                        <span className="text-slate-400">
+                                          {' '}
+                                          baseline:{Math.round(server.meta.baselineBytes / 1024)}KB
+                                        </span>
+                                      ) : null}
+                                      {typeof server?.meta?.specialProgramsBytes === 'number' ? (
+                                        <span className="text-slate-400">
+                                          {' '}
+                                          sp:{Math.round(server.meta.specialProgramsBytes / 1024)}KB
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    {Array.isArray(server.stages) && server.stages.length > 0 && (
+                                      <div className="text-[11px] text-slate-300 space-y-0.5">
+                                        {server.stages.map((s: any) => (
+                                          <div key={`copy-server-${s.name}`}>
+                                            <span className="text-slate-400">{s.name}:</span>{' '}
+                                            {Math.round(s.ms ?? 0)}ms
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })()}
+                            </>
+                          ) : (
+                            <div className="text-slate-500">No copy timing captured yet.</div>
                           )}
                         </div>
                       </div>
@@ -6094,9 +6597,10 @@ function SchedulePageContent() {
                       onClick={() => setCopyMenuOpen(prev => !prev)}
                       type="button"
                       className="flex items-center"
+                      disabled={copying || saving}
                     >
                       <Copy className="h-4 w-4 mr-2" />
-                      Copy
+                      {copying ? 'Copying...' : 'Copy'}
                     </Button>
                   </Tooltip>
                 ) : (
@@ -6105,9 +6609,10 @@ function SchedulePageContent() {
                     onClick={() => setCopyMenuOpen(prev => !prev)}
                     type="button"
                     className="flex items-center"
+                    disabled={copying || saving}
                   >
                     <Copy className="h-4 w-4 mr-2" />
-                    Copy
+                    {copying ? 'Copying...' : 'Copy'}
                   </Button>
                 )}
                 {copyMenuOpen && (
@@ -6154,15 +6659,79 @@ function SchedulePageContent() {
                   </div>
                 )}
               </div>
-              <Button 
-                onClick={saveScheduleToDatabase} 
-                disabled={saving || !hasUnsavedChanges}
-                variant={hasUnsavedChanges ? "default" : "outline"}
-                className={hasUnsavedChanges ? "bg-green-600 hover:bg-green-700" : ""}
-              >
-                <Save className="h-4 w-4 mr-2" />
-                {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
-              </Button>
+              {userRole === 'admin' ? (
+                <Tooltip
+                  side="bottom"
+                  className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
+                  content={
+                    <div className="w-56 bg-slate-800 border border-slate-700 rounded-md shadow-lg">
+                      <div className="border-b border-slate-700 px-3 py-2 text-xs text-slate-500">
+                        Save timing
+                      </div>
+                      <div className="px-3 py-2 text-xs text-slate-200 space-y-1">
+                        {lastSaveTiming ? (
+                          <>
+                            <div>
+                              <span className="text-slate-400">total:</span>{' '}
+                              {Math.round(lastSaveTiming.totalMs)}ms
+                            </div>
+                            {(() => {
+                              const meta = lastSaveTiming.meta as any
+                              if (!meta) return null
+                              return (
+                                <div className="text-[11px] text-slate-400">
+                                  rpc:{meta.rpcUsed ? 'yes' : 'no'}
+                                  {typeof meta.snapshotWritten === 'boolean'
+                                    ? `, snapshotWrite:${meta.snapshotWritten ? 'yes' : 'no'}`
+                                    : null}
+                                  {typeof meta.snapshotBytes === 'number'
+                                    ? `, baseline:${Math.round(meta.snapshotBytes / 1024)}KB`
+                                    : null}
+                                  {typeof meta.specialProgramsBytes === 'number'
+                                    ? `, sp:${Math.round(meta.specialProgramsBytes / 1024)}KB`
+                                    : null}
+                                </div>
+                              )
+                            })()}
+                            {lastSaveTiming.stages.length > 0 && (
+                              <div className="pt-1 text-[11px] text-slate-300 space-y-0.5">
+                                {lastSaveTiming.stages.map(s => (
+                                  <div key={`save-${s.name}`}>
+                                    <span className="text-slate-400">{s.name}:</span>{' '}
+                                    {Math.round(s.ms)}ms
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="text-slate-500">No save timing captured yet.</div>
+                        )}
+                      </div>
+                    </div>
+                  }
+                >
+                  <Button 
+                    onClick={saveScheduleToDatabase} 
+                    disabled={saving || !hasUnsavedChanges}
+                    variant={hasUnsavedChanges ? "default" : "outline"}
+                    className={hasUnsavedChanges ? "bg-green-600 hover:bg-green-700" : ""}
+                  >
+                    <Save className="h-4 w-4 mr-2" />
+                    {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
+                  </Button>
+                </Tooltip>
+              ) : (
+                <Button 
+                  onClick={saveScheduleToDatabase} 
+                  disabled={saving || !hasUnsavedChanges}
+                  variant={hasUnsavedChanges ? "default" : "outline"}
+                  className={hasUnsavedChanges ? "bg-green-600 hover:bg-green-700" : ""}
+                >
+                  <Save className="h-4 w-4 mr-2" />
+                  {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
+                </Button>
+              )}
               {/* Dev/Testing Dropdown Menu */}
               <div className="relative">
                 <Button 
@@ -6204,7 +6773,6 @@ function SchedulePageContent() {
                   </div>
                 )}
               </div>
-            </div>
           </div>
         </div>
 
@@ -6263,49 +6831,72 @@ function SchedulePageContent() {
         </div>
 
         <div className="flex gap-4">
-          <StaffPool
-            therapists={therapists}
-            pcas={pcas}
-            inactiveStaff={inactiveStaff}
-            bufferStaff={bufferStaff}
-            onEditStaff={handleEditStaff}
-            staffOverrides={staffOverrides}
-            specialPrograms={specialPrograms}
-            pcaAllocations={pcaAllocations}
-            currentStep={currentStep}
-            initializedSteps={initializedSteps}
-            weekday={selectedDate ? getWeekday(selectedDate) : undefined}
-            onBufferStaffCreated={loadStaff}
-            sptAllocations={sptAllocations}
-            onSlotTransfer={(staffId: string, targetTeam: string, slots: number[]) => {
-              // Find source team from allocations
-              let sourceTeam: Team | null = null
-              for (const [team, allocs] of Object.entries(pcaAllocations)) {
-                if (allocs.some(a => a.staff_id === staffId)) {
-                  sourceTeam = team as Team
-                  break
+          <div className="shrink-0 space-y-4">
+            {/* Summary */}
+            {(() => {
+              const totalBeds = wards.reduce((sum, ward) => sum + ward.total_beds, 0)
+              const totalPT = TEAMS.reduce((sum, team) => {
+                return sum + therapistAllocations[team].reduce((teamSum, alloc) => {
+                  // Only count therapists (SPT, APPT, RPT) with FTE > 0
+                  const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
+                  const hasFTE = (alloc.fte_therapist || 0) > 0
+                  return teamSum + (isTherapist && hasFTE ? (alloc.fte_therapist || 0) : 0)
+                }, 0)
+              }, 0)
+              const bedsPerPT = totalPT > 0 ? totalBeds / totalPT : 0
+
+              return (
+                <SummaryColumn
+                  totalBeds={totalBeds}
+                  totalPTOnDuty={totalPT}
+                  bedsPerPT={bedsPerPT}
+                />
+              )
+            })()}
+
+            <StaffPool
+              therapists={therapists}
+              pcas={pcas}
+              inactiveStaff={inactiveStaff}
+              bufferStaff={bufferStaff}
+              onEditStaff={handleEditStaff}
+              staffOverrides={staffOverrides}
+              specialPrograms={specialPrograms}
+              pcaAllocations={pcaAllocations}
+              currentStep={currentStep}
+              initializedSteps={initializedSteps}
+              weekday={selectedDate ? getWeekday(selectedDate) : undefined}
+              onBufferStaffCreated={loadStaff}
+              onSlotTransfer={(staffId: string, targetTeam: string, slots: number[]) => {
+                // Find source team from allocations
+                let sourceTeam: Team | null = null
+                for (const [team, allocs] of Object.entries(pcaAllocations)) {
+                  if (allocs.some(a => a.staff_id === staffId)) {
+                    sourceTeam = team as Team
+                    break
+                  }
                 }
-              }
-              if (sourceTeam) {
-                // Update drag state and perform transfer
-                const staffMember = staff.find(s => s.id === staffId)
-                const isBufferStaff = staffMember?.status === 'buffer'
-                setPcaDragState({
-                  isActive: true,
-                  isDraggingFromPopover: false,
-                  staffId,
-                  staffName: staffMember?.name || null,
-                  sourceTeam,
-                  availableSlots: staffOverrides[staffId]?.availableSlots || [1, 2, 3, 4],
-                  selectedSlots: slots,
-                  showSlotSelection: false,
-                  popoverPosition: null,
-                  isBufferStaff: isBufferStaff || false,
-                })
-                performSlotTransfer(targetTeam as Team)
-              }
-            }}
-          />
+                if (sourceTeam) {
+                  // Update drag state and perform transfer
+                  const staffMember = staff.find(s => s.id === staffId)
+                  const isBufferStaff = staffMember?.status === 'buffer'
+                  setPcaDragState({
+                    isActive: true,
+                    isDraggingFromPopover: false,
+                    staffId,
+                    staffName: staffMember?.name || null,
+                    sourceTeam,
+                    availableSlots: staffOverrides[staffId]?.availableSlots || [1, 2, 3, 4],
+                    selectedSlots: slots,
+                    showSlotSelection: false,
+                    popoverPosition: null,
+                    isBufferStaff: isBufferStaff || false,
+                  })
+                  performSlotTransfer(targetTeam as Team)
+                }
+              }}
+            />
+          </div>
 
           <div className="flex-1 overflow-x-auto">
             {/* Team Columns */}
@@ -6371,13 +6962,20 @@ function SchedulePageContent() {
                 <div className="mb-4">
                   <h3 className="text-xs font-semibold text-center mb-2">Relieving Beds</h3>
                   <div className="grid grid-cols-8 gap-2">
-                    {TEAMS.map((team) => (
-                      <BedBlock
-                        key={`bed-${team}`}
-                        team={team}
-                        allocations={bedAllocations}
-                      />
-                    ))}
+                    {(() => {
+                      const canShowBeds =
+                        stepStatus['bed-relieving'] === 'completed' ||
+                        currentStep === 'bed-relieving' ||
+                        currentStep === 'review'
+                      const visibleBedAllocs = canShowBeds ? bedAllocations : []
+                      return TEAMS.map((team) => (
+                        <BedBlock
+                          key={`bed-${team}`}
+                          team={team}
+                          allocations={visibleBedAllocs}
+                        />
+                      ))
+                    })()}
                   </div>
                 </div>
                 

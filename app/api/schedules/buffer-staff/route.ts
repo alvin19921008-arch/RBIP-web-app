@@ -88,10 +88,14 @@ export async function GET(request: NextRequest) {
 
     const liveStaffById = new Map<string, any>()
     if (missingIds.length > 0) {
-      const { data: liveStaff } = await supabase
+      const attempt = await supabase
         .from('staff')
-        .select('*')
+        .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program')
         .in('id', missingIds)
+      const liveStaff =
+        attempt.error && (attempt.error.message?.includes('column') || (attempt.error as any)?.code === '42703')
+          ? (await supabase.from('staff').select('*').in('id', missingIds)).data
+          : attempt.data
       ;(liveStaff || []).forEach((s: any) => {
         if (s?.id) liveStaffById.set(s.id, s)
       })

@@ -10,8 +10,8 @@ interface SummaryColumnProps {
 
 export function SummaryColumn({ totalBeds, totalPTOnDuty, bedsPerPT }: SummaryColumnProps) {
   return (
-    <Card className="bg-slate-50 border-slate-300">
-      <CardContent className="p-2 pt-1 space-y-1 text-xs">
+    <Card className="bg-slate-50 border-slate-300 w-fit inline-block">
+      <CardContent className="p-1.5 space-y-0.5 text-[11px] leading-tight whitespace-nowrap">
         <div>
           <span className="font-semibold">Total Beds:</span> {totalBeds}
         </div>
