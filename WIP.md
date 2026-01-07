@@ -1,8 +1,10 @@
 # Work In Progress - Per-Date Snapshot & Copy Functionality
 
-**Last Updated**: 2026-01-03  
-**Status**: Implementation Complete - Ready for Testing  
-**Related Plan**: `.cursor/plans/per-date_data_isolation_1bad69f4.plan.md`
+**Last Updated**: 2026-01-07  
+**Status**: Implementation Complete - Enhanced with Validation & UX Polish  
+**Related Plans**: 
+- `.cursor/plans/per-date_data_isolation_1bad69f4.plan.md`
+- `.cursor/plans/snapshot_validation+repair_a12759be.plan.md`
 
 ---
 
@@ -25,7 +27,10 @@ Added three new JSONB columns to `daily_schedules` table:
 
 **Type Definitions**: `types/schedule.ts`
 - `BaselineSnapshot` interface
+- `BaselineSnapshotEnvelope` interface (versioned: `schemaVersion`, `createdAt`, `source`)
+- `BaselineSnapshotStored` type (envelope or legacy raw)
 - `WorkflowState` interface with `ScheduleStepId` type
+- `SnapshotHealthReport` interface (runtime validation status)
 - `ScheduleStaffOverrides` type (extends existing staffOverrides structure)
 
 **Schema Update**: `supabase/schema.sql` and `lib/supabase/types.ts` updated to reflect new columns.
@@ -108,8 +113,10 @@ Added three new JSONB columns to `daily_schedules` table:
   - Marks steps in `workflow_state.completedSteps` as 'completed' in `stepStatus`
 - Falls back to data-presence heuristics if `workflow_state` is empty (backward compatible)
 
-**History Page Integration** (Future):
-- Can use `workflow_state.completedSteps` to determine completion badges instead of inferring from allocations
+**History Page Integration** (Completed):
+- History page now uses `workflow_state.completedSteps` to determine completion badges
+- Falls back to allocation-based inference for legacy schedules without `workflow_state`
+- More accurate than inferring from allocations alone
 
 ---
 
@@ -253,6 +260,92 @@ Added three new JSONB columns to `daily_schedules` table:
 
 ---
 
+### 10. Versioned Snapshot Envelope
+
+**Location**: `lib/utils/snapshotEnvelope.ts`
+
+**Purpose**: Make snapshots self-describing and versioned for future schema evolution.
+
+**Envelope Structure**:
+```typescript
+{
+  schemaVersion: 1
+  createdAt: string  // ISO timestamp
+  source: 'save' | 'copy' | 'migration'
+  data: BaselineSnapshot  // Actual snapshot payload
+}
+```
+
+**Backward Compatibility**:
+- Legacy raw snapshots (no `schemaVersion`) are automatically wrapped at runtime
+- Copy API upgrades legacy snapshots to envelope format opportunistically
+- All new snapshots are stored as v1 envelopes
+
+**Files**:
+- `lib/utils/snapshotEnvelope.ts` - Envelope creation/unwrapping utilities
+- `app/(dashboard)/schedule/page.tsx` - Uses envelope for all snapshot operations
+- `app/api/schedules/copy/route.ts` - Creates/upgrades envelopes during copy
+
+---
+
+### 11. Snapshot Validation & Auto-Repair
+
+**Location**: `lib/utils/snapshotValidation.ts`
+
+**Purpose**: Prevent crashes from corrupted/incomplete snapshots and automatically repair missing data.
+
+**Validation Rules**:
+- Checks snapshot structure (required keys, array types)
+- Deduplicates staff by `id`
+- Normalizes invalid fields:
+  - Missing/invalid `status` → defaults to `'active'`
+  - Invalid `team` → `null`
+  - Invalid `rank` → row dropped
+
+**Repair Logic**:
+- If `data.staff` is empty OR missing referenced staff IDs, fetches live staff rows for **referenced IDs only** and merges them in
+- Marks report as `status: 'repaired'` with issues like `emptyStaffArray`, `missingReferencedStaffRows`, `wrappedLegacySnapshot`
+
+**Auto-Repair on Save**:
+- When saving, if validation reports `status !== 'ok'` OR snapshot was merged with missing staff, persists the repaired snapshot back to `daily_schedules.baseline_snapshot`
+- Ensures legacy schedules converge to healthy state naturally
+
+**Runtime Validation**:
+- Runs on schedule load (before `applyBaselineSnapshot()`)
+- Also used in copy/buffer detection APIs to avoid brittle assumptions
+- Produces `SnapshotHealthReport` for observability
+
+**Files**:
+- `lib/utils/snapshotValidation.ts` - Validation/repair utilities
+- `app/(dashboard)/schedule/page.tsx` - Wires validator into load/save paths
+- `app/api/schedules/copy/route.ts` - Validates source snapshot before copy
+- `app/api/schedules/buffer-staff/route.ts` - Validates snapshot when detecting buffer staff
+
+---
+
+### 12. Admin Diagnostics & UX Polish
+
+**Admin Tooltip Diagnostics**:
+- Admin users see diagnostic info in hover tooltip over "Copy" button
+- Shows snapshot health (`ok|repaired|fallback`), issues list, staff coverage, snapshot metadata
+- Copy dropdown restored to normal white background for all users
+
+**Copy Success Feedback**:
+- Copy wizard auto-closes after successful copy
+- Bottom-right fixed toast notification (pale yellow, auto-dismisses after 2s)
+- Date label briefly glows/highlights for 2s after navigation to new schedule
+- Non-blocking: `loadDatesWithData()` called in background (no await)
+
+**Save Success Feedback**:
+- Replaced browser `alert()` with same bottom-right toast style for consistency
+- Error messages also use toast (no browser alerts)
+
+**Files**:
+- `app/(dashboard)/schedule/page.tsx` - Toast system, date glow animation, admin tooltip
+- `components/ui/tooltip.tsx` - Enhanced to support ReactNode content for diagnostic panel
+
+---
+
 ## Known Issues / Edge Cases
 
 ### 1. Legacy Schedules Without Snapshots
@@ -262,8 +355,8 @@ Added three new JSONB columns to `daily_schedules` table:
 
 ### 2. Buffer Staff in Baseline Snapshot
 - **Issue**: If buffer staff is created AFTER schedule snapshot was taken, it won't appear in baseline
-- **Current Behavior**: Copy API falls back to live `staff.status` for referenced IDs missing from snapshot
-- **Future Enhancement**: On save, merge any newly referenced staff (especially buffer) into baseline snapshot
+- **Current Behavior**: Auto-repair on save merges any newly referenced staff (including buffer) into baseline snapshot
+- **Status**: Resolved via snapshot validation/repair system
 
 ### 3. Snapshot Size
 - **Consideration**: Large snapshots (many staff/wards/programs) stored as JSONB
@@ -279,7 +372,7 @@ Added three new JSONB columns to `daily_schedules` table:
 - [ ] Copy hybrid schedule → verify Step 3+ reset, Step 1+2 preserved
 - [ ] Copy with buffer staff excluded → verify buffer staff converted to inactive in target
 - [ ] Copy from legacy schedule (no snapshot) → verify snapshot built during copy
-- [ ] Edit schedule after copy → verify edits don't affect source schedule
+- [ ] Edit sched ule after copy → verify edits don't affect source schedule
 - [ ] Copy "to next working day" → verify dates auto-resolved correctly
 - [ ] Copy "from a specific date" → verify calendar grid disables correct dates
 - [ ] Buffer staff detection → verify shows only buffer staff actually used in source
@@ -289,25 +382,20 @@ Added three new JSONB columns to `daily_schedules` table:
 
 ## Next Steps / Future Enhancements
 
-1. **Snapshot Merging on Save**
-   - When saving, merge any newly referenced staff (especially buffer staff created after snapshot) into baseline snapshot
-   - Prevents "baseline missing buffer row" blind spots
+1. **Performance Optimization** (Planned)
+   - Conditional snapshot refresh: skip if health is ok and no team changes
+   - Batch allocation writes: use bulk `upsert()` instead of per-row operations
+   - RPC/server-side transactions: create `save_schedule_v1()` and `copy_schedule_v1()` Postgres functions
+   - Snapshot size reduction: store only required fields (minimal projections)
+   - See `.cursor/plans/performance_optimization_save,_copy,_snapshot_size_fe7e0987.plan.md`
 
-2. **History Page Integration**
-   - Use `workflow_state.completedSteps` to determine completion badges
-   - More accurate than inferring from allocations
-
-3. **Snapshot Validation**
-   - Add runtime validation when loading snapshot (check for required fields)
-   - Handle corrupted/incomplete snapshots gracefully
-
-4. **Performance Optimization**
-   - Consider indexing JSONB columns if query performance degrades
-   - Monitor snapshot size and consider compression if needed
-
-5. **Migration Script**
+2. **Migration Script**
    - Optional: Build snapshots for all existing schedules (one-time migration)
    - Would eliminate cross-date contamination for legacy schedules
+
+3. **Snapshot Compression** (If Needed)
+   - Monitor snapshot size and consider compression if performance degrades
+   - Consider indexing JSONB columns if query performance degrades
 
 ---
 
@@ -318,12 +406,17 @@ Added three new JSONB columns to `daily_schedules` table:
 - `app/api/schedules/buffer-staff/route.ts` - Buffer staff detection endpoint
 - `components/allocation/ScheduleCopyWizard.tsx` - Copy wizard UI component
 - `supabase/migrations/add_daily_schedule_snapshots.sql` - Database migration
+- `lib/utils/snapshotEnvelope.ts` - Versioned snapshot envelope utilities
+- `lib/utils/snapshotValidation.ts` - Snapshot validation and auto-repair logic
 
 ### Modified Files
-- `app/(dashboard)/schedule/page.tsx` - Snapshot creation/application, copy UI integration, workflow state persistence
+- `app/(dashboard)/schedule/page.tsx` - Snapshot creation/application, copy UI integration, workflow state persistence, validation/repair, admin diagnostics, toast notifications, date glow animation
+- `app/(dashboard)/history/page.tsx` - Uses `workflow_state.completedSteps` for completion badges
 - `lib/utils/dateHelpers.ts` - Working day helpers with HK holiday support
+- `lib/utils/scheduleHistory.ts` - Added `getCompletionStatusFromWorkflow()` with legacy fallback
 - `components/ui/calendar-grid.tsx` - Added `isDateDisabled` prop
-- `types/schedule.ts` - Added `BaselineSnapshot`, `WorkflowState`, `ScheduleStepId` types
+- `components/ui/tooltip.tsx` - Enhanced to support ReactNode content for admin diagnostic panel
+- `types/schedule.ts` - Added `BaselineSnapshot`, `BaselineSnapshotEnvelope`, `BaselineSnapshotStored`, `WorkflowState`, `ScheduleStepId`, `SnapshotHealthReport` types
 - `lib/supabase/types.ts` - Updated `daily_schedules` type to include new JSONB columns
 - `supabase/schema.sql` - Updated schema to include new columns
 

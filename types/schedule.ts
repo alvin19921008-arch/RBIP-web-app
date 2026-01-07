@@ -170,3 +170,38 @@ export interface BaselineSnapshot {
   // Optional map of custom team display names (from team_settings)
   teamDisplayNames?: Record<Team, string>
 }
+
+export type BaselineSnapshotSource = 'save' | 'copy' | 'migration'
+
+/**
+ * Versioned envelope for baseline snapshots stored in daily_schedules.baseline_snapshot.
+ * We keep BaselineSnapshot as the *data payload* shape for easy consumption by UI/algorithms.
+ */
+export interface BaselineSnapshotEnvelopeV1 {
+  schemaVersion: 1
+  createdAt: string // ISO timestamp
+  source: BaselineSnapshotSource
+  data: BaselineSnapshot
+}
+
+export type BaselineSnapshotEnvelope = BaselineSnapshotEnvelopeV1
+
+/**
+ * Backward-compatible type for what may come back from DB:
+ * - New: BaselineSnapshotEnvelope (v1)
+ * - Legacy: raw BaselineSnapshot object
+ */
+export type BaselineSnapshotStored = BaselineSnapshotEnvelope | BaselineSnapshot
+
+export type SnapshotHealthStatus = 'ok' | 'repaired' | 'fallback'
+
+export interface SnapshotHealthReport {
+  status: SnapshotHealthStatus
+  issues: string[]
+  referencedStaffCount: number
+  snapshotStaffCount: number
+  missingReferencedStaffCount: number
+  schemaVersion?: number
+  source?: BaselineSnapshotSource
+  createdAt?: string
+}

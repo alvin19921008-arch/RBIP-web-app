@@ -1,24 +1,3 @@
----
-name: Allocation Sync Optimization
-overview: Refactor the step-wise workflow to use a centralized allocation sync mechanism that ensures allocations always reflect the latest staffOverrides, with proper handling of step-specific PCA allocations and cross-step dependencies.
-todos:
-  - id: create-hook
-    content: Create useAllocationSync custom hook with step-aware sync dispatcher
-    status: completed
-  - id: add-change-detection
-    content: Add change detection helper to identify what changed in staffOverrides
-    status: completed
-  - id: update-page
-    content: Update schedule/page.tsx to use the new hook and remove scattered effects
-    status: completed
-  - id: update-rules
-    content: Update stepwise-workflow-data.mdc with new sync architecture documentation
-    status: completed
-  - id: verify-all-steps
-    content: Verify drag-and-drop and sync works correctly in all 4 steps
-    status: completed
----
-
 # Allocation Sync Optimization Plan
 
 ## Problem Analysis
@@ -218,7 +197,7 @@ function detectChanges(current: StaffOverrides, previous: StaffOverrides) {
 
 ### 3. Update Schedule Page
 
-Modify [`app/(dashboard)/schedule/page.tsx`](app/\\\\\\\\\\\\\\\\\\\\\\\\\\(dashboard)/schedule/page.tsx):
+Modify [`app/(dashboard)/schedule/page.tsx`](app/\\\\\\\\\\\\\\\\\\\\\\\\\\\(dashboard)/schedule/page.tsx):
 
 - Import and use `useAllocationSync` hook
 - Remove scattered `useEffect` hooks

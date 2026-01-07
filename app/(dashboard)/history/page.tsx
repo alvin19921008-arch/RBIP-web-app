@@ -13,7 +13,8 @@ import {
   groupSchedulesByMonth,
   getWeekday,
   getWeekdayName,
-  getCompletionStatus
+  getCompletionStatus,
+  getCompletionStatusFromWorkflowState,
 } from '@/lib/utils/scheduleHistory'
 
 export default function HistoryPage() {
@@ -32,10 +33,20 @@ export default function HistoryPage() {
     setLoading(true)
     try {
       // Query all schedules that have any allocation data
-      const { data: scheduleData, error: scheduleError } = await supabase
+      // Prefer workflow_state for completion badges when available (legacy-safe fallback).
+      let { data: scheduleData, error: scheduleError } = await supabase
         .from('daily_schedules')
-        .select('id, date')
+        .select('id, date, workflow_state')
         .order('date', { ascending: false })
+
+      if (scheduleError && scheduleError.message?.includes('column')) {
+        const fallback = await supabase
+          .from('daily_schedules')
+          .select('id, date')
+          .order('date', { ascending: false })
+        scheduleData = fallback.data as any
+        scheduleError = fallback.error as any
+      }
 
       if (scheduleError) {
         console.error('Error loading schedules:', scheduleError)
@@ -85,11 +96,10 @@ export default function HistoryPage() {
         const hasTherapistAllocs = hasTherapist.has(schedule.id)
         const hasPCAAllocs = hasPCA.has(schedule.id)
         const hasBedAllocs = hasBed.has(schedule.id)
-        const completionStatus = getCompletionStatus(
-          hasTherapistAllocs,
-          hasPCAAllocs,
-          hasBedAllocs
-        )
+        const workflowState = (schedule as any).workflow_state ?? null
+        const completionStatus =
+          getCompletionStatusFromWorkflowState(workflowState) ??
+          getCompletionStatus(hasTherapistAllocs, hasPCAAllocs, hasBedAllocs)
 
         return {
           id: schedule.id,
@@ -99,6 +109,7 @@ export default function HistoryPage() {
           hasTherapistAllocations: hasTherapistAllocs,
           hasPCAAllocations: hasPCAAllocs,
           hasBedAllocations: hasBedAllocs,
+          workflowState,
           completionStatus
         }
       })

@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerComponentClient } from '@/lib/supabase/server'
 import { requireAuth } from '@/lib/auth'
 import { formatDate } from '@/lib/utils/dateHelpers'
-import { BaselineSnapshot } from '@/types/schedule'
+import { BaselineSnapshot, BaselineSnapshotStored } from '@/types/schedule'
 import { Team } from '@/types/staff'
+import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 
 type CopyMode = 'full' | 'hybrid'
 
@@ -194,18 +195,29 @@ export async function POST(request: NextRequest) {
     const fromScheduleId = fromSchedule.id
     const toScheduleId = toSchedule.id
 
-    // Build or reuse baseline snapshot
-    let sourceBaseline: BaselineSnapshot | null = (fromSchedule as any).baseline_snapshot ?? null
+    // Build or reuse baseline snapshot (supports legacy raw and v1 envelope)
+    const sourceStored = ((fromSchedule as any).baseline_snapshot ?? null) as BaselineSnapshotStored | null
     const hasExistingBaseline =
-      sourceBaseline && typeof sourceBaseline === 'object' && Object.keys(sourceBaseline as any).length > 0
+      sourceStored && typeof sourceStored === 'object' && Object.keys(sourceStored as any).length > 0
 
+    let sourceBaselineData: BaselineSnapshot
     if (!hasExistingBaseline) {
-      sourceBaseline = await buildBaselineSnapshot(supabase)
-      // Persist baseline snapshot back to source schedule for future consistency
+      sourceBaselineData = await buildBaselineSnapshot(supabase)
+      // Persist baseline snapshot back to source schedule for future consistency (as v1 envelope)
       await supabase
         .from('daily_schedules')
-        .update({ baseline_snapshot: sourceBaseline })
+        .update({ baseline_snapshot: buildBaselineSnapshotEnvelope({ data: sourceBaselineData, source: 'copy' }) as any })
         .eq('id', fromScheduleId)
+    } else {
+      const { data, wasWrapped } = unwrapBaselineSnapshotStored(sourceStored as BaselineSnapshotStored)
+      sourceBaselineData = data
+      // If the source schedule still stores the legacy raw shape, upgrade it opportunistically.
+      if (wasWrapped) {
+        await supabase
+          .from('daily_schedules')
+          .update({ baseline_snapshot: buildBaselineSnapshotEnvelope({ data: sourceBaselineData, source: 'copy' }) as any })
+          .eq('id', fromScheduleId)
+      }
     }
 
     const sourceOverrides = (fromSchedule as any).staff_overrides || {}
@@ -234,19 +246,20 @@ export async function POST(request: NextRequest) {
     // Buffer staff sets (based on latest source schedule state)
     const bufferStaffIds = await resolveBufferStaffIdsFromLatestState(
       supabase,
-      sourceBaseline as BaselineSnapshot,
+      sourceBaselineData,
       referencedIds
     )
 
     // Build target baseline (adjusting buffer staff if needed)
-    let targetBaseline: BaselineSnapshot = sourceBaseline as BaselineSnapshot
-    const snapshotStaff: any[] = (sourceBaseline as any).staff || []
+    const snapshotStaff: any[] = (sourceBaselineData as any).staff || []
+    let targetBaselineData: BaselineSnapshot = sourceBaselineData
     if (!includeBufferStaff && snapshotStaff.length > 0) {
-      const updatedStaff = snapshotStaff.map(s =>
+      const updatedStaff = snapshotStaff.map((s: any) =>
         bufferStaffIds.has(s.id) ? { ...s, status: 'inactive' } : s
       )
-      targetBaseline = { ...(sourceBaseline as any), staff: updatedStaff }
+      targetBaselineData = { ...(sourceBaselineData as any), staff: updatedStaff }
     }
+    const targetBaselineEnvelope = buildBaselineSnapshotEnvelope({ data: targetBaselineData, source: 'copy' })
 
     // Clear target allocations and calculations
     await Promise.all([
@@ -347,7 +360,7 @@ export async function POST(request: NextRequest) {
       .from('daily_schedules')
       .update({
         is_tentative: true,
-        baseline_snapshot: targetBaseline,
+        baseline_snapshot: targetBaselineEnvelope as any,
         staff_overrides: sourceOverrides,
         workflow_state: targetWorkflowState,
         tie_break_decisions: (fromSchedule as any).tie_break_decisions || {},

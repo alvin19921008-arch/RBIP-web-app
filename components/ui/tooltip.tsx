@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 
 interface TooltipProps {
   children: React.ReactNode
-  content: string
+  content: React.ReactNode
   side?: 'top' | 'right' | 'bottom' | 'left'
   className?: string
 }
@@ -38,12 +38,12 @@ export function Tooltip({ children, content, side = 'right', className }: Toolti
       }
       setPortalStyle({ left, top, transform })
     }
-  }, [isVisible, side, content])
+  }, [isVisible, side])
 
   return (
     <div
       ref={anchorRef}
-      className="relative block w-full"
+      className="relative inline-block"
       onMouseEnter={() => {
         setIsVisible(true)
       }}

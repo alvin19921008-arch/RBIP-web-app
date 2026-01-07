@@ -3,6 +3,8 @@ import { createServerComponentClient } from '@/lib/supabase/server'
 import { requireAuth } from '@/lib/auth'
 import { formatDate } from '@/lib/utils/dateHelpers'
 import { Staff } from '@/types/staff'
+import type { BaselineSnapshotStored } from '@/types/schedule'
+import { unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 
 function isNonEmptyObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value as any).length > 0
@@ -21,11 +23,24 @@ export async function GET(request: NextRequest) {
 
     const dateStr = formatDate(dateParam)
 
-    const { data: schedule, error: scheduleError } = await supabase
+    // Try to load schedule with snapshot/overrides columns; fall back for legacy DB schemas
+    let { data: schedule, error: scheduleError } = await supabase
       .from('daily_schedules')
       .select('id, baseline_snapshot, staff_overrides')
       .eq('date', dateStr)
       .maybeSingle()
+
+    // If DB is missing the new columns (baseline_snapshot/staff_overrides), retry with minimal selection.
+    // This keeps the copy wizard functional even before migrations are applied.
+    if (scheduleError && (scheduleError as any)?.code === '42703') {
+      const fallback = await supabase
+        .from('daily_schedules')
+        .select('id')
+        .eq('date', dateStr)
+        .maybeSingle()
+      schedule = fallback.data as any
+      scheduleError = fallback.error as any
+    }
 
     if (scheduleError) {
       return NextResponse.json({ error: 'Failed to load schedule' }, { status: 500 })
@@ -56,11 +71,10 @@ export async function GET(request: NextRequest) {
       Object.keys(staffOverrides).forEach(id => referencedIds.add(id))
     }
 
-    const baselineSnapshot = (schedule as any).baseline_snapshot
-    const snapshotStaff: any[] =
-      baselineSnapshot && typeof baselineSnapshot === 'object'
-        ? ((baselineSnapshot as any).staff || [])
-        : []
+    const baselineStored = ((schedule as any).baseline_snapshot ?? null) as BaselineSnapshotStored | null
+    const snapshotStaff: any[] = baselineStored
+      ? unwrapBaselineSnapshotStored(baselineStored).data.staff
+      : []
 
     const snapshotStaffById = new Map<string, any>()
     snapshotStaff.forEach(s => {

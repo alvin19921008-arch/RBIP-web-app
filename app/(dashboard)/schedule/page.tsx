@@ -3,7 +3,17 @@
 import { useState, useEffect, useRef, Fragment, useCallback, Suspense } from 'react'
 import { DndContext, DragOverlay, DragEndEvent, DragStartEvent, DragMoveEvent, Active } from '@dnd-kit/core'
 import { Team, Weekday, LeaveType } from '@/types/staff'
-import { TherapistAllocation, PCAAllocation, BedAllocation, ScheduleCalculations, AllocationTracker, WorkflowState, BaselineSnapshot } from '@/types/schedule'
+import {
+  TherapistAllocation,
+  PCAAllocation,
+  BedAllocation,
+  ScheduleCalculations,
+  AllocationTracker,
+  WorkflowState,
+  BaselineSnapshot,
+  BaselineSnapshotStored,
+  SnapshotHealthReport,
+} from '@/types/schedule'
 import { Staff } from '@/types/staff'
 import { TeamColumn } from '@/components/allocation/TeamColumn'
 import { StaffPool } from '@/components/allocation/StaffPool'
@@ -26,6 +36,7 @@ import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopov
 import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X, ArrowLeft, Copy } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { CalendarGrid } from '@/components/ui/calendar-grid'
+import { Tooltip } from '@/components/ui/tooltip'
 import { getHongKongHolidays } from '@/lib/utils/hongKongHolidays'
 import { getNextWorkingDay, getPreviousWorkingDay } from '@/lib/utils/dateHelpers'
 import { createClientComponentClient } from '@/lib/supabase/client'
@@ -49,6 +60,8 @@ import {
 } from '@/lib/db/types'
 import { useAllocationSync } from '@/lib/hooks/useAllocationSync'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
+import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
+import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 const WEEKDAYS: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri']
@@ -98,6 +111,7 @@ function parseDateFromInput(dateStr: string): Date {
 function SchedulePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const supabase = createClientComponentClient()
   const [selectedDate, setSelectedDate] = useState<Date>(DEFAULT_DATE)
   const [showBackButton, setShowBackButton] = useState(false)
   const [therapistAllocations, setTherapistAllocations] = useState<Record<Team, (TherapistAllocation & { staff: Staff })[]>>({
@@ -118,6 +132,12 @@ function SchedulePageContent() {
   const [wards, setWards] = useState<{ name: string; total_beds: number; team_assignments: Record<Team, number>; team_assignment_portions?: Record<Team, string> }[]>([])
   const [pcaPreferences, setPcaPreferences] = useState<PCAPreference[]>([])
   const [loading, setLoading] = useState(false)
+  const [userRole, setUserRole] = useState<'admin' | 'regular'>('regular')
+  const toastTimerRef = useRef<any>(null)
+  const highlightTimerRef = useRef<any>(null)
+  const [actionToast, setActionToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null)
+  const [highlightDateKey, setHighlightDateKey] = useState<string | null>(null)
+  const [isDateHighlighted, setIsDateHighlighted] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [editingStaffId, setEditingStaffId] = useState<string | null>(null)
   const [tieBreakDialogOpen, setTieBreakDialogOpen] = useState(false)
@@ -237,6 +257,8 @@ function SchedulePageContent() {
   const [persistedWorkflowState, setPersistedWorkflowState] = useState<WorkflowState | null>(null)
   // Baseline snapshot for this schedule date (daily_schedules.baseline_snapshot)
   const [baselineSnapshot, setBaselineSnapshot] = useState<BaselineSnapshot | null>(null)
+  // Runtime-only snapshot health report (for admin dev panel)
+  const [snapshotHealthReport, setSnapshotHealthReport] = useState<SnapshotHealthReport | null>(null)
   // Intermediate state for step-wise allocation (passed between steps)
   const [step2Result, setStep2Result] = useState<{
     pcaData: PCAData[]
@@ -551,7 +573,48 @@ function SchedulePageContent() {
     }
   }, [pcaDragState.isDraggingFromPopover, pcaDragState.sourceTeam, pcaDragState.selectedSlots, popoverDragHoverTeam])
   
-  const supabase = createClientComponentClient()
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { data } = await supabase.auth.getUser()
+        const userId = data.user?.id
+        if (!userId) return
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('role')
+          .eq('id', userId)
+          .maybeSingle()
+        const role = (profile as any)?.role === 'admin' ? 'admin' : 'regular'
+        if (!cancelled) setUserRole(role)
+      } catch {
+        // default to regular
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [supabase])
+
+  const showActionToast = (message: string, variant: 'success' | 'error' = 'success') => {
+    setActionToast({ message, variant })
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = setTimeout(() => {
+      setActionToast(null)
+    }, 2000)
+  }
+
+  useEffect(() => {
+    if (!highlightDateKey) return
+    const currentKey = formatDateForInput(selectedDate)
+    if (currentKey !== highlightDateKey) return
+
+    setIsDateHighlighted(true)
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
+    highlightTimerRef.current = setTimeout(() => {
+      setIsDateHighlighted(false)
+    }, 2000)
+  }, [selectedDate, highlightDateKey])
 
   useEffect(() => {
     loadAllData()
@@ -995,6 +1058,10 @@ function SchedulePageContent() {
       // Immediately snapshot current dashboard state for this new schedule to prevent cross-date contamination.
       // If DB schema doesn't have the new columns yet (legacy), fall back to minimal insert.
       const baselineSnapshotToSave = buildBaselineSnapshotFromCurrentState()
+      const baselineEnvelopeToSave = buildBaselineSnapshotEnvelope({
+        data: baselineSnapshotToSave,
+        source: 'save',
+      })
       const initialWorkflowState: WorkflowState = { currentStep: 'leave-fte', completedSteps: [] }
 
       let newSchedule: { id: string } | null = null
@@ -1005,7 +1072,7 @@ function SchedulePageContent() {
         .insert({
           date: dateStr,
           is_tentative: true,
-          baseline_snapshot: baselineSnapshotToSave as any,
+          baseline_snapshot: baselineEnvelopeToSave as any,
           staff_overrides: {} as any,
           workflow_state: initialWorkflowState as any,
         })
@@ -1063,12 +1130,15 @@ function SchedulePageContent() {
       setTieBreakDecisions({})
     }
 
-    // Load and apply baseline snapshot if present
-    const rawBaselineSnapshot = (scheduleData as any)?.baseline_snapshot as BaselineSnapshot | undefined
+    // Load and apply baseline snapshot if present (supports both legacy raw snapshot and v1 envelope)
+    const rawBaselineSnapshotStored = (scheduleData as any)?.baseline_snapshot as BaselineSnapshotStored | undefined
     const hasBaselineSnapshot =
-      rawBaselineSnapshot && typeof rawBaselineSnapshot === 'object' && Object.keys(rawBaselineSnapshot as any).length > 0
+      rawBaselineSnapshotStored &&
+      typeof rawBaselineSnapshotStored === 'object' &&
+      Object.keys(rawBaselineSnapshotStored as any).length > 0
     if (hasBaselineSnapshot) {
-      applyBaselineSnapshot(rawBaselineSnapshot as BaselineSnapshot)
+      const { data } = unwrapBaselineSnapshotStored(rawBaselineSnapshotStored)
+      applyBaselineSnapshot(data)
     }
 
     // Load workflow state if present
@@ -1093,7 +1163,7 @@ function SchedulePageContent() {
 
     // If this is a legacy/blank schedule with no snapshot yet, create snapshot once.
     // Do NOT overwrite if the schedule already has a snapshot (e.g., created via copy API).
-    const existingSnapshot = (scheduleData as any)?.baseline_snapshot as BaselineSnapshot | undefined
+    const existingSnapshot = (scheduleData as any)?.baseline_snapshot as BaselineSnapshotStored | undefined
     const hasSnapshot =
       existingSnapshot && typeof existingSnapshot === 'object' && Object.keys(existingSnapshot as any).length > 0
     const hasAnyAllocations = (therapistAllocs?.length || 0) > 0 || (pcaAllocs?.length || 0) > 0
@@ -1105,11 +1175,15 @@ function SchedulePageContent() {
 
     if (!hasSnapshot && !hasAnyAllocations && !hasPersistedOverrides) {
       const baselineSnapshotToSave = buildBaselineSnapshotFromCurrentState()
+      const baselineEnvelopeToSave = buildBaselineSnapshotEnvelope({
+        data: baselineSnapshotToSave,
+        source: 'save',
+      })
       const initialWorkflowState: WorkflowState = { currentStep: 'leave-fte', completedSteps: [] }
       const { error: snapshotError } = await supabase
         .from('daily_schedules')
         .update({
-          baseline_snapshot: baselineSnapshotToSave as any,
+          baseline_snapshot: baselineEnvelopeToSave as any,
           workflow_state: (scheduleData as any)?.workflow_state || (initialWorkflowState as any),
         })
         .eq('id', scheduleId)
@@ -1215,6 +1289,47 @@ function SchedulePageContent() {
     
     setStaffOverrides(overrides)
     setSavedOverrides(overrides) // Track what's saved
+
+    // Runtime validation/repair for baseline snapshot (staff coverage, legacy wrapping, etc.).
+    // This is runtime-only; persistence happens on Save (auto-repair-on-save todo).
+    if ((scheduleData as any)?.baseline_snapshot) {
+      try {
+        const referencedIds = extractReferencedStaffIds({
+          therapistAllocs: therapistAllocs as any,
+          pcaAllocs: pcaAllocs as any,
+          staffOverrides: overrides,
+        })
+
+        const result = await validateAndRepairBaselineSnapshot({
+          storedSnapshot: (scheduleData as any)?.baseline_snapshot,
+          referencedStaffIds: referencedIds,
+          fetchLiveStaffByIds: async (ids) => {
+            if (ids.length === 0) return []
+            const { data } = await supabase.from('staff').select('*').in('id', ids)
+            return (data || []) as any[]
+          },
+          buildFallbackBaseline: buildBaselineSnapshotFromCurrentState,
+          sourceForNewEnvelope: 'save',
+        })
+
+        setSnapshotHealthReport(result.report)
+        // If repaired, apply immediately so UI/algos have required staff rows.
+        if (result.report.status !== 'ok') {
+          applyBaselineSnapshot(result.data)
+        }
+      } catch (e) {
+        console.warn('Snapshot validation failed (runtime-only):', e)
+        setSnapshotHealthReport({
+          status: 'fallback',
+          issues: ['validationException'],
+          referencedStaffCount: 0,
+          snapshotStaffCount: baselineSnapshot?.staff?.length || 0,
+          missingReferencedStaffCount: 0,
+        })
+      }
+    } else {
+      setSnapshotHealthReport(null)
+    }
     
     // Return allocations and metadata so we can use saved allocations directly instead of regenerating
     return {
@@ -1222,7 +1337,9 @@ function SchedulePageContent() {
       overrides,
       pcaAllocs: pcaAllocs || [],
       therapistAllocs: therapistAllocs || [],
-      baselineSnapshot: hasBaselineSnapshot ? (rawBaselineSnapshot as BaselineSnapshot) : null,
+      baselineSnapshot: hasBaselineSnapshot
+        ? unwrapBaselineSnapshotStored(rawBaselineSnapshotStored as BaselineSnapshotStored).data
+        : null,
       workflowState: rawWorkflowState ?? null,
     } as any
   }
@@ -4206,7 +4323,7 @@ function SchedulePageContent() {
       })
 
       // Save all allocations
-      const promises: Promise<any>[] = []
+      const promises: PromiseLike<any>[] = []
 
       // Build special programs reference for UUID conversion
       const specialProgramsRef: SpecialProgramRef[] = specialPrograms.map(sp => ({ id: sp.id, name: sp.name }))
@@ -4267,13 +4384,13 @@ function SchedulePageContent() {
               .update(allocationData)
               .eq('id', existing.id)
               .select() // Add select to verify update persisted
-            promises.push(updatePromise as unknown as Promise<any>)
+            promises.push(updatePromise)
           } else {
             const insertPromise = supabase
               .from('schedule_therapist_allocations')
               .insert(allocationData)
               .select() // Add select to verify insert succeeded
-            promises.push(insertPromise as unknown as Promise<any>)
+            promises.push(insertPromise)
           }
         } else {
           const alloc = item.alloc as PCAAllocation | null
@@ -4284,9 +4401,9 @@ function SchedulePageContent() {
           // Use actual fte_pca value (no longer rounded down) and calculate fte_remaining/slot_assigned
           // Handle both slot_assigned (new) and fte_assigned (old) during migration transition
           const baseFTEPCA = alloc?.fte_pca ?? item.fteRemaining
-          const slotAssigned = (alloc as any).slot_assigned ?? (alloc as any).fte_assigned ?? 0
+          const slotAssigned = (alloc as any)?.slot_assigned ?? (alloc as any)?.fte_assigned ?? 0
           const fteRemaining = alloc?.fte_remaining ?? Math.max(0, baseFTEPCA - slotAssigned)
-          
+
           // Convert special program names to UUIDs if needed
           let programIds = alloc?.special_program_ids || []
           if (programIds.length > 0) {
@@ -4339,13 +4456,13 @@ function SchedulePageContent() {
               .update(allocationData)
               .eq('id', existing.id)
               .select()
-            promises.push(updatePromise as unknown as Promise<any>)
+            promises.push(updatePromise)
           } else {
             const insertPromise = supabase
               .from('schedule_pca_allocations')
               .insert(allocationData)
               .select()
-            promises.push(insertPromise as unknown as Promise<any>)
+            promises.push(insertPromise)
           }
         }
       }
@@ -4356,7 +4473,7 @@ function SchedulePageContent() {
       const errors = results.filter(r => r.error)
       if (errors.length > 0) {
         console.error('Errors saving schedule:', errors)
-        alert(`Error saving schedule: ${errors[0].error?.message || 'Unknown error'}`)
+        showActionToast(`Error saving schedule: ${errors[0].error?.message || 'Unknown error'}`, 'error')
         setSaving(false)
         return
       }
@@ -4379,9 +4496,11 @@ function SchedulePageContent() {
       // Ensure baseline_snapshot includes any newly-used staff (especially buffer staff created later),
       // so per-date isolation remains stable for future loads and copy operations.
       try {
-        const referencedIds = new Set<string>()
-        allocationsToSave.forEach(item => referencedIds.add(item.staffId))
-        Object.keys(overridesToSave || {}).forEach(id => referencedIds.add(id))
+        const referencedIds = extractReferencedStaffIds({
+          therapistAllocs: allocationsToSave.filter(a => a.isTherapist).map(a => ({ staff_id: a.staffId })),
+          pcaAllocs: allocationsToSave.filter(a => !a.isTherapist).map(a => ({ staff_id: a.staffId })),
+          staffOverrides: overridesToSave,
+        })
 
         const { data: existingScheduleRow } = await supabase
           .from('daily_schedules')
@@ -4389,44 +4508,28 @@ function SchedulePageContent() {
           .eq('id', scheduleId)
           .maybeSingle()
 
-        const existingBaseline = (existingScheduleRow as any)?.baseline_snapshot as BaselineSnapshot | undefined
-        const hasExistingBaseline =
-          existingBaseline &&
-          typeof existingBaseline === 'object' &&
-          Object.keys(existingBaseline as any).length > 0
+        const existingBaselineStored = (existingScheduleRow as any)?.baseline_snapshot as BaselineSnapshotStored | undefined
 
-        const baselineToMerge = hasExistingBaseline ? (existingBaseline as any) : buildBaselineSnapshotFromCurrentState()
-        const baselineStaff: any[] = (baselineToMerge as any).staff || []
-        const baselineStaffById = new Map<string, any>()
-        baselineStaff.forEach(s => s?.id && baselineStaffById.set(s.id, s))
-
-        const missingIds: string[] = []
-        referencedIds.forEach(id => {
-          if (!baselineStaffById.has(id)) missingIds.push(id)
+        const result = await validateAndRepairBaselineSnapshot({
+          storedSnapshot: existingBaselineStored,
+          referencedStaffIds: referencedIds,
+          fetchLiveStaffByIds: async (ids) => {
+            if (ids.length === 0) return []
+            const { data } = await supabase.from('staff').select('*').in('id', ids)
+            return (data || []) as any[]
+          },
+          buildFallbackBaseline: buildBaselineSnapshotFromCurrentState,
+          sourceForNewEnvelope: 'save',
         })
 
-        if (missingIds.length > 0) {
-          const { data: liveStaff } = await supabase
-            .from('staff')
-            .select('*')
-            .in('id', missingIds)
-          ;(liveStaff || []).forEach((s: any) => {
-            if (s?.id) baselineStaffById.set(s.id, s)
-          })
-        }
-
-        const mergedBaseline: BaselineSnapshot = {
-          ...(baselineToMerge as any),
-          staff: Array.from(baselineStaffById.values()),
-        }
-
-        // Persist baseline snapshot back (append-only style; no removals)
+        // Persist repaired snapshot back (auto-repair). Always store v1 envelope.
         await supabase
           .from('daily_schedules')
-          .update({ baseline_snapshot: mergedBaseline as any })
+          .update({ baseline_snapshot: result.envelope as any })
           .eq('id', scheduleId)
 
-        setBaselineSnapshot(mergedBaseline)
+        setBaselineSnapshot(result.data)
+        setSnapshotHealthReport(result.report)
       } catch (e) {
         console.warn('Failed to update baseline snapshot during save:', e)
       }
@@ -4510,10 +4613,10 @@ function SchedulePageContent() {
         }
       }
       
-      alert('Schedule saved successfully!')
+      showActionToast('Saved successfully.', 'success')
     } catch (error) {
       console.error('Error saving schedule:', error)
-      alert('Error saving schedule. Please try again.')
+      showActionToast('Failed to save. Please try again.', 'error')
     } finally {
       setSaving(false)
     }
@@ -4559,10 +4662,20 @@ function SchedulePageContent() {
 
     const data = await res.json()
 
+    // Close wizard after success (non-modal feedback will be shown via toast).
+    setCopyWizardOpen(false)
+    setCopyWizardConfig(null)
+    setCopyMenuOpen(false)
+
+    // Highlight the newly-loaded date label briefly.
+    setHighlightDateKey(formatDateForInput(toDate))
+
     // Navigate to copied schedule date and reload schedule metadata
     setSelectedDate(toDate)
     setScheduleLoadedForDate(null)
     await loadDatesWithData()
+
+    showActionToast(`Copied schedule to ${formatDateDDMMYYYY(toDate)}.`, 'success')
 
     return {
       copiedUpToStep: (data as any).copiedUpToStep as string | undefined,
@@ -5858,6 +5971,19 @@ function SchedulePageContent() {
       <DragOverlay />
       
       <div className="container mx-auto p-4">
+        {actionToast && (
+          <div className="fixed bottom-4 right-4 z-[9999]">
+            <div
+              className={`px-4 py-3 rounded-md border shadow-lg text-sm ${
+                actionToast.variant === 'success'
+                  ? 'bg-amber-100 border-amber-300 text-amber-950'
+                  : 'bg-red-100 border-red-300 text-red-950'
+              }`}
+            >
+              {actionToast.message}
+            </div>
+          </div>
+        )}
         {showBackButton && (
           <Button
             variant="ghost"
@@ -5889,7 +6015,13 @@ function SchedulePageContent() {
               >
                 <Calendar className="h-5 w-5 text-muted-foreground hover:text-foreground transition-colors" />
               </button>
-              <span className="text-lg font-semibold">
+              <span
+                className={`text-lg font-semibold rounded px-2 py-1 transition-shadow transition-colors ${
+                  isDateHighlighted
+                    ? 'bg-amber-50 ring-2 ring-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.55)]'
+                    : ''
+                }`}
+              >
                 {formatDateDDMMYYYY(selectedDate)} ({weekdayName})
               </span>
             </div>
@@ -5919,15 +6051,65 @@ function SchedulePageContent() {
             <div className="flex items-center space-x-2">
               {/* Copy dropdown button */}
               <div className="relative">
-                <Button
-                  variant="outline"
-                  onClick={() => setCopyMenuOpen(prev => !prev)}
-                  type="button"
-                  className="flex items-center"
-                >
-                  <Copy className="h-4 w-4 mr-2" />
-                  Copy
-                </Button>
+                {userRole === 'admin' && snapshotHealthReport ? (
+                  <Tooltip
+                    side="bottom"
+                    className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
+                    content={
+                      <div className="w-56 bg-slate-800 border border-slate-700 rounded-md shadow-lg">
+                        <div className="border-t border-slate-700 px-3 py-2 text-xs text-slate-500">
+                          Dev/Testing Options
+                        </div>
+                        <div className="px-3 pb-3 text-xs text-slate-200 space-y-1">
+                          <div>
+                            <span className="text-slate-400">snapshotHealth:</span>{' '}
+                            {snapshotHealthReport.status}
+                          </div>
+                          {snapshotHealthReport.issues?.length > 0 && (
+                            <div>
+                              <span className="text-slate-400">issues:</span>{' '}
+                              {snapshotHealthReport.issues.join(', ')}
+                            </div>
+                          )}
+                          <div>
+                            <span className="text-slate-400">staff:</span>{' '}
+                            {snapshotHealthReport.snapshotStaffCount} (missing referenced:{' '}
+                            {snapshotHealthReport.missingReferencedStaffCount})
+                          </div>
+                          {(snapshotHealthReport.schemaVersion || snapshotHealthReport.source) && (
+                            <div>
+                              <span className="text-slate-400">meta:</span>{' '}
+                              {snapshotHealthReport.schemaVersion
+                                ? `v${snapshotHealthReport.schemaVersion}`
+                                : 'v?'}
+                              {snapshotHealthReport.source ? `, ${snapshotHealthReport.source}` : ''}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    }
+                  >
+                    <Button
+                      variant="outline"
+                      onClick={() => setCopyMenuOpen(prev => !prev)}
+                      type="button"
+                      className="flex items-center"
+                    >
+                      <Copy className="h-4 w-4 mr-2" />
+                      Copy
+                    </Button>
+                  </Tooltip>
+                ) : (
+                  <Button
+                    variant="outline"
+                    onClick={() => setCopyMenuOpen(prev => !prev)}
+                    type="button"
+                    className="flex items-center"
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    Copy
+                  </Button>
+                )}
                 {copyMenuOpen && (
                   <div className="absolute right-0 top-full mt-1 w-64 bg-background border border-border rounded-md shadow-lg z-50">
                     <div className="p-1">
@@ -6355,7 +6537,8 @@ function SchedulePageContent() {
                 // Note: fte_subtraction is not stored in database - calculate from fte_pca
                 // fte_pca represents base_FTE_remaining = 1.0 - fteSubtraction
                 // Handle both slot_assigned (new) and fte_assigned (old) during migration transition
-                const slotAssigned = (allocation as any).slot_assigned ?? (allocation as any).fte_assigned ?? 0
+                // allocation can be null in some paths; guard it to avoid runtime crash
+                const slotAssigned = (allocation as any)?.slot_assigned ?? (allocation as any)?.fte_assigned ?? 0
                 currentFTERemaining = allocation.fte_pca || ((allocation.fte_remaining ?? 0) + slotAssigned)
                 // Calculate fteSubtraction from fte_pca
                 currentFTESubtraction = 1.0 - currentFTERemaining

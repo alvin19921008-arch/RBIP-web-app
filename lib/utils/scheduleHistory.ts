@@ -1,4 +1,5 @@
 import { Weekday } from '@/types/staff'
+import type { WorkflowState, ScheduleStepId } from '@/types/schedule'
 
 export interface ScheduleHistoryEntry {
   id: string
@@ -8,6 +9,7 @@ export interface ScheduleHistoryEntry {
   hasTherapistAllocations: boolean
   hasPCAAllocations: boolean
   hasBedAllocations: boolean
+  workflowState?: WorkflowState | null
   completionStatus: 'complete' | 'step3.2' | 'step2' | 'step1'
 }
 
@@ -71,6 +73,21 @@ export function getCompletionStatus(
   } else {
     return 'step1'
   }
+}
+
+export function getCompletionStatusFromWorkflowState(
+  workflowState: WorkflowState | null | undefined
+): ScheduleHistoryEntry['completionStatus'] | null {
+  if (!workflowState || typeof workflowState !== 'object') return null
+  const completed = Array.isArray(workflowState.completedSteps) ? workflowState.completedSteps : []
+  const completedSet = new Set<ScheduleStepId>(completed as ScheduleStepId[])
+
+  // Treat Step 4 completion as "complete" for history badge purposes (matches prior bed-data inference).
+  if (completedSet.has('bed-relieving') || completedSet.has('review')) return 'complete'
+  if (completedSet.has('floating-pca')) return 'step3.2'
+  if (completedSet.has('therapist-pca')) return 'step2'
+  if (completedSet.has('leave-fte')) return 'step1'
+  return 'step1'
 }
 
 /**
