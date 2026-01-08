@@ -35,7 +35,12 @@ export function extractReferencedStaffIds(params: {
   ;(params.therapistAllocs || []).forEach(a => a?.staff_id && ids.add(a.staff_id))
   ;(params.pcaAllocs || []).forEach(a => a?.staff_id && ids.add(a.staff_id))
   if (isNonEmptyObject(params.staffOverrides)) {
-    Object.keys(params.staffOverrides).forEach(id => ids.add(id))
+    Object.keys(params.staffOverrides).forEach(id => {
+      // staff_overrides may contain schedule-level metadata keys (e.g. "__bedCounts").
+      // Never treat these as staff UUIDs.
+      if (id.startsWith('__')) return
+      ids.add(id)
+    })
   }
   return ids
 }

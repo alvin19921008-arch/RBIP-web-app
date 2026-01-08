@@ -13,7 +13,7 @@ export function SummaryColumn({ totalBeds, totalPTOnDuty, bedsPerPT }: SummaryCo
     <Card className="bg-slate-50 border-slate-300 w-fit inline-block">
       <CardContent className="p-1.5 space-y-0.5 text-[11px] leading-tight whitespace-nowrap">
         <div>
-          <span className="font-semibold">Total Beds:</span> {totalBeds}
+          <span className="font-semibold">Total bed counts:</span> {totalBeds}
         </div>
         <div>
           <span className="font-semibold">Total PT:</span> {totalPTOnDuty.toFixed(2)}

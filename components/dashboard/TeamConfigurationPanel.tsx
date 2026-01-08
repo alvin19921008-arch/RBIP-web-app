@@ -692,7 +692,7 @@ export function TeamConfigurationPanel() {
                               <div key={wardId} className="flex items-center gap-3 py-2 border-b last:border-b-0">
                                   <span className="font-medium">{wardLabel}</span>
                                 <span className="text-sm text-muted-foreground">
-                                    Bed no.: {beds}
+                                    Bed counts: {beds}
                                   </span>
                                 <Button
                                   type="button"
@@ -707,7 +707,7 @@ export function TeamConfigurationPanel() {
                             )
                           })}
                           <div className="pt-2 border-t">
-                            <span className="font-semibold">Total beds: {getSelectedWardsTotalBeds()}</span>
+                            <span className="font-semibold">Total bed counts: {getSelectedWardsTotalBeds()}</span>
                           </div>
                         </div>
                       )}
@@ -765,7 +765,7 @@ export function TeamConfigurationPanel() {
                       </p>
                     )}
                     <p className="text-black font-semibold">
-                      Total beds: {totalBeds}
+                      Total bed counts: {totalBeds}
                     </p>
                   </div>
                 </Card>

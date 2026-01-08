@@ -26,7 +26,7 @@ const categoryDescriptions: Record<PanelKey, string> = {
   'spt-allocations': 'Configure SPT allocation settings',
   'pca-preferences': 'Manage PCA preference settings',
   'staff-profile': 'Manage staff records and configurations',
-  'ward-config': 'Manage ward names and bed counts',
+  'ward-config': 'Manage ward names and bed stat',
   'team-configuration': 'Manage team staffing and ward responsibilities',
 }
 

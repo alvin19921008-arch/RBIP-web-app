@@ -68,7 +68,11 @@ export async function GET(request: NextRequest) {
 
     const staffOverrides = (schedule as any).staff_overrides
     if (isNonEmptyObject(staffOverrides)) {
-      Object.keys(staffOverrides).forEach(id => referencedIds.add(id))
+      Object.keys(staffOverrides).forEach(id => {
+        // staff_overrides may include schedule-level metadata keys (e.g. "__bedCounts").
+        if (id.startsWith('__')) return
+        referencedIds.add(id)
+      })
     }
 
     const baselineStored = ((schedule as any).baseline_snapshot ?? null) as BaselineSnapshotStored | null

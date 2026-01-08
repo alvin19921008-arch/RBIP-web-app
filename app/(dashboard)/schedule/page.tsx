@@ -22,6 +22,12 @@ import { PCABlock } from '@/components/allocation/PCABlock'
 import { BedBlock } from '@/components/allocation/BedBlock'
 import { LeaveBlock } from '@/components/allocation/LeaveBlock'
 import { CalculationBlock } from '@/components/allocation/CalculationBlock'
+import {
+  BedCountsEditDialog,
+  type BedCountsOverridePayload,
+  type BedCountsOverrideState,
+  type BedCountsWardRow,
+} from '@/components/allocation/BedCountsEditDialog'
 import { PCACalculationBlock } from '@/components/allocation/PCACalculationBlock'
 import { SummaryColumn } from '@/components/allocation/SummaryColumn'
 import { ScheduleCopyWizard } from '@/components/allocation/ScheduleCopyWizard'
@@ -253,9 +259,10 @@ function SchedulePageContent() {
   const [saving, setSaving] = useState(false)
   const [scheduleLoadedForDate, setScheduleLoadedForDate] = useState<string | null>(null) // Track which date's schedule is loaded
   const [hasSavedAllocations, setHasSavedAllocations] = useState(false) // Track if we loaded allocations from DB (to skip regeneration)
-  const [editableBeds, setEditableBeds] = useState<Record<Team, number>>({
-    FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
-  })
+  type BedCountsOverridesByTeam = Partial<Record<Team, BedCountsOverrideState>>
+  const [bedCountsOverridesByTeam, setBedCountsOverridesByTeam] = useState<BedCountsOverridesByTeam>({})
+  const [savedBedCountsOverridesByTeam, setSavedBedCountsOverridesByTeam] = useState<BedCountsOverridesByTeam>({})
+  const [editingBedTeam, setEditingBedTeam] = useState<Team | null>(null)
   const [pendingPCAFTEPerTeam, setPendingPCAFTEPerTeam] = useState<Record<Team, number>>({
     FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
   })
@@ -273,9 +280,6 @@ function SchedulePageContent() {
     direction: 'to' | 'from'
   } | null>(null)
   const [copyWizardOpen, setCopyWizardOpen] = useState(false)
-  const [savedEditableBeds, setSavedEditableBeds] = useState<Record<Team, number>>({
-    FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
-  })
   // Step-wise allocation workflow state
   const [currentStep, setCurrentStep] = useState<string>('leave-fte')
   const [stepStatus, setStepStatus] = useState<Record<string, 'pending' | 'completed' | 'modified'>>({
@@ -1469,9 +1473,25 @@ function SchedulePageContent() {
     }> = {}
 
     if (persistedOverrides && Object.keys(persistedOverrides).length > 0) {
+      // Extract schedule-level bed count overrides (stored under __bedCounts) and keep them in a dedicated state.
+      const persistedBedCountsByTeam = (persistedOverrides as any)?.__bedCounts?.byTeam
+      if (persistedBedCountsByTeam && typeof persistedBedCountsByTeam === 'object') {
+        setBedCountsOverridesByTeam(persistedBedCountsByTeam as any)
+        setSavedBedCountsOverridesByTeam(persistedBedCountsByTeam as any)
+      } else {
+        setBedCountsOverridesByTeam({})
+        setSavedBedCountsOverridesByTeam({})
+      }
+
       // Use staff_overrides JSON from database as single source of truth
-      Object.assign(overrides, persistedOverrides)
+      const persistedStaffOverrides = { ...(persistedOverrides as any) }
+      delete (persistedStaffOverrides as any).__bedCounts
+      Object.assign(overrides, persistedStaffOverrides)
     } else {
+      // No persisted staff_overrides: clear bed count overrides as well
+      setBedCountsOverridesByTeam({})
+      setSavedBedCountsOverridesByTeam({})
+
       // Legacy path: derive overrides from saved allocations
       therapistAllocs?.forEach(alloc => {
         if (alloc.leave_type !== null || alloc.fte_therapist !== 1) {
@@ -1746,8 +1766,22 @@ function SchedulePageContent() {
       }, 0)
       
       const teamWards = wards.filter(w => w.team_assignments[team] && w.team_assignments[team] > 0)
-      const calculatedBeds = teamWards.reduce((sum, w) => sum + (w.team_assignments[team] || 0), 0)
-      const totalBedsDesignated = editableBeds[team] > 0 ? editableBeds[team] : calculatedBeds
+      const bedOverride = bedCountsOverridesByTeam?.[team] as any
+      const calculatedBaseBeds = teamWards.reduce((sum, w) => {
+        const overrideVal = bedOverride?.wardBedCounts?.[w.name]
+        const effective =
+          typeof overrideVal === 'number'
+            ? Math.min(overrideVal, w.total_beds)
+            : (w.team_assignments[team] || 0)
+        return sum + effective
+      }, 0)
+      const shs = typeof bedOverride?.shsBedCounts === 'number' ? bedOverride.shsBedCounts : 0
+      const students =
+        typeof bedOverride?.studentPlacementBedCounts === 'number'
+          ? bedOverride.studentPlacementBedCounts
+          : 0
+      const safeDeductions = Math.min(calculatedBaseBeds, shs + students)
+      const totalBedsDesignated = Math.max(0, calculatedBaseBeds - safeDeductions)
       const expectedBeds = overallBedsPerPT * ptPerTeam
       bedsForRelieving[team] = expectedBeds - totalBedsDesignated
     })
@@ -1812,8 +1846,22 @@ function SchedulePageContent() {
     
     TEAMS.forEach(team => {
       const teamWards = wards.filter(w => w.team_assignments[team] && w.team_assignments[team] > 0)
-      const calculatedBeds = teamWards.reduce((sum, w) => sum + (w.team_assignments[team] || 0), 0)
-      const totalBedsDesignated = editableBeds[team] > 0 ? editableBeds[team] : calculatedBeds
+      const bedOverride = bedCountsOverridesByTeam?.[team] as any
+      const calculatedBaseBeds = teamWards.reduce((sum, w) => {
+        const overrideVal = bedOverride?.wardBedCounts?.[w.name]
+        const effective =
+          typeof overrideVal === 'number'
+            ? Math.min(overrideVal, w.total_beds)
+            : (w.team_assignments[team] || 0)
+        return sum + effective
+      }, 0)
+      const shs = typeof bedOverride?.shsBedCounts === 'number' ? bedOverride.shsBedCounts : 0
+      const students =
+        typeof bedOverride?.studentPlacementBedCounts === 'number'
+          ? bedOverride.studentPlacementBedCounts
+          : 0
+      const safeDeductions = Math.min(calculatedBaseBeds, shs + students)
+      const totalBedsDesignated = Math.max(0, calculatedBaseBeds - safeDeductions)
       const designatedWards = teamWards.map(w => formatWardName(w, team))
       
       const teamTherapists = therapistByTeam[team]
@@ -1881,7 +1929,7 @@ function SchedulePageContent() {
     })
     
     setCalculations(scheduleCalcs)
-  }, [pcaAllocations, therapistAllocations, staffOverrides, wards, editableBeds, selectedDate, specialPrograms, staff, currentStep])
+  }, [pcaAllocations, therapistAllocations, staffOverrides, wards, bedCountsOverridesByTeam, selectedDate, specialPrograms, staff, currentStep])
 
   // Auto-recalculate when allocations change (e.g., after Step 2 algo)
   useEffect(() => {
@@ -1890,6 +1938,88 @@ function SchedulePageContent() {
       recalculateScheduleCalculations()
     }
   }, [therapistAllocations, pcaAllocations, recalculateScheduleCalculations])
+
+  // Recalculate beds + relieving beds when bed-count overrides change.
+  useEffect(() => {
+    const hasAllocations = Object.keys(pcaAllocations).some(team => pcaAllocations[team as Team]?.length > 0)
+    if (!hasAllocations && currentStep !== 'leave-fte') {
+      return
+    }
+
+    recalculateScheduleCalculations()
+
+    const shouldComputeBeds =
+      stepStatus['bed-relieving'] === 'completed' || currentStep === 'bed-relieving' || currentStep === 'review'
+
+    if (!shouldComputeBeds) {
+      setBedAllocations([])
+      return
+    }
+
+    // Compute bed allocations using current therapist allocations and bed-count overrides
+    const totalBedsAllTeams = wards.reduce((sum, ward) => sum + ward.total_beds, 0)
+    const totalPTOnDutyAllTeams = TEAMS.reduce((sum, team) => {
+      return sum + therapistAllocations[team].reduce((teamSum, alloc) => {
+        const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
+        const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
+        const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_therapist || 0)
+        const hasFTE = currentFTE > 0
+        return teamSum + (isTherapist && hasFTE ? currentFTE : 0)
+      }, 0)
+    }, 0)
+
+    const bedsForRelieving: Record<Team, number> = {
+      FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
+    }
+    const overallBedsPerPT = totalPTOnDutyAllTeams > 0 ? totalBedsAllTeams / totalPTOnDutyAllTeams : 0
+
+    TEAMS.forEach(team => {
+      const ptPerTeam = therapistAllocations[team].reduce((sum, alloc) => {
+        const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
+        const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
+        const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_therapist || 0)
+        const hasFTE = currentFTE > 0
+        return sum + (isTherapist && hasFTE ? currentFTE : 0)
+      }, 0)
+
+      const teamWards = wards.filter(w => w.team_assignments[team] && w.team_assignments[team] > 0)
+      const bedOverride = bedCountsOverridesByTeam?.[team] as any
+      const calculatedBaseBeds = teamWards.reduce((sum, w) => {
+        const overrideVal = bedOverride?.wardBedCounts?.[w.name]
+        const effective =
+          typeof overrideVal === 'number'
+            ? Math.min(overrideVal, w.total_beds)
+            : (w.team_assignments[team] || 0)
+        return sum + effective
+      }, 0)
+      const shs = typeof bedOverride?.shsBedCounts === 'number' ? bedOverride.shsBedCounts : 0
+      const students =
+        typeof bedOverride?.studentPlacementBedCounts === 'number'
+          ? bedOverride.studentPlacementBedCounts
+          : 0
+      const safeDeductions = Math.min(calculatedBaseBeds, shs + students)
+      const totalBedsDesignated = Math.max(0, calculatedBaseBeds - safeDeductions)
+
+      const expectedBeds = overallBedsPerPT * ptPerTeam
+      bedsForRelieving[team] = expectedBeds - totalBedsDesignated
+    })
+
+    const bedContext: BedAllocationContext = {
+      bedsForRelieving,
+      wards: wards.map(w => ({ name: w.name, team_assignments: w.team_assignments })),
+    }
+    const bedResult = allocateBeds(bedContext)
+    setBedAllocations(bedResult.allocations)
+  }, [
+    bedCountsOverridesByTeam,
+    currentStep,
+    stepStatus,
+    wards,
+    therapistAllocations,
+    staffOverrides,
+    pcaAllocations,
+    recalculateScheduleCalculations,
+  ])
 
   // ============================================================================
   // CENTRALIZED ALLOCATION SYNC
@@ -2019,13 +2149,22 @@ function SchedulePageContent() {
       }, 0)
       
       const teamWards = wards.filter(w => w.team_assignments[team] && w.team_assignments[team] > 0)
-      const calculatedBeds = teamWards.reduce((sum, w) => sum + (w.team_assignments[team] || 0), 0)
-      
-      if (editableBeds[team] === 0 && calculatedBeds > 0) {
-        setEditableBeds(prev => ({ ...prev, [team]: calculatedBeds }))
-      }
-      
-      const totalBedsDesignated = editableBeds[team] > 0 ? editableBeds[team] : calculatedBeds
+      const bedOverride = bedCountsOverridesByTeam?.[team] as any
+      const calculatedBaseBeds = teamWards.reduce((sum, w) => {
+        const overrideVal = bedOverride?.wardBedCounts?.[w.name]
+        const effective =
+          typeof overrideVal === 'number'
+            ? Math.min(overrideVal, w.total_beds)
+            : (w.team_assignments[team] || 0)
+        return sum + effective
+      }, 0)
+      const shs = typeof bedOverride?.shsBedCounts === 'number' ? bedOverride.shsBedCounts : 0
+      const students =
+        typeof bedOverride?.studentPlacementBedCounts === 'number'
+          ? bedOverride.studentPlacementBedCounts
+          : 0
+      const safeDeductions = Math.min(calculatedBaseBeds, shs + students)
+      const totalBedsDesignated = Math.max(0, calculatedBaseBeds - safeDeductions)
       const expectedBeds = overallBedsPerPT * ptPerTeam
       bedsForRelieving[team] = expectedBeds - totalBedsDesignated
     })
@@ -2104,8 +2243,22 @@ function SchedulePageContent() {
     
     TEAMS.forEach(team => {
       const teamWards = wards.filter(w => w.team_assignments[team] && w.team_assignments[team] > 0)
-      const calculatedBeds = teamWards.reduce((sum, w) => sum + (w.team_assignments[team] || 0), 0)
-      const totalBedsDesignated = editableBeds[team] > 0 ? editableBeds[team] : calculatedBeds
+      const bedOverride = bedCountsOverridesByTeam?.[team] as any
+      const calculatedBaseBeds = teamWards.reduce((sum, w) => {
+        const overrideVal = bedOverride?.wardBedCounts?.[w.name]
+        const effective =
+          typeof overrideVal === 'number'
+            ? Math.min(overrideVal, w.total_beds)
+            : (w.team_assignments[team] || 0)
+        return sum + effective
+      }, 0)
+      const shs = typeof bedOverride?.shsBedCounts === 'number' ? bedOverride.shsBedCounts : 0
+      const students =
+        typeof bedOverride?.studentPlacementBedCounts === 'number'
+          ? bedOverride.studentPlacementBedCounts
+          : 0
+      const safeDeductions = Math.min(calculatedBaseBeds, shs + students)
+      const totalBedsDesignated = Math.max(0, calculatedBaseBeds - safeDeductions)
       const designatedWards = teamWards.map(w => formatWardName(w, team))
       
       const teamTherapists = therapistByTeam[team]
@@ -2646,12 +2799,22 @@ function SchedulePageContent() {
         
         // Get the designated beds for this team
         const teamWards = wards.filter(w => w.team_assignments[team] && w.team_assignments[team] > 0)
-        const calculatedBeds = teamWards.reduce((sum, w) => sum + (w.team_assignments[team] || 0), 0)
-        // Initialize editableBeds if not set
-        if (editableBeds[team] === 0 && calculatedBeds > 0) {
-          setEditableBeds(prev => ({ ...prev, [team]: calculatedBeds }))
-        }
-        const totalBedsDesignated = editableBeds[team] > 0 ? editableBeds[team] : calculatedBeds
+        const bedOverride = bedCountsOverridesByTeam?.[team] as any
+        const calculatedBaseBeds = teamWards.reduce((sum, w) => {
+          const overrideVal = bedOverride?.wardBedCounts?.[w.name]
+          const effective =
+            typeof overrideVal === 'number'
+              ? Math.min(overrideVal, w.total_beds)
+              : (w.team_assignments[team] || 0)
+          return sum + effective
+        }, 0)
+        const shs = typeof bedOverride?.shsBedCounts === 'number' ? bedOverride.shsBedCounts : 0
+        const students =
+          typeof bedOverride?.studentPlacementBedCounts === 'number'
+            ? bedOverride.studentPlacementBedCounts
+            : 0
+        const safeDeductions = Math.min(calculatedBaseBeds, shs + students)
+        const totalBedsDesignated = Math.max(0, calculatedBaseBeds - safeDeductions)
         
         // Expected beds for this team based on overall beds per PT ratio
         const expectedBeds = overallBedsPerPT * ptPerTeam
@@ -2753,13 +2916,22 @@ function SchedulePageContent() {
       TEAMS.forEach(team => {
         const teamWards = wards.filter(w => w.team_assignments[team] && w.team_assignments[team] > 0)
         const designatedWards = teamWards.map(w => formatWardName(w, team))
-        const calculatedBeds = teamWards.reduce((sum, w) => sum + (w.team_assignments[team] || 0), 0)
-        // Use editable beds if set, otherwise use calculated designated beds
-        // Initialize editableBeds if not set
-        if (editableBeds[team] === 0 && calculatedBeds > 0) {
-          setEditableBeds(prev => ({ ...prev, [team]: calculatedBeds }))
-        }
-        const totalBedsDesignated = editableBeds[team] > 0 ? editableBeds[team] : calculatedBeds
+        const bedOverride = bedCountsOverridesByTeam?.[team] as any
+        const calculatedBaseBeds = teamWards.reduce((sum, w) => {
+          const overrideVal = bedOverride?.wardBedCounts?.[w.name]
+          const effective =
+            typeof overrideVal === 'number'
+              ? Math.min(overrideVal, w.total_beds)
+              : (w.team_assignments[team] || 0)
+          return sum + effective
+        }, 0)
+        const shs = typeof bedOverride?.shsBedCounts === 'number' ? bedOverride.shsBedCounts : 0
+        const students =
+          typeof bedOverride?.studentPlacementBedCounts === 'number'
+            ? bedOverride.studentPlacementBedCounts
+            : 0
+        const safeDeductions = Math.min(calculatedBaseBeds, shs + students)
+        const totalBedsDesignated = Math.max(0, calculatedBaseBeds - safeDeductions)
         
         // Calculate PT per team: sum all FTE for therapists in this team (only count therapists with FTE > 0)
         const ptPerTeam = therapistByTeam[team].reduce((sum, alloc) => {
@@ -3786,8 +3958,22 @@ function SchedulePageContent() {
       }, 0)
 
       const teamWards = wards.filter(w => w.team_assignments[team] && w.team_assignments[team] > 0)
-      const calculatedBeds = teamWards.reduce((sum, w) => sum + (w.team_assignments[team] || 0), 0)
-      const totalBedsDesignated = editableBeds[team] > 0 ? editableBeds[team] : calculatedBeds
+      const bedOverride = bedCountsOverridesByTeam?.[team] as any
+      const calculatedBaseBeds = teamWards.reduce((sum, w) => {
+        const overrideVal = bedOverride?.wardBedCounts?.[w.name]
+        const effective =
+          typeof overrideVal === 'number'
+            ? Math.min(overrideVal, w.total_beds)
+            : (w.team_assignments[team] || 0)
+        return sum + effective
+      }, 0)
+      const shs = typeof bedOverride?.shsBedCounts === 'number' ? bedOverride.shsBedCounts : 0
+      const students =
+        typeof bedOverride?.studentPlacementBedCounts === 'number'
+          ? bedOverride.studentPlacementBedCounts
+          : 0
+      const safeDeductions = Math.min(calculatedBaseBeds, shs + students)
+      const totalBedsDesignated = Math.max(0, calculatedBaseBeds - safeDeductions)
 
       const expectedBeds = overallBedsPerPT * ptPerTeam
       bedsForRelieving[team] = expectedBeds - totalBedsDesignated
@@ -4413,6 +4599,8 @@ function SchedulePageContent() {
   const resetToBaseline = () => {
     setStaffOverrides({})
     setSavedOverrides({})
+    setBedCountsOverridesByTeam({})
+    setSavedBedCountsOverridesByTeam({})
     setStep2Result(null)
     setTherapistAllocations({ FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: [] })
     setPcaAllocations({ FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: [] })
@@ -4440,7 +4628,7 @@ function SchedulePageContent() {
     startTopLoading(0.06)
     bumpTopLoadingTo(0.12)
 
-    // Get the latest overrides - use current state
+    // Get the latest staff overrides - use current state
     let overridesToSave = { ...staffOverrides }
     let scheduleId = currentScheduleId
     
@@ -4459,6 +4647,12 @@ function SchedulePageContent() {
     }
     timer.stage('ensureScheduleRow')
     bumpTopLoadingTo(0.2)
+
+    // Build persisted staff_overrides payload (includes schedule-level bed count overrides).
+    const staffOverridesPayloadForDb: Record<string, any> = {
+      ...overridesToSave,
+      __bedCounts: { byTeam: bedCountsOverridesByTeam },
+    }
 
     setSaving(true)
     try {
@@ -4714,7 +4908,7 @@ function SchedulePageContent() {
           bed_allocations: bedRows,
           calculations: calcRows,
           tie_break_decisions: tieBreakDecisions,
-          staff_overrides: overridesToSave,
+          staff_overrides: staffOverridesPayloadForDb,
           workflow_state: workflowStateToSave,
         })
 
@@ -4794,7 +4988,7 @@ function SchedulePageContent() {
       // Update saved state
       setSavedOverrides({ ...overridesToSave })
       setStaffOverrides({ ...overridesToSave }) // Also update staffOverrides with the merged data
-      setSavedEditableBeds({ ...editableBeds }) // Save current bed edits
+      setSavedBedCountsOverridesByTeam({ ...(bedCountsOverridesByTeam as any) })
 
       // Conditional snapshot refresh:
       // - Avoid rewriting baseline_snapshot on every save (large JSONB write).
@@ -4928,7 +5122,7 @@ function SchedulePageContent() {
           .from('daily_schedules')
           .update({
             tie_break_decisions: tieBreakDecisions,
-            staff_overrides: overridesToSave,
+            staff_overrides: staffOverridesPayloadForDb,
             workflow_state: workflowStateToSave,
           })
           .eq('id', scheduleId)
@@ -5078,8 +5272,9 @@ function SchedulePageContent() {
   }
 
   // Check if there are unsaved changes (staff overrides or bed edits)
-  const hasUnsavedChanges = JSON.stringify(staffOverrides) !== JSON.stringify(savedOverrides) ||
-    JSON.stringify(editableBeds) !== JSON.stringify(savedEditableBeds)
+  const hasUnsavedChanges =
+    JSON.stringify(staffOverrides) !== JSON.stringify(savedOverrides) ||
+    JSON.stringify(bedCountsOverridesByTeam) !== JSON.stringify(savedBedCountsOverridesByTeam)
 
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newDate = parseDateFromInput(e.target.value)
@@ -7054,19 +7249,26 @@ function SchedulePageContent() {
                 <div className="mb-4">
                   <h3 className="text-xs font-semibold text-center mb-2">Beds Calculations</h3>
                   <div className="grid grid-cols-8 gap-2">
-                    {TEAMS.map((team) => (
-                      <CalculationBlock
-                        key={`calc-${team}`}
-                        team={team}
-                        calculations={calculations[team]}
-                        onBedsChange={(team, newBeds) => {
-                          setEditableBeds(prev => ({ ...prev, [team]: newBeds }))
-                          // Regenerate allocations with new beds
-                          generateAllocationsWithOverrides(staffOverrides)
-                          // This will trigger hasUnsavedChanges to become true
-                        }}
-                      />
-                    ))}
+                    {TEAMS.map((team) => {
+                      const bedOverride = bedCountsOverridesByTeam?.[team] as any
+                      const shs =
+                        typeof bedOverride?.shsBedCounts === 'number' ? (bedOverride.shsBedCounts as number) : null
+                      const students =
+                        typeof bedOverride?.studentPlacementBedCounts === 'number'
+                          ? (bedOverride.studentPlacementBedCounts as number)
+                          : null
+
+                      return (
+                        <CalculationBlock
+                          key={`calc-${team}`}
+                          team={team}
+                          calculations={calculations[team]}
+                          shsBedCounts={shs}
+                          studentPlacementBedCounts={students}
+                          onEditBedCounts={() => setEditingBedTeam(team)}
+                        />
+                      )
+                    })}
                   </div>
                 </div>
                 
@@ -7086,6 +7288,89 @@ function SchedulePageContent() {
               </div>
             </div>
           </div>
+
+        {editingBedTeam && (() => {
+          const team = editingBedTeam
+
+          const formatWardLabel = (
+            ward: { name: string; total_beds: number; team_assignments: Record<Team, number>; team_assignment_portions?: Record<Team, string> },
+            t: Team
+          ): string => {
+            const storedPortion = ward.team_assignment_portions?.[t]
+            if (storedPortion) return `${storedPortion} ${ward.name}`
+            const teamBeds = ward.team_assignments[t] || 0
+            const totalBeds = ward.total_beds
+            if (teamBeds === totalBeds) return ward.name
+            const fraction = totalBeds > 0 ? teamBeds / totalBeds : 0
+            const validFractions = [
+              { num: 1, den: 2, value: 0.5 },
+              { num: 1, den: 3, value: 1 / 3 },
+              { num: 2, den: 3, value: 2 / 3 },
+              { num: 3, den: 4, value: 0.75 },
+            ]
+            for (const f of validFractions) {
+              if (Math.abs(fraction - f.value) < 0.01) return `${f.num}/${f.den} ${ward.name}`
+            }
+            return ward.name
+          }
+
+          const wardRows: BedCountsWardRow[] = wards
+            .filter(w => (w.team_assignments[team] || 0) > 0)
+            .map(w => ({
+              wardName: w.name,
+              wardLabel: formatWardLabel(w, team),
+              wardTotalBeds: w.total_beds,
+              baselineTeamBeds: w.team_assignments[team] || 0,
+            }))
+
+          const initialOverrides = bedCountsOverridesByTeam?.[team]
+
+          return (
+            <BedCountsEditDialog
+              open={true}
+              onOpenChange={(open) => {
+                if (!open) setEditingBedTeam(null)
+              }}
+              team={team}
+              wardRows={wardRows}
+              initialOverrides={initialOverrides}
+              onSave={(payload: BedCountsOverridePayload) => {
+                const wardBedCountsPruned: Record<string, number> = {}
+                Object.entries(payload.wardBedCounts || {}).forEach(([wardName, value]) => {
+                  if (typeof value === 'number') wardBedCountsPruned[wardName] = value
+                })
+
+                const shs = payload.shsBedCounts ?? null
+                const students = payload.studentPlacementBedCounts ?? null
+
+                setBedCountsOverridesByTeam(prev => {
+                  const next = { ...prev } as any
+                  const hasAny =
+                    Object.keys(wardBedCountsPruned).length > 0 ||
+                    (typeof shs === 'number' && shs > 0) ||
+                    (typeof students === 'number' && students > 0)
+                  if (!hasAny) {
+                    delete next[team]
+                    return next
+                  }
+                  next[team] = {
+                    wardBedCounts: wardBedCountsPruned,
+                    shsBedCounts: shs,
+                    studentPlacementBedCounts: students,
+                  } satisfies BedCountsOverrideState
+                  return next
+                })
+
+                // Mark bed relieving as modified (and review as pending) since bed math changed.
+                setStepStatus(prev => ({
+                  ...prev,
+                  'bed-relieving': prev['bed-relieving'] === 'completed' ? 'modified' : prev['bed-relieving'],
+                  'review': 'pending',
+                }))
+              }}
+            />
+          )
+        })()}
 
         {editingStaffId && (() => {
           const staffMember = staff.find(s => s.id === editingStaffId)

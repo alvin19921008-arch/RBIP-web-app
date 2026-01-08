@@ -189,6 +189,16 @@ export async function POST(request: NextRequest) {
     const fromScheduleId = fromSchedule.id
     const toScheduleId = toSchedule.id
 
+    // Ensure target schedule is tentative BEFORE cloning allocations.
+    // RLS policies for allocation tables may depend on daily_schedules.is_tentative = true.
+    const { error: tentativeError } = await supabase
+      .from('daily_schedules')
+      .update({ is_tentative: true })
+      .eq('id', toScheduleId)
+    if (tentativeError) {
+      return NextResponse.json({ error: 'Failed to mark target schedule tentative' }, { status: 500 })
+    }
+
     // Build or reuse baseline snapshot (supports legacy raw and v1 envelope)
     const sourceStored = ((fromSchedule as any).baseline_snapshot ?? null) as BaselineSnapshotStored | null
     const hasExistingBaseline =
@@ -246,7 +256,11 @@ export async function POST(request: NextRequest) {
     ;(therapistAllocations || []).forEach((a: any) => a?.staff_id && referencedIds.add(a.staff_id))
     ;(pcaAllocations || []).forEach((a: any) => a?.staff_id && referencedIds.add(a.staff_id))
     if (isNonEmptyObject(sourceOverrides)) {
-      Object.keys(sourceOverrides).forEach(id => referencedIds.add(id))
+      Object.keys(sourceOverrides).forEach(id => {
+        // staff_overrides may include schedule-level metadata keys (e.g. "__bedCounts").
+        if (id.startsWith('__')) return
+        referencedIds.add(id)
+      })
     }
 
     // Buffer staff sets (based on latest source schedule state)
@@ -321,13 +335,38 @@ export async function POST(request: NextRequest) {
     timer.stage('rpcCopyFallback')
 
     // Clear target allocations and calculations
-    await Promise.all([
+    const deleteResults = await Promise.all([
       supabase.from('schedule_therapist_allocations').delete().eq('schedule_id', toScheduleId),
       supabase.from('schedule_pca_allocations').delete().eq('schedule_id', toScheduleId),
       supabase.from('schedule_bed_allocations').delete().eq('schedule_id', toScheduleId),
       supabase.from('schedule_calculations').delete().eq('schedule_id', toScheduleId),
-      supabase.from('pca_unmet_needs_tracking').delete().eq('schedule_id', toScheduleId),
     ])
+    const deleteErr = deleteResults.find(r => (r as any)?.error)?.error
+    if (deleteErr) {
+      return NextResponse.json(
+        { error: `Failed to clear target schedule data: ${deleteErr.message || 'Unknown error'}` },
+        { status: 500 }
+      )
+    }
+
+    // Legacy-safe: unmet-needs tracking table may not exist in some deployments.
+    const unmetDelete = await supabase
+      .from('pca_unmet_needs_tracking')
+      .delete()
+      .eq('schedule_id', toScheduleId)
+    if (unmetDelete.error) {
+      const msg = unmetDelete.error.message || ''
+      const code = (unmetDelete.error as any)?.code
+      const isMissingTable =
+        msg.includes('pca_unmet_needs_tracking') &&
+        (msg.includes('Could not find the table') || msg.includes('schema cache') || code === 'PGRST202')
+      if (!isMissingTable) {
+        return NextResponse.json(
+          { error: `Failed to clear unmet-needs tracking: ${unmetDelete.error.message || 'Unknown error'}` },
+          { status: 500 }
+        )
+      }
+    }
 
     // Prepare therapist & PCA allocations to insert depending on mode
     let therapistToInsert = (therapistAllocations || []).filter(
@@ -366,39 +405,61 @@ export async function POST(request: NextRequest) {
 
     // Insert cloned allocations for target
     if (therapistToInsert.length > 0) {
-      const therapistClones = therapistToInsert.map((a: any) => ({
-        ...a,
-        id: undefined,
-        schedule_id: toScheduleId,
-      }))
-      await supabase.from('schedule_therapist_allocations').insert(therapistClones)
+      const therapistClones = therapistToInsert.map((a: any) => {
+        // IMPORTANT: do not send `id: null/undefined` (can violate NOT NULL).
+        // Omit `id` entirely so DB can use defaults.
+        const { id: _id, ...rest } = a
+        return {
+          ...rest,
+          schedule_id: toScheduleId,
+        }
+      })
+      const ins = await supabase.from('schedule_therapist_allocations').insert(therapistClones)
+      if (ins.error) {
+        return NextResponse.json({ error: `Failed to copy therapist allocations: ${ins.error.message}` }, { status: 500 })
+      }
     }
 
     if (pcaToInsert.length > 0) {
-      const pcaClones = pcaToInsert.map((a: any) => ({
-        ...a,
-        id: undefined,
-        schedule_id: toScheduleId,
-      }))
-      await supabase.from('schedule_pca_allocations').insert(pcaClones)
+      const pcaClones = pcaToInsert.map((a: any) => {
+        const { id: _id, ...rest } = a
+        return {
+          ...rest,
+          schedule_id: toScheduleId,
+        }
+      })
+      const ins = await supabase.from('schedule_pca_allocations').insert(pcaClones)
+      if (ins.error) {
+        return NextResponse.json({ error: `Failed to copy PCA allocations: ${ins.error.message}` }, { status: 500 })
+      }
     }
 
     if (mode === 'full') {
       if (bedAllocations && bedAllocations.length > 0) {
-        const bedClones = bedAllocations.map((a: any) => ({
-          ...a,
-          id: undefined,
-          schedule_id: toScheduleId,
-        }))
-        await supabase.from('schedule_bed_allocations').insert(bedClones)
+        const bedClones = bedAllocations.map((a: any) => {
+          const { id: _id, ...rest } = a
+          return {
+            ...rest,
+            schedule_id: toScheduleId,
+          }
+        })
+        const ins = await supabase.from('schedule_bed_allocations').insert(bedClones)
+        if (ins.error) {
+          return NextResponse.json({ error: `Failed to copy bed allocations: ${ins.error.message}` }, { status: 500 })
+        }
       }
       if (calculations && calculations.length > 0) {
-        const calcClones = calculations.map((c: any) => ({
-          ...c,
-          id: undefined,
-          schedule_id: toScheduleId,
-        }))
-        await supabase.from('schedule_calculations').insert(calcClones)
+        const calcClones = calculations.map((c: any) => {
+          const { id: _id, ...rest } = c
+          return {
+            ...rest,
+            schedule_id: toScheduleId,
+          }
+        })
+        const ins = await supabase.from('schedule_calculations').insert(calcClones)
+        if (ins.error) {
+          return NextResponse.json({ error: `Failed to copy schedule calculations: ${ins.error.message}` }, { status: 500 })
+        }
       }
     }
 

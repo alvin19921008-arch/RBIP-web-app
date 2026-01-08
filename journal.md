@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
-**Last Updated**: 2026-01-07  
-**Latest Phase**: Phase 14 - Performance Optimization & Step Validation  
+**Last Updated**: 2026-01-08  
+**Latest Phase**: Phase 15 - Bed Counts Edit Dialog & Copy Fix  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -259,7 +259,39 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Solution: Destructured `onClick` from props and merged handlers to call both `onCheckedChange` and prop's `onClick`
   - Excluded `onClick` from spread props using `Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'>`
 
-### Phase 14: Performance Optimization & Step Validation (Latest)
+### Phase 15: Bed Counts Edit Dialog & Copy Fix (Latest)
+- ✅ **Bed Counts Edit Dialog**
+  - Replaced inline "Total beds" editing in Beds Calculations (Block 5) with hover pencil icon + modal dialog
+  - Dialog features:
+    - Base total bed counts (read-only, derived from per-ward sums)
+    - Per-ward bed counts (editable, one input per designated ward for that team)
+    - SHS bed counts (optional, nullable, collapsible section)
+    - Student placement bed counts (optional, nullable, collapsible section)
+    - Final total beds preview (base total minus SHS/Students deductions)
+  - Validation:
+    - Each per-ward bed count must be ≤ that ward's `total_beds` (Ward Config bed stat)
+    - SHS + Students ≤ baseTotal
+    - Empty inputs treated as `null` (reverts to baseline ward assignment)
+  - Display in schedule grid:
+    - First line: `Total beds: <finalTotal>`
+    - Second line (only if deductions > 0): `SHS:<n>   <AcademicCapIcon>:<n>` with tooltip "Student placement bed counts"
+  - Data persistence:
+    - Stored in `daily_schedules.staff_overrides.__bedCounts.byTeam[team]`
+    - Structure: `{ wardBedCounts: Record<wardName, number | null>, shsBedCounts: number | null, studentPlacementBedCounts: number | null }`
+    - Carried over via Copy schedule (both Hybrid and Full modes)
+  - Integration:
+    - Removed legacy `editableBeds` / `savedEditableBeds` state pathway
+    - Recomputes `total_beds_designated` as `baseTotal - SHS - Students` in all calculation functions
+    - Updates bed allocations and relieving beds when overrides change
+    - Marks `bed-relieving` step as modified when bed counts change
+- ✅ **Copy Schedule Bug Fixes**
+  - Fixed copy API failing due to missing `pca_unmet_needs_tracking` table (legacy-safe handling)
+  - Fixed copy API failing due to `id: undefined` violating NOT NULL constraint (now omits `id` field entirely)
+  - Ensures target schedule is marked `is_tentative = true` BEFORE inserting allocations (RLS requirement)
+  - Added proper error handling and reporting for all allocation insert operations
+  - Fixed mismatch between History page / date picker dots and actual saved data (allocations now properly inserted)
+
+### Phase 14: Performance Optimization & Step Validation
 - ✅ **Snapshot Size Reduction**
   - Implemented sparse `specialPrograms` serialization (`minifySpecialProgramsForSnapshot`)
   - Only essential fields stored in `baseline_snapshot` JSONB
@@ -873,8 +905,8 @@ The schedule page uses a three-layer state management pattern:
 ### Key State Variables
 
 #### `staffOverrides`
-- **Type**: `Record<string, { leaveType, fteRemaining, fteSubtraction?, availableSlots?, invalidSlots?, amPmSelection?, specialProgramAvailable?, slotOverrides?, substitutionFor?, specialProgramOverrides? }>`
-- **Purpose**: Single source of truth for staff modifications
+- **Type**: `Record<string, { leaveType, fteRemaining, fteSubtraction?, availableSlots?, invalidSlots?, amPmSelection?, specialProgramAvailable?, slotOverrides?, substitutionFor?, specialProgramOverrides? }> & { __bedCounts?: { byTeam: Record<Team, BedCountsOverrideState> } }`
+- **Purpose**: Single source of truth for staff modifications + schedule-level bed count overrides
 - **Updated**: When user edits staff in Step 1, manually reallocates after algorithm, or performs slot transfers
 - **invalidSlots**: Array of invalid slot objects with time ranges: `Array<{ slot: number; timeRange: { start: string; end: string } }>` (display-only, does not affect FTE)
 - **amPmSelection**: Therapist AM/PM selection for FTE = 0.5 or 0.25: `'AM' | 'PM'` (AM = slots 1-2 range, PM = slots 3-4 range)
@@ -882,6 +914,9 @@ The schedule page uses a three-layer state management pattern:
 - **slotOverrides**: Stores manual slot transfer assignments: `{ slot1?, slot2?, slot3?, slot4? }` (Team | null per slot)
 - **substitutionFor**: Non-floating PCA substitution override: `{ nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }`
 - **specialProgramOverrides**: Special program assignment overrides (Step 2.0): `Array<{ programId: string; therapistId?, pcaId?, slots?, therapistFTESubtraction?, pcaFTESubtraction?, drmAddOn? }>` (scoped to current day only)
+- **__bedCounts** (schedule-level metadata): Bed count overrides per team: `{ byTeam: Record<Team, { wardBedCounts?: Record<wardName, number | null>, shsBedCounts?: number | null, studentPlacementBedCounts?: number | null }> }`
+  - Stored in `daily_schedules.staff_overrides` but NOT treated as staff UUID (ignored by `extractReferencedStaffIds` and copy/buffer-staff APIs)
+  - Carried over via Copy schedule (both Hybrid and Full modes)
 
 #### `pcaAllocations`
 - **Type**: `Record<Team, (PCAAllocation & { staff: Staff })[]>`
@@ -1263,6 +1298,8 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 ### Component Files
 - `components/allocation/PCABlock.tsx` - PCA allocation display
 - `components/allocation/TherapistBlock.tsx` - Therapist allocation display
+- `components/allocation/CalculationBlock.tsx` - Beds Calculations display with hover pencil icon and bed counts edit dialog trigger
+- `components/allocation/BedCountsEditDialog.tsx` - Bed counts edit dialog (per-ward bed counts, SHS, Student placement with validation)
 - `components/allocation/StaffEditDialog.tsx` - Staff editing dialog (leave/FTE, available slots, invalid slots, AM/PM selection, special program availability)
 - `components/allocation/SpecialProgramOverrideDialog.tsx` - Special program overrides dialog (Step 2.0) with horizontal card carousel
 - `components/allocation/SpecialProgramSubstitutionDialog.tsx` - Staff substitution dialog for special programs
@@ -1365,6 +1402,19 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
     - Step 2.0, 2.1, and Step 3.0-3.3 dialogs display step badges in titles
     - Consistent badge styling across all step dialogs
     - Step 2.1 "Skip" button includes hover tooltip (consistent with Step 2.0)
+32. **Bed Counts Edit Dialog**: 
+    - Replaced inline bed editing with hover pencil icon (same interaction as LeaveBlock)
+    - Per-ward bed counts editable with validation against ward `total_beds`
+    - SHS and Student placement bed counts stored in `staffOverrides.__bedCounts.byTeam[team]`
+    - Final total = baseTotal - SHS - Students (recomputes `total_beds_designated` in all calculations)
+    - Display shows SHS and student counts with academic cap icon tooltip when > 0
+    - Carried over via Copy schedule (both Hybrid and Full modes)
+    - Removed legacy `editableBeds` state pathway
+33. **Copy Schedule API Fixes**: 
+    - Target schedule must be `is_tentative = true` BEFORE inserting allocations (RLS requirement)
+    - Clone operations omit `id` field entirely (don't set `id: undefined` which becomes NULL)
+    - Legacy-safe handling for missing `pca_unmet_needs_tracking` table
+    - Proper error reporting for all allocation insert operations
 
 ---
 

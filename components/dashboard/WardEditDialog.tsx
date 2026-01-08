@@ -126,7 +126,7 @@ export function WardEditDialog({ ward, existingWards, onSave, onCancel }: WardEd
             <p className="text-xs text-muted-foreground mt-1 flex items-start gap-1.5">
               <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
               <span>
-                This value is used to calculate the "Bed No." in <strong>Beds Calculations</strong> on schedule page.
+                This value is used to calculate the "bed counts" in <strong>Beds Calculations</strong> on schedule page.
               </span>
             </p>
           </div>

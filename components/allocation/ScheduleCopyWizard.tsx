@@ -289,7 +289,10 @@ export function ScheduleCopyWizard({
             <p className="font-semibold mb-1">Full copy</p>
             <ul className="list-disc list-inside space-y-1 text-[11px] text-muted-foreground">
               <li>Copies all steps (1–4), including bed allocations.</li>
-              <li>Preserves all staff edits, overrides, and manual slot transfers.</li>
+              <li>
+                Preserves all staff edits/overrides, including bed count overrides (Total beds, SHS,
+                Students) and manual slot transfers.
+              </li>
               <li>Keeps tie-break decisions and workflow state.</li>
             </ul>
           </button>
@@ -304,7 +307,10 @@ export function ScheduleCopyWizard({
             <ul className="list-disc list-inside space-y-1 text-[11px] text-muted-foreground">
               <li>Copies Step 1 &amp; Step 2 setup and outputs.</li>
               <li>Resets floating PCA allocations (Step 3) and bed relieving (Step 4).</li>
-              <li>Keeps leave/FTE choices, substitutions, and special program overrides.</li>
+              <li>
+                Keeps leave/FTE choices, substitutions, special program overrides, and bed count
+                overrides (Total beds, SHS, Students).
+              </li>
             </ul>
           </button>
         </div>
