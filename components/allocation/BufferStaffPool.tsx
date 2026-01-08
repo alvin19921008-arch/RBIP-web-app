@@ -14,6 +14,7 @@ import { SpecialProgram } from '@/types/allocation'
 import { ChevronUp, ChevronDown, ChevronRight } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { DragValidationTooltip } from './DragValidationTooltip'
+import { useToast } from '@/components/ui/toast-provider'
 
 interface BufferStaffPoolProps {
   inactiveStaff: Staff[]
@@ -40,6 +41,7 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
   const [isBufferStaffExpanded, setIsBufferStaffExpanded] = useState(true)
   const [isPoolCollapsed, setIsPoolCollapsed] = useState(false)
   const supabase = createClientComponentClient()
+  const toast = useToast()
 
   // Load special programs if not provided
   const [loadedSpecialPrograms, setLoadedSpecialPrograms] = useState<SpecialProgram[]>(specialPrograms)
@@ -251,13 +253,14 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
 
       if (error) {
         console.error('Error converting to inactive:', error)
-        alert('Failed to convert to inactive. Please try again.')
+        toast.error('Failed to convert to inactive. Please try again.')
       } else {
         onBufferStaffCreated?.()
+        toast.success('Converted to inactive.')
       }
     } catch (err) {
       console.error('Error converting to inactive:', err)
-      alert('Failed to convert to inactive. Please try again.')
+      toast.error('Failed to convert to inactive. Please try again.')
     }
   }
 

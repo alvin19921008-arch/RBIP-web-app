@@ -78,3 +78,12 @@
   }
 }
 
+@keyframes navbar-indeterminate {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+

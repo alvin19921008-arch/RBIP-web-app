@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Staff } from '@/types/staff'
+import { useToast } from '@/components/ui/toast-provider'
 
 export function FloorPCAMappingPanel() {
   const [staff, setStaff] = useState<Staff[]>([])
@@ -12,6 +13,7 @@ export function FloorPCAMappingPanel() {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const supabase = createClientComponentClient()
+  const toast = useToast()
 
   useEffect(() => {
     loadData()
@@ -49,7 +51,7 @@ export function FloorPCAMappingPanel() {
       }
     } catch (err) {
       console.error('Error loading data:', err)
-      alert('Failed to load PCA staff data')
+      toast.error('Failed to load PCA staff data')
     } finally {
       setLoading(false)
     }
@@ -104,10 +106,10 @@ export function FloorPCAMappingPanel() {
       })
 
       await Promise.all(updates)
-      alert('Floor PCA mapping saved successfully!')
+      toast.success('Floor PCA mapping saved successfully!')
     } catch (err) {
       console.error('Error saving floor PCA mapping:', err)
-      alert(`Error saving floor PCA mapping: ${err instanceof Error ? err.message : String(err)}`)
+      toast.error('Error saving floor PCA mapping.', err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
     }

@@ -33,7 +33,10 @@ BEGIN
   DELETE FROM schedule_pca_allocations WHERE schedule_id = to_schedule_id;
   DELETE FROM schedule_bed_allocations WHERE schedule_id = to_schedule_id;
   DELETE FROM schedule_calculations WHERE schedule_id = to_schedule_id;
-  DELETE FROM pca_unmet_needs_tracking WHERE schedule_id = to_schedule_id;
+  -- Legacy-safe: unmet-needs tracking table may not exist in some deployments.
+  IF to_regclass('public.pca_unmet_needs_tracking') IS NOT NULL THEN
+    DELETE FROM pca_unmet_needs_tracking WHERE schedule_id = to_schedule_id;
+  END IF;
 
   -- Therapist allocations (always copied)
   INSERT INTO schedule_therapist_allocations (

@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Staff } from '@/types/staff'
+import { useToast } from '@/components/ui/toast-provider'
 
 interface BufferSlotSelectionDialogProps {
   open: boolean
@@ -19,6 +20,7 @@ export function BufferSlotSelectionDialog({
   staff,
   onConfirm,
 }: BufferSlotSelectionDialogProps) {
+  const toast = useToast()
   const [availableSlots, setAvailableSlots] = useState<number[]>([])
 
   useEffect(() => {
@@ -40,7 +42,7 @@ export function BufferSlotSelectionDialog({
 
   const handleConfirm = () => {
     if (availableSlots.length === 0) {
-      alert('At least one slot must be selected')
+      toast.warning('At least one slot must be selected')
       return
     }
     const bufferFTE = availableSlots.length * 0.25

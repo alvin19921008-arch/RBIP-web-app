@@ -11,8 +11,24 @@
 -- - Relies on unique constraints from add_allocation_upsert_constraints.sql
 -- - Runs with SECURITY INVOKER (default) so RLS policies still apply
 
+-- IMPORTANT:
+-- Postgres does not allow changing input parameter *names* with CREATE OR REPLACE.
+-- If you need to rename parameters (e.g. schedule_id -> p_schedule_id to avoid ambiguity),
+-- you must DROP the function first.
+
+DROP FUNCTION IF EXISTS public.save_schedule_v1(
+  uuid,
+  jsonb,
+  jsonb,
+  jsonb,
+  jsonb,
+  jsonb,
+  jsonb,
+  jsonb
+);
+
 CREATE OR REPLACE FUNCTION public.save_schedule_v1(
-  schedule_id uuid,
+  p_schedule_id uuid,
   therapist_allocations jsonb,
   pca_allocations jsonb,
   bed_allocations jsonb,
@@ -45,7 +61,7 @@ BEGIN
     manual_override_note
   )
   SELECT
-    x.schedule_id,
+    p_schedule_id,
     x.staff_id,
     x.team,
     x.fte_therapist,
@@ -62,7 +78,6 @@ BEGIN
     COALESCE(x.is_manual_override, false),
     x.manual_override_note
   FROM jsonb_to_recordset(COALESCE(therapist_allocations, '[]'::jsonb)) AS x(
-    schedule_id uuid,
     staff_id uuid,
     team team,
     fte_therapist numeric,
@@ -116,7 +131,7 @@ BEGIN
     leave_mode
   )
   SELECT
-    x.schedule_id,
+    p_schedule_id,
     x.staff_id,
     x.team,
     x.fte_pca,
@@ -133,7 +148,6 @@ BEGIN
     x.leave_comeback_time,
     x.leave_mode
   FROM jsonb_to_recordset(COALESCE(pca_allocations, '[]'::jsonb)) AS x(
-    schedule_id uuid,
     staff_id uuid,
     team team,
     fte_pca numeric,
@@ -169,7 +183,7 @@ BEGIN
 
   -- Bed allocations (replace)
   DELETE FROM schedule_bed_allocations
-  WHERE schedule_bed_allocations.schedule_id = save_schedule_v1.schedule_id;
+  WHERE schedule_bed_allocations.schedule_id = p_schedule_id;
 
   INSERT INTO schedule_bed_allocations (
     schedule_id,
@@ -180,7 +194,7 @@ BEGIN
     slot
   )
   SELECT
-    save_schedule_v1.schedule_id,
+    p_schedule_id,
     x.from_team,
     x.to_team,
     x.ward,
@@ -211,7 +225,7 @@ BEGIN
     average_pca_per_team
   )
   SELECT
-    x.schedule_id,
+    p_schedule_id,
     x.team,
     COALESCE(x.designated_wards, '{}'::text[]),
     x.total_beds_designated,
@@ -225,7 +239,6 @@ BEGIN
     x.total_pt_per_team,
     x.average_pca_per_team
   FROM jsonb_to_recordset(COALESCE(calculations, '[]'::jsonb)) AS x(
-    schedule_id uuid,
     team team,
     designated_wards text[],
     total_beds_designated integer,
@@ -260,7 +273,7 @@ BEGIN
     tie_break_decisions = COALESCE(save_schedule_v1.tie_break_decisions, '{}'::jsonb),
     staff_overrides = COALESCE(save_schedule_v1.staff_overrides, '{}'::jsonb),
     workflow_state = COALESCE(save_schedule_v1.workflow_state, '{}'::jsonb)
-  WHERE daily_schedules.id = save_schedule_v1.schedule_id;
+  WHERE daily_schedules.id = p_schedule_id;
 END;
 $$;
 

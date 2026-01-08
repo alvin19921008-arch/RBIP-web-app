@@ -11,6 +11,7 @@ import { SpecialProgram } from '@/types/allocation'
 import { TEAMS } from '@/lib/utils/types'
 import { X, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useToast } from '@/components/ui/toast-provider'
 
 const RANKS: StaffRank[] = ['SPT', 'APPT', 'RPT', 'PCA']
 const SPECIALTY_OPTIONS = ['MSK/Ortho', 'Cardiac', 'Neuro', 'Cancer', 'nil']
@@ -34,6 +35,7 @@ export function BufferStaffCreateDialog({
   minRequiredFTE
 }: BufferStaffCreateDialogProps) {
   const supabase = createClientComponentClient()
+  const toast = useToast()
 
   const [name, setName] = useState('')
   const [rank, setRank] = useState<StaffRank>('PCA')
@@ -107,23 +109,23 @@ export function BufferStaffCreateDialog({
 
     // Validate required fields
     if (!name.trim()) {
-      alert('Staff name is required')
+      toast.warning('Staff name is required')
       return
     }
 
     if (rank === 'PCA' && floorPCA === null) {
-      alert('Floor PCA is required for PCA staff')
+      toast.warning('Floor PCA is required for PCA staff')
       return
     }
 
     if (rank === 'PCA' && availableSlots.length === 0) {
-      alert('At least one slot must be selected for PCA staff')
+      toast.warning('At least one slot must be selected for PCA staff')
       return
     }
 
     // Buffer non-floating PCA: must be full-day only (whole-day substitute intent).
     if (rank === 'PCA' && !floating && availableSlots.length !== 4) {
-      alert('Non-floating buffer PCA must be whole day (all 4 slots).')
+      toast.warning('Non-floating buffer PCA must be whole day (all 4 slots).')
       return
     }
 
@@ -150,8 +152,9 @@ export function BufferStaffCreateDialog({
     if (typeof minRequiredFTE === 'number' && minRequiredFTE > 0) {
       const effective = finalBufferFTE ?? 0
       if (effective < minRequiredFTE) {
-        alert(
-          `Insufficient FTE for special program.\n\nRequired: ${minRequiredFTE.toFixed(2)}\nThis buffer staff: ${effective.toFixed(2)}`
+        toast.warning(
+          'Insufficient FTE for special program.',
+          `Required: ${minRequiredFTE.toFixed(2)} • This buffer staff: ${effective.toFixed(2)}`
         )
         return
       }
@@ -181,7 +184,10 @@ export function BufferStaffCreateDialog({
       if (staffError && (staffError.code === 'PGRST204' || staffError.message?.includes('buffer_fte') || staffError.message?.includes('status'))) {
         const missingColumn = staffError.message?.includes('buffer_fte') ? 'buffer_fte' : 
                              staffError.message?.includes('status') ? 'status' : 'required column'
-        alert(`Database migration required: The ${missingColumn} column is missing. Please run the migration file: supabase/migrations/add_buffer_staff_system.sql in your Supabase SQL Editor.`)
+        toast.error(
+          'Database migration required.',
+          `Missing column: ${missingColumn}. Run supabase/migrations/add_buffer_staff_system.sql in Supabase SQL Editor.`
+        )
         return
       }
 
@@ -212,7 +218,7 @@ export function BufferStaffCreateDialog({
       onOpenChange(false)
     } catch (err) {
       console.error('Error creating buffer staff:', err)
-      alert('Failed to create buffer staff. Please try again.')
+      toast.error('Failed to create buffer staff. Please try again.')
     }
   }
 

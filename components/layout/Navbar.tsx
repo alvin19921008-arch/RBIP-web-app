@@ -6,14 +6,17 @@ import { createClientComponentClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useNavigationLoading } from '@/components/ui/navigation-loading'
 
 export function Navbar() {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClientComponentClient()
+  const navLoading = useNavigationLoading()
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
+    navLoading.start('/login')
     router.push('/login')
     router.refresh()
   }
@@ -36,6 +39,7 @@ export function Navbar() {
               <Link
                 key={item.href}
                 href={item.href}
+                onClick={() => navLoading.start(item.href)}
                 className={cn(
                   "text-sm font-medium transition-colors hover:text-primary",
                   pathname === item.href

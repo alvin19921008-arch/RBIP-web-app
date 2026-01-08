@@ -3,7 +3,7 @@
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
 **Last Updated**: 2026-01-08  
-**Latest Phase**: Phase 15 - Bed Counts Edit Dialog & Copy Fix  
+**Latest Phase**: Phase 16 - UI/UX Optimization & Critical Bug Fixes  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -230,7 +230,7 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Grouped by month with latest schedules first within each month
   - Month boundary handling (Dec 2025 → Jan 2026 sorting)
   - Each schedule entry shows: date, weekday name, completion status badge
-  - Completion status indicators: 'Step 1', 'Step 2', 'Step 3.2', 'Complete'
+  - Completion status indicators: 'Step 1', 'Step 2', 'Step 3.2', 'Step 4+' (green badge for complete schedules)
   - Individual schedule navigation to schedule page with return path
   - Batch delete functionality with "Select All" per month
   - Individual delete with confirmation dialog
@@ -259,7 +259,36 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Solution: Destructured `onClick` from props and merged handlers to call both `onCheckedChange` and prop's `onClick`
   - Excluded `onClick` from spread props using `Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'>`
 
-### Phase 15: Bed Counts Edit Dialog & Copy Fix (Latest)
+### Phase 16: UI/UX Optimization & Critical Bug Fixes (Latest)
+- ✅ **Toast Notification System**
+  - **Reusable toast component** (`ActionToast`) with three variants: success (green tick), warning (yellow alert), error (red cross)
+  - **Top-right positioning** with slide-in/slide-out animations
+  - **Auto-dismiss** after 3 seconds with manual close button (X icon)
+  - **Global toast provider** (`ToastProvider`) with `useToast` hook for easy access across components
+  - **Replaced all browser `alert()` calls** with appropriate toast notifications (success/warning/error)
+  - **Success toasts** added after confirmed actions complete (e.g., after `confirm()` dialogs)
+  - **In-field validation messages** preserved (HTML5 `required` attributes remain unchanged)
+- ✅ **Navigation Loading & Animation System**
+  - **Global navigation loading provider** (`NavigationLoadingProvider`) wraps dashboard layout
+  - **Lottie animation overlay** (transparent background with dimming) during page transitions
+  - **Thicker top loading bar** (6px) with indeterminate animation for navigation
+  - **Navbar exclusion**: Top header/navbar remains non-dimmed and interactive during loading
+  - **Schedule page special handling**: Only content below step indicator dims during initial load
+  - **Grid loading overlay**: Local overlay for schedule page grid that waits for full data rendering before undimming
+  - **Auto-start on navigation**: Detects internal link clicks and starts loading animation automatically
+  - **Auto-stop on route change**: Navigation loading automatically stops when route change completes
+- ✅ **Critical Bug Fixes**
+  - **Staff Duplication Bug**: Fixed React key collision issue where baseline allocations used empty `id: ''`, causing duplicate rendering
+    - Solution: Baseline allocations now use stable unique IDs: `baseline-therapist:${dateStr}:${staffId}:${team}` and `baseline-pca:${dateStr}:${staffId}:${team}`
+  - **Save Schedule Failure**: Fixed two issues preventing schedule saves
+    - RPC ambiguity error: Renamed `schedule_id` parameter to `p_schedule_id` in `save_schedule_v1` function to resolve SQL ambiguity
+    - Foreign key constraint: Added preflight check to detect missing staff IDs and filter them from save payload with user warning
+    - Missing staff IDs are automatically removed from allocations and in-memory state to prevent FK violations
+  - **History Page Step Badge Inconsistency**: Fixed badge suppression for complete schedules
+    - Complete schedules (Step 4+) now display green "Step 4+" badge instead of being hidden
+    - Badge styling: Green background (`bg-emerald-600`) for complete status, outline variant for incomplete steps
+
+### Phase 15: Bed Counts Edit Dialog & Copy Fix
 - ✅ **Bed Counts Edit Dialog**
   - Replaced inline "Total beds" editing in Beds Calculations (Block 5) with hover pencil icon + modal dialog
   - Dialog features:
@@ -309,10 +338,18 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Conditional snapshot refresh (only when staff/program changes detected)
   - Timing instrumentation for admin diagnostics
   - Dramatic reduction in save/copy execution time
-- ✅ **Universal Loading Bar**
-  - Thin top loading bar visible to all users during save/copy operations
-  - Stage-driven progress (0-100%) for visual feedback
-  - Admin-only detailed timing tooltips on Copy/Save buttons
+- ✅ **Universal Loading Bar & Navigation Loading System**
+  - **Thicker top loading bar** (6px height, up from 3px) for better visibility
+  - **Global navigation loading system** (`NavigationLoadingProvider`) with context-based state management
+  - **Lottie animation overlay** during page navigation (Schedule/Dashboard/History transitions)
+  - **Transparent dimming effect** with backdrop blur for content area (navbar remains non-dimmed and interactive)
+  - **Schedule page initial load handling**: Grid-specific loading overlay that ensures content is fully rendered before undimming (prevents "blank column moment")
+  - **Auto-dismiss on route change**: Navigation loading automatically stops when route change completes
+  - **Click-based navigation detection**: Automatically starts loading animation for internal link clicks
+  - **Schedule page special handling**: Skips global dimming overlay for `/schedule` targets (uses local grid overlay instead)
+  - **Stage-driven progress** (0-100%) for save/copy operations
+  - **Admin-only detailed timing tooltips** on Copy/Save buttons
+  - **CSS keyframe animation** (`navbar-indeterminate`) for indeterminate progress bar
 - ✅ **Date Navigation Controls**
   - 3-button navigation block (Previous / Today / Next working day)
   - Hover tooltips showing exact target dates
@@ -1310,9 +1347,13 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 - `components/allocation/TeamPendingCard.tsx` - Team card for Step 3.1 (pending FTE adjustment)
 - `components/allocation/TeamReservationCard.tsx` - Team card for Step 3.2 (preferred slot reservation)
 - `components/allocation/TeamAdjacentSlotCard.tsx` - Team card for Step 3.3 (adjacent slot assignment)
-- `components/history/ScheduleHistoryList.tsx` - Individual schedule entry in history page
+- `components/history/ScheduleHistoryList.tsx` - Individual schedule entry in history page with step badge display
 - `components/history/MonthSection.tsx` - Month grouping section in history page
 - `components/history/DeleteConfirmDialog.tsx` - Confirmation dialog for schedule deletion
+- `components/ui/action-toast.tsx` - Reusable toast notification component (success/warning/error variants)
+- `components/ui/toast-provider.tsx` - Global toast context provider with `useToast` hook
+- `components/ui/loading-animation.tsx` - Lottie animation component for loading overlays
+- `components/ui/navigation-loading.tsx` - Global navigation loading provider with progress bar and dimming overlay
 
 ### Dashboard Component Files
 - `components/dashboard/TeamConfigurationPanel.tsx` - Team configuration management (staff assignments, ward responsibilities, portion settings)

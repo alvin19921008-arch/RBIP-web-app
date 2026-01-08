@@ -9,6 +9,7 @@ import { Staff, Team, Weekday } from '@/types/staff'
 import { getSlotLabel } from '@/lib/utils/slotHelpers'
 import { Trash2 } from 'lucide-react'
 import { ChevronUp, ChevronDown } from 'lucide-react'
+import { useToast } from '@/components/ui/toast-provider'
 
 export function SPTAllocationPanel() {
   const [allocations, setAllocations] = useState<SPTAllocation[]>([])
@@ -17,6 +18,7 @@ export function SPTAllocationPanel() {
   const [editingAllocation, setEditingAllocation] = useState<SPTAllocation | null>(null)
   const editFormRef = useRef<HTMLDivElement>(null)
   const supabase = createClientComponentClient()
+  const toast = useToast()
 
   useEffect(() => {
     loadData()
@@ -53,8 +55,10 @@ export function SPTAllocationPanel() {
         .update({ active: false })
         .eq('id', allocationId)
       await loadData()
+      toast.success('SPT allocation removed from work schedules.')
     } catch (err) {
       console.error('Error deleting allocation:', err)
+      toast.error('Failed to remove SPT allocation.', err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -70,8 +74,10 @@ export function SPTAllocationPanel() {
       }
       await loadData()
       setEditingAllocation(null)
+      toast.success(editingAllocation?.id ? 'SPT allocation updated.' : 'SPT allocation created.')
     } catch (err) {
       console.error('Error saving allocation:', err)
+      toast.error('Failed to save SPT allocation.', err instanceof Error ? err.message : String(err))
     }
   }
 

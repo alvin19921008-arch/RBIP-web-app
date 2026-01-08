@@ -10,6 +10,7 @@ import { Staff, Team, StaffStatus, SpecialProgram as StaffSpecialProgram } from 
 import { SpecialProgram } from '@/types/allocation'
 import { TEAMS } from '@/lib/utils/types'
 import { X, Info } from 'lucide-react'
+import { useToast } from '@/components/ui/toast-provider'
 
 interface BufferStaffConvertDialogProps {
   open: boolean
@@ -27,6 +28,7 @@ export function BufferStaffConvertDialog({
   specialPrograms = []
 }: BufferStaffConvertDialogProps) {
   const supabase = createClientComponentClient()
+  const toast = useToast()
 
   const [team, setTeam] = useState<Team | null>(null)
   const [specialProgram, setSpecialProgram] = useState<StaffSpecialProgram[]>([])
@@ -118,18 +120,18 @@ export function BufferStaffConvertDialog({
 
     // Validate required fields
     if (staff.rank === 'PCA' && floorPCA === null) {
-      alert('Floor PCA is required for PCA staff')
+      toast.warning('Floor PCA is required for PCA staff')
       return
     }
 
     if (staff.rank === 'PCA' && availableSlots.length === 0) {
-      alert('At least one slot must be selected for PCA staff')
+      toast.warning('At least one slot must be selected for PCA staff')
       return
     }
 
     // Buffer non-floating PCA: must be full-day only (whole-day substitute intent).
     if (staff.rank === 'PCA' && !floating && availableSlots.length !== 4) {
-      alert('Non-floating buffer PCA must be whole day (all 4 slots).')
+      toast.warning('Non-floating buffer PCA must be whole day (all 4 slots).')
       return
     }
 
@@ -169,15 +171,16 @@ export function BufferStaffConvertDialog({
 
       if (error) {
         console.error('Error converting to buffer staff:', error)
-        alert('Failed to convert to buffer staff. Please try again.')
+        toast.error('Failed to convert to buffer staff. Please try again.')
         return
       }
 
       onSave()
+      toast.success('Converted to buffer staff.')
       onOpenChange(false)
     } catch (err) {
       console.error('Error converting to buffer staff:', err)
-      alert('Failed to convert to buffer staff. Please try again.')
+      toast.error('Failed to convert to buffer staff. Please try again.')
     }
   }
 

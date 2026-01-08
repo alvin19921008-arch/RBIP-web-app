@@ -12,6 +12,7 @@ import { TEAMS } from '@/lib/utils/types'
 import { Checkbox } from '@/components/ui/checkbox'
 import { X } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { useToast } from '@/components/ui/toast-provider'
 
 interface TeamSettings {
   team: Team
@@ -75,6 +76,7 @@ export function TeamConfigurationPanel() {
   const [saving, setSaving] = useState(false)
   const [portionPopover, setPortionPopover] = useState<PortionPopoverState | null>(null)
   const supabase = createClientComponentClient()
+  const toast = useToast()
 
   // Edit state for current team
   const [editDisplayName, setEditDisplayName] = useState('')
@@ -201,7 +203,10 @@ export function TeamConfigurationPanel() {
       })
 
       if (overAllocatedWards.length > 0) {
-        alert(`Cannot save: The following wards have over-allocation:\n${overAllocatedWards.map(w => `- ${w.name}: ${wardTotals[w.id]} beds (max: ${w.total_beds})`).join('\n')}`)
+        const details = overAllocatedWards
+          .map(w => `${w.name}: ${wardTotals[w.id]} / ${w.total_beds}`)
+          .join(' • ')
+        toast.warning('Cannot save: ward bed over-allocation.', details)
         setSaving(false)
         return
       }
@@ -314,9 +319,10 @@ export function TeamConfigurationPanel() {
       await loadData()
       setEditingTeam(null)
       setPortionPopover(null)
+      toast.success('Team configuration saved.')
     } catch (err) {
       console.error('Error saving team configuration:', err)
-      alert(`Error saving: ${err instanceof Error ? err.message : String(err)}`)
+      toast.error('Error saving team configuration.', err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
     }

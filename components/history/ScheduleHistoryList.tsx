@@ -23,20 +23,22 @@ export function ScheduleHistoryList({
   onNavigate
 }: ScheduleHistoryListProps) {
   const getStatusBadge = () => {
-    if (schedule.completionStatus === 'complete') {
-      return null
-    }
-    
     const statusLabels: Record<ScheduleHistoryEntry['completionStatus'], string> = {
       'step1': 'Step 1',
       'step2': 'Step 2',
       'step3.2': 'Step 3.2',
-      'complete': 'Complete'
+      'complete': 'Step 4+'
     }
+
+    const isComplete = schedule.completionStatus === 'complete'
+    const label = statusLabels[schedule.completionStatus]
     
     return (
-      <Badge variant="outline" className="text-xs">
-        {statusLabels[schedule.completionStatus]}
+      <Badge
+        variant={isComplete ? 'secondary' : 'outline'}
+        className={isComplete ? 'text-xs bg-emerald-600 text-white hover:bg-emerald-600/90' : 'text-xs'}
+      >
+        {label}
       </Badge>
     )
   }

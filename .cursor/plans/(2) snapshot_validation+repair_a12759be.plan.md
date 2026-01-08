@@ -22,7 +22,7 @@
 
 ### Where
 
-- Schedule creation/load path: `[app/(dashboard)/schedule/page.tsx](app/\\\\\\\\\\(dashboard)/schedule/page.tsx)`
+- Schedule creation/load path: `[app/(dashboard)/schedule/page.tsx](app/\\\\\\\\\\\(dashboard)/schedule/page.tsx)`
 - Copy path: [`app/api/schedules/copy/route.ts`](app/api/schedules/copy/route.ts)
 
 ### Backward compatibility
@@ -56,7 +56,7 @@ Create a utility (e.g. [`lib/utils/snapshotValidation.ts`](lib/utils/snapshotVal
 
 ### Where it runs
 
-- On schedule load in `[app/(dashboard)/schedule/page.tsx](app/\\\\\\\\\\(dashboard)/schedule/page.tsx) `before `applyBaselineSnapshot(...)`.
+- On schedule load in `[app/(dashboard)/schedule/page.tsx](app/\\\\\\\\\\\(dashboard)/schedule/page.tsx) `before `applyBaselineSnapshot(...)`.
 - In APIs that depend on snapshot content (copy/buffer detection) to avoid brittle assumptions:
 - [`app/api/schedules/copy/route.ts`](app/api/schedules/copy/route.ts)
 - [`app/api/schedules/buffer-staff/route.ts`](app/api/schedules/buffer-staff/route.ts)
@@ -72,7 +72,7 @@ Create a utility (e.g. [`lib/utils/snapshotValidation.ts`](lib/utils/snapshotVal
 
 ### Where
 
-- `[app/(dashboard)/schedule/page.tsx](app/\\\\\\\\\\(dashboard)/schedule/page.tsx) `in `saveScheduleToDatabase()` (this already does a baseline merge; we’ll adapt it to the new envelope + validator report and make it consistent).
+- `[app/(dashboard)/schedule/page.tsx](app/\\\\\\\\\\\(dashboard)/schedule/page.tsx) `in `saveScheduleToDatabase()` (this already does a baseline merge; we’ll adapt it to the new envelope + validator report and make it consistent).
 
 ---
 
@@ -85,7 +85,7 @@ Create a utility (e.g. [`lib/utils/snapshotValidation.ts`](lib/utils/snapshotVal
 
 ### Where
 
-- `[app/(dashboard)/history/page.tsx](app/\\\\\\\\\\(dashboard)/history/page.tsx) `(query needs to include `workflow_state`)
+- `[app/(dashboard)/history/page.tsx](app/\\\\\\\\\\\(dashboard)/history/page.tsx) `(query needs to include `workflow_state`)
 - [`components/history/ScheduleHistoryList.tsx`](components/history/ScheduleHistoryList.tsx) or wherever status badge is derived
 - [`lib/utils/scheduleHistory.ts`](lib/utils/scheduleHistory.ts) (centralize badge logic)
 
@@ -109,7 +109,7 @@ Show a compact diagnostic block in the Copy dropdown (styled like your existing 
 
 ### Where
 
-- Copy/Reset menu UI in `[app/(dashboard)/schedule/page.tsx](app/\\\\\\\\\\(dashboard)/schedule/page.tsx)`
+- Copy/Reset menu UI in `[app/(dashboard)/schedule/page.tsx](app/\\\\\\\\\\\(dashboard)/schedule/page.tsx)`
 - Likely reuse the same dropdown container that already renders “Reset to Baseline” and add a border-t section for diagnostics.
 
 ---

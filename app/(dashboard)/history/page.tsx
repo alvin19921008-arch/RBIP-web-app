@@ -8,6 +8,8 @@ import { Trash2, Loader2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { MonthSection } from '@/components/history/MonthSection'
 import { DeleteConfirmDialog } from '@/components/history/DeleteConfirmDialog'
+import { useToast } from '@/components/ui/toast-provider'
+import { useNavigationLoading } from '@/components/ui/navigation-loading'
 import {
   ScheduleHistoryEntry,
   groupSchedulesByMonth,
@@ -28,6 +30,8 @@ export default function HistoryPage() {
   const loadingBarHideTimeoutRef = useRef<number | null>(null)
   const router = useRouter()
   const supabase = createClientComponentClient()
+  const toast = useToast()
+  const navLoading = useNavigationLoading()
 
   const startTopLoading = (initialProgress: number = 0.05) => {
     if (loadingBarHideTimeoutRef.current) {
@@ -221,13 +225,13 @@ export default function HistoryPage() {
 
       if (error) {
         console.error('Error deleting schedules:', error)
-        alert(`Failed to delete schedules: ${error.message}`)
+        toast.error('Failed to delete schedules.', error.message)
         return
       }
 
       // Check if any rows were actually deleted (RLS might silently block)
       if (!data || data.length === 0) {
-        alert('Failed to delete schedules: Permission denied. Only admins can delete schedules.')
+        toast.error('Failed to delete schedules.', 'Permission denied. Only admins can delete schedules.')
         return
       }
 
@@ -235,15 +239,17 @@ export default function HistoryPage() {
       await loadSchedules()
       setSelectedScheduleIds(new Set())
       setDeleteDialogOpen(false)
+      toast.success(`Deleted ${scheduleIds.length} schedule${scheduleIds.length > 1 ? 's' : ''}.`)
     } catch (error) {
       console.error('Error deleting schedules:', error)
-      alert('Failed to delete schedules. Please try again.')
+      toast.error('Failed to delete schedules. Please try again.')
     }
   }
 
   const handleNavigate = (date: string) => {
     // Store return path in sessionStorage
     sessionStorage.setItem('scheduleReturnPath', '/history')
+    navLoading.start(`/schedule?date=${date}`)
     router.push(`/schedule?date=${date}`)
   }
 
@@ -253,7 +259,7 @@ export default function HistoryPage() {
     <div className="container mx-auto p-4">
       {/* Thin top loading bar */}
       {topLoadingVisible && (
-        <div className="fixed top-0 left-0 right-0 h-[3px] z-[99999] bg-transparent">
+        <div className="fixed top-0 left-0 right-0 h-[6px] z-[99999] bg-transparent">
           <div
             className="h-full bg-sky-500 transition-[width] duration-200 ease-out"
             style={{ width: `${Math.round(topLoadingProgress * 100)}%` }}

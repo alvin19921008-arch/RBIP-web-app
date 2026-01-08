@@ -11,6 +11,7 @@ import { Edit2, Trash2, Plus, X, Loader2, ArrowUpDown, ChevronDown } from 'lucid
 import { StaffEditDialog } from './StaffEditDialog'
 import { BufferStaffConvertDialog } from '@/components/allocation/BufferStaffConvertDialog'
 import { cn } from '@/lib/utils'
+import { useToast } from '@/components/ui/toast-provider'
 
 const RANK_ORDER: StaffRank[] = ['SPT', 'APPT', 'RPT', 'PCA', 'workman']
 
@@ -44,6 +45,7 @@ export function StaffProfilePanel() {
   const [showBufferSlotDialog, setShowBufferSlotDialog] = useState(false)
   const [pcaStaffForBuffer, setPcaStaffForBuffer] = useState<Staff | null>(null)
   const supabase = createClientComponentClient()
+  const toast = useToast()
 
   useEffect(() => {
     loadData()
@@ -222,7 +224,7 @@ export function StaffProfilePanel() {
 
       if (error) {
         console.error('Error updating name:', error)
-        alert('Failed to update name. Please try again.')
+        toast.error('Failed to update name. Please try again.')
         // Revert to original
         const originalStaff = staff.find((s) => s.id === staffId)
         if (originalStaff) setEditingNameValue(originalStaff.name)
@@ -230,10 +232,11 @@ export function StaffProfilePanel() {
         // Success - update local state
         setStaff((prev) => prev.map((s) => (s.id === staffId ? { ...s, name: newName } : s)))
         setEditingNameId(null)
+        toast.success('Name updated.')
       }
     } catch (err) {
       console.error('Error updating name:', err)
-      alert('Failed to update name. Please try again.')
+      toast.error('Failed to update name. Please try again.')
     } finally {
       setSavingNameId(null)
     }
@@ -282,7 +285,7 @@ export function StaffProfilePanel() {
 
       if (error) {
         console.error('Error updating status:', error)
-        alert('Failed to update status. Please try again.')
+        toast.error('Failed to update status. Please try again.')
       } else {
         // Update local state
         setStaff((prev) => prev.map((s) => 
@@ -290,10 +293,11 @@ export function StaffProfilePanel() {
             ? { ...s, status: newStatus, team: (newStatus === 'inactive' || newStatus === 'buffer') ? null : s.team, buffer_fte: newStatus === 'buffer' && bufferFTE !== undefined ? bufferFTE : s.buffer_fte } 
             : s
         ))
+        toast.success('Status updated.')
       }
     } catch (err) {
       console.error('Error updating status:', err)
-      alert('Failed to update status. Please try again.')
+      toast.error('Failed to update status. Please try again.')
     }
   }
   
@@ -324,7 +328,7 @@ export function StaffProfilePanel() {
 
       if (error) {
         console.error('Error batch updating status:', error)
-        alert('Failed to update status. Please try again.')
+        toast.error('Failed to update status. Please try again.')
       } else {
         // Update local state
         setStaff((prev) =>
@@ -334,11 +338,12 @@ export function StaffProfilePanel() {
               : s
           )
         )
+        toast.success(`Updated status for ${selectedStaffIds.size} staff.`)
         setSelectedStaffIds(new Set())
       }
     } catch (err) {
       console.error('Error batch updating status:', err)
-      alert('Failed to update status. Please try again.')
+      toast.error('Failed to update status. Please try again.')
     }
   }
 
@@ -358,14 +363,15 @@ export function StaffProfilePanel() {
 
       if (error) {
         console.error('Error deleting staff:', error)
-        alert('Failed to delete staff. Please try again.')
+        toast.error('Failed to delete staff. Please try again.')
       } else {
         await loadData()
+        toast.success(`Deleted ${count} staff member${count > 1 ? 's' : ''}.`)
         setSelectedStaffIds(new Set())
       }
     } catch (err) {
       console.error('Error deleting staff:', err)
-      alert('Failed to delete staff. Please try again.')
+      toast.error('Failed to delete staff. Please try again.')
     }
   }
 
@@ -382,9 +388,10 @@ export function StaffProfilePanel() {
 
       if (error) {
         console.error('Error deleting staff:', error)
-        alert('Failed to delete staff. Please try again.')
+        toast.error('Failed to delete staff. Please try again.')
       } else {
         await loadData()
+        toast.success(`Deleted ${staffName}.`)
         // Remove from selection if selected
         setSelectedStaffIds(prev => {
           const newSet = new Set(prev)
@@ -394,7 +401,7 @@ export function StaffProfilePanel() {
       }
     } catch (err) {
       console.error('Error deleting staff:', err)
-      alert('Failed to delete staff. Please try again.')
+      toast.error('Failed to delete staff. Please try again.')
     }
   }
 
@@ -480,9 +487,10 @@ export function StaffProfilePanel() {
 
       await loadData()
       setEditingStaff(null)
+      toast.success(staffId ? 'Staff updated.' : 'Staff created.')
     } catch (err) {
       console.error('Error saving staff:', err)
-      alert('Failed to save staff. Please try again.')
+      toast.error('Failed to save staff. Please try again.')
     }
   }
 

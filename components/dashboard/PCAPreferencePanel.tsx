@@ -8,6 +8,7 @@ import { PCAPreference } from '@/types/allocation'
 import { Staff, Team } from '@/types/staff'
 import { getSlotLabel, getSlotTime } from '@/lib/utils/slotHelpers'
 import { FloorPCAMappingPanel } from '@/components/dashboard/FloorPCAMappingPanel'
+import { useToast } from '@/components/ui/toast-provider'
 
 export function PCAPreferencePanel() {
   const [preferences, setPreferences] = useState<PCAPreference[]>([])
@@ -17,6 +18,7 @@ export function PCAPreferencePanel() {
   const [showFloorMapping, setShowFloorMapping] = useState(false)
   const editFormRef = useRef<HTMLDivElement>(null)
   const supabase = createClientComponentClient()
+  const toast = useToast()
 
   useEffect(() => {
     loadData()
@@ -54,16 +56,23 @@ export function PCAPreferencePanel() {
       if (result.error) {
         console.error('Error saving preference:', result.error)
         const errorMsg = result.error.message || result.error.code || 'Unknown error'
-        alert(`Error saving preference: ${errorMsg}\n\nIf you see "column gym_schedule does not exist", please run the migration script in Supabase SQL Editor:\nsupabase/migrations/add_gym_schedule_to_pca_preferences.sql`)
+        toast.error(
+          'Error saving preference.',
+          `${errorMsg}. If you see "column gym_schedule does not exist", run supabase/migrations/add_gym_schedule_to_pca_preferences.sql.`
+        )
         return
       }
       
       await loadData()
       setEditingPreference(null)
+      toast.success('Preference saved.')
     } catch (err) {
       console.error('Error saving preference:', err)
       const errorMsg = err instanceof Error ? err.message : String(err)
-      alert(`Error saving preference: ${errorMsg}\n\nIf you see "column gym_schedule does not exist", please run the migration script in Supabase SQL Editor:\nsupabase/migrations/add_gym_schedule_to_pca_preferences.sql`)
+      toast.error(
+        'Error saving preference.',
+        `${errorMsg}. If you see "column gym_schedule does not exist", run supabase/migrations/add_gym_schedule_to_pca_preferences.sql.`
+      )
     }
   }
 
@@ -194,6 +203,7 @@ function PCAPreferenceForm({
   onSave: (preference: Partial<PCAPreference>) => void
   onCancel: () => void
 }) {
+  const toast = useToast()
   const [preferredPCA, setPreferredPCA] = useState<string[]>(preference.preferred_pca_ids || [])
   const [preferredSlots, setPreferredSlots] = useState<number[]>(preference.preferred_slots || [])
   const [gymSchedule, setGymSchedule] = useState<number | null>(preference.gym_schedule ?? null)
@@ -204,11 +214,11 @@ function PCAPreferenceForm({
     e.preventDefault()
     // Validation: max 2 preferred PCAs, max 1 preferred slot
     if (preferredPCA.length > 2) {
-      alert('Maximum 2 preferred PCAs allowed')
+      toast.warning('Maximum 2 preferred PCAs allowed')
       return
     }
     if (preferredSlots.length > 1) {
-      alert('Maximum 1 preferred slot allowed')
+      toast.warning('Maximum 1 preferred slot allowed')
       return
     }
     onSave({

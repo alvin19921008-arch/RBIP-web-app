@@ -11,6 +11,7 @@ import { getSlotLabel } from '@/lib/utils/slotHelpers'
 import { createEmptyTeamRecordFactory } from '@/lib/utils/types'
 import { Trash2, Edit2, ChevronUp, ChevronDown } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
+import { useToast } from '@/components/ui/toast-provider'
 
 interface StaffSpecialProgram {
   name: string
@@ -47,6 +48,7 @@ export function SpecialProgramPanel() {
   const [pendingSave, setPendingSave] = useState<(() => Promise<void>) | null>(null)
   const editFormRef = useRef<HTMLDivElement>(null)
   const supabase = createClientComponentClient()
+  const toast = useToast()
 
   useEffect(() => {
     loadData()
@@ -199,7 +201,7 @@ export function SpecialProgramPanel() {
         
         if (staffError) {
           console.error('Error removing program from staff:', staffError)
-          alert('Failed to remove staff from program. Please try again.')
+          toast.error('Failed to remove staff from program. Please try again.')
           return
         }
       }
@@ -233,7 +235,7 @@ export function SpecialProgramPanel() {
         
         if (programError) {
           console.error('Error removing staff from program:', programError)
-          alert('Failed to remove staff from program data. Please try again.')
+          toast.error('Failed to remove staff from program data. Please try again.')
           return
         }
       }
@@ -246,9 +248,10 @@ export function SpecialProgramPanel() {
       
       // 4. Reload data to sync
       await loadData()
+      toast.success('Removed staff from program.')
     } catch (err) {
       console.error('Error removing staff from program:', err)
-      alert('Failed to remove staff from program. Please try again.')
+      toast.error('Failed to remove staff from program. Please try again.')
     }
   }
 
@@ -430,7 +433,7 @@ export function SpecialProgramPanel() {
       setPendingSave(null)
     } catch (err) {
       console.error('Error saving staff program:', err)
-      alert('Failed to save program. Please try again.')
+      toast.error('Failed to save program. Please try again.')
     }
   }
 
@@ -475,8 +478,10 @@ export function SpecialProgramPanel() {
       }
       await loadData()
       setEditingProgram(null)
+      toast.success('Special program saved.')
     } catch (err) {
       console.error('Error saving program:', err)
+      toast.error('Error saving special program.', err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -493,9 +498,10 @@ export function SpecialProgramPanel() {
       
       if (error) throw error
       await loadData()
+      toast.success('Special program deleted.')
     } catch (err) {
       console.error('Error deleting program:', err)
-      alert('Failed to delete program. Please try again.')
+      toast.error('Failed to delete program. Please try again.')
     }
   }
 

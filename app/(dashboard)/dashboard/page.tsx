@@ -119,7 +119,7 @@ export default function DashboardPage() {
     <div className="flex h-[calc(100vh-4rem)]">
       {/* Thin top loading bar */}
       {topLoadingVisible && (
-        <div className="fixed top-0 left-0 right-0 h-[3px] z-[99999] bg-transparent">
+        <div className="fixed top-0 left-0 right-0 h-[6px] z-[99999] bg-transparent">
           <div
             className="h-full bg-sky-500 transition-[width] duration-200 ease-out"
             style={{ width: `${Math.round(topLoadingProgress * 100)}%` }}

@@ -9,6 +9,7 @@ import { Team } from '@/types/staff'
 import { WardEditDialog } from './WardEditDialog'
 import { Edit2, Trash2, Plus } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { useToast } from '@/components/ui/toast-provider'
 
 const INITIAL_WARDS = [
   'R7B', 'R7C', 'R8A', 'R8B', 'R8C',
@@ -28,6 +29,7 @@ export function WardConfigPanel() {
   const [editingWard, setEditingWard] = useState<Ward | Partial<Ward> | null>(null)
   const [deletingWardId, setDeletingWardId] = useState<string | null>(null)
   const supabase = createClientComponentClient()
+  const toast = useToast()
 
   useEffect(() => {
     loadWards()
@@ -115,10 +117,11 @@ export function WardConfigPanel() {
 
       await loadWards()
       setDeletingWardId(null)
+      toast.success('Ward deleted.')
     } catch (err) {
       console.error('Error deleting ward:', err)
       const errorMsg = err instanceof Error ? err.message : String(err)
-      alert(`Error deleting ward: ${errorMsg}`)
+      toast.error('Error deleting ward.', errorMsg)
     }
   }
 

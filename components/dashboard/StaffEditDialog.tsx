@@ -10,6 +10,7 @@ import { Staff, StaffRank, Team, StaffStatus, SpecialProgram as StaffSpecialProg
 import { SpecialProgram } from '@/types/allocation'
 import { TEAMS } from '@/lib/utils/types'
 import { X, Info } from 'lucide-react'
+import { useToast } from '@/components/ui/toast-provider'
 
 const RANKS: StaffRank[] = ['SPT', 'APPT', 'RPT', 'PCA', 'workman']
 const SPECIALTY_OPTIONS = ['MSK/Ortho', 'Cardiac', 'Neuro', 'Cancer', 'nil']
@@ -24,6 +25,7 @@ interface StaffEditDialogProps {
 export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: StaffEditDialogProps) {
   const isNew = !staff.id
   const supabase = createClientComponentClient()
+  const toast = useToast()
 
   const [name, setName] = useState(staff.name || '')
   const [rank, setRank] = useState<StaffRank>(staff.rank || 'PCA')
@@ -93,17 +95,17 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
 
     // Validate required fields
     if (!name.trim()) {
-      alert('Staff name is required')
+      toast.warning('Staff name is required')
       return
     }
 
     if (isTeamRequired() && !team) {
-      alert('Team is required for this staff type')
+      toast.warning('Team is required for this staff type')
       return
     }
 
     if (rank === 'PCA' && floorPCA === null) {
-      alert('Floor PCA is required for PCA staff')
+      toast.warning('Floor PCA is required for PCA staff')
       return
     }
 

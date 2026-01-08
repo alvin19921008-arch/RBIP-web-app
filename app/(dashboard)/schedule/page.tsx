@@ -32,6 +32,9 @@ import { PCACalculationBlock } from '@/components/allocation/PCACalculationBlock
 import { SummaryColumn } from '@/components/allocation/SummaryColumn'
 import { ScheduleCopyWizard } from '@/components/allocation/ScheduleCopyWizard'
 import { Button } from '@/components/ui/button'
+import { ActionToast, type ActionToastVariant } from '@/components/ui/action-toast'
+import { LoadingAnimation } from '@/components/ui/loading-animation'
+import { useNavigationLoading } from '@/components/ui/navigation-loading'
 import { StaffEditDialog } from '@/components/allocation/StaffEditDialog'
 import { TieBreakDialog } from '@/components/allocation/TieBreakDialog'
 import { StepIndicator } from '@/components/allocation/StepIndicator'
@@ -125,6 +128,7 @@ function SchedulePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClientComponentClient()
+  const navLoading = useNavigationLoading()
   const [selectedDate, setSelectedDate] = useState<Date>(DEFAULT_DATE)
   
   // Read date from URL query parameter on mount and when searchParams change
@@ -163,10 +167,19 @@ function SchedulePageContent() {
   const [wards, setWards] = useState<{ name: string; total_beds: number; team_assignments: Record<Team, number>; team_assignment_portions?: Record<Team, string> }[]>([])
   const [pcaPreferences, setPcaPreferences] = useState<PCAPreference[]>([])
   const [loading, setLoading] = useState(false)
+  const [gridLoading, setGridLoading] = useState(true)
+  const gridLoadingUsesLocalBarRef = useRef(false)
   const [userRole, setUserRole] = useState<'admin' | 'regular'>('regular')
   const toastTimerRef = useRef<any>(null)
+  const toastIdRef = useRef(0)
   const highlightTimerRef = useRef<any>(null)
-  const [actionToast, setActionToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null)
+  const [actionToast, setActionToast] = useState<{
+    id: number
+    title: string
+    description?: string
+    variant: ActionToastVariant
+    open: boolean
+  } | null>(null)
   const [highlightDateKey, setHighlightDateKey] = useState<string | null>(null)
   const [isDateHighlighted, setIsDateHighlighted] = useState(false)
   const [lastSaveTiming, setLastSaveTiming] = useState<TimingReport | null>(null)
@@ -632,13 +645,26 @@ function SchedulePageContent() {
     }
   }, [supabase])
 
-  const showActionToast = (message: string, variant: 'success' | 'error' = 'success') => {
-    setActionToast({ message, variant })
+  const dismissActionToast = useCallback(() => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = null
+    setActionToast(prev => (prev ? { ...prev, open: false } : null))
+  }, [])
+
+  const showActionToast = (title: string, variant: ActionToastVariant = 'success', description?: string) => {
+    const id = (toastIdRef.current += 1)
+    setActionToast({ id, title, description, variant, open: true })
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
     toastTimerRef.current = setTimeout(() => {
-      setActionToast(null)
-    }, 2000)
+      setActionToast(prev => (prev && prev.id === id ? { ...prev, open: false } : prev))
+    }, 3000)
   }
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     if (!highlightDateKey) return
@@ -653,6 +679,15 @@ function SchedulePageContent() {
   }, [selectedDate, highlightDateKey])
 
   useEffect(() => {
+    const isScheduleNavTarget = (navLoading.targetHref ?? '').startsWith('/schedule')
+    setGridLoading(true)
+    // If we're not coming from a navigation overlay, use the schedule's own top bar.
+    gridLoadingUsesLocalBarRef.current = !isScheduleNavTarget
+    if (!isScheduleNavTarget) {
+      startTopLoading(0.08)
+      startSoftAdvance(0.75)
+    }
+
     loadAllData()
     loadDatesWithData()
   }, [])
@@ -663,6 +698,37 @@ function SchedulePageContent() {
       setShowBackButton(!!returnPath)
     }
   }, [])
+
+  // End the grid loading overlay only after schedule data is loaded for this date,
+  // so we never undim the grid while it's still visually blank.
+  useEffect(() => {
+    if (!gridLoading) return
+    if (loading) return
+    if (staff.length === 0) return
+
+    // Use local date components to avoid timezone issues
+    const year = selectedDate.getFullYear()
+    const month = String(selectedDate.getMonth() + 1).padStart(2, '0')
+    const day = String(selectedDate.getDate()).padStart(2, '0')
+    const dateStr = `${year}-${month}-${day}`
+    if (scheduleLoadedForDate !== dateStr) return
+
+    const finish = () => {
+      setGridLoading(false)
+      if (gridLoadingUsesLocalBarRef.current) {
+        stopSoftAdvance()
+        bumpTopLoadingTo(0.95)
+        finishTopLoading()
+        gridLoadingUsesLocalBarRef.current = false
+      }
+      if ((navLoading.targetHref ?? '').startsWith('/schedule')) {
+        navLoading.stop()
+      }
+    }
+
+    // Wait for the next paint (and a follow-up) so the grid content is on screen.
+    window.requestAnimationFrame(() => window.requestAnimationFrame(finish))
+  }, [gridLoading, loading, staff.length, scheduleLoadedForDate, selectedDate, navLoading])
 
 
   // Load schedule when date changes OR when staff becomes available (initial load)
@@ -765,7 +831,9 @@ function SchedulePageContent() {
               // Filter out full-leave therapists from therapist block (they show in leave block)
               if (fte <= 0) return
               baselineTherapistByTeam[s.team as Team].push({
-                id: '',
+                // IMPORTANT: must be stable+unique for React keys on blank schedules
+                // (saved allocations have real ids; baseline allocations are client-only)
+                id: `baseline-therapist:${dateStr}:${s.id}:${s.team}`,
                 schedule_id: '',
                 staff_id: s.id,
                 team: s.team as Team,
@@ -799,7 +867,8 @@ function SchedulePageContent() {
               const fte = typeof o?.fteRemaining === 'number' ? o.fteRemaining : (s.status === 'buffer' && s.buffer_fte != null ? (s.buffer_fte as any) : 1.0)
               if (fte <= 0) return
               baselinePCAByTeam[s.team as Team].push({
-                id: '',
+                // IMPORTANT: must be stable+unique for React keys on blank schedules
+                id: `baseline-pca:${dateStr}:${s.id}:${s.team}`,
                 schedule_id: '',
                 staff_id: s.id,
                 team: s.team as Team,
@@ -4030,7 +4099,11 @@ function SchedulePageContent() {
         
         if (unassignedBufferPCAs.length > 0) {
           const names = unassignedBufferPCAs.map(s => s.name).join(', ')
-          alert(`Non-floating PCA buffer staff (${names}*) must be assigned to a team before proceeding. Please assign them in Step 2.`)
+          showActionToast(
+            'Non-floating buffer PCA must be assigned to a team before proceeding.',
+            'warning',
+            `Unassigned: ${names}`
+          )
           return
         }
         
@@ -4201,7 +4274,7 @@ function SchedulePageContent() {
         // For teams with buffer floating PCA: round avg FIRST, then subtract assignments
         // For teams without buffer floating PCA: round avg, then subtract non-floating only
         if (!step2Result) {
-          alert('Step 2 must be completed before Step 3')
+          showActionToast('Step 2 must be completed before Step 3.', 'warning')
           return
         }
 
@@ -4635,7 +4708,7 @@ function SchedulePageContent() {
     if (!scheduleId) {
       const result = await loadScheduleForDate(selectedDate)
       if (!result || !result.scheduleId) {
-        alert('Error: Could not create schedule. Please try again.')
+        showActionToast('Could not create schedule. Please try again.', 'error')
         timer.stage('ensureScheduleRow')
         setLastSaveTiming(timer.finalize({ ok: false }))
         finishTopLoading()
@@ -4858,6 +4931,80 @@ function SchedulePageContent() {
       timer.stage('buildDbRows')
       bumpTopLoadingTo(0.42)
 
+      let missingStaffIdsForSave: string[] = []
+
+      // Preflight: verify all allocation staff_ids exist in DB (helps debug FK failures)
+      try {
+        const submittedIds = Array.from(new Set<string>([
+          ...therapistRows.map(r => (r as any)?.staff_id).filter(Boolean),
+          ...pcaRows.map(r => (r as any)?.staff_id).filter(Boolean),
+        ]))
+        const badFormatIds = submittedIds.filter(id => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+        const { data: existingStaff, error: staffCheckError } = await supabase
+          .from('staff')
+          .select('id')
+          .in('id', submittedIds)
+        const existingSet = new Set((existingStaff || []).map((r: any) => r?.id).filter(Boolean))
+        const missingIds = submittedIds.filter(id => !existingSet.has(id))
+        missingStaffIdsForSave = missingIds
+        void badFormatIds
+        void staffCheckError
+      } catch {}
+
+      // If any referenced staff IDs are missing from the staff table, saving allocations will fail
+      // due to FK constraints. In this case we (1) warn, (2) strip those rows from the save payload,
+      // and (3) remove them from in-memory state so the UI aligns with what can be persisted.
+      if (missingStaffIdsForSave.length > 0) {
+        showActionToast(
+          `Cannot save allocations for ${missingStaffIdsForSave.length} staff record(s) that no longer exist. ` +
+            `They will be removed from this schedule (e.g. ${missingStaffIdsForSave[0]}).`,
+          'warning'
+        )
+
+        // Strip from save payload
+        for (let i = therapistRows.length - 1; i >= 0; i--) {
+          const sid = (therapistRows[i] as any)?.staff_id
+          if (sid && missingStaffIdsForSave.includes(sid)) therapistRows.splice(i, 1)
+        }
+        for (let i = pcaRows.length - 1; i >= 0; i--) {
+          const sid = (pcaRows[i] as any)?.staff_id
+          if (sid && missingStaffIdsForSave.includes(sid)) pcaRows.splice(i, 1)
+        }
+
+        // Strip from overrides payload (avoid accumulating unreachable keys)
+        try {
+          missingStaffIdsForSave.forEach(staffId => {
+            delete (staffOverridesPayloadForDb as any)[staffId]
+            delete (overridesToSave as any)[staffId]
+          })
+        } catch {
+          // ignore
+        }
+
+        // Sync UI state to match what can be persisted
+        try {
+          setStaff(prev => prev.filter(s => !missingStaffIdsForSave.includes((s as any)?.id)))
+          setInactiveStaff(prev => prev.filter(s => !missingStaffIdsForSave.includes((s as any)?.id)))
+          setBufferStaff(prev => prev.filter(s => !missingStaffIdsForSave.includes((s as any)?.id)))
+          setTherapistAllocations(prev => {
+            const next: any = { ...prev }
+            TEAMS.forEach(team => {
+              next[team] = (next[team] || []).filter((a: any) => !missingStaffIdsForSave.includes(a?.staff_id))
+            })
+            return next
+          })
+          setPcaAllocations(prev => {
+            const next: any = { ...prev }
+            TEAMS.forEach(team => {
+              next[team] = (next[team] || []).filter((a: any) => !missingStaffIdsForSave.includes(a?.staff_id))
+            })
+            return next
+          })
+        } catch {
+          // ignore
+        }
+      }
+
       // Schedule calculations: upsert per (schedule_id, team) if available
       const calcRows = TEAMS.map(team => calculations[team])
         .filter((c): c is ScheduleCalculations => !!c)
@@ -4902,7 +5049,7 @@ function SchedulePageContent() {
         bumpTopLoadingTo(0.55)
         startSoftAdvance(0.86)
         const rpcRes = await supabase.rpc('save_schedule_v1', {
-          schedule_id: scheduleId,
+          p_schedule_id: scheduleId,
           therapist_allocations: therapistRows,
           pca_allocations: pcaRows,
           bed_allocations: bedRows,
@@ -6488,7 +6635,7 @@ function SchedulePageContent() {
       >
       {/* Thin top loading bar (Save/Copy). Shown for everyone. */}
       {topLoadingVisible && (
-        <div className="fixed top-0 left-0 right-0 h-[3px] z-[99999] bg-transparent">
+        <div className="fixed top-0 left-0 right-0 h-[6px] z-[99999] bg-transparent">
           <div
             className="h-full bg-sky-500 transition-[width] duration-200 ease-out"
             style={{ width: `${Math.round(topLoadingProgress * 100)}%` }}
@@ -6571,16 +6718,18 @@ function SchedulePageContent() {
       
       <div className="container mx-auto p-4">
         {actionToast && (
-          <div className="fixed bottom-4 right-4 z-[9999]">
-            <div
-              className={`px-4 py-3 rounded-md border shadow-lg text-sm ${
-                actionToast.variant === 'success'
-                  ? 'bg-amber-100 border-amber-300 text-amber-950'
-                  : 'bg-red-100 border-red-300 text-red-950'
-              }`}
-            >
-              {actionToast.message}
-            </div>
+          <div className="fixed right-4 top-4 z-[9999]">
+            <ActionToast
+              key={actionToast.id}
+              title={actionToast.title}
+              description={actionToast.description}
+              variant={actionToast.variant}
+              open={actionToast.open}
+              onClose={dismissActionToast}
+              onExited={() => {
+                setActionToast(prev => (prev && prev.id === actionToast.id ? null : prev))
+              }}
+            />
           </div>
         )}
         {showBackButton && (
@@ -6591,8 +6740,10 @@ function SchedulePageContent() {
               const returnPath = sessionStorage.getItem('scheduleReturnPath')
               if (returnPath) {
                 sessionStorage.removeItem('scheduleReturnPath')
+                navLoading.start(returnPath)
                 router.push(returnPath)
               } else {
+                navLoading.start('/history')
                 router.push('/history')
               }
             }}
@@ -7025,7 +7176,16 @@ function SchedulePageContent() {
           />
         </div>
 
-        <div className="flex gap-4">
+        <div className="relative flex gap-4">
+          {/* Grid loading overlay: dim only below StepIndicator */}
+          {gridLoading && (
+            <div className="absolute inset-0 z-50 pointer-events-auto">
+              <div className="absolute inset-0 bg-slate-950/25 backdrop-blur-[1px]" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <LoadingAnimation className="w-[200px] h-[200px]" />
+              </div>
+            </div>
+          )}
           <div className="shrink-0 space-y-4">
             {/* Summary */}
             {(() => {
