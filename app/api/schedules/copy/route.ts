@@ -90,6 +90,14 @@ function isNonEmptyObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value as any).length > 0
 }
 
+function stripNonCopyableScheduleOverrides(overrides: any): any {
+  if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) return overrides
+  const next = { ...(overrides as any) }
+  // Bed relieving notes are within-day only; never copy across dates.
+  delete next.__bedRelieving
+  return next
+}
+
 async function resolveBufferStaffIdsFromLatestState(
   supabase: any,
   sourceBaseline: BaselineSnapshot,
@@ -230,7 +238,8 @@ export async function POST(request: NextRequest) {
     }
     timer.stage('resolveSourceBaseline')
 
-    const sourceOverrides = (fromSchedule as any).staff_overrides || {}
+    const sourceOverridesRaw = (fromSchedule as any).staff_overrides || {}
+    const sourceOverrides = stripNonCopyableScheduleOverrides(sourceOverridesRaw)
     const sourceWorkflowState = (fromSchedule as any).workflow_state || null
 
     // Load allocations to clone

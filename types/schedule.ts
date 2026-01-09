@@ -59,6 +59,28 @@ export interface BedAllocation {
   slot: number | null
 }
 
+// ============================================================================
+// Bed relieving free-text notes (per-schedule, not copied across days)
+// ============================================================================
+
+/**
+ * A user-entered row for bed relieving notes, used on the TAKING side.
+ * - ward: selected from releasing team's designated wards (ward name only, e.g. "R9C")
+ * - bedNumbersText: free text list like "5, 6, 7"
+ */
+export interface BedRelievingNoteRow {
+  ward: string
+  bedNumbersText: string
+}
+
+/**
+ * Notes keyed by toTeam (taking team) then by fromTeam (releasing team).
+ * Stored under `daily_schedules.staff_overrides.__bedRelieving.byToTeam`.
+ */
+export type BedRelievingNotesByToTeam = Partial<
+  Record<Team, Partial<Record<Team, BedRelievingNoteRow[]>>>
+>
+
 export interface ScheduleCalculations {
   id: string
   schedule_id: string

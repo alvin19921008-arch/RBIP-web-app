@@ -12,6 +12,47 @@ export interface BedAllocationResult {
   optimizationScore: number
 }
 
+function roundBedsPreserveSum(bedsForRelieving: Record<Team, number>): Record<Team, number> {
+  const teams = Object.keys(bedsForRelieving) as Team[]
+  const base: Record<Team, number> = {
+    FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0,
+  }
+  const residual: Record<Team, number> = {
+    FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0,
+  }
+
+  let sumBase = 0
+  teams.forEach(t => {
+    const v = bedsForRelieving[t] ?? 0
+    const trunc = Math.trunc(v) // toward zero
+    base[t] = trunc
+    residual[t] = v - trunc
+    sumBase += trunc
+  })
+
+  // Adjust so that sum(rounded) == 0 while staying as close as possible to the raw values.
+  // needAdjust > 0 => we need to add +1 to some teams; prefer largest positive residuals.
+  // needAdjust < 0 => we need to add -1 to some teams; prefer most negative residuals.
+  let needAdjust = -sumBase
+  if (needAdjust > 0) {
+    const candidates = [...teams].sort((a, b) => residual[b] - residual[a])
+    for (const t of candidates) {
+      if (needAdjust <= 0) break
+      base[t] += 1
+      needAdjust -= 1
+    }
+  } else if (needAdjust < 0) {
+    const candidates = [...teams].sort((a, b) => residual[a] - residual[b])
+    for (const t of candidates) {
+      if (needAdjust >= 0) break
+      base[t] -= 1
+      needAdjust += 1
+    }
+  }
+
+  return base
+}
+
 export function allocateBeds(context: BedAllocationContext): BedAllocationResult {
   const allocations: BedAllocation[] = []
   
@@ -19,16 +60,23 @@ export function allocateBeds(context: BedAllocationContext): BedAllocationResult
   const releasingTeams: { team: Team; beds: number }[] = []
   const takingTeams: { team: Team; beds: number }[] = []
 
-  Object.entries(context.bedsForRelieving).forEach(([team, beds]) => {
+  // IMPORTANT: Round while preserving global sum to avoid mismatches like
+  // sum(taking) != sum(releasing) due to independent rounding per team.
+  const roundedByTeam = roundBedsPreserveSum(context.bedsForRelieving)
+
+  Object.entries(roundedByTeam).forEach(([team, beds]) => {
     const teamKey = team as Team
     const roundedBeds = roundToNearestInteger(beds)
-    
     if (roundedBeds < 0) {
       releasingTeams.push({ team: teamKey, beds: Math.abs(roundedBeds) })
     } else if (roundedBeds > 0) {
       takingTeams.push({ team: teamKey, beds: roundedBeds })
     }
   })
+
+  // Prioritize higher needs first (prevents last-team starvation).
+  takingTeams.sort((a, b) => b.beds - a.beds)
+  releasingTeams.sort((a, b) => b.beds - a.beds)
 
   // Generate allocation combinations
   const combinations = generateCombinations(releasingTeams, takingTeams, context.wards)

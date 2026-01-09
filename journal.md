@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
-**Last Updated**: 2026-01-08  
-**Latest Phase**: Phase 16 - UI/UX Optimization & Critical Bug Fixes  
+**Last Updated**: 2026-01-09 
+**Latest Phase**: Phase 17 - Bed Relieving Notes Inline Editing & Critical Algorithm Fixes  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -17,10 +17,9 @@
 4. [Code Rules & Conventions](#code-rules--conventions)
 5. [State Management](#state-management)
 6. [Allocation Workflow](#allocation-workflow)
-7. [Step 3 Wizard Architecture](#step-3-wizard-architecture)
-8. [Key Algorithms](#key-algorithms)
-9. [Important Patterns](#important-patterns)
-10. [Common Pitfalls & Solutions](#common-pitfalls--solutions)
+7. [Key Algorithms](#key-algorithms)
+8. [Important Patterns](#important-patterns)
+9. [Common Pitfalls & Solutions](#common-pitfalls--solutions)
 
 ---
 
@@ -259,34 +258,80 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Solution: Destructured `onClick` from props and merged handlers to call both `onCheckedChange` and prop's `onClick`
   - Excluded `onClick` from spread props using `Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'>`
 
-### Phase 16: UI/UX Optimization & Critical Bug Fixes (Latest)
-- ✅ **Toast Notification System**
-  - **Reusable toast component** (`ActionToast`) with three variants: success (green tick), warning (yellow alert), error (red cross)
-  - **Top-right positioning** with slide-in/slide-out animations
-  - **Auto-dismiss** after 3 seconds with manual close button (X icon)
-  - **Global toast provider** (`ToastProvider`) with `useToast` hook for easy access across components
-  - **Replaced all browser `alert()` calls** with appropriate toast notifications (success/warning/error)
-  - **Success toasts** added after confirmed actions complete (e.g., after `confirm()` dialogs)
-  - **In-field validation messages** preserved (HTML5 `required` attributes remain unchanged)
-- ✅ **Navigation Loading & Animation System**
-  - **Global navigation loading provider** (`NavigationLoadingProvider`) wraps dashboard layout
-  - **Lottie animation overlay** (transparent background with dimming) during page transitions
-  - **Thicker top loading bar** (6px) with indeterminate animation for navigation
-  - **Navbar exclusion**: Top header/navbar remains non-dimmed and interactive during loading
-  - **Schedule page special handling**: Only content below step indicator dims during initial load
-  - **Grid loading overlay**: Local overlay for schedule page grid that waits for full data rendering before undimming
-  - **Auto-start on navigation**: Detects internal link clicks and starts loading animation automatically
-  - **Auto-stop on route change**: Navigation loading automatically stops when route change completes
-- ✅ **Critical Bug Fixes**
-  - **Staff Duplication Bug**: Fixed React key collision issue where baseline allocations used empty `id: ''`, causing duplicate rendering
-    - Solution: Baseline allocations now use stable unique IDs: `baseline-therapist:${dateStr}:${staffId}:${team}` and `baseline-pca:${dateStr}:${staffId}:${team}`
-  - **Save Schedule Failure**: Fixed two issues preventing schedule saves
-    - RPC ambiguity error: Renamed `schedule_id` parameter to `p_schedule_id` in `save_schedule_v1` function to resolve SQL ambiguity
-    - Foreign key constraint: Added preflight check to detect missing staff IDs and filter them from save payload with user warning
-    - Missing staff IDs are automatically removed from allocations and in-memory state to prevent FK violations
-  - **History Page Step Badge Inconsistency**: Fixed badge suppression for complete schedules
-    - Complete schedules (Step 4+) now display green "Step 4+" badge instead of being hidden
-    - Badge styling: Green background (`bg-emerald-600`) for complete status, outline variant for incomplete steps
+### Phase 17: Bed Relieving Notes Inline Editing & Critical Algorithm Fixes (Latest)
+- ✅ **Inline Bed Relieving Notes Editor (Block 3)**
+  - Replaced summary text "Takes/Releases [N] beds from [teams]" with inline editable interface
+  - **Taking side (editable)**: Free-text bed number input with ward dropdown selection
+    - Ward dropdown shows releasing team's designated wards (e.g., "R9C", "R10A")
+    - Auto-resizing textarea for bed numbers (e.g., "5, 6, 7, 8, 9")
+    - Multiple rows per releasing team (one row per ward)
+    - Auto-focus: Ward dropdown first (if empty), then bed numbers textarea (if ward selected)
+    - Radix Select close autofocus prevention to maintain textarea focus after ward selection
+  - **Releasing side (read-only, visual feedback)**: 
+    - Lines turn grey when counterparty (taking team) has entered bed numbers
+    - Entire "Releases" section hidden when all outgoing lines are marked "done"
+  - **Display mode**: Team name (left-aligned) and sorted bed numbers (right-aligned), no card containers
+  - **Re-edit functionality**: Hover pencil icon per team row for re-editing specific teams
+  - **Action buttons**: Icon-only Clear/Cancel/Save with tooltips
+  - **Data persistence**: Stored in `staffOverrides.__bedRelieving` (within-day only, not copied across dates)
+  - **Validation**: Non-blocking warning if typed bed count doesn't match algorithm's expected count
+  - **Component**: `components/allocation/BedBlock.tsx` with state management for edit/display modes
+- ✅ **Critical Bed Allocation Algorithm Fix**
+  - **Problem**: Block 5 showed decimal bed needs (e.g., NSM: 14.62) but Block 3 allocated fewer beds (e.g., NSM: 3), causing team starvation
+  - **Root Cause**: Bed relieving calculations used `totalBedsAllTeams` (raw total, e.g., 533) for "expected beds" but `totalBedsDesignated` (after SHS/students deductions, e.g., 518) for "designated beds", creating impossible positive global sum (+15 beds)
+  - **Solution**: Use `totalBedsEffectiveAllTeams` (sum of `totalBedsDesignated` across teams) consistently for both expected beds calculation and bed allocation algorithm
+  - **Impact**: Global `bedsForRelieving` sum now equals ~0, enabling proper allocation matching Block 5 targets
+  - **Files Modified**: `app/(dashboard)/schedule/page.tsx` (recalculateScheduleCalculations, bedEffect, calculateStep4_BedRelieving), `lib/algorithms/bedAllocation.ts` (roundBedsPreserveSum with sum-preserving rounding)
+- ✅ **Summary Column Enhancement**
+  - Added "After SHS/students" row in sidebar summary (only shown when any team has SHS/student deductions)
+  - Displays effective total beds after deductions for clarity
+  - Component: `components/allocation/SummaryColumn.tsx`
+
+### Phase 9: Pending FTE Bug Fix & Safe Wrapper System
+- ✅ **Critical Bug Fix: Pending FTE Overwrite Issue**
+  - **Problem**: When `assignSlotsToTeam()` was called with `pendingFTE: 0.25` (local request), the global `pendingFTE[team]` was incorrectly overwritten with `result.newPendingFTE` (which is only the local remaining, often 0)
+  - **Impact**: Teams with pending FTE > 0.25 (e.g., 1.0) would prematurely stop receiving slots after the first 0.25 assignment, causing under-allocation
+  - **Root Cause**: `result.newPendingFTE` represents the remaining of the local request (0.25), not the team's global pending FTE
+  - **Solution**: Changed all one-slot calls to subtract `0.25 * slotsAssigned.length` from global pending instead of overwriting with `result.newPendingFTE`
+  - **Fixed Locations**:
+    - Condition A Step 1/2/3 (preferred slot attempts)
+    - Condition A Step 4 (fill remaining from preferred PCA - one-slot loop)
+    - Condition B preferred-slot attempts (floor/non-floor)
+    - Cycle 3 cleanup (one-slot-at-a-time)
+- ✅ **Safe Wrapper System for Pending FTE Updates**
+  - **Purpose**: Prevent regression of pending FTE overwrite bug by making the correct update pattern structural
+  - **Implementation**: Added two wrapper functions in `lib/utils/floatingPCAHelpers.ts`:
+    - `assignOneSlotAndUpdatePending()`: For one-slot (0.25) requests - automatically subtracts from global pending
+    - `assignUpToPendingAndUpdatePending()`: For global pending requests - uses `result.newPendingFTE` correctly
+  - **Key Features**:
+    - Both wrappers accept optional `context` parameter (human-readable labels like "Preferred PCA + preferred slot → preferred slot from preferred PCA")
+    - Both wrappers automatically update `pendingFTEByTeam[team]` internally, preventing manual update errors
+    - Wrappers read/write the shared `pendingFTEByTeam` record directly, removing the footgun of passing wrong pending values
+  - **Refactoring**: Completely refactored `lib/algorithms/pcaAllocation.ts` to use wrappers exclusively:
+    - Removed all direct calls to `assignSlotsToTeam()`
+    - All Conditions A/B/C/D now use appropriate wrapper based on intent
+    - All fallback functions (floor/non-floor) use appropriate wrapper
+    - Cycle 3 cleanup uses one-slot wrapper
+  - **Benefits**:
+    - Type-safe: Impossible to accidentally call wrong wrapper (TypeScript enforces correct usage)
+    - Self-documenting: Context strings make debugging easier
+    - Regression-proof: Future edits cannot reintroduce the overwrite bug
+- ✅ **"Remaining" Slot Tag in Tracking Tooltip**
+  - **Feature**: Added `assignmentTag?: 'remaining'` field to `SlotAssignmentLog` interface
+  - **Purpose**: Track slots assigned as "fill remaining slots from same PCA" (e.g., Condition B follow-up fill, Condition A Step 4 fill)
+  - **Display**: Tooltip in `PCABlock.tsx` now shows `, remaining` inline for slots tagged with this marker
+  - **Usage**: Automatically tagged when slots are assigned via "fill remaining from same PCA" logic
+- ✅ **TypeScript Strict Mode Compliance Fixes**
+  - Fixed `Record<PanelType, string>` type error in dashboard page (excluded `null` from Record keys)
+  - Fixed `invalid_slot: null` type error in schedule page (changed to `undefined`)
+  - Fixed missing `slot_whole` property in buffer PCA allocation creation
+  - Fixed `currentStep` prop missing from `TherapistBlockProps` interface
+  - Fixed `special_program` type mismatches in buffer staff dialogs (changed from `string[]` to `StaffSpecialProgram[]`)
+  - Fixed `allocationLog.assignments[0]` type narrowing issue in `PCABlock.tsx`
+  - Fixed `active` property missing from `Staff` interface (added as optional for legacy/DB column support)
+  - Fixed checkbox component type mismatch (`HTMLInputElement` vs `HTMLButtonElement`)
+  - Fixed holiday utility type error (handled array return from `date-holidays` library)
+  - All fixes verified with `npm run build` (strict TypeScript compilation passes)
 
 ### Phase 15: Bed Counts Edit Dialog & Copy Fix
 - ✅ **Bed Counts Edit Dialog**
@@ -319,6 +364,35 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Ensures target schedule is marked `is_tentative = true` BEFORE inserting allocations (RLS requirement)
   - Added proper error handling and reporting for all allocation insert operations
   - Fixed mismatch between History page / date picker dots and actual saved data (allocations now properly inserted)
+
+### Phase 16: UI/UX Optimization & Critical Bug Fixes
+- ✅ **Toast Notification System**
+  - **Reusable toast component** (`ActionToast`) with three variants: success (green tick), warning (yellow alert), error (red cross)
+  - **Top-right positioning** with slide-in/slide-out animations
+  - **Auto-dismiss** after 3 seconds with manual close button (X icon)
+  - **Global toast provider** (`ToastProvider`) with `useToast` hook for easy access across components
+  - **Replaced all browser `alert()` calls** with appropriate toast notifications (success/warning/error)
+  - **Success toasts** added after confirmed actions complete (e.g., after `confirm()` dialogs)
+  - **In-field validation messages** preserved (HTML5 `required` attributes remain unchanged)
+- ✅ **Navigation Loading & Animation System**
+  - **Global navigation loading provider** (`NavigationLoadingProvider`) wraps dashboard layout
+  - **Lottie animation overlay** (transparent background with dimming) during page transitions
+  - **Thicker top loading bar** (6px) with indeterminate animation for navigation
+  - **Navbar exclusion**: Top header/navbar remains non-dimmed and interactive during loading
+  - **Schedule page special handling**: Only content below step indicator dims during initial load
+  - **Grid loading overlay**: Local overlay for schedule page grid that waits for full data rendering before undimming
+  - **Auto-start on navigation**: Detects internal link clicks and starts loading animation automatically
+  - **Auto-stop on route change**: Navigation loading automatically stops when route change completes
+- ✅ **Critical Bug Fixes**
+  - **Staff Duplication Bug**: Fixed React key collision issue where baseline allocations used empty `id: ''`, causing duplicate rendering
+    - Solution: Baseline allocations now use stable unique IDs: `baseline-therapist:${dateStr}:${staffId}:${team}` and `baseline-pca:${dateStr}:${staffId}:${team}`
+  - **Save Schedule Failure**: Fixed two issues preventing schedule saves
+    - RPC ambiguity error: Renamed `schedule_id` parameter to `p_schedule_id` in `save_schedule_v1` function to resolve SQL ambiguity
+    - Foreign key constraint: Added preflight check to detect missing staff IDs and filter them from save payload with user warning
+    - Missing staff IDs are automatically removed from allocations and in-memory state to prevent FK violations
+  - **History Page Step Badge Inconsistency**: Fixed badge suppression for complete schedules
+    - Complete schedules (Step 4+) now display green "Step 4+" badge instead of being hidden
+    - Badge styling: Green background (`bg-emerald-600`) for complete status, outline variant for incomplete steps
 
 ### Phase 14: Performance Optimization & Step Validation
 - ✅ **Snapshot Size Reduction**
@@ -499,52 +573,6 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Shared function `removeTherapistAllocationFromTeam()` for consistency
   - No slot selection popover - immediate removal regardless of slot count
   - Works correctly for both single and multi-slot SPT allocations
-
-### Phase 9: Pending FTE Bug Fix & Safe Wrapper System
-- ✅ **Critical Bug Fix: Pending FTE Overwrite Issue**
-  - **Problem**: When `assignSlotsToTeam()` was called with `pendingFTE: 0.25` (local request), the global `pendingFTE[team]` was incorrectly overwritten with `result.newPendingFTE` (which is only the local remaining, often 0)
-  - **Impact**: Teams with pending FTE > 0.25 (e.g., 1.0) would prematurely stop receiving slots after the first 0.25 assignment, causing under-allocation
-  - **Root Cause**: `result.newPendingFTE` represents the remaining of the local request (0.25), not the team's global pending FTE
-  - **Solution**: Changed all one-slot calls to subtract `0.25 * slotsAssigned.length` from global pending instead of overwriting with `result.newPendingFTE`
-  - **Fixed Locations**:
-    - Condition A Step 1/2/3 (preferred slot attempts)
-    - Condition A Step 4 (fill remaining from preferred PCA - one-slot loop)
-    - Condition B preferred-slot attempts (floor/non-floor)
-    - Cycle 3 cleanup (one-slot-at-a-time)
-- ✅ **Safe Wrapper System for Pending FTE Updates**
-  - **Purpose**: Prevent regression of pending FTE overwrite bug by making the correct update pattern structural
-  - **Implementation**: Added two wrapper functions in `lib/utils/floatingPCAHelpers.ts`:
-    - `assignOneSlotAndUpdatePending()`: For one-slot (0.25) requests - automatically subtracts from global pending
-    - `assignUpToPendingAndUpdatePending()`: For global pending requests - uses `result.newPendingFTE` correctly
-  - **Key Features**:
-    - Both wrappers accept optional `context` parameter (human-readable labels like "Preferred PCA + preferred slot → preferred slot from preferred PCA")
-    - Both wrappers automatically update `pendingFTEByTeam[team]` internally, preventing manual update errors
-    - Wrappers read/write the shared `pendingFTEByTeam` record directly, removing the footgun of passing wrong pending values
-  - **Refactoring**: Completely refactored `lib/algorithms/pcaAllocation.ts` to use wrappers exclusively:
-    - Removed all direct calls to `assignSlotsToTeam()`
-    - All Conditions A/B/C/D now use appropriate wrapper based on intent
-    - All fallback functions (floor/non-floor) use appropriate wrapper
-    - Cycle 3 cleanup uses one-slot wrapper
-  - **Benefits**:
-    - Type-safe: Impossible to accidentally call wrong wrapper (TypeScript enforces correct usage)
-    - Self-documenting: Context strings make debugging easier
-    - Regression-proof: Future edits cannot reintroduce the overwrite bug
-- ✅ **"Remaining" Slot Tag in Tracking Tooltip**
-  - **Feature**: Added `assignmentTag?: 'remaining'` field to `SlotAssignmentLog` interface
-  - **Purpose**: Track slots assigned as "fill remaining slots from same PCA" (e.g., Condition B follow-up fill, Condition A Step 4 fill)
-  - **Display**: Tooltip in `PCABlock.tsx` now shows `, remaining` inline for slots tagged with this marker
-  - **Usage**: Automatically tagged when slots are assigned via "fill remaining from same PCA" logic
-- ✅ **TypeScript Strict Mode Compliance Fixes**
-  - Fixed `Record<PanelType, string>` type error in dashboard page (excluded `null` from Record keys)
-  - Fixed `invalid_slot: null` type error in schedule page (changed to `undefined`)
-  - Fixed missing `slot_whole` property in buffer PCA allocation creation
-  - Fixed `currentStep` prop missing from `TherapistBlockProps` interface
-  - Fixed `special_program` type mismatches in buffer staff dialogs (changed from `string[]` to `StaffSpecialProgram[]`)
-  - Fixed `allocationLog.assignments[0]` type narrowing issue in `PCABlock.tsx`
-  - Fixed `active` property missing from `Staff` interface (added as optional for legacy/DB column support)
-  - Fixed checkbox component type mismatch (`HTMLInputElement` vs `HTMLButtonElement`)
-  - Fixed holiday utility type error (handled array return from `date-holidays` library)
-  - All fixes verified with `npm run build` (strict TypeScript compilation passes)
 
 ### Technical Achievements
 - ✅ **Type Safety**: Comprehensive database type conversion utilities
@@ -1224,60 +1252,6 @@ The schedule page uses a three-layer state management pattern:
 
 ---
 
-## Step 3 Wizard Architecture
-
-### Component Structure
-The Step 3 wizard is implemented as a multi-step dialog (`FloatingPCAConfigDialog`) that guides users through three sub-steps before the final algorithm execution:
-
-1. **Step 3.1**: `TeamPendingCard` components in a drag-and-drop enabled container
-2. **Step 3.2**: `TeamReservationCard` components with checkbox selections
-3. **Step 3.3**: `TeamAdjacentSlotCard` components with checkbox selections
-
-### Data Flow Architecture
-```
-Step 3.1 (Adjust FTE & Order)
-  ↓
-adjustedFTE, teamOrder
-  ↓
-Step 3.2 (Preferred Slots)
-  ↓
-step3.2 Assignments → executeSlotAssignments()
-  ↓
-currentPendingFTE (updated), pcaAllocations (updated)
-  ↓
-Step 3.3 (Adjacent Slots)
-  ↓
-step3.3 Selections → executeSlotAssignments()
-  ↓
-currentPendingFTE (updated), pcaAllocations (updated)
-  ↓
-Step 3.4 (Final Algorithm)
-  ↓
-generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
-```
-
-**Buffer PCA note (Step 3.0 → Step 3.4)**: buffer PCA can be pre-assigned before Step 3 algo run (preserved via `staffOverrides`), or left unassigned and allocated by the Step 3 algorithm.
-
-### Reservation Logic
-- **Preferred Slots (3.2)**: Identifies PCA + slot combinations where:
-  - Team's rounded pending FTE > 0
-  - PCA is on duty
-  - Slot is available
-  - Team has preference for this PCA + slot
-- **Adjacent Slots (3.3)**: Identifies slots adjacent to special program assignments where:
-  - Team's rounded pending FTE > 0
-  - Special program PCA has an available adjacent slot (1↔2, 3↔4)
-  - Adjacent slot is not already assigned
-  - **Critical**: Only considers slots actually assigned by special programs (not Step 3.2 assignments)
-
-### Slot Time Labels
-- Slot 1: 0900-1030
-- Slot 2: 1030-1200
-- Slot 3: 1330-1500
-- Slot 4: 1500-1630
-
----
-
 ## Common Pitfalls & Solutions
 
 ### Pitfall 1: Special Program IDs Type Mismatch
@@ -1377,85 +1351,18 @@ generateStep3_FloatingPCA(currentPendingFTE, teamOrder)
 
 ## Notes for New Chat Agents
 
-1. **Always check `lib/db/types.ts`** before saving to database
-2. **Always use `staffOverrides`** as single source of truth for staff modifications
-3. **Never recalculate `average_pca_per_team`** after Step 1
-4. **Always use rounding utilities** for FTE comparisons
-5. **Skip DRM** during special program PCA allocation
-6. **Track slots** to prevent duplicate assignments
-7. **Use preparation functions** (`prepareTherapistAllocationForDb`, `preparePCAAllocationForDb`) for complete type safety
-8. **Step 3 Wizard**: Understand the data flow from 3.1 → 3.2 → 3.3 → 3.4
-9. **Reservation Logic**: Preferred slots and adjacent slots are "reservations" (not guaranteed) until user approves
-10. **Adjacent Slot Logic**: Only consider slots actually assigned by special programs, not Step 3.2 assignments
-11. **TypeScript Strict Mode**: Use `createEmptyTeamRecord<T>()`, guard clauses, and `PromiseLike` for Supabase queries
-12. **State Immutability**: Always clone state objects before modification in Step 3 wizard
-13. **Manual Slot Transfers**: Stored in `staffOverrides.slotOverrides`, update `assigned_PCA-FTE/team` and `pendingPCA-FTE/team`, special program slots are non-draggable
-14. **Step-Based Validation**: Enforce step restrictions for slot transfers, therapist transfers, and leave editing with warning popovers
-15. **SPT Allocation Timing**: SPT allocation only runs in Step 2 when "Initialize Algo" is clicked, not in Step 1
-16. **History Page**: Queries schedules with any allocation data, groups by month, supports batch delete and navigation
-17. **Date Picker**: Non-modal popover with data indicators, holiday highlighting, and past/future date styling
-18. **Checkbox Component**: Always destructure `onClick` from props and merge with internal `onCheckedChange` handler to prevent override issues
-19. **Buffer Staff**: Use `buffer_fte` instead of default 1.0 FTE; buffer therapists assignable in Step 1 & 2 only; buffer floating PCA assignable in Step 3 onwards
-20. **Step 3.0**: Entry point to Step 3 wizard before sub-steps 3.1-3.4
-21. **Over-Fill Prevention**: Step 3.1 adjustments have upper limits; Step 3.4 algorithm respects available floating PCA capacity to prevent over-allocation
-22. **Pending FTE Update Safety**: Always use `assignOneSlotAndUpdatePending()` for one-slot calls and `assignUpToPendingAndUpdatePending()` for global pending calls - never manually update `pendingFTE[team]` after calling these wrappers
-23. **"Remaining" Slot Tag**: Slots assigned as "fill remaining from same PCA" are automatically tagged with `assignmentTag: 'remaining'` and displayed in tooltip
-24. **Leave Edit Dialog Enhancements**: 
-    - Half day TIL supported with AM/PM selection (same as half day VL)
-    - Therapists with special programs can indicate availability during special program slot
-    - PCA invalid slots: Array-based system with time interval slider (display-only, does not affect FTE)
-    - FTE validation: Validates rounded FTE matches available slots FTE (catches both directions)
-    - Invalid slots auto-populate immediately when available slots change (no delay)
-    - Special program slot time display uses `whitespace-nowrap` to prevent breaking
-25. **Special Program Overrides Dialog (Step 2.0)**: 
-    - Horizontal card carousel layout with scroll snapping
-    - Shows all active special programs on current weekday
-    - Auto-calculates PCA FTE for Robotic/CRP (0.25 × slots)
-    - CRP Thursday toggle for therapist FTE (0.25/0.4)
-    - Substitution dropdown with buffer staff creation
-    - Auto-fills configured slot time/FTE when substitution selected
-    - Always appears, loading existing `staffOverrides` as candidates
-    - Selected buffer PCAs injected into algorithm before Step 2 execution
-26. **Step 2.1 Substitution Detection**: 
-    - Pre-detects existing `staffOverrides.substitutionFor` from current Step 2 context
-    - Infers already-allocated floating PCAs from saved allocations
-    - Prevents duplicate allocations when buffer substitutes already exist
-    - Resolver preserves pre-selections if user skips/cancels
-27. **Buffer Non-Floating PCA Substitution**: 
-    - Auto-detects full-day non-floating buffer PCAs as substitutes for missing regular non-floating PCAs
-    - Sets `substitutionFor` override and nullifies missing PCA's team in algorithm input
-    - Prevents Step 2.1 from generating duplicate substitutes
-    - Enforced full-day requirement (all 4 slots) for non-floating buffer PCAs
-28. **Substitution Styling Logic**: 
-    - Special program PCAs explicitly excluded from substitution styling (check `special_program_ids`)
-    - Derived substitution logic skips non-floating PCAs already covered by whole-day buffer substitutes
-    - Prevents unrelated floating PCAs from being incorrectly marked green
-29. **Buffer Staff Edit**: 
-    - Edit icon on buffer staff cards opens BufferStaffCreateDialog in edit mode
-    - Dialog pre-populates all buffer properties (rank, team, special program, floating, floor PCA, buffer FTE, available slots)
-    - Uses database `update` operation when editing existing buffer staff
-30. **SPT FTE Edit Model**: 
-    - SPT uses additive FTE model: "FTE" (base, overrideable 0.25-1.0 step=0.25), "FTE Cost due to Leave" (user input), "FTE Remaining on Duty" (auto-calculated)
-    - Step 2 allocation applies SPT overrides to `sptAllocations.fte_addon`
-    - StaffPool displays SPT FTE when SPT has duty on current weekday
-    - Schedule page SPT display: Shows "AM/PM" only when FTE = 0.25/0.5 AND slot pattern matches; otherwise shows number only
-31. **Step Dialog Badges**: 
-    - Step 2.0, 2.1, and Step 3.0-3.3 dialogs display step badges in titles
-    - Consistent badge styling across all step dialogs
-    - Step 2.1 "Skip" button includes hover tooltip (consistent with Step 2.0)
-32. **Bed Counts Edit Dialog**: 
-    - Replaced inline bed editing with hover pencil icon (same interaction as LeaveBlock)
-    - Per-ward bed counts editable with validation against ward `total_beds`
-    - SHS and Student placement bed counts stored in `staffOverrides.__bedCounts.byTeam[team]`
-    - Final total = baseTotal - SHS - Students (recomputes `total_beds_designated` in all calculations)
-    - Display shows SHS and student counts with academic cap icon tooltip when > 0
-    - Carried over via Copy schedule (both Hybrid and Full modes)
-    - Removed legacy `editableBeds` state pathway
-33. **Copy Schedule API Fixes**: 
-    - Target schedule must be `is_tentative = true` BEFORE inserting allocations (RLS requirement)
-    - Clone operations omit `id` field entirely (don't set `id: undefined` which becomes NULL)
-    - Legacy-safe handling for missing `pca_unmet_needs_tracking` table
-    - Proper error reporting for all allocation insert operations
+**Critical Gotchas & Architectural Constraints:**
+
+1. **Database Type Safety (CRITICAL)**: Always use `lib/db/types.ts` utilities (`toDbLeaveType`, `programNamesToIds`, `normalizeFTE`) - TypeScript types are WIDER than database enums
+2. **staffOverrides is Single Source of Truth**: All staff modifications must update `staffOverrides`; algorithms read from it
+3. **Never Recalculate `average_pca_per_team` After Step 1**: It's a target value that persists through Steps 2-4
+4. **Bed Relieving Calculations**: Use `totalBedsEffectiveAllTeams` (after SHS/students deductions) consistently for both expected beds and allocation algorithm - using raw `totalBedsAllTeams` creates impossible positive global sums
+5. **Pending FTE Update Safety**: Always use `assignOneSlotAndUpdatePending()` for one-slot calls and `assignUpToPendingAndUpdatePending()` for global pending calls - never manually update `pendingFTE[team]` after calling wrappers
+6. **TypeScript Strict Mode**: Use `createEmptyTeamRecord<T>()` for Record initialization, guard clauses instead of `!`, `PromiseLike<any>[]` for Supabase queries in `Promise.all()`
+7. **Step 3 Wizard State**: Always clone state objects (`adjustedFTE`, `existingAllocations`) before modification; each mini-step progressively updates `currentPendingFTE` and `pcaAllocations`
+8. **Adjacent Slot Logic (Step 3.3)**: Only considers slots actually assigned by special programs, NOT Step 3.2 assignments
+9. **Bed Relieving Notes**: Stored in `staffOverrides.__bedRelieving` (within-day only, NOT copied across dates via copy schedule)
+10. **Snapshot Envelope**: Always use `buildBaselineSnapshotEnvelope()` before saving; always validate with `validateAndRepairBaselineSnapshot()` on load
 
 ---
 
