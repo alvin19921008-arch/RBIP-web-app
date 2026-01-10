@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
-**Last Updated**: 2026-01-09 
-**Latest Phase**: Phase 17 - Bed Relieving Notes Inline Editing & Critical Algorithm Fixes  
+**Last Updated**: 2026-01-10 
+**Latest Phase**: Phase 18 - Schedule Loading Optimization & SPT FTE=0 Edge Case Fixes  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -258,7 +258,7 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Solution: Destructured `onClick` from props and merged handlers to call both `onCheckedChange` and prop's `onClick`
   - Excluded `onClick` from spread props using `Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'>`
 
-### Phase 17: Bed Relieving Notes Inline Editing & Critical Algorithm Fixes (Latest)
+### Phase 17: Bed Relieving Notes Inline Editing & Critical Algorithm Fixes
 - ✅ **Inline Bed Relieving Notes Editor (Block 3)**
   - Replaced summary text "Takes/Releases [N] beds from [teams]" with inline editable interface
   - **Taking side (editable)**: Free-text bed number input with ward dropdown selection
@@ -286,6 +286,80 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Added "After SHS/students" row in sidebar summary (only shown when any team has SHS/student deductions)
   - Displays effective total beds after deductions for clarity
   - Component: `components/allocation/SummaryColumn.tsx`
+
+### Phase 18: Schedule Loading Optimization & SPT FTE=0 Edge Case Fixes (Latest)
+- ✅ **Cold Start Loading Optimization**
+  - **Problem**: Initial schedule load after refresh took 8-10 seconds with progressive "Avg PCA/team" value jumps (blank → 1.8125 → final)
+  - **Root Cause**: Sequential database queries, repeated client-side calculations, lack of caching, expensive computations during hydration
+  - **Solution**: Multi-pronged optimization approach:
+    - **Supabase RPC (`load_schedule_v1`)**: Single-round-trip data fetch for all schedule-related data (schedule metadata, therapist/PCA/bed allocations, calculations)
+    - **Deferred base data loads**: Non-essential queries (e.g., `loadDatesWithData`) deferred until after main schedule loads
+    - **In-memory cache (`scheduleCache`)**: Client-side cache with TTL for fast subsequent navigations
+    - **Hydration guards**: Prevented `recalculateScheduleCalculations` calls during initial hydration via `isHydratingSchedule` state
+    - **Optimized `loadDatesWithData()`**: Query only `daily_schedules.date` initially, use in-memory cache, perform allocation existence checks in parallel batches
+  - **Admin Diagnostic Tooltip**: Hover tooltip on "Schedule Allocation" title showing runtime, optimization features used (RPC, batched queries, pre-calculated values), and detailed timings
+  - **Impact**: Reduced cold start time from 8-10s to significantly faster, eliminated progressive value jumps
+  - **Files Modified**: `app/(dashboard)/schedule/page.tsx`, `lib/utils/scheduleCache.ts`, `lib/hooks/useAllocationSync.ts`, `supabase/migrations/add_load_schedule_rpc.sql`
+- ✅ **SPT FTE=0 Edge Case Fix (Aggie Case)**
+  - **Problem**: SPT with dashboard `fte_addon = 0` but still on duty (leave type = "On duty (no leave") was incorrectly:
+    - Counted as FTE = 1 in team PT/team calculations (causing bloated counts)
+    - Displayed as "Aggie 1 AM" instead of "Aggie AM" (showing incorrect FTE prefix)
+    - Not auto-selectable in special program substitution dialogs
+  - **Root Cause**: Multiple code paths defaulted SPT FTE to 1.0 when `fte_addon = 0`, and "on duty" string normalization was missing
+  - **Solution**:
+    - **Leave type normalization**: Created `lib/utils/leaveType.ts` with `isOnDutyLeaveType()` helper to handle both `null` and legacy string values ("On duty (no leave)", "none", etc.)
+    - **SPT base FTE respect**: All override creation paths now pull SPT base FTE from `spt_allocations.fte_addon` (even if 0) instead of defaulting to 1.0
+    - **Therapist block display**: Allow SPT with FTE=0 + on-duty + `spt_slot_display` to appear in team column; display shows slot suffix only (no "1" prefix)
+    - **Special program availability**: SPT with FTE=0 + on-duty treated as eligible for special program assignment
+    - **Auto-repair legacy overrides**: Existing saved overrides with default 1.0 automatically synced back to dashboard-configured FTE when on duty + leave cost = 0
+  - **Impact**: SPT with FTE=0 correctly contribute 0 to PT/team, display correctly, and are eligible for special program auto-selection
+  - **Files Modified**: `components/allocation/TherapistBlock.tsx`, `components/allocation/SpecialProgramOverrideDialog.tsx`, `components/allocation/SpecialProgramSubstitutionDialog.tsx`, `app/(dashboard)/schedule/page.tsx`, `lib/algorithms/therapistAllocation.ts`, `lib/utils/leaveType.ts` (new)
+- ✅ **CRP Special Program Dialog Fixes**
+  - **Problem**: CRP dialog could not auto-select configured therapist (Aggie) or auto-fill therapist FTE subtraction as 0
+  - **Root Cause**: Dashboard save logic omitted explicit `0` entries from `fte_subtraction` (only saved values > 0), so Step 2.0 dialog couldn't detect configured runner or auto-fill 0
+  - **Solution**:
+    - **Dashboard save fix**: For CRP, persist `fte_subtraction` even when value is 0 (if weekday is enabled)
+    - **Legacy fallback**: If `fte_subtraction` omits configured runner, infer from staffId-keyed slots structure
+    - **Auto-fill default**: If configured CRP therapist found but subtraction missing, default to 0
+    - **No auto-fallback**: Restored original behavior - if configured CRP therapist unavailable, show substitution alert (no preference-order/any-therapist fallback)
+  - **Impact**: CRP dialog now correctly auto-selects configured therapist and auto-fills 0 when dashboard configured
+  - **Files Modified**: `components/dashboard/SpecialProgramPanel.tsx`, `components/allocation/SpecialProgramOverrideDialog.tsx`
+- ✅ **Calendar Dots Consistency Fix**
+  - **Problem**: Calendar dots showed all dates with `daily_schedules` rows (including "semi-blank" Step 1-only schedules), while History page showed only dates with actual allocations
+  - **Solution**: Modified `loadDatesWithData()` to query allocation tables (`schedule_therapist_allocations`, `schedule_pca_allocations`, `schedule_bed_allocations`) and only mark dates with dots if allocation data exists
+  - **Impact**: Calendar dots now consistent with History page - both show only dates with saved allocations
+  - **Files Modified**: `app/(dashboard)/schedule/page.tsx`
+- ✅ **Copy Button Disabled Fix**
+  - **Problem**: Copy menu buttons (to next/last/specific date) were disabled after initial page load due to deferred `loadDatesWithData()` mounting
+  - **Solution**: Pre-fetch `datesWithData` in background after main schedule loads, introduce `datesWithDataLoading` state, display "Loading schedule dates…" placeholder in copy menu when data not yet available
+  - **Impact**: Eliminated disabled-to-enabled flicker, copy menu always functional
+  - **Files Modified**: `app/(dashboard)/schedule/page.tsx`
+- ✅ **Calendar Lag Fixes**
+  - **Problem**: Calendar in copy wizard was laggy when opening dialog and toggling months
+  - **Root Cause**: `isHongKongHoliday()` created new `Holidays('HK')` instances per calendar cell render
+  - **Solution**: 
+    - Module-level `Holidays('HK')` instance and `yearHolidayCache` for reuse
+    - Memoized `isCalendarDateDisabled` with `useCallback` using pre-loaded `holidays` map
+    - Local `formatDateIso` function for faster date formatting
+  - **Impact**: Calendar opens instantly, month toggling is smooth
+  - **Files Modified**: `components/allocation/ScheduleCopyWizard.tsx`, `lib/utils/hongKongHolidays.ts`
+- ✅ **Buffer Therapist Detection Fix**
+  - **Problem**: Buffer therapists were not detected and excluded when "include buffer staff" option was unchecked during copy operation
+  - **Root Cause**: Buffer staff detection only considered staff IDs from allocations/overrides, missing buffer therapists present only in `baseline_snapshot`
+  - **Solution**: Modified both `/api/schedules/buffer-staff` and `/api/schedules/copy` to include all staff IDs from `baseline_snapshot` in `referencedIds` set
+  - **Impact**: Buffer therapists correctly detected and excluded when `includeBufferStaff = false`
+  - **Files Modified**: `app/api/schedules/buffer-staff/route.ts`, `app/api/schedules/copy/route.ts`
+- ✅ **Bed Allocation Auto-Show Fix**
+  - **Problem**: Bed allocations for completed schedules (Step 4+) only showed after clicking "Step 4 algo button" instead of automatically on initial load
+  - **Root Cause**: `useEffect` erroneously clearing loaded bed allocations for completed schedules
+  - **Solution**: Fixed `useEffect` logic to preserve bed allocations when schedule is completed (Step 4+)
+  - **Impact**: Bed allocations automatically display on initial load for completed schedules
+  - **Files Modified**: `app/(dashboard)/schedule/page.tsx`
+- ✅ **Tooltip Truncation Fix**
+  - **Problem**: Admin diagnostic tooltip was truncated on left side of viewport
+  - **Solution**: Refactored `Tooltip` component to use direct `left/top` positioning with dynamic measurement and clamping within viewport boundaries
+  - **Impact**: Tooltip stays fully visible within viewport
+  - **Files Modified**: `components/ui/tooltip.tsx`
 
 ### Phase 9: Pending FTE Bug Fix & Safe Wrapper System
 - ✅ **Critical Bug Fix: Pending FTE Overwrite Issue**

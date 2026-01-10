@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDroppable, useDndContext } from '@dnd-kit/core'
 import { SpecialProgram } from '@/types/allocation'
 import { formatFTE } from '@/lib/utils/rounding'
+import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 
 interface TherapistBlockProps {
   team: Team
@@ -42,16 +43,23 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
   const showDragZone = isOver && isTherapistDragging
 
   // Filter out PCA staff - only show therapists (SPT, APPT, RPT)
-  // Also filter out staff with FTE = 0 (they should only appear in leave block)
+  // Also filter out staff with FTE = 0 (they should only appear in leave block),
+  // EXCEPT SPT with configured FTE=0 that are still on-duty (leave_type null) and have SPT slot display.
   const therapistAllocations = allocations.filter(alloc => {
     const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-    const hasFTE = (alloc.fte_therapist || 0) > 0
-    return isTherapist && hasFTE
+    const fte = alloc.fte_therapist ?? 0
+    const isOnDuty = isOnDutyLeaveType(alloc.leave_type as any)
+    const isOnDutyZeroFteSPT =
+      alloc.staff.rank === 'SPT' &&
+      fte === 0 &&
+      isOnDuty &&
+      !!alloc.spt_slot_display
+    return isTherapist && (fte > 0 || isOnDutyZeroFteSPT)
   })
 
   // Calculate sum of therapist FTE per team
   const ptPerTeam = therapistAllocations.reduce((sum, alloc) => {
-    return sum + (alloc.fte_therapist || 0)
+    return sum + (alloc.fte_therapist ?? 0)
   }, 0)
 
   // Collect special program information for this team
@@ -86,8 +94,11 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
       <CardContent className="p-2 pt-1 flex flex-col min-h-full">
         <div className="space-y-1 flex-1">
           {therapistAllocations.map((allocation) => {
+            const fte = allocation.fte_therapist ?? 0
             const sptDisplay = allocation.spt_slot_display
-              ? `${allocation.fte_therapist} ${allocation.spt_slot_display}`
+              ? (allocation.staff.rank === 'SPT' && fte === 0
+                  ? allocation.spt_slot_display
+                  : `${fte} ${allocation.spt_slot_display}`)
               : undefined
             
             // Calculate FTE for display
@@ -96,7 +107,7 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
             const baseFTE = isBufferStaff && allocation.staff.buffer_fte !== undefined 
               ? allocation.staff.buffer_fte 
               : 1.0
-            const originalFTE = allocation.fte_therapist || baseFTE
+            const originalFTE = allocation.fte_therapist ?? baseFTE
             const hasSpecialProgram = allocation.special_program_ids && allocation.special_program_ids.length > 0
             
             // Calculate special program FTE subtraction
@@ -114,10 +125,10 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
             
             // Get allocation FTE (which accounts for leave, excluding special program FTE subtraction)
             // The allocationFTE already represents FTE remaining after all deductions
-            const allocationFTE = allocation.fte_therapist || originalFTE
+            const allocationFTE = allocation.fte_therapist ?? originalFTE
             
             // Check if there's a leave type (leave FTE subtraction)
-            const hasLeave = allocation.leave_type !== null && allocation.leave_type !== undefined
+            const hasLeave = !isOnDutyLeaveType(allocation.leave_type as any)
             
             // Display FTE remaining logic:
             // - If FTE subtraction is ONLY from special program (no leave), don't show FTE value

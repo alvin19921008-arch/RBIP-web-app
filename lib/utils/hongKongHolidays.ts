@@ -1,12 +1,20 @@
 import Holidays from 'date-holidays'
 
+// date-holidays instantiation is relatively expensive; reuse a single instance.
+const hk = new Holidays('HK')
+
+// Cache computed year maps (YYYY-MM-DD -> holiday name) to avoid recomputation.
+const yearHolidayCache = new Map<number, Map<string, string>>()
+
 /**
  * Get Hong Kong public holidays for a given year
  * Returns a Map of date strings (YYYY-MM-DD) to holiday names
  */
 export function getHongKongHolidays(year: number): Map<string, string> {
+  const cached = yearHolidayCache.get(year)
+  if (cached) return cached
+
   const holidays = new Map<string, string>()
-  const hk = new Holidays('HK')
   
   // Get all holidays for the year
   const yearHolidays = hk.getHolidays(year)
@@ -31,6 +39,7 @@ export function getHongKongHolidays(year: number): Map<string, string> {
     }
   }
   
+  yearHolidayCache.set(year, holidays)
   return holidays
 }
 
@@ -38,8 +47,6 @@ export function getHongKongHolidays(year: number): Map<string, string> {
  * Check if a date is a Hong Kong public holiday or Sunday
  */
 export function isHongKongHoliday(date: Date): { isHoliday: boolean; name?: string } {
-  const hk = new Holidays('HK')
-  
   // Check if it's a Sunday
   if (date.getDay() === 0) {
     return { isHoliday: true, name: 'Sunday' }

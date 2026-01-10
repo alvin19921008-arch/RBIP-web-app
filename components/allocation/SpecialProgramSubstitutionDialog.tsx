@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Staff, StaffRank, SpecialProgram as StaffSpecialProgram } from '@/types/staff'
 import { cn } from '@/lib/utils'
+import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 
 interface SpecialProgramSubstitutionDialogProps {
   open: boolean
@@ -15,6 +16,9 @@ interface SpecialProgramSubstitutionDialogProps {
   requiredSlots?: number[]  // For PCA only
   minRequiredFTE?: number   // Minimum FTE remaining needed to take the special program
   allStaff: Staff[]
+  // Base SPT FTE for this weekday (from dashboard `spt_allocations.fte_addon`)
+  // Used to avoid defaulting SPT to 1.0 in substitution list.
+  sptBaseFteByStaffId?: Record<string, number>
   staffOverrides: Record<string, {
     leaveType?: any
     fteRemaining?: number
@@ -43,6 +47,7 @@ export function SpecialProgramSubstitutionDialog({
   requiredSlots,
   minRequiredFTE,
   allStaff,
+  sptBaseFteByStaffId,
   staffOverrides,
   sourceType,
   onConfirm,
@@ -53,8 +58,11 @@ export function SpecialProgramSubstitutionDialog({
   const getEffectiveFTERemaining = (s: Staff): number => {
     const override = staffOverrides[s.id]
     if (typeof override?.fteRemaining === 'number') return override.fteRemaining
-    if (override?.leaveType) return 0
+    if (override?.leaveType && !isOnDutyLeaveType(override.leaveType as any)) return 0
     if (s.status === 'buffer' && typeof s.buffer_fte === 'number') return s.buffer_fte
+    if (s.rank === 'SPT' && sptBaseFteByStaffId && typeof sptBaseFteByStaffId[s.id] === 'number') {
+      return sptBaseFteByStaffId[s.id]!
+    }
     return 1.0
   }
 
@@ -81,9 +89,12 @@ export function SpecialProgramSubstitutionDialog({
       // Must have special program property
       if (!s.special_program?.includes(programName as StaffSpecialProgram)) return false
 
-      // Must have FTE > 0
+      // Must have FTE > 0 (except on-duty SPT with FTE=0 edge case)
       const fteRemaining = getEffectiveFTERemaining(s)
-      if (fteRemaining <= 0) return false
+      const isOnDuty = isOnDutyLeaveType(staffOverrides[s.id]?.leaveType as any)
+      if (fteRemaining <= 0) {
+        if (!(s.rank === 'SPT' && isOnDuty)) return false
+      }
 
       // Must have enough FTE remaining to cover special program requirement
       if (typeof minRequiredFTE === 'number' && minRequiredFTE > 0) {

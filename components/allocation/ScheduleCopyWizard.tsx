@@ -1,12 +1,18 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { CalendarGrid } from '@/components/ui/calendar-grid'
 import { Staff } from '@/types/staff'
 import { formatDate } from '@/lib/utils/dateHelpers'
-import { isHongKongHoliday } from '@/lib/utils/hongKongHolidays'
+
+function formatDateIso(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 type CopyMode = 'full' | 'hybrid'
 
@@ -98,7 +104,13 @@ export function ScheduleCopyWizard({
           return
         }
         const data = await res.json()
-        setSourceBufferStaff((data?.bufferStaff || []) as Staff[])
+        const list = (data?.bufferStaff || []) as Staff[]
+        const rankCounts = list.reduce<Record<string, number>>((acc, s) => {
+          const r = (s as any)?.rank ?? 'unknown'
+          acc[r] = (acc[r] || 0) + 1
+          return acc
+        }, {})
+        setSourceBufferStaff(list)
       } catch (e) {
         console.error('Error loading source buffer staff:', e)
         setSourceBufferStaff([])
@@ -148,6 +160,28 @@ export function ScheduleCopyWizard({
     return copyMode !== null
   }
 
+  const isCalendarDateDisabled = useCallback(
+    (date: Date) => {
+      // Disable weekends + HK public holidays/Sundays.
+      // IMPORTANT: Do NOT call isHongKongHoliday() here; it instantiates heavy holiday logic per cell render.
+      const day = date.getDay()
+      const isWeekend = day === 0 || day === 6
+      if (isWeekend) return true
+
+      const iso = formatDateIso(date)
+      if (holidays.has(iso)) return true
+
+      const hasData = datesWithData.has(iso)
+      if (direction === 'to') {
+        // Copy TO: only allow empty dates
+        return hasData
+      }
+      // direction === 'from': only allow filled dates
+      return !hasData
+    },
+    [datesWithData, direction, holidays]
+  )
+
   const handleNext = () => {
     if (step === 1) {
       const validationError = validateSpecificDate()
@@ -192,6 +226,11 @@ export function ScheduleCopyWizard({
     setIsSubmitting(true)
     setError(null)
     try {
+      const clientRankCounts = sourceBufferStaff.reduce<Record<string, number>>((acc, s) => {
+        const r = (s as any)?.rank ?? 'unknown'
+        acc[r] = (acc[r] || 0) + 1
+        return acc
+      }, {})
       const result = await onConfirmCopy({
         fromDate,
         toDate,
@@ -245,22 +284,7 @@ export function ScheduleCopyWizard({
             onDateSelect={(date) => setTargetDate(date)}
             datesWithData={datesWithData}
             holidays={holidays}
-            isDateDisabled={(date) => {
-              // Disable weekends + HK public holidays/Sundays
-              const day = date.getDay()
-              const isWeekend = day === 0 || day === 6
-              if (isWeekend) return true
-              if (isHongKongHoliday(date).isHoliday) return true
-
-              const iso = formatDate(date)
-              const hasData = datesWithData.has(iso)
-              if (direction === 'to') {
-                // Copy TO: only allow empty dates
-                return hasData
-              }
-              // direction === 'from': only allow filled dates
-              return !hasData
-            }}
+            isDateDisabled={isCalendarDateDisabled}
           />
         </div>
       </>

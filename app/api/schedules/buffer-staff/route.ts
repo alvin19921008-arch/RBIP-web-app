@@ -85,6 +85,12 @@ export async function GET(request: NextRequest) {
       if (s?.id) snapshotStaffById.set(s.id, s)
     })
 
+    // Include all snapshot staff ids so we can detect buffer staff that are present in the schedule snapshot
+    // even if they are not referenced by allocations/overrides (important for copy wizard "exclude buffer staff").
+    snapshotStaffById.forEach((_v, id) => {
+      referencedIds.add(id)
+    })
+
     const missingIds: string[] = []
     referencedIds.forEach(id => {
       if (!snapshotStaffById.has(id)) missingIds.push(id)
@@ -112,6 +118,13 @@ export async function GET(request: NextRequest) {
         bufferStaff.push(s as Staff)
       }
     })
+
+    // #region agent log
+    const rankCounts = bufferStaff.reduce<Record<string, number>>((acc, s) => {
+      const r = (s as any)?.rank ?? 'unknown'
+      acc[r] = (acc[r] || 0) + 1
+      return acc
+    }, {})
 
     // Sort: therapists first, then PCAs, then by name
     const rankOrder: Record<string, number> = { SPT: 1, APPT: 2, RPT: 3, PCA: 4, workman: 5 }

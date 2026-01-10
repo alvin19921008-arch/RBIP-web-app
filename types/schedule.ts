@@ -191,6 +191,12 @@ export interface BaselineSnapshot {
   pcaPreferences: import('./allocation').PCAPreference[]
   // Optional map of custom team display names (from team_settings)
   teamDisplayNames?: Partial<Record<Team, string>>
+  // Optional pre-calculated schedule calculations to avoid recalculation on load
+  calculatedValues?: {
+    calculations: Record<Team, ScheduleCalculations | null>
+    calculatedAt: string // ISO timestamp
+    calculatedForStep: ScheduleStepId // Which step these calculations are valid for
+  }
 }
 
 export type BaselineSnapshotSource = 'save' | 'copy' | 'migration'

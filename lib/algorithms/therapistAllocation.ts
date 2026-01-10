@@ -2,6 +2,7 @@ import { Team, StaffRank, LeaveType } from '@/types/staff'
 import { TherapistAllocation, DailySchedule } from '@/types/schedule'
 import { SPTAllocation, SpecialProgram } from '@/types/allocation'
 import { roundToNearestQuarter } from '@/lib/utils/rounding'
+import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 
 export interface StaffData {
   id: string
@@ -285,6 +286,11 @@ export function allocateTherapists(context: AllocationContext): AllocationResult
       .filter(sptAlloc => sptAlloc.active !== false && !sptAlloc.is_rbip_supervisor) // Only include active, non-supervisor allocations
       .forEach((sptAlloc) => {
     if (!sptAlloc.weekdays.includes(weekday)) return
+
+    // Respect leave/availability overrides: if the staff is not available (e.g. full-day leave),
+    // skip allocating this SPT to a team even if they have slots configured.
+    const staffMember = context.staff.find(s => s.id === sptAlloc.staff_id)
+    if (staffMember && !staffMember.is_available) return
     
     const slots = sptAlloc.slots[weekday] || []
     if (slots.length === 0) return
@@ -324,8 +330,6 @@ export function allocateTherapists(context: AllocationContext): AllocationResult
     const fteToAdd = sptAlloc.fte_addon
     const slotDisplay = getSlotDisplay(slots)
     
-    // Get staff data to check available slots
-    const staffMember = context.staff.find(s => s.id === sptAlloc.staff_id)
     const staffAvailableSlots = staffMember?.availableSlots
 
     const allocation: TherapistAllocation = {
@@ -454,6 +458,8 @@ export function allocateTherapists(context: AllocationContext): AllocationResult
       const staffMember = context.staff.find(s => s.id === supervisorAlloc.staff_id)
       const staffAvailableSlots = staffMember?.availableSlots
 
+      if (staffMember && !staffMember.is_available) return
+
       const allocation: TherapistAllocation = {
         id: crypto.randomUUID(),
         schedule_id: '',
@@ -536,17 +542,27 @@ export function allocateTherapists(context: AllocationContext): AllocationResult
         orderedStaffList = [...orderedStaffList, ...unorderedStaff]
       }
       
-      // Find first available therapist (FTE > 0, not on full leave)
+      // Find first available therapist.
+      // - Default rule: therapist must have remaining FTE > 0
+      // - Edge rule: SPT may have configured FTE = 0 but still be on duty (leave_type null),
+      //   and can still be assigned to run special programs IF the program's therapist FTE subtraction is 0.
       let assignedStaff: { staffId: string; fteSubtraction: number; allocation: TherapistAllocation } | null = null
       
       for (const staffItem of orderedStaffList) {
         // Get staff data from context (allocation doesn't have staff object yet)
         const staffData = context.staff.find(s => s.id === staffItem.staffId)
-        const originalFTE = staffData?.fte_therapist || 1.0
-        const currentFTE = staffItem.allocation.fte_therapist || originalFTE
+        const originalFTE = staffData?.fte_therapist ?? 1.0
+        const currentFTE = staffItem.allocation.fte_therapist ?? originalFTE
         
-        // Check if therapist is available (has FTE > 0)
-        if (currentFTE > 0) {
+        const isOnDuty = isOnDutyLeaveType(staffItem.allocation.leave_type as any)
+        const isOnDutyZeroFteSPT =
+          staffData?.rank === 'SPT' &&
+          currentFTE === 0 &&
+          isOnDuty &&
+          (staffItem.fteSubtraction ?? 0) === 0
+
+        // Check if therapist is available
+        if (currentFTE > 0 || isOnDutyZeroFteSPT) {
           assignedStaff = staffItem
           break
         }

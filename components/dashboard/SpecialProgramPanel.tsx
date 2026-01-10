@@ -368,8 +368,20 @@ export function SpecialProgramPanel() {
       editingStaffProgram.configs.forEach(config => {
         fte_subtraction[config.staff_id] = {}
         ;(['mon', 'tue', 'wed', 'thu', 'fri'] as Weekday[]).forEach(day => {
-          if (config.weekdayConfigs[day].fte_subtraction > 0) {
-            fte_subtraction[config.staff_id][day] = config.weekdayConfigs[day].fte_subtraction
+          const value = config.weekdayConfigs[day].fte_subtraction
+          const enabled = config.weekdayConfigs[day].enabled === true
+
+          // CRP edge: therapist subtraction can be intentionally 0 and must be persisted,
+          // otherwise Step 2.0 cannot auto-map it back.
+          if (programName === 'CRP') {
+            if (enabled && typeof value === 'number' && value >= 0) {
+              fte_subtraction[config.staff_id][day] = value
+            }
+            return
+          }
+
+          if (value > 0) {
+            fte_subtraction[config.staff_id][day] = value
           }
         })
       })
@@ -378,7 +390,12 @@ export function SpecialProgramPanel() {
       const allWeekdays = new Set<Weekday>()
       editingStaffProgram.configs.forEach(config => {
         ;(['mon', 'tue', 'wed', 'thu', 'fri'] as Weekday[]).forEach(day => {
-          if (config.weekdayConfigs[day].slots.length > 0 || config.weekdayConfigs[day].fte_subtraction > 0) {
+          const enabled = config.weekdayConfigs[day].enabled === true
+          const hasSlots = config.weekdayConfigs[day].slots.length > 0
+          const hasPositiveFte = config.weekdayConfigs[day].fte_subtraction > 0
+          const isCRPEnabledDay = programName === 'CRP' && enabled
+
+          if (hasSlots || hasPositiveFte || isCRPEnabledDay) {
             allWeekdays.add(day)
           }
         })

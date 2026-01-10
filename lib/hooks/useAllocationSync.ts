@@ -60,6 +60,10 @@ export interface AllocationSyncDeps {
   
   // Callbacks
   recalculateScheduleCalculations: () => void
+
+  // When true, schedule page is hydrating/loading and we should NOT trigger sync/recalc
+  // from staffOverrides/currentStep changes caused by the load itself.
+  isHydrating?: boolean
 }
 
 /**
@@ -137,6 +141,7 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
     selectedDate,
     setTherapistAllocations,
     recalculateScheduleCalculations,
+    isHydrating = false,
   } = deps
 
   // Track previous values for change detection
@@ -292,6 +297,23 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
     // Detect changes
     const changes = detectChanges(staffOverrides, prevOverridesRef.current)
 
+    // If we are NOT in Step 1, and this is the first time we're seeing a non-empty staffOverrides payload,
+    // treat it as "loaded from DB" initialization rather than a user edit. Do not sync/recalculate.
+    // This avoids a late overwrite of saved therapist allocations (and schedule calculations) during load.
+    const prevKeys = Object.keys(prevOverridesRef.current || {}).length
+    const nextKeys = Object.keys(staffOverrides || {}).length
+    if (prevKeys === 0 && nextKeys > 0 && currentStep !== 'leave-fte') {
+      prevOverridesRef.current = { ...staffOverrides }
+      return
+    }
+
+    // During initial schedule hydration, staffOverrides is set from DB.
+    // Do not sync/recalculate in response to that load-driven state change.
+    if (isHydrating) {
+      prevOverridesRef.current = { ...staffOverrides }
+      return
+    }
+
     // Only sync if there are team or FTE changes that affect allocations
     if (changes.hasTeamChange || changes.hasFTEChange || changes.hasLeaveChange) {
       syncAllocations()
@@ -316,6 +338,20 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
     if (staff.length === 0) return
 
     const prevStep = prevStepRef.current
+
+    if (isHydrating) {
+      prevStepRef.current = currentStep
+      return
+    }
+
+    // When loading an existing schedule, currentStep may jump from 'leave-fte' to a later step
+    // while staffOverrides is being initialized from DB. Do NOT sync/recalculate from this load-driven step transition.
+    const prevOverrideKeys = Object.keys(prevOverridesRef.current || {}).length
+    const nextOverrideKeys = Object.keys(staffOverrides || {}).length
+    if (prevOverrideKeys === 0 && nextOverrideKeys > 0 && prevStep === 'leave-fte' && currentStep !== 'leave-fte') {
+      prevStepRef.current = currentStep
+      return
+    }
     
     // Check if we're transitioning FROM Step 2 or later TO a subsequent step
     // In this case, we should NOT regenerate therapist allocations to preserve
@@ -339,7 +375,7 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
 
     // Update ref
     prevStepRef.current = currentStep
-  }, [currentStep, staff.length, syncAllocations, therapistAllocations, recalculateScheduleCalculations])
+  }, [currentStep, staff.length, syncAllocations, therapistAllocations, recalculateScheduleCalculations, isHydrating])
 
   return {
     syncAllocations,

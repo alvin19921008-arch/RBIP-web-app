@@ -272,6 +272,14 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    // Include all snapshot staff ids so "exclude buffer staff" applies to buffer staff present in the
+    // source schedule snapshot even if they are not referenced by allocations/overrides.
+    // This matches user expectation that buffer staff should be removed from the copied schedule.
+    const snapshotStaffForRefs: any[] = (sourceBaselineData as any).staff || []
+    snapshotStaffForRefs.forEach((s: any) => {
+      if (s?.id) referencedIds.add(s.id)
+    })
+
     // Buffer staff sets (based on latest source schedule state)
     const bufferStaffIds = await resolveBufferStaffIdsFromLatestState(
       supabase,
@@ -279,9 +287,16 @@ export async function POST(request: NextRequest) {
       referencedIds
     )
     timer.stage('resolveBufferStaff')
+    // #region agent log
+    const snapshotStaff: any[] = (sourceBaselineData as any).staff || []
+    const snapshotBufferRankCounts = snapshotStaff.reduce<Record<string, number>>((acc, s: any) => {
+      if (s?.status !== 'buffer') return acc
+      const r = s?.rank ?? 'unknown'
+      acc[r] = (acc[r] || 0) + 1
+      return acc
+    }, {})
 
     // Build target baseline (adjusting buffer staff if needed)
-    const snapshotStaff: any[] = (sourceBaselineData as any).staff || []
     let targetBaselineData: BaselineSnapshot = sourceBaselineData
     if (!includeBufferStaff && snapshotStaff.length > 0) {
       const updatedStaff = snapshotStaff.map((s: any) =>

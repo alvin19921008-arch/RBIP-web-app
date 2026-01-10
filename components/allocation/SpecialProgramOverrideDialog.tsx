@@ -13,12 +13,16 @@ import { AlertCircle, Edit2, ChevronDown, ChevronLeft, ChevronRight } from 'luci
 import { cn } from '@/lib/utils'
 import { BufferStaffCreateDialog } from './BufferStaffCreateDialog'
 import { SpecialProgramSubstitutionDialog } from '@/components/allocation/SpecialProgramSubstitutionDialog'
+import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 
 interface SpecialProgramOverrideDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   specialPrograms: SpecialProgram[]
   allStaff: Staff[]
+  // Base SPT FTE for this weekday (from dashboard `spt_allocations.fte_addon`)
+  // Used to avoid defaulting SPT to 1.0 in availability checks.
+  sptBaseFteByStaffId?: Record<string, number>
   staffOverrides: Record<string, {
     leaveType?: any
     fteRemaining?: number
@@ -67,6 +71,7 @@ export function SpecialProgramOverrideDialog({
   onOpenChange,
   specialPrograms,
   allStaff,
+  sptBaseFteByStaffId,
   staffOverrides,
   weekday,
   onConfirm,
@@ -168,6 +173,7 @@ export function SpecialProgramOverrideDialog({
   // Use the dashboard-configured values for THIS weekday (independent of who substitutes).
   // - Slots/FTE in DB are sometimes staffId-keyed, so we pick the staff member(s) with a
   //   non-zero weekday entry (when available) to derive the "configured" baseline.
+  // - Exception: CRP therapist subtraction may be explicitly configured as 0 (meaningful).
   const getConfiguredTherapistFTESubtractionForWeekday = (
     program: SpecialProgram,
     day: Weekday
@@ -179,9 +185,19 @@ export function SpecialProgramOverrideDialog({
 
     let best: number | undefined
     for (const id of therapistIds) {
-      const fte = (program as any).fte_subtraction?.[id]?.[day]
-      if (typeof fte === 'number' && fte > 0) {
-        best = best === undefined ? fte : Math.max(best, fte)
+      const rawByStaff: any = (program as any).fte_subtraction?.[id]
+      const hasDayKey =
+        rawByStaff && typeof rawByStaff === 'object' && Object.prototype.hasOwnProperty.call(rawByStaff, day)
+      const fte = hasDayKey ? rawByStaff[day] : undefined
+
+      if (program.name === 'CRP') {
+        if (typeof fte === 'number' && fte >= 0) {
+          best = best === undefined ? fte : Math.max(best, fte)
+        }
+      } else {
+        if (typeof fte === 'number' && fte > 0) {
+          best = best === undefined ? fte : Math.max(best, fte)
+        }
       }
     }
     return best
@@ -216,7 +232,14 @@ export function SpecialProgramOverrideDialog({
       const s = allStaff.find(st => st.id === id)
       if (!s) return false
       if (!['SPT', 'APPT', 'RPT'].includes(s.rank)) return false
-      const fte = (program as any).fte_subtraction?.[id]?.[day] ?? 0
+      const rawByStaff: any = (program as any).fte_subtraction?.[id]
+      const hasDayKey =
+        rawByStaff && typeof rawByStaff === 'object' && Object.prototype.hasOwnProperty.call(rawByStaff, day)
+      const fte = hasDayKey ? rawByStaff[day] : undefined
+      if (program.name === 'CRP') {
+        // CRP can have explicit 0; treat that as the configured runner.
+        return typeof fte === 'number' && fte >= 0
+      }
       return typeof fte === 'number' && fte > 0
     })
 
@@ -386,16 +409,37 @@ export function SpecialProgramOverrideDialog({
           const staff = allStaff.find(s => s.id === id)
           if (!staff) return false
           if (!['SPT', 'APPT', 'RPT'].includes(staff.rank)) return false
-          const fte = program.fte_subtraction?.[id]?.[weekday] ?? 0
-          return fte > 0
+          const rawByStaff: any = (program as any).fte_subtraction?.[id]
+          const hasWeekdayKey =
+            rawByStaff && typeof rawByStaff === 'object' && Object.prototype.hasOwnProperty.call(rawByStaff, weekday)
+          const fte = hasWeekdayKey ? rawByStaff[weekday] : undefined
+          if (program.name === 'CRP') {
+            // CRP can be configured with 0 therapist FTE subtraction (still a real "runner")
+            return typeof fte === 'number' && fte >= 0
+          }
+          return typeof fte === 'number' && fte > 0
         })
 
-        if (configuredTherapistIdsWithFte.length > 0) {
+        // CRP legacy support: if fte_subtraction omits explicit 0 entries, infer configured runner(s)
+        // from staffId-keyed slots for this weekday.
+        const configuredTherapistIdsForSelection =
+          program.name === 'CRP' && configuredTherapistIdsWithFte.length === 0
+            ? (program.staff_ids || []).filter((id) => {
+                const staff = allStaff.find(s => s.id === id)
+                if (!staff) return false
+                if (!['SPT', 'APPT', 'RPT'].includes(staff.rank)) return false
+                const rawSlots: any = (program as any).slots
+                const daySlots = rawSlots?.[id]?.[weekday]
+                return Array.isArray(daySlots) && daySlots.length > 0
+              })
+            : configuredTherapistIdsWithFte
+
+        if (configuredTherapistIdsForSelection.length > 0) {
           // If preference order has entries, use it to break ties among configured therapists
           const prefIds = therapistPrefOrder ? Object.values(therapistPrefOrder).flat() : []
           const orderedIds = prefIds.length > 0
-            ? prefIds.filter(id => configuredTherapistIdsWithFte.includes(id))
-            : configuredTherapistIdsWithFte
+            ? prefIds.filter(id => configuredTherapistIdsForSelection.includes(id))
+            : configuredTherapistIdsForSelection
 
           for (const id of orderedIds) {
             const staff = allStaff.find(s => s.id === id)
@@ -407,7 +451,7 @@ export function SpecialProgramOverrideDialog({
 
           // If none matched preference order (or no pref order), pick first available configured therapist
           if (!therapistId) {
-            for (const id of configuredTherapistIdsWithFte) {
+            for (const id of configuredTherapistIdsForSelection) {
               const staff = allStaff.find(s => s.id === id)
               if (staff && isTherapistAvailable(staff, program.name)) {
                 therapistId = id
@@ -418,8 +462,8 @@ export function SpecialProgramOverrideDialog({
         }
       }
       
-      // For CRP: No automatic fallback - if configured therapist is not available, show substitution alert
-      // For other programs: Try preference order if available
+      // For CRP: no automatic fallback - if configured therapist is not available, show substitution alert.
+      // For other programs: Try preference order if available.
       if (!therapistId && therapistPrefOrder && program.name !== 'CRP') {
         for (const team of Object.keys(therapistPrefOrder) as Team[]) {
           const teamPrefs = therapistPrefOrder[team] || []
@@ -435,7 +479,7 @@ export function SpecialProgramOverrideDialog({
       }
       
       // If no therapist found from preference order, try to find any available therapist
-      // Skip this fallback for CRP - user must manually select substitution
+      // Skip this fallback for CRP - user must manually select substitution.
       if (!therapistId && program.name !== 'CRP') {
         const availableTherapists = getAvailableTherapists(program.name)
         if (availableTherapists.length > 0) {
@@ -464,10 +508,14 @@ export function SpecialProgramOverrideDialog({
         : getConfiguredProgramSlotsForWeekday(program, weekday)
 
       // Get FTE subtractions
-      const therapistFTESubtraction: number | undefined =
+      let therapistFTESubtraction: number | undefined =
         program.name === 'Robotic'
           ? undefined
           : getConfiguredTherapistFTESubtractionForWeekday(program, weekday)
+      if (program.name === 'CRP' && therapistId && therapistFTESubtraction === undefined) {
+        // Legacy support: if dashboard omitted explicit 0 entries, treat configured CRP therapist as 0 subtraction.
+        therapistFTESubtraction = 0
+      }
 
       let pcaFTESubtraction: number | undefined
       
@@ -502,15 +550,31 @@ export function SpecialProgramOverrideDialog({
       return false
     }
     
-    // Must have FTE > 0
-    const fteRemaining = staffOverrides[staff.id]?.fteRemaining ?? 
-      (staffOverrides[staff.id]?.leaveType ? 0 : 1.0)
+    const override = staffOverrides[staff.id]
+      const leaveType = override?.leaveType
+      const isOnDuty = isOnDutyLeaveType(leaveType as any)
+
+    // FTE remaining:
+    // - Prefer explicit override.fteRemaining when present
+    // - Otherwise default:
+    //   - SPT: use dashboard-configured base FTE for this weekday (can be 0)
+    //   - Others: 1.0 if on duty, 0 if on leave
+    const fteRemaining =
+      override?.fteRemaining ??
+      (staff.rank === 'SPT'
+        ? (sptBaseFteByStaffId?.[staff.id] ?? (isOnDuty ? 1.0 : 0))
+        : (isOnDuty ? 1.0 : 0))
+
+    // Availability rule:
+    // - Non-SPT: must have FTE > 0
+    // - SPT: allow FTE = 0 ONLY when on duty (leaveType is null/undefined)
     if (fteRemaining <= 0) {
-      return false
+      if (!(staff.rank === 'SPT' && isOnDuty)) {
+        return false
+      }
     }
     
     // Must be available during special program slot (if override exists)
-    const override = staffOverrides[staff.id]
     if (override?.specialProgramAvailable !== undefined) {
       return override.specialProgramAvailable === true
     }
@@ -1467,6 +1531,7 @@ export function SpecialProgramOverrideDialog({
           requiredSlots={substitutionDialogConfig.requiredSlots}
           minRequiredFTE={substitutionDialogConfig.minRequiredFTE}
           allStaff={allStaff}
+          sptBaseFteByStaffId={sptBaseFteByStaffId}
           staffOverrides={staffOverrides}
           sourceType={substitutionDialogConfig.sourceType}
           onConfirm={handleSubstitutionSelect}
