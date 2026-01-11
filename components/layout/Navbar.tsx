@@ -7,13 +7,22 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
-import { CalendarDays, LayoutDashboard, History } from 'lucide-react'
+import { CalendarDays, LayoutDashboard, History, UserCircle, LogOut, KeyRound, ChevronDown, UserRoundCog } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ChangePasswordDialog } from '@/components/auth/ChangePasswordDialog'
+import { EditProfileDialog } from '@/components/auth/EditProfileDialog'
 
 export function Navbar() {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClientComponentClient()
   const navLoading = useNavigationLoading()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const [profileName, setProfileName] = useState<string>('Account')
+  const [changePwOpen, setChangePwOpen] = useState(false)
+  const [editProfileOpen, setEditProfileOpen] = useState(false)
+  const [profileRefreshKey, setProfileRefreshKey] = useState(0)
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -27,6 +36,47 @@ export function Navbar() {
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/history', label: 'History', icon: History },
   ]
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { data } = await supabase.auth.getUser()
+        const userId = data.user?.id
+        const fallback = data.user?.email ? data.user.email.split('@')[0] : 'Account'
+        if (!userId) {
+          if (!cancelled) setProfileName(fallback)
+          return
+        }
+
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('username')
+          .eq('id', userId)
+          .maybeSingle()
+
+        const name = (profile as any)?.username || fallback
+        if (!cancelled) setProfileName(name)
+      } catch {
+        // ignore
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [supabase, profileRefreshKey])
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const onMouseDown = (e: MouseEvent) => {
+      const el = menuRef.current
+      if (!el) return
+      if (el.contains(e.target as Node)) return
+      setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [menuOpen])
 
   return (
     <nav className="border-b bg-background">
@@ -54,9 +104,59 @@ export function Navbar() {
             ))}
           </div>
         </div>
-        <Button variant="ghost" onClick={handleLogout}>
-          Logout
-        </Button>
+        <div className="relative" ref={menuRef}>
+          <Button
+            variant="ghost"
+            onClick={() => setMenuOpen(v => !v)}
+            className="flex items-center gap-2"
+          >
+            <UserCircle className="h-5 w-5" />
+            <span className="max-w-[160px] truncate">{profileName}</span>
+            <ChevronDown className="h-4 w-4 opacity-70" />
+          </Button>
+          {menuOpen ? (
+            <div className="absolute right-0 top-full mt-1 w-56 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md shadow-lg z-50">
+              <div className="p-1">
+                <button
+                  className="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    setEditProfileOpen(true)
+                  }}
+                >
+                  <UserRoundCog className="h-4 w-4 mr-2" />
+                  Edit profile
+                </button>
+                <button
+                  className="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    setChangePwOpen(true)
+                  }}
+                >
+                  <KeyRound className="h-4 w-4 mr-2" />
+                  Change password
+                </button>
+                <button
+                  className="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-slate-100 dark:hover:bg-slate-800 rounded text-red-600 dark:text-red-400"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    handleLogout()
+                  }}
+                >
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Logout
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />
+          <EditProfileDialog
+            open={editProfileOpen}
+            onOpenChange={setEditProfileOpen}
+            onSaved={() => setProfileRefreshKey((k) => k + 1)}
+          />
+        </div>
       </div>
     </nav>
   )

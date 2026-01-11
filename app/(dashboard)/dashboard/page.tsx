@@ -7,9 +7,18 @@ import { PCAPreferencePanel } from '@/components/dashboard/PCAPreferencePanel'
 import { StaffProfilePanel } from '@/components/dashboard/StaffProfilePanel'
 import { WardConfigPanel } from '@/components/dashboard/WardConfigPanel'
 import { TeamConfigurationPanel } from '@/components/dashboard/TeamConfigurationPanel'
+import { AccountManagementPanel } from '@/components/dashboard/AccountManagementPanel'
 import { DashboardSidebar, type CategoryId } from '@/components/dashboard/DashboardSidebar'
 
-type PanelType = 'special-programs' | 'spt-allocations' | 'pca-preferences' | 'staff-profile' | 'ward-config' | 'team-configuration' | null
+type PanelType =
+  | 'special-programs'
+  | 'spt-allocations'
+  | 'pca-preferences'
+  | 'staff-profile'
+  | 'ward-config'
+  | 'team-configuration'
+  | 'account-management'
+  | null
 type PanelKey = Exclude<PanelType, null>
 
 const categoryLabels: Record<PanelKey, string> = {
@@ -19,6 +28,7 @@ const categoryLabels: Record<PanelKey, string> = {
   'staff-profile': 'Staff Profile',
   'ward-config': 'Ward Config and Bed Stat',
   'team-configuration': 'Team Configuration',
+  'account-management': 'Account Management',
 }
 
 const categoryDescriptions: Record<PanelKey, string> = {
@@ -28,6 +38,7 @@ const categoryDescriptions: Record<PanelKey, string> = {
   'staff-profile': 'Manage staff records and configurations',
   'ward-config': 'Manage ward names and bed stat',
   'team-configuration': 'Manage team staffing and ward responsibilities',
+  'account-management': 'Manage user accounts and access rights',
 }
 
 export default function DashboardPage() {
@@ -152,6 +163,7 @@ export default function DashboardPage() {
             {activePanel === 'staff-profile' && <StaffProfilePanel />}
             {activePanel === 'ward-config' && <WardConfigPanel />}
             {activePanel === 'team-configuration' && <TeamConfigurationPanel />}
+            {activePanel === 'account-management' && <AccountManagementPanel />}
           </div>
         )}
         {!activePanel && (

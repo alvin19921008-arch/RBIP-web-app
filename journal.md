@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
-**Last Updated**: 2026-01-12 
-**Latest Phase**: Phase 20 - Points to Note Board & Summary Info Box Enhancements  
+**Last Updated**: 2026-01-11
+**Latest Phase**: Phase 21 - Account Management, Access Roles, Step Clear & Step Validation Enhancements  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -53,7 +53,7 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
 - Special program support (CRP, DRM, Robotic, etc.)
 - Preference-based allocation (PCA preferences, team preferences)
 - Tie-breaker resolution with user decision persistence
-- Role-based access (Admin vs Regular user)
+- Role-based access (User vs Admin vs Developer)
 - Schedule cloning and history (5 working days)
 
 ### Project Structure
@@ -440,6 +440,27 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - **Copy Wizard Wording**: Updated to "Choose how much of the source schedule to copy from YYYY-MM-DD to YYYY-MM-DD" with `whitespace-nowrap` for dates
   - **Toast Alignment**: Fixed vertical centering for single-line notification text
   - **Files Modified**: `app/(dashboard)/schedule/page.tsx`, `components/layout/Navbar.tsx`, `components/allocation/StepIndicator.tsx`, `components/allocation/ScheduleCopyWizard.tsx`, `components/ui/action-toast.tsx`
+
+### Phase 21: Account Management, Access Roles, Step Clear & Step Validation Enhancements (Latest)
+- ✅ **Account Management Dashboard**
+  - New Dashboard panel: list/create/edit/delete accounts + batch delete
+  - Columns: username, email (nullable), created date, access badge + dropdown
+  - Developer-only: shows internal auth email (e.g. `username@rbip.local`) and can reset other users’ passwords
+  - Admin: can manage non-developer accounts only; cannot assign Developer; Developer accounts are hidden from Admin/User
+  - Protects against deleting/demoting the last remaining Developer
+  - Migration: `supabase/migrations/add_account_management_roles_and_usernames.sql`
+- ✅ **Username or Email Login**
+  - Login accepts “email or username” (username resolves to internal auth email via `/api/auth/resolve-login`)
+- ✅ **Navbar Account Menu**
+  - Replaced Logout button with profile menu (Edit profile / Change password / Logout)
+  - Edit profile: username/email only; access is read-only; password change remains separate dialog
+- ✅ **Developer-only Diagnostics**
+  - Schedule load/copy/save diagnostics and dev tooltips are now visible to Developer only
+- ✅ **Step Tools**
+  - Step 1–4: Clear buttons with per-step clearing, cascade clearing with confirm toast when later-step data exists
+  - Block 3 bed relieving note editing is step-gated (Step 4 only) with warning tooltip when attempted earlier
+- ✅ **Staff Pool Scroll Stability**
+  - Restored left-side Staff Pool vertical scrolling and aligned bottom edge to PCA Dedicated Schedule table (excluding notes board)
 
 ### Phase 9: Pending FTE Bug Fix & Safe Wrapper System
 - ✅ **Critical Bug Fix: Pending FTE Overwrite Issue**

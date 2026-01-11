@@ -23,6 +23,8 @@ interface StepIndicatorProps {
   canGoPrevious?: boolean
   className?: string
   onInitialize?: () => void
+  onClearStep?: (stepId: string) => void
+  showClear?: boolean
   isInitialized?: boolean
   isLoading?: boolean
   errorMessage?: string // Optional error message to display in center area
@@ -41,12 +43,16 @@ export function StepIndicator({
   canGoPrevious = true,
   className,
   onInitialize,
+  onClearStep,
+  showClear = true,
   isInitialized = false,
   isLoading = false,
   errorMessage,
   bufferTherapistStatus,
 }: StepIndicatorProps) {
   const currentStepIndex = steps.findIndex(s => s.id === currentStep)
+  const canClear = ['leave-fte', 'therapist-pca', 'floating-pca', 'bed-relieving'].includes(currentStep)
+  const canInitialize = !!onInitialize && ['therapist-pca', 'floating-pca', 'bed-relieving'].includes(currentStep)
 
   return (
     <div className={cn("bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 shadow-sm", className)}>
@@ -192,16 +198,28 @@ export function StepIndicator({
         </div>
 
         {/* Initialize Algorithm Button */}
-        {onInitialize && ['therapist-pca', 'floating-pca', 'bed-relieving'].includes(currentStep) && (
-          <div className="flex justify-center">
-            <Button
-              onClick={onInitialize}
-              disabled={isLoading}
-              variant="default"
-              className="bg-blue-600 hover:bg-blue-700 text-white"
-            >
-              {isLoading ? 'Running...' : isInitialized ? 'Re-run Algorithm' : 'Initialize Algorithm'}
-            </Button>
+        {(canClear || canInitialize) && (
+          <div className="flex justify-center gap-2">
+            {canClear && showClear && onClearStep ? (
+              <Button
+                onClick={() => onClearStep(currentStep)}
+                disabled={isLoading}
+                variant="outline"
+                className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40"
+              >
+                Clear
+              </Button>
+            ) : null}
+            {canInitialize ? (
+              <Button
+                onClick={onInitialize}
+                disabled={isLoading}
+                variant="default"
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                {isLoading ? 'Running...' : isInitialized ? 'Re-run Algorithm' : 'Initialize Algorithm'}
+              </Button>
+            ) : null}
           </div>
         )}
       </div>

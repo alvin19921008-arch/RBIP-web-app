@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('')
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -41,8 +41,8 @@ export default function LoginPage() {
     e.stopPropagation()
     
     
-    if (!email || !password) {
-      setError('Please enter both email and password')
+    if (!identifier || !password) {
+      setError('Please enter your email/username and password')
       return
     }
     
@@ -50,8 +50,25 @@ export default function LoginPage() {
     setError(null)
 
     try {
+      const ident = identifier.trim()
+      let emailToUse = ident
+
+      if (!ident.includes('@')) {
+        const res = await fetch('/api/auth/resolve-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifier: ident }),
+        })
+        const json = await res.json()
+        if (!res.ok) {
+          throw new Error(json?.error || 'Invalid credentials')
+        }
+        emailToUse = String(json?.email || '')
+        if (!emailToUse) throw new Error('Invalid credentials')
+      }
+
       const result = await supabase.auth.signInWithPassword({
-        email: email.trim(),
+        email: emailToUse.trim(),
         password: password,
       })
 
@@ -100,17 +117,17 @@ export default function LoginPage() {
         <CardContent>
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium mb-1">
-                Email
+              <label htmlFor="identifier" className="block text-sm font-medium mb-1">
+                Email or username
               </label>
               <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                id="identifier"
+                type="text"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
                 required
                 className="w-full px-3 py-2 border rounded-md"
-                autoComplete="email"
+                autoComplete="username"
               />
             </div>
             <div>

@@ -9,6 +9,8 @@ type ToastInput = {
   description?: string
   variant?: ActionToastVariant
   durationMs?: number
+  actions?: React.ReactNode
+  persistUntilDismissed?: boolean
 }
 
 type ToastApi = {
@@ -32,6 +34,8 @@ type ToastState = {
   title: string
   description?: string
   variant: ActionToastVariant
+  actions?: React.ReactNode
+  persistUntilDismissed?: boolean
   open: boolean
 }
 
@@ -49,14 +53,18 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const show = React.useCallback(
-    ({ title, description, variant = 'success', durationMs }: ToastInput) => {
+    ({ title, description, variant = 'success', durationMs, actions, persistUntilDismissed }: ToastInput) => {
       const id = (idRef.current += 1)
-      setToast({ id, title, description, variant, open: true })
+      setToast({ id, title, description, variant, actions, persistUntilDismissed, open: true })
 
       if (timerRef.current) window.clearTimeout(timerRef.current)
-      timerRef.current = window.setTimeout(() => {
-        setToast(prev => (prev && prev.id === id ? { ...prev, open: false } : prev))
-      }, durationMs ?? DEFAULT_DURATION_MS)
+      timerRef.current = null
+
+      if (!persistUntilDismissed) {
+        timerRef.current = window.setTimeout(() => {
+          setToast(prev => (prev && prev.id === id ? { ...prev, open: false } : prev))
+        }, durationMs ?? DEFAULT_DURATION_MS)
+      }
     },
     []
   )
@@ -87,6 +95,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             key={toast.id}
             title={toast.title}
             description={toast.description}
+            actions={toast.actions}
             variant={toast.variant}
             open={toast.open}
             onClose={api.dismiss}

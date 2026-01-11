@@ -1,6 +1,6 @@
 'use client'
 
-import { LayoutList, Users, Settings, AlertCircle, Menu, ChevronLeft, UserCircle, Building2, Users2 } from 'lucide-react'
+import { LayoutList, Settings, Menu, ChevronLeft, UserCircle, Building2, Users2, UserRoundCog } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -8,7 +8,15 @@ import type { LucideIcon } from 'lucide-react'
 import { UserGearIcon } from '@/components/icons/UserGear'
 import React from 'react'
 
-export type CategoryId = 'special-programs' | 'spt-allocations' | 'pca-preferences' | 'staff-profile' | 'ward-config' | 'team-configuration' | null
+export type CategoryId =
+  | 'special-programs'
+  | 'spt-allocations'
+  | 'pca-preferences'
+  | 'staff-profile'
+  | 'ward-config'
+  | 'team-configuration'
+  | 'account-management'
+  | null
 
 interface Category {
   id: CategoryId
@@ -53,6 +61,11 @@ const categories: Category[] = [
     id: 'team-configuration',
     label: 'Team Configuration',
     icon: Users2,
+  },
+  {
+    id: 'account-management',
+    label: 'Account Management',
+    icon: UserRoundCog,
   },
 ]
 

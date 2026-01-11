@@ -28,6 +28,8 @@ interface BedBlockProps {
     toTeam: Team,
     notes: Partial<Record<Team, BedRelievingNoteRow[]>>
   ) => void
+  currentStep?: string
+  onInvalidEditAttempt?: (position: { x: number; y: number }) => void
 }
 
 function countBedNumbers(text: string): number {
@@ -56,6 +58,8 @@ export function BedBlock({
   wards,
   bedRelievingNotesByToTeam,
   onSaveBedRelievingNotesForToTeam,
+  currentStep,
+  onInvalidEditAttempt,
 }: BedBlockProps) {
   const receiving = React.useMemo(
     () => allocations.filter(a => a.to_team === team),
@@ -101,6 +105,19 @@ export function BedBlock({
     receiving.forEach(a => set.add(a.from_team))
     return Array.from(set)
   }, [receiving])
+
+  const canEdit = currentStep === 'bed-relieving'
+
+  const reportInvalidEdit = React.useCallback(
+    (e: React.MouseEvent) => {
+      if (!onInvalidEditAttempt) return
+      const rect = (e.currentTarget as HTMLElement | null)?.getBoundingClientRect()
+      const x = rect ? rect.left : e.clientX
+      const y = rect ? rect.top : e.clientY
+      onInvalidEditAttempt({ x, y })
+    },
+    [onInvalidEditAttempt]
+  )
 
   const openEditAll = React.useCallback(() => {
     if (!onSaveBedRelievingNotesForToTeam) return
@@ -347,6 +364,10 @@ export function BedBlock({
                         onClick={(e) => {
                           e.preventDefault()
                           e.stopPropagation()
+                          if (!canEdit) {
+                            reportInvalidEdit(e)
+                            return
+                          }
                           openEditFromTeam(fromTeam)
                         }}
                       >
@@ -401,6 +422,10 @@ export function BedBlock({
                                 onClick={(e) => {
                                   e.preventDefault()
                                   e.stopPropagation()
+                                  if (!canEdit) {
+                                    reportInvalidEdit(e)
+                                    return
+                                  }
                                   openEditFromTeam(ft)
                                 }}
                               >
@@ -694,6 +719,10 @@ export function BedBlock({
                         onClick={(e) => {
                           e.preventDefault()
                           e.stopPropagation()
+                          if (!canEdit) {
+                            reportInvalidEdit(e)
+                            return
+                          }
                           openEditAll()
                         }}
                       >
@@ -706,8 +735,12 @@ export function BedBlock({
 
               <div
                 className={onSaveBedRelievingNotesForToTeam ? 'cursor-text' : undefined}
-                onClick={() => {
+                onClick={(e) => {
                   if (isEditingTakes) return
+                  if (!canEdit) {
+                    reportInvalidEdit(e)
+                    return
+                  }
                   openEditAll()
                 }}
               >

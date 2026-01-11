@@ -30,7 +30,9 @@ export async function requireAuth() {
   return user
 }
 
-export async function getUserRole(userId: string): Promise<'admin' | 'regular'> {
+export type UserRole = 'user' | 'admin' | 'developer'
+
+export async function getUserRole(userId: string): Promise<UserRole> {
   const supabase = await createServerComponentClient()
   const { data, error } = await supabase
     .from('user_profiles')
@@ -39,17 +41,20 @@ export async function getUserRole(userId: string): Promise<'admin' | 'regular'> 
     .single()
   
   if (error || !data) {
-    return 'regular'
+    return 'user'
   }
   
-  return data.role as 'admin' | 'regular'
+  const role = (data as any).role
+  if (role === 'developer' || role === 'admin' || role === 'user') return role
+  if (role === 'regular') return 'user'
+  return 'user'
 }
 
 export async function requireAdmin() {
   const user = await requireAuth()
   const role = await getUserRole(user.id)
   
-  if (role !== 'admin') {
+  if (role !== 'admin' && role !== 'developer') {
     redirect('/schedule')
   }
   

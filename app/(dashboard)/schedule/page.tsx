@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useLayoutEffect, useRef, Fragment, useCallback, Suspense, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, Fragment, useCallback, Suspense, useMemo, type ReactNode } from 'react'
 import { DndContext, DragOverlay, DragEndEvent, DragStartEvent, DragMoveEvent, Active } from '@dnd-kit/core'
 import { Team, Weekday, LeaveType } from '@/types/staff'
 import {
@@ -184,15 +184,19 @@ function SchedulePageContent() {
   const [loading, setLoading] = useState(false)
   const [gridLoading, setGridLoading] = useState(true)
   const gridLoadingUsesLocalBarRef = useRef(false)
-  const [userRole, setUserRole] = useState<'admin' | 'regular'>('regular')
+  const [userRole, setUserRole] = useState<'developer' | 'admin' | 'user'>('user')
   const toastTimerRef = useRef<any>(null)
   const toastIdRef = useRef(0)
   const highlightTimerRef = useRef<any>(null)
+  const actionToastContainerRef = useRef<HTMLDivElement | null>(null)
   const [actionToast, setActionToast] = useState<{
     id: number
     title: string
     description?: string
     variant: ActionToastVariant
+    actions?: ReactNode
+    persistUntilDismissed?: boolean
+    dismissOnOutsideClick?: boolean
     open: boolean
   } | null>(null)
   const [highlightDateKey, setHighlightDateKey] = useState<string | null>(null)
@@ -273,16 +277,39 @@ function SchedulePageContent() {
   // Keep the Staff Pool column ending at the same bottom edge as the right content (incl. PCA dedicated table),
   // while keeping Staff Pool itself internally scrollable.
   useLayoutEffect(() => {
-    const el = rightContentRef.current
-    if (!el) return
+    let cancelled = false
+    let ro: ResizeObserver | null = null
 
-    const update = () => setRightContentHeight(el.offsetHeight)
-    update()
+    let attempts = 0
+    const maxAttempts = 10
 
-    const ro = new ResizeObserver(() => update())
-    ro.observe(el)
+    const attach = () => {
+      if (cancelled) return
+      const el = rightContentRef.current
+      if (!el) {
+        attempts += 1
+        if (attempts < maxAttempts) requestAnimationFrame(attach)
+        return
+      }
 
-    return () => ro.disconnect()
+      const update = () => {
+        if (cancelled) return
+        // offsetHeight can briefly report 0 during layout transitions; ignore those.
+        const h = el.offsetHeight
+        if (h > 0) setRightContentHeight(h)
+      }
+
+      update()
+      ro = new ResizeObserver(() => update())
+      ro.observe(el)
+    }
+
+    attach()
+
+    return () => {
+      cancelled = true
+      ro?.disconnect()
+    }
   }, [])
 
   type SpecialProgramOverrideEntry = {
@@ -645,6 +672,15 @@ function SchedulePageContent() {
     show: false,
     position: null,
   })
+
+  // Warning popover for bed relieving edit outside Step 4
+  const [bedRelievingEditWarningPopover, setBedRelievingEditWarningPopover] = useState<{
+    show: boolean
+    position: { x: number; y: number } | null
+  }>({
+    show: false,
+    position: null,
+  })
   
   // PCA Drag-and-Drop state for slot transfer
   const [pcaDragState, setPcaDragState] = useState<{
@@ -793,7 +829,9 @@ function SchedulePageContent() {
           .select('role')
           .eq('id', userId)
           .maybeSingle()
-        const role = (profile as any)?.role === 'admin' ? 'admin' : 'regular'
+        const raw = (profile as any)?.role
+        const role: 'developer' | 'admin' | 'user' =
+          raw === 'developer' ? 'developer' : raw === 'admin' ? 'admin' : raw === 'user' || raw === 'regular' ? 'user' : 'user'
         if (!cancelled) setUserRole(role)
       } catch {
         // default to regular
@@ -810,13 +848,37 @@ function SchedulePageContent() {
     setActionToast(prev => (prev ? { ...prev, open: false } : null))
   }, [])
 
-  const showActionToast = (title: string, variant: ActionToastVariant = 'success', description?: string) => {
+  const showActionToast = (
+    title: string,
+    variant: ActionToastVariant = 'success',
+    description?: string,
+    options?: {
+      durationMs?: number
+      actions?: ReactNode
+      persistUntilDismissed?: boolean
+      dismissOnOutsideClick?: boolean
+    }
+  ) => {
     const id = (toastIdRef.current += 1)
-    setActionToast({ id, title, description, variant, open: true })
+    setActionToast({
+      id,
+      title,
+      description,
+      variant,
+      actions: options?.actions,
+      persistUntilDismissed: options?.persistUntilDismissed,
+      dismissOnOutsideClick: options?.dismissOnOutsideClick,
+      open: true,
+    })
+
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-    toastTimerRef.current = setTimeout(() => {
-      setActionToast(prev => (prev && prev.id === id ? { ...prev, open: false } : prev))
-    }, 3000)
+    toastTimerRef.current = null
+
+    if (!options?.persistUntilDismissed) {
+      toastTimerRef.current = setTimeout(() => {
+        setActionToast(prev => (prev && prev.id === id ? { ...prev, open: false } : prev))
+      }, options?.durationMs ?? 3000)
+    }
   }
 
   useEffect(() => {
@@ -824,6 +886,24 @@ function SchedulePageContent() {
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
     }
   }, [])
+
+  // For persistent toasts (e.g., confirm/cancel), dismiss when user clicks elsewhere.
+  useEffect(() => {
+    if (!actionToast?.open) return
+    if (!actionToast.dismissOnOutsideClick) return
+
+    const onMouseDown = (e: MouseEvent) => {
+      const container = actionToastContainerRef.current
+      if (!container) return
+      if (container.contains(e.target as Node)) return
+      dismissActionToast()
+    }
+
+    document.addEventListener('mousedown', onMouseDown)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+    }
+  }, [actionToast?.open, actionToast?.dismissOnOutsideClick, dismissActionToast])
 
   useEffect(() => {
     if (!highlightDateKey) return
@@ -4891,6 +4971,506 @@ function SchedulePageContent() {
         break
     }
   }
+
+  const createEmptyTherapistAllocationsByTeam = () => ({
+    FO: [],
+    SMM: [],
+    SFM: [],
+    CPPC: [],
+    MC: [],
+    GMC: [],
+    NSM: [],
+    DRO: [],
+  }) as Record<Team, (TherapistAllocation & { staff: Staff })[]>
+
+  const createEmptyPCAAllocationsByTeam = () => ({
+    FO: [],
+    SMM: [],
+    SFM: [],
+    CPPC: [],
+    MC: [],
+    GMC: [],
+    NSM: [],
+    DRO: [],
+  }) as Record<Team, (PCAAllocation & { staff: Staff })[]>
+
+  const applyBaselineViewAllocations = (overrides: Record<string, any>) => {
+    const dateStr = formatDateForInput(selectedDate)
+
+    const baselineTherapistByTeam = createEmptyTherapistAllocationsByTeam()
+    staff.forEach(s => {
+      if (!s.team) return
+      if (!['SPT', 'APPT', 'RPT'].includes(s.rank)) return
+      const o = overrides?.[s.id]
+      const fte = typeof o?.fteRemaining === 'number' ? o.fteRemaining : 1.0
+      if (fte <= 0) return
+      baselineTherapistByTeam[s.team as Team].push({
+        id: `baseline-therapist:${dateStr}:${s.id}:${s.team}`,
+        schedule_id: '',
+        staff_id: s.id,
+        team: s.team as Team,
+        fte_therapist: fte,
+        fte_remaining: Math.max(0, 1.0 - fte),
+        slot_whole: null,
+        slot1: null,
+        slot2: null,
+        slot3: null,
+        slot4: null,
+        leave_type: (o?.leaveType ?? null) as any,
+        special_program_ids: null,
+        is_substitute_team_head: false,
+        spt_slot_display: null,
+        is_manual_override: false,
+        manual_override_note: null,
+        staff: s,
+      } as any)
+    })
+    setTherapistAllocations(baselineTherapistByTeam)
+
+    const baselinePCAByTeam = createEmptyPCAAllocationsByTeam()
+    staff.forEach(s => {
+      if (!s.team) return
+      if (s.rank !== 'PCA') return
+      if (s.floating) return
+      const o = overrides?.[s.id]
+      const baseFTE = s.status === 'buffer' && s.buffer_fte != null ? (s.buffer_fte as any) : 1.0
+      const fte = typeof o?.fteRemaining === 'number' ? o.fteRemaining : baseFTE
+      if (fte <= 0) return
+      baselinePCAByTeam[s.team as Team].push({
+        id: `baseline-pca:${dateStr}:${s.id}:${s.team}`,
+        schedule_id: '',
+        staff_id: s.id,
+        team: s.team as Team,
+        fte_pca: fte,
+        fte_remaining: fte,
+        slot_assigned: 0,
+        slot_whole: null,
+        slot1: null,
+        slot2: null,
+        slot3: null,
+        slot4: null,
+        leave_type: (o?.leaveType ?? null) as any,
+        special_program_ids: null,
+        invalid_slot: null,
+        leave_comeback_time: null,
+        leave_mode: null,
+        staff: s,
+      } as any)
+    })
+    TEAMS.forEach(team => {
+      baselinePCAByTeam[team].sort((a, b) => (a.staff?.name ?? '').localeCompare(b.staff?.name ?? ''))
+    })
+    setPcaAllocations(baselinePCAByTeam)
+  }
+
+  const STEP_ORDER: ScheduleStepId[] = ['leave-fte', 'therapist-pca', 'floating-pca', 'bed-relieving', 'review']
+  const hasLaterStepData = (target: ScheduleStepId) => {
+    const idx = STEP_ORDER.indexOf(target)
+    if (idx < 0) return false
+    const later = STEP_ORDER.slice(idx + 1, STEP_ORDER.indexOf('review'))
+    return later.some(stepId => stepStatus[stepId] !== 'pending')
+  }
+
+  const showClearForCurrentStep = useMemo(() => {
+    const hasStep1Overrides = Object.keys(staffOverrides ?? {}).length > 0
+
+    const hasNonBaselineTherapistAllocs = TEAMS.some(team =>
+      (therapistAllocations[team] || []).some(a => typeof a.id === 'string' && !a.id.startsWith('baseline-therapist:'))
+    )
+    const hasNonBaselinePcaAllocs = TEAMS.some(team =>
+      (pcaAllocations[team] || []).some(a => typeof a.id === 'string' && !a.id.startsWith('baseline-pca:'))
+    )
+
+    // Step 2 is considered to have data if algorithm allocations exist or step-specific override keys exist.
+    const hasStep2OverrideKeys = Object.values(staffOverrides ?? {}).some((o: any) => {
+      if (!o || typeof o !== 'object') return false
+      if (Array.isArray(o.specialProgramOverrides) && o.specialProgramOverrides.length > 0) return true
+      if (o.substitutionFor) return true
+      // Team transfer overrides (fixed-team therapist emergency move)
+      if (o.team != null) return true
+      return false
+    })
+    const hasStep2Data =
+      step2Result != null ||
+      initializedSteps.has('therapist-pca') ||
+      stepStatus['therapist-pca'] !== 'pending' ||
+      hasNonBaselineTherapistAllocs ||
+      hasNonBaselinePcaAllocs ||
+      hasStep2OverrideKeys
+
+    // Step 3 has data if floating allocations exist, or slotOverrides exist, or tracking state exists.
+    const hasStep3SlotOverrides = Object.values(staffOverrides ?? {}).some((o: any) => !!o?.slotOverrides)
+    const hasFloatingAllocations = TEAMS.some(team =>
+      (pcaAllocations[team] || []).some(a => {
+        const staffMember = staff.find(s => s.id === a.staff_id)
+        return !!staffMember?.floating
+      })
+    )
+    const hasStep3Data =
+      initializedSteps.has('floating-pca') ||
+      stepStatus['floating-pca'] !== 'pending' ||
+      adjustedPendingFTE != null ||
+      teamAllocationOrder != null ||
+      allocationTracker != null ||
+      hasStep3SlotOverrides ||
+      hasFloatingAllocations
+
+    const hasStep4Notes = Object.keys(bedRelievingNotesByToTeam ?? {}).length > 0
+    const hasStep4Data =
+      initializedSteps.has('bed-relieving') ||
+      stepStatus['bed-relieving'] !== 'pending' ||
+      (bedAllocations?.length ?? 0) > 0 ||
+      hasStep4Notes
+
+    const step = currentStep as ScheduleStepId
+    if (step === 'leave-fte') return hasStep1Overrides || hasStep2Data || hasStep3Data || hasStep4Data
+    if (step === 'therapist-pca') return hasStep2Data || hasStep3Data || hasStep4Data
+    if (step === 'floating-pca') return hasStep3Data || hasStep4Data
+    if (step === 'bed-relieving') return hasStep4Data
+    return false
+  }, [
+    currentStep,
+    staffOverrides,
+    staff,
+    therapistAllocations,
+    pcaAllocations,
+    bedAllocations,
+    bedRelievingNotesByToTeam,
+    step2Result,
+    initializedSteps,
+    stepStatus,
+    adjustedPendingFTE,
+    teamAllocationOrder,
+    allocationTracker,
+  ])
+
+  const removeStep2KeysFromOverrides = (overrides: Record<string, any>) => {
+    const cleaned: Record<string, any> = {}
+    Object.entries(overrides ?? {}).forEach(([staffId, raw]) => {
+      if (!raw || typeof raw !== 'object') return
+      const o = { ...(raw as any) }
+
+      // Step 2.0 + 2.1 inputs
+      delete o.specialProgramOverrides
+      delete o.substitutionFor
+
+      // Step 2 emergency team transfer overrides for therapists (APPT/RPT/SPT)
+      const staffMember = staff.find(s => s.id === staffId)
+      if (staffMember && ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)) {
+        delete o.team
+      }
+
+      if (Object.keys(o).length > 0) {
+        cleaned[staffId] = o
+      }
+    })
+    return cleaned
+  }
+
+  const clearStep3StateOnly = () => {
+    // Step 3 wizard state + tracking
+    setFloatingPCAConfigOpen(false)
+    setAdjustedPendingFTE(null)
+    setTeamAllocationOrder(null)
+    setAllocationTracker(null)
+    setPendingPCAFTEPerTeam({ FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 })
+    setPcaAllocationErrors(prev => ({ ...prev, preferredSlotUnassigned: undefined }))
+  }
+
+  const clearStep4StateOnly = () => {
+    setBedAllocations([])
+    setBedRelievingNotesByToTeam({})
+  }
+
+  const clearStep3AllocationsPreserveStep2 = () => {
+    // Remove floating PCA allocations except: (a) special program allocations from Step 2, (b) Step 2.1 substitutions.
+    const cleanedPcaAllocations = createEmptyPCAAllocationsByTeam()
+    TEAMS.forEach(team => {
+      const preservedAllocs = (pcaAllocations[team] || []).filter(alloc => {
+        const staffMember = staff.find(s => s.id === alloc.staff_id)
+        if (!staffMember) return false
+        if (!staffMember.floating) return true
+        if (alloc.special_program_ids && alloc.special_program_ids.length > 0) return true
+        const sf = staffOverrides[alloc.staff_id]?.substitutionFor
+        if (sf && sf.team === team) return true
+        return false
+      })
+      cleanedPcaAllocations[team] = preservedAllocs
+    })
+    setPcaAllocations(cleanedPcaAllocations)
+
+    // Clear slotOverrides for floating PCAs (preserve Step 1 + Step 2 fields like substitutionFor).
+    setStaffOverrides(prev => {
+      const cleaned = { ...prev }
+      const floatingPCAIds = new Set(staff.filter(s => s.rank === 'PCA' && s.floating).map(s => s.id))
+      floatingPCAIds.forEach(pcaId => {
+        if (!cleaned[pcaId]) return
+        const { slotOverrides, ...otherOverrides } = cleaned[pcaId]
+        const hasSubstitutionFor = !!otherOverrides.substitutionFor
+        const hasOtherKeys = Object.keys(otherOverrides).length > 0
+        if (hasSubstitutionFor || hasOtherKeys) {
+          cleaned[pcaId] = otherOverrides
+        } else {
+          delete cleaned[pcaId]
+        }
+      })
+      return cleaned
+    })
+
+    // Recompute pending needs from cleaned allocations (so Step 3 re-entry has correct starting point).
+    const recalculatedPendingFTE: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
+    const nonFloatingPCAAssignedPerTeam: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
+    const preservedFloatingAssignedPerTeam: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
+
+    Object.entries(cleanedPcaAllocations).forEach(([team, allocs]) => {
+      allocs.forEach(alloc => {
+        const staffMember = staff.find(s => s.id === alloc.staff_id)
+        if (!staffMember) return
+        let slotsInTeam = 0
+        if (alloc.slot1 === team) slotsInTeam++
+        if (alloc.slot2 === team) slotsInTeam++
+        if (alloc.slot3 === team) slotsInTeam++
+        if (alloc.slot4 === team) slotsInTeam++
+
+        const invalidSlot = (alloc as any).invalid_slot
+        if (invalidSlot) {
+          const slotField = `slot${invalidSlot}` as keyof PCAAllocation
+          if (alloc[slotField] === team) slotsInTeam = Math.max(0, slotsInTeam - 1)
+        }
+
+        if (!staffMember.floating) {
+          nonFloatingPCAAssignedPerTeam[team as Team] += slotsInTeam * 0.25
+          return
+        }
+
+        const hasSpecial = Array.isArray(alloc.special_program_ids) && alloc.special_program_ids.length > 0
+        const sf = staffOverrides[alloc.staff_id]?.substitutionFor
+        const isSubForThisTeam = !!sf && sf.team === (team as Team)
+        if (hasSpecial || isSubForThisTeam) {
+          preservedFloatingAssignedPerTeam[team as Team] += slotsInTeam * 0.25
+        }
+      })
+    })
+
+    TEAMS.forEach(team => {
+      const displayedAvgPCA = calculations[team]?.average_pca_per_team || 0
+      const rawPending = Math.max(
+        0,
+        displayedAvgPCA - (nonFloatingPCAAssignedPerTeam[team] || 0) - (preservedFloatingAssignedPerTeam[team] || 0)
+      )
+      recalculatedPendingFTE[team] = roundToNearestQuarterWithMidpoint(rawPending)
+    })
+    setPendingPCAFTEPerTeam(recalculatedPendingFTE)
+  }
+
+  const clearStepOnly = async (stepId: ScheduleStepId) => {
+    switch (stepId) {
+      case 'leave-fte': {
+        setStaffOverrides({})
+        setPcaAllocationErrors({})
+        setStep2Result(null)
+        clearStep3StateOnly()
+        clearStep4StateOnly()
+        applyBaselineViewAllocations({})
+        setStepStatus(prev => ({
+          ...prev,
+          'leave-fte': 'pending',
+          'therapist-pca': 'pending',
+          'floating-pca': 'pending',
+          'bed-relieving': 'pending',
+          review: 'pending',
+        }))
+        return
+      }
+      case 'therapist-pca': {
+        const cleanedOverrides = removeStep2KeysFromOverrides(staffOverrides)
+        setStaffOverrides(cleanedOverrides)
+        setPcaAllocationErrors({})
+        setStep2Result(null)
+        clearStep3StateOnly()
+        clearStep4StateOnly()
+        applyBaselineViewAllocations(cleanedOverrides)
+        setInitializedSteps(prev => {
+          const next = new Set(prev)
+          next.delete('therapist-pca')
+          return next
+        })
+        setStepStatus(prev => ({
+          ...prev,
+          'therapist-pca': 'pending',
+          'floating-pca': 'pending',
+          'bed-relieving': 'pending',
+          review: 'pending',
+        }))
+        return
+      }
+      case 'floating-pca': {
+        clearStep3StateOnly()
+        clearStep3AllocationsPreserveStep2()
+        setInitializedSteps(prev => {
+          const next = new Set(prev)
+          next.delete('floating-pca')
+          return next
+        })
+        setStepStatus(prev => ({
+          ...prev,
+          'floating-pca': 'pending',
+          'bed-relieving': 'pending',
+          review: 'pending',
+        }))
+        return
+      }
+      case 'bed-relieving': {
+        clearStep4StateOnly()
+        setInitializedSteps(prev => {
+          const next = new Set(prev)
+          next.delete('bed-relieving')
+          return next
+        })
+        setStepStatus(prev => ({
+          ...prev,
+          'bed-relieving': 'pending',
+          review: 'pending',
+        }))
+        return
+      }
+      default:
+        return
+    }
+  }
+
+  const clearFromStep = async (stepId: ScheduleStepId) => {
+    // Clear the selected step and all later steps.
+    const stepsToClear = (() => {
+      if (stepId === 'leave-fte') return ['leave-fte', 'therapist-pca', 'floating-pca', 'bed-relieving'] as ScheduleStepId[]
+      if (stepId === 'therapist-pca') return ['therapist-pca', 'floating-pca', 'bed-relieving'] as ScheduleStepId[]
+      if (stepId === 'floating-pca') return ['floating-pca', 'bed-relieving'] as ScheduleStepId[]
+      if (stepId === 'bed-relieving') return ['bed-relieving'] as ScheduleStepId[]
+      return [] as ScheduleStepId[]
+    })()
+
+    // Close any step dialogs to avoid dangling resolvers.
+    setShowSpecialProgramOverrideDialog(false)
+    setSpecialProgramOverrideResolver(null)
+    specialProgramOverrideResolverRef.current = null
+    setSubstitutionWizardOpen(false)
+    setSubstitutionWizardData(null)
+    substitutionWizardResolverRef.current = null
+    setFloatingPCAConfigOpen(false)
+
+    if (stepsToClear.includes('leave-fte')) {
+      setStaffOverrides({})
+      setPcaAllocationErrors({})
+      setStep2Result(null)
+      clearStep3StateOnly()
+      clearStep4StateOnly()
+      applyBaselineViewAllocations({})
+    } else if (stepsToClear.includes('therapist-pca')) {
+      const cleanedOverrides = removeStep2KeysFromOverrides(staffOverrides)
+      setStaffOverrides(cleanedOverrides)
+      setPcaAllocationErrors({})
+      setStep2Result(null)
+      clearStep3StateOnly()
+      clearStep4StateOnly()
+      applyBaselineViewAllocations(cleanedOverrides)
+    } else if (stepsToClear.includes('floating-pca')) {
+      clearStep3StateOnly()
+      clearStep3AllocationsPreserveStep2()
+      if (stepsToClear.includes('bed-relieving')) {
+        clearStep4StateOnly()
+      }
+    } else if (stepsToClear.includes('bed-relieving')) {
+      clearStep4StateOnly()
+    }
+
+    setInitializedSteps(prev => {
+      const next = new Set(prev)
+      if (stepsToClear.includes('therapist-pca')) next.delete('therapist-pca')
+      if (stepsToClear.includes('floating-pca')) next.delete('floating-pca')
+      if (stepsToClear.includes('bed-relieving')) next.delete('bed-relieving')
+      return next
+    })
+
+    setStepStatus(prev => {
+      const next = { ...prev }
+      stepsToClear.forEach(s => {
+        next[s] = 'pending'
+      })
+      next.review = 'pending'
+      return next
+    })
+  }
+
+  const handleClearStep = (stepIdRaw: string) => {
+    const stepId = stepIdRaw as ScheduleStepId
+    if (!['leave-fte', 'therapist-pca', 'floating-pca', 'bed-relieving'].includes(stepId)) return
+
+    if (hasLaterStepData(stepId)) {
+      const clearedLabel =
+        stepId === 'leave-fte'
+          ? 'Steps 1–4'
+          : stepId === 'therapist-pca'
+            ? 'Steps 2–4'
+            : stepId === 'floating-pca'
+              ? 'Steps 3–4'
+              : 'Step 4'
+
+      showActionToast(
+        'This will clear later steps too',
+        'warning',
+        `Later-step data exists. Confirm to clear ${clearedLabel}.`,
+        {
+          persistUntilDismissed: true,
+          dismissOnOutsideClick: true,
+          actions: (
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  dismissActionToast()
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                onClick={async (e) => {
+                  e.stopPropagation()
+                  dismissActionToast()
+                  await clearFromStep(stepId)
+                  showActionToast('Cleared', 'success', `Cleared ${clearedLabel}.`)
+                }}
+              >
+                Confirm
+              </Button>
+            </div>
+          ),
+        }
+      )
+      return
+    }
+
+    ;(async () => {
+      await clearStepOnly(stepId)
+      const label =
+        stepId === 'leave-fte'
+          ? 'Step 1 (Leave & FTE)'
+          : stepId === 'therapist-pca'
+            ? 'Step 2 (Therapist & PCA)'
+            : stepId === 'floating-pca'
+              ? 'Step 3 (Floating PCA)'
+              : 'Step 4 (Bed Relieving)'
+      showActionToast('Cleared', 'success', `Cleared ${label}.`)
+    })().catch((e) => {
+      console.error('Clear step failed:', e)
+      showActionToast('Clear failed', 'error', (e as any)?.message || 'Please try again.')
+    })
+  }
   
   /**
    * Handle save from FloatingPCAConfigDialog (Steps 3.1 + 3.2 + 3.3 + 3.4)
@@ -5702,7 +6282,7 @@ function SchedulePageContent() {
               calculatedForStep: currentStep as ScheduleStepId,
             },
           }
-          if (userRole === 'admin') {
+          if (userRole === 'developer') {
             try {
               specialProgramsBytes = JSON.stringify((minifiedSnapshot as any).specialPrograms || []).length
               snapshotBytes = JSON.stringify(buildBaselineSnapshotEnvelope({ data: minifiedSnapshot, source: 'save' }) as any).length
@@ -5754,8 +6334,8 @@ function SchedulePageContent() {
       showActionToast('Failed to save. Please try again.', 'error')
     } finally {
       setSaving(false)
-      // Persist timing report (admin-only tooltip, but collection is cheap)
-      if (userRole === 'admin' && specialProgramsBytes == null) {
+      // Persist timing report (developer-only tooltip, but collection is cheap)
+      if (userRole === 'developer' && specialProgramsBytes == null) {
         try {
           const prog = baselineSnapshot?.specialPrograms ?? specialPrograms
           specialProgramsBytes = JSON.stringify(minifySpecialProgramsForSnapshot(prog as any)).length
@@ -7173,6 +7753,34 @@ function SchedulePageContent() {
           </div>
         </div>
       )}
+
+      {/* Warning Popover for bed relieving edit outside step 4 */}
+      {bedRelievingEditWarningPopover.show && bedRelievingEditWarningPopover.position && (
+        <div
+          className="fixed z-[9999] bg-white dark:bg-slate-800 rounded-lg shadow-xl border-2 border-amber-500 p-3 w-[200px]"
+          style={{
+            left: bedRelievingEditWarningPopover.position.x,
+            top: bedRelievingEditWarningPopover.position.y,
+            pointerEvents: 'auto',
+          }}
+        >
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              setBedRelievingEditWarningPopover({ show: false, position: null })
+            }}
+            className="absolute top-1 right-1 p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+          <div className="text-xs font-semibold text-amber-800 dark:text-amber-200 mb-1 pr-4">
+            Bed Relieving Edit Not Available
+          </div>
+          <div className="text-[10px] text-slate-600 dark:text-slate-400 leading-tight">
+            Bed relieving note editing is only available in Step 4 (Bed Relieving). Please return to Step 4 to edit.
+          </div>
+        </div>
+      )}
       
       {/* PCA Drag Overlay - shows mini card with selected slots (when dragging from popover) */}
       {pcaDragState.isDraggingFromPopover && pcaDragState.staffName && pcaDragState.selectedSlots.length > 0 && (
@@ -7207,11 +7815,12 @@ function SchedulePageContent() {
       
       <div className="container mx-auto p-4 min-w-[1360px]">
         {actionToast && (
-          <div className="fixed right-4 top-4 z-[9999]">
+          <div ref={actionToastContainerRef} className="fixed right-4 top-4 z-[9999]">
             <ActionToast
               key={actionToast.id}
               title={actionToast.title}
               description={actionToast.description}
+              actions={actionToast.actions}
               variant={actionToast.variant}
               open={actionToast.open}
               onClose={dismissActionToast}
@@ -7244,7 +7853,7 @@ function SchedulePageContent() {
         )}
         <div className="flex justify-between items-center mb-4">
           <div className="flex items-center space-x-4">
-            {userRole === 'admin' ? (
+            {userRole === 'developer' ? (
               <Tooltip
                 side="bottom"
                 className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
@@ -7389,7 +7998,7 @@ function SchedulePageContent() {
           <div className="flex items-center space-x-2">
               {/* Copy dropdown button */}
               <div className="relative">
-                {userRole === 'admin' ? (
+                {userRole === 'developer' ? (
                   <Tooltip
                     side="bottom"
                     className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
@@ -7574,7 +8183,7 @@ function SchedulePageContent() {
                   </div>
                 )}
               </div>
-              {userRole === 'admin' ? (
+              {userRole === 'developer' ? (
                 <Tooltip
                   side="bottom"
                   className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
@@ -7712,6 +8321,8 @@ function SchedulePageContent() {
             canGoNext={currentStep !== 'review'}
             canGoPrevious={currentStep !== 'leave-fte'}
             onInitialize={handleInitializeAlgorithm}
+            onClearStep={handleClearStep}
+            showClear={showClearForCurrentStep}
             isInitialized={initializedSteps.has(currentStep)}
             isLoading={loading}
             errorMessage={
@@ -7756,7 +8367,7 @@ function SchedulePageContent() {
             </div>
           )}
           <div
-            className="shrink-0 flex flex-col gap-4 self-start min-h-0 overflow-hidden"
+            className="shrink-0 flex flex-col gap-4 self-start min-h-0"
             style={typeof rightContentHeight === 'number' && rightContentHeight > 0 ? { height: rightContentHeight } : undefined}
           >
             {/* Summary */}
@@ -8070,7 +8681,9 @@ function SchedulePageContent() {
 
             {/* Team grid content (horizontal scroller) */}
             <div ref={teamGridScrollRef} className="overflow-x-auto bg-background">
-              <div className="min-w-[960px]" ref={rightContentRef}>
+              <div className="min-w-[960px]">
+                {/* Height anchor for Staff Pool column: stop at bottom of PCA Dedicated table (exclude notes board). */}
+                <div ref={rightContentRef}>
                 
                 {/* Block 1: Therapist Allocation */}
                 <div className="mb-4">
@@ -8138,6 +8751,13 @@ function SchedulePageContent() {
                           wards={wards}
                           bedRelievingNotesByToTeam={bedRelievingNotesByToTeam}
                           onSaveBedRelievingNotesForToTeam={saveBedRelievingNotesForToTeam}
+                          currentStep={currentStep}
+                          onInvalidEditAttempt={(position) => {
+                            setBedRelievingEditWarningPopover({ show: true, position })
+                            setTimeout(() => {
+                              setBedRelievingEditWarningPopover(prev => ({ ...prev, show: false }))
+                            }, 5000)
+                          }}
                         />
                       ))
                     })()}
@@ -8269,6 +8889,7 @@ function SchedulePageContent() {
                   stepStatus={stepStatus}
                   initializedSteps={initializedSteps}
                 />
+                </div>
 
                 <AllocationNotesBoard doc={allocationNotesDoc} onSave={saveAllocationNotes} />
               </div>

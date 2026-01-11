@@ -10,6 +10,7 @@ export type ActionToastVariant = 'success' | 'warning' | 'error'
 type ActionToastProps = {
   title: string
   description?: string
+  actions?: React.ReactNode
   variant?: ActionToastVariant
   open: boolean
   onClose: () => void
@@ -42,6 +43,7 @@ function getVariantStyles(variant: ActionToastVariant) {
 export function ActionToast({
   title,
   description,
+  actions,
   variant = 'success',
   open,
   onClose,
@@ -49,6 +51,7 @@ export function ActionToast({
 }: ActionToastProps) {
   const styles = getVariantStyles(variant)
   const hasDescription = typeof description === 'string' && description.trim().length > 0
+  const hasActions = actions != null
 
   return (
     <div
@@ -83,11 +86,12 @@ export function ActionToast({
           {styles.icon}
         </div>
 
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold leading-5 text-foreground">{title}</div>
           {description ? (
             <div className="mt-0.5 text-sm leading-5 text-muted-foreground">{description}</div>
           ) : null}
+          {hasActions ? <div className="mt-3">{actions}</div> : null}
         </div>
       </div>
     </div>

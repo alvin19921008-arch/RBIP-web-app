@@ -287,16 +287,9 @@ export async function POST(request: NextRequest) {
       referencedIds
     )
     timer.stage('resolveBufferStaff')
-    // #region agent log
-    const snapshotStaff: any[] = (sourceBaselineData as any).staff || []
-    const snapshotBufferRankCounts = snapshotStaff.reduce<Record<string, number>>((acc, s: any) => {
-      if (s?.status !== 'buffer') return acc
-      const r = s?.rank ?? 'unknown'
-      acc[r] = (acc[r] || 0) + 1
-      return acc
-    }, {})
 
     // Build target baseline (adjusting buffer staff if needed)
+    const snapshotStaff: any[] = (sourceBaselineData as any).staff || []
     let targetBaselineData: BaselineSnapshot = sourceBaselineData
     if (!includeBufferStaff && snapshotStaff.length > 0) {
       const updatedStaff = snapshotStaff.map((s: any) =>

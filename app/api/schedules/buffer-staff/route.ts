@@ -119,13 +119,6 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // #region agent log
-    const rankCounts = bufferStaff.reduce<Record<string, number>>((acc, s) => {
-      const r = (s as any)?.rank ?? 'unknown'
-      acc[r] = (acc[r] || 0) + 1
-      return acc
-    }, {})
-
     // Sort: therapists first, then PCAs, then by name
     const rankOrder: Record<string, number> = { SPT: 1, APPT: 2, RPT: 3, PCA: 4, workman: 5 }
     bufferStaff.sort((a, b) => {
