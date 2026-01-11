@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
+import { CalendarDays, LayoutDashboard, History } from 'lucide-react'
 
 export function Navbar() {
   const pathname = usePathname()
@@ -22,9 +23,9 @@ export function Navbar() {
   }
 
   const navItems = [
-    { href: '/schedule', label: 'Schedule' },
-    { href: '/dashboard', label: 'Dashboard' },
-    { href: '/history', label: 'History' },
+    { href: '/schedule', label: 'Schedule', icon: CalendarDays },
+    { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { href: '/history', label: 'History', icon: History },
   ]
 
   return (
@@ -41,13 +42,14 @@ export function Navbar() {
                 href={item.href}
                 onClick={() => navLoading.start(item.href)}
                 className={cn(
-                  "text-sm font-medium transition-colors hover:text-primary",
+                  "text-sm font-medium transition-colors hover:text-primary inline-flex items-center gap-1.5",
                   pathname === item.href
                     ? "text-foreground"
                     : "text-muted-foreground"
                 )}
               >
-                {item.label}
+                <item.icon className="h-4 w-4" />
+                <span>{item.label}</span>
               </Link>
             ))}
           </div>

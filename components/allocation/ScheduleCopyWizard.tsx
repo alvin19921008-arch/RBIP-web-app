@@ -298,9 +298,9 @@ export function ScheduleCopyWizard({
     return (
       <>
         <DialogDescription className="mb-3">
-          Choose how much of the source schedule to copy between{' '}
-          <span className="font-semibold">{sourceDateStr}</span> and{' '}
-          <span className="font-semibold">{targetDateStr || '...'}</span>.
+          Choose how much of the source schedule to copy from{' '}
+          <span className="font-semibold whitespace-nowrap">{sourceDateStr}</span> to{' '}
+          <span className="font-semibold whitespace-nowrap">{targetDateStr || '...'}</span>.
         </DialogDescription>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <button

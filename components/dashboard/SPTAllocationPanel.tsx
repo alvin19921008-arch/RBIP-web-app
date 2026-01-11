@@ -367,7 +367,7 @@ function SPTAllocationForm({
 
       {weekdays.length > 0 && (
         <div>
-          <label className="block text-sm font-medium mb-1">Slots per Day</label>
+          <label className="block text-sm font-medium mb-1">Slots per Weekday</label>
           {weekdays.map((day) => {
             const selectedSlots = slots[day] || []
             const amSlots = selectedSlots.filter(s => s === 1 || s === 2)
@@ -531,7 +531,7 @@ function SPTAllocationForm({
       )}
 
       <div>
-        <label className="block text-sm font-medium mb-1">FTE Add-on</label>
+        <label className="block text-sm font-medium mb-1">FTE Add-on to the assigned team</label>
         <input
           type="number"
           step="0.25"

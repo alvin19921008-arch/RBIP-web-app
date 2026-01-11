@@ -3,7 +3,7 @@
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
 **Last Updated**: 2026-01-12 
-**Latest Phase**: Phase 19 - PCA Dedicated Schedule Table & Staff Pool Scroll Isolation  
+**Latest Phase**: Phase 20 - Points to Note Board & Summary Info Box Enhancements  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -405,6 +405,41 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - **Dark Mode Support**: All scrollbar classes include dark mode variants
   - **Usage**: Apply base class + conditional hidden variant based on visibility state
   - **Files Modified**: `app/globals.css`
+
+### Phase 20: Points to Note Board & Summary Info Box Enhancements (Latest)
+- ✅ **Points to Note Board**
+  - **Purpose**: Rich-text notes board for general allocation rules and reminders
+  - **Location**: Below PCA Dedicated Schedule table, spanning full width of team grid (FO to DRO borders)
+  - **Features**:
+    - Rich text editing with Tiptap editor (bold, italic, underline, text color, highlight, bullets/numbering)
+    - Display mode (renders rich text) and edit mode (toolbar with formatting controls)
+    - Toolbar: left-aligned on 2nd line, includes undo/redo (Ctrl/Cmd+Z/Y), bold, italic, underline, text color, highlight (Highlighter icon), bullets/numbering
+    - Edit mode: expands up to 15 lines, then scrolls (`max-h-[360px] overflow-y-auto`)
+    - Save/Cancel buttons (regular button styling)
+    - Dashboard-like state: auto-seeds new schedules from previous working day's saved note
+    - Independent of step workflow (editable in any step)
+  - **Data Storage**: Stored in `daily_schedules.staff_overrides.__allocationNotes` (JSONB with Tiptap document structure)
+  - **Integration**: Integrated with snapshot, copy/save, and fast-loading (RPC, caching, batch queries) features
+  - **Component**: `components/allocation/AllocationNotesBoard.tsx`
+  - **RPC**: `update_schedule_allocation_notes_v1` for immediate persistence without affecting other `staff_overrides`
+  - **Files Modified**: `app/(dashboard)/schedule/page.tsx`, `components/allocation/AllocationNotesBoard.tsx`, `lib/utils/scheduleCache.ts`, `supabase/migrations/add_update_allocation_notes_rpc.sql`, `types/schedule.ts`
+- ✅ **Summary Info Box Enhancements**
+  - **Total PCA**: Label changed to "Total PCA" (removed "FTE"), displays "regular + buffer" when buffer exists, tooltip shows breakdown + leave/sick leave FTE costs
+  - **Total PT**: Displays "regular + buffer" when buffer exists, tooltip shows breakdown + leave/sick leave FTE costs (SPT-aware: only counts on configured weekdays using `fte_addon`)
+  - **After SHS/students**: Tooltip shows SHS and Student bed totals breakdown
+  - **Leave/Sick Leave**: Tooltips display FTE cost totals (not headcount), with 2 decimal precision (no rounding)
+  - **SPT-Aware Calculations**: PT totals and leave counts respect SPT weekday service and `fte_addon` (0.5, etc.), excluding SPT not scheduled for current weekday
+  - **Component**: `components/allocation/SummaryColumn.tsx`
+  - **Files Modified**: `app/(dashboard)/schedule/page.tsx`, `components/allocation/SummaryColumn.tsx`
+- ✅ **UI Enhancements**
+  - **Sticky Team Header**: Excel-like freeze effect - team header row (FO/SMM/...) stays visible at top when scrolling down, disappears when entire grid scrolls out of view
+  - **Horizontal Scroll Sync**: Header and grid scroll horizontally in sync (bidirectional)
+  - **Minimum Page Width**: Added `min-w-[1360px]` to prevent squishing on narrow viewports (horizontal scroll instead)
+  - **Navigation Icons**: Added SVG icons to top nav bar (CalendarDays for Schedule, LayoutDashboard for Dashboard, History for History)
+  - **Step Indicator Compactness**: Reduced vertical padding for more compact layout
+  - **Copy Wizard Wording**: Updated to "Choose how much of the source schedule to copy from YYYY-MM-DD to YYYY-MM-DD" with `whitespace-nowrap` for dates
+  - **Toast Alignment**: Fixed vertical centering for single-line notification text
+  - **Files Modified**: `app/(dashboard)/schedule/page.tsx`, `components/layout/Navbar.tsx`, `components/allocation/StepIndicator.tsx`, `components/allocation/ScheduleCopyWizard.tsx`, `components/ui/action-toast.tsx`
 
 ### Phase 9: Pending FTE Bug Fix & Safe Wrapper System
 - ✅ **Critical Bug Fix: Pending FTE Overwrite Issue**

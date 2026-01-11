@@ -48,6 +48,7 @@ export function ActionToast({
   onExited,
 }: ActionToastProps) {
   const styles = getVariantStyles(variant)
+  const hasDescription = typeof description === 'string' && description.trim().length > 0
 
   return (
     <div
@@ -77,8 +78,8 @@ export function ActionToast({
         <X className="h-4 w-4" />
       </button>
 
-      <div className="flex items-start gap-3">
-        <div className={cn('mt-0.5 inline-flex h-9 w-9 items-center justify-center rounded-full', styles.iconWrap)}>
+      <div className={cn('flex gap-3', hasDescription ? 'items-start' : 'items-center')}>
+        <div className={cn('inline-flex h-9 w-9 items-center justify-center rounded-full', styles.iconWrap)}>
           {styles.icon}
         </div>
 

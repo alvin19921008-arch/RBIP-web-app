@@ -73,6 +73,23 @@ export interface BedRelievingNoteRow {
   bedNumbersText: string
 }
 
+// ============================================================================
+// Allocation notes (Points to note) - rich text per schedule, carried across days
+// ============================================================================
+
+/**
+ * Rich-text notes shown below the PCA dedicated schedule table.
+ * Stored under `daily_schedules.staff_overrides.__allocationNotes`.
+ */
+export type AllocationNotesPayload = {
+  /**
+   * Rich-text JSON document (editor-specific).
+   * We keep it as unknown here to avoid hard coupling `types/` to a specific editor schema.
+   */
+  doc: unknown
+  updatedAt?: string
+}
+
 /**
  * Notes keyed by toTeam (taking team) then by fromTeam (releasing team).
  * Stored under `daily_schedules.staff_overrides.__bedRelieving.byToTeam`.

@@ -51,7 +51,7 @@ export function StepIndicator({
   return (
     <div className={cn("bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 shadow-sm", className)}>
       {/* Step Progress Bar with Titles */}
-      <div className="relative mb-6">
+      <div className="relative mb-4">
         {/* Connector Lines (behind circles) - positioned at center of w-14 circles (28px) for alignment */}
         <div className="absolute top-7 left-0 right-0 flex items-center">
           {steps.map((step, index) => {
@@ -135,8 +135,8 @@ export function StepIndicator({
       </div>
 
       {/* Current Step Description and Navigation */}
-      <div className="bg-slate-50 dark:bg-slate-800/50 rounded-md p-4 mb-4">
-        <div className="flex items-center justify-between mb-3">
+      <div className="bg-slate-50 dark:bg-slate-800/50 rounded-md px-3 py-2 mb-2">
+        <div className="flex items-center justify-between mb-2">
           {/* Previous Button */}
           <Button
             variant="ghost"

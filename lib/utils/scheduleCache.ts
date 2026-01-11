@@ -6,6 +6,11 @@
 interface CachedScheduleData {
   scheduleId: string
   overrides: Record<string, any>
+  // Schedule-level metadata extracted from staff_overrides (NOT staff UUID keyed)
+  bedCountsOverridesByTeam?: Record<string, any>
+  bedRelievingNotesByToTeam?: Record<string, any>
+  allocationNotesDoc?: any
+  tieBreakDecisions?: Record<string, any>
   therapistAllocs: any[]
   pcaAllocs: any[]
   bedAllocs: any[]
