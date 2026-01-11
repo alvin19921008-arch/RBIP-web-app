@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -9,14 +9,16 @@ import { Staff, Team } from '@/types/staff'
 import { getSlotLabel, getSlotTime } from '@/lib/utils/slotHelpers'
 import { FloorPCAMappingPanel } from '@/components/dashboard/FloorPCAMappingPanel'
 import { useToast } from '@/components/ui/toast-provider'
+import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
 
 export function PCAPreferencePanel() {
   const [preferences, setPreferences] = useState<PCAPreference[]>([])
   const [staff, setStaff] = useState<Staff[]>([])
   const [loading, setLoading] = useState(false)
   const [editingPreference, setEditingPreference] = useState<PCAPreference | null>(null)
-  const [showFloorMapping, setShowFloorMapping] = useState(false)
-  const editFormRef = useRef<HTMLDivElement>(null)
+  const [editingFloorMapping, setEditingFloorMapping] = useState(false)
+  const expand = useDashboardExpandableCard<string>({ animationMs: 220 })
+  const expandFloor = useDashboardExpandableCard<string>({ animationMs: 220 })
   const supabase = createClientComponentClient()
   const toast = useToast()
 
@@ -64,7 +66,7 @@ export function PCAPreferencePanel() {
       }
       
       await loadData()
-      setEditingPreference(null)
+      expand.close(() => setEditingPreference(null))
       toast.success('Preference saved.')
     } catch (err) {
       console.error('Error saving preference:', err)
@@ -91,10 +93,18 @@ export function PCAPreferencePanel() {
               
               if (isEditing) {
                 return (
-                  <Card key={team} className="p-4 border-2 col-span-full">
+                  <Card
+                    key={team}
+                    ref={expand.expandedRef}
+                    className={`p-4 border-2 col-span-full ${expand.getExpandedAnimationClass(team)}`}
+                  >
                     <div className="flex justify-between items-center mb-4">
                       <h3 className="text-lg font-semibold">Edit: {team}</h3>
-                      <Button variant="ghost" size="sm" onClick={() => setEditingPreference(null)}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => expand.close(() => setEditingPreference(null))}
+                      >
                         Cancel
                       </Button>
                     </div>
@@ -102,7 +112,7 @@ export function PCAPreferencePanel() {
                       preference={editingPreference}
                       staff={staff}
                       onSave={handleSave}
-                      onCancel={() => setEditingPreference(null)}
+                      onCancel={() => expand.close(() => setEditingPreference(null))}
                     />
                   </Card>
                 )
@@ -116,11 +126,25 @@ export function PCAPreferencePanel() {
                       variant="outline"
                       size="sm"
                       onClick={() => {
-                        if (pref) {
-                          setEditingPreference(pref)
-                        } else {
-                          setEditingPreference({ team } as PCAPreference)
+                        const openTeamEditor = () => {
+                          if (pref) {
+                            setEditingPreference(pref)
+                          } else {
+                            setEditingPreference({ team } as PCAPreference)
+                          }
+                          expand.open(team)
                         }
+
+                        // Ensure only one expanded card at a time for correct scroll/reposition.
+                        if (editingFloorMapping) {
+                          expandFloor.close(() => {
+                            setEditingFloorMapping(false)
+                            openTeamEditor()
+                          })
+                          return
+                        }
+
+                        openTeamEditor()
                       }}
                     >
                       {pref ? 'Edit' : 'Add'}
@@ -166,26 +190,63 @@ export function PCAPreferencePanel() {
           </div>
         )}
         
-        {/* Floor PCA Mapping Subcard */}
+        {/* Floor PCA Mapping (same expand/collapse UX as other cards) */}
         <div className="mt-6">
-          <Card
-            className={`cursor-pointer hover:border-primary ${
-              showFloorMapping ? 'border-primary' : ''
-            }`}
-            onClick={() => setShowFloorMapping(!showFloorMapping)}
-          >
-            <CardHeader>
-              <CardTitle className="text-lg">Floor PCA Mapping</CardTitle>
-              <CardDescription>
-                Assign PCAs to Upper and/or Lower floors
-              </CardDescription>
-            </CardHeader>
-            {showFloorMapping && (
-              <CardContent>
+          {editingFloorMapping ? (
+            <Card
+              ref={expandFloor.expandedRef}
+              className={`p-4 border-2 ${expandFloor.getExpandedAnimationClass('floor-mapping')}`}
+            >
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <h4 className="font-semibold text-lg">Floor PCA Mapping</h4>
+                  <p className="text-sm text-muted-foreground">Assign PCAs to Upper and/or Lower floors</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => expandFloor.close(() => setEditingFloorMapping(false))}
+                >
+                  Cancel
+                </Button>
+              </div>
+              <CardContent className="p-0 pt-2">
                 <FloorPCAMappingPanel />
               </CardContent>
-            )}
-          </Card>
+            </Card>
+          ) : (
+            <Card className="p-4">
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <h4 className="font-semibold text-lg">Floor PCA Mapping</h4>
+                  <p className="text-sm text-muted-foreground">Assign PCAs to Upper and/or Lower floors</p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const openFloor = () => {
+                      setEditingFloorMapping(true)
+                      expandFloor.open('floor-mapping')
+                    }
+
+                    // Ensure only one expanded card at a time for correct scroll/reposition.
+                    if (editingPreference) {
+                      expand.close(() => {
+                        setEditingPreference(null)
+                        openFloor()
+                      })
+                      return
+                    }
+
+                    openFloor()
+                  }}
+                >
+                  Edit
+                </Button>
+              </div>
+            </Card>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -281,7 +342,7 @@ function PCAPreferenceForm({
         <label className="block text-sm font-medium mb-1">
           Preferred PCA (max 2) {preferredPCA.length > 0 && `(${preferredPCA.length}/2)`}
         </label>
-        <div className="max-h-40 overflow-y-auto border rounded p-2">
+        <div className="max-h-40 overflow-y-auto border rounded p-2 pr-1 scrollbar-visible">
           {staff.filter(s => s.floating).map((s) => (
             <label key={s.id} className="flex items-center space-x-2">
               <input

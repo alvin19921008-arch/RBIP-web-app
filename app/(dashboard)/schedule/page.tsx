@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, Fragment, useCallback, Suspense, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, Fragment, useCallback, Suspense, useMemo } from 'react'
 import { DndContext, DragOverlay, DragEndEvent, DragStartEvent, DragMoveEvent, Active } from '@dnd-kit/core'
 import { Team, Weekday, LeaveType } from '@/types/staff'
 import {
@@ -22,6 +22,7 @@ import { TeamColumn } from '@/components/allocation/TeamColumn'
 import { StaffPool } from '@/components/allocation/StaffPool'
 import { TherapistBlock } from '@/components/allocation/TherapistBlock'
 import { PCABlock } from '@/components/allocation/PCABlock'
+import { PCADedicatedScheduleTable } from '@/components/allocation/PCADedicatedScheduleTable'
 import { BedBlock } from '@/components/allocation/BedBlock'
 import { LeaveBlock } from '@/components/allocation/LeaveBlock'
 import { CalculationBlock } from '@/components/allocation/CalculationBlock'
@@ -136,6 +137,8 @@ function SchedulePageContent() {
   const searchParams = useSearchParams()
   const supabase = createClientComponentClient()
   const navLoading = useNavigationLoading()
+  const rightContentRef = useRef<HTMLDivElement | null>(null)
+  const [rightContentHeight, setRightContentHeight] = useState<number | null>(null)
   const [selectedDate, setSelectedDate] = useState<Date>(DEFAULT_DATE)
   
   // Read date from URL query parameter on mount and when searchParams change
@@ -214,6 +217,21 @@ function SchedulePageContent() {
     tieBreakResolverRef.current = tieBreakResolver
   }, [tieBreakResolver])
   const [tieBreakDecisions, setTieBreakDecisions] = useState<Record<string, Team>>({}) // Store tie-breaker decisions: key = `${teams.sort().join(',')}:${pendingFTE}`, value = selected team
+
+  // Keep the Staff Pool column ending at the same bottom edge as the right content (incl. PCA dedicated table),
+  // while keeping Staff Pool itself internally scrollable.
+  useLayoutEffect(() => {
+    const el = rightContentRef.current
+    if (!el) return
+
+    const update = () => setRightContentHeight(el.offsetHeight)
+    update()
+
+    const ro = new ResizeObserver(() => update())
+    ro.observe(el)
+
+    return () => ro.disconnect()
+  }, [])
 
   type SpecialProgramOverrideEntry = {
     programId: string
@@ -719,6 +737,29 @@ function SchedulePageContent() {
 
   useEffect(() => {
     const isScheduleNavTarget = (navLoading.targetHref ?? '').startsWith('/schedule')
+    // If we already have cached data for the current date (e.g. React dev remount / fast back nav),
+    // skip the initial overlay to avoid flicker loops.
+    const year = selectedDate.getFullYear()
+    const month = String(selectedDate.getMonth() + 1).padStart(2, '0')
+    const day = String(selectedDate.getDate()).padStart(2, '0')
+    const dateStr = `${year}-${month}-${day}`
+    const cached = getCachedSchedule(dateStr)
+    const canSkipInitialOverlay =
+      !!cached &&
+      ((cached as any).baselineSnapshot?.staff?.length > 0 ||
+        ((cached as any).therapistAllocs?.length ?? 0) > 0 ||
+        ((cached as any).pcaAllocs?.length ?? 0) > 0 ||
+        ((cached as any).bedAllocs?.length ?? 0) > 0)
+
+    if (canSkipInitialOverlay) {
+      setGridLoading(false)
+      gridLoadingUsesLocalBarRef.current = false
+      if (isScheduleNavTarget) {
+        window.requestAnimationFrame(() => navLoading.stop())
+      }
+      return
+    }
+
     setGridLoading(true)
     // If we're not coming from a navigation overlay, use the schedule's own top bar.
     gridLoadingUsesLocalBarRef.current = !isScheduleNavTarget
@@ -810,9 +851,8 @@ function SchedulePageContent() {
         resultAny = result as any
       }
 
-      setScheduleLoadedForDate(dateStr)
-
       if (!resultAny) {
+        setScheduleLoadedForDate(dateStr)
         setLastLoadTiming(timer.finalize({ dateStr, result: 'null' }))
         return
       }
@@ -1007,6 +1047,8 @@ function SchedulePageContent() {
         setInitializedSteps(new Set())
       }
 
+      // Mark loaded only after load-driven state updates were applied.
+      setScheduleLoadedForDate(dateStr)
       setLastLoadTiming(
         timer.finalize({
           dateStr,
@@ -7527,7 +7569,10 @@ function SchedulePageContent() {
               </div>
             </div>
           )}
-          <div className="shrink-0 space-y-4">
+          <div
+            className="shrink-0 flex flex-col gap-4 self-start min-h-0 overflow-hidden"
+            style={typeof rightContentHeight === 'number' && rightContentHeight > 0 ? { height: rightContentHeight } : undefined}
+          >
             {/* Summary */}
             {(() => {
               const totalBeds = wards.reduce((sum, ward) => sum + ward.total_beds, 0)
@@ -7568,53 +7613,55 @@ function SchedulePageContent() {
               )
             })()}
 
-            <StaffPool
-              therapists={therapists}
-              pcas={pcas}
-              inactiveStaff={inactiveStaff}
-              bufferStaff={bufferStaff}
-              onEditStaff={handleEditStaff}
-              staffOverrides={staffOverrides}
-              specialPrograms={specialPrograms}
-              pcaAllocations={pcaAllocations}
-              currentStep={currentStep}
-              initializedSteps={initializedSteps}
-              weekday={selectedDate ? getWeekday(selectedDate) : undefined}
-              onBufferStaffCreated={loadStaff}
-              onSlotTransfer={(staffId: string, targetTeam: string, slots: number[]) => {
-                // Find source team from allocations
-                let sourceTeam: Team | null = null
-                for (const [team, allocs] of Object.entries(pcaAllocations)) {
-                  if (allocs.some(a => a.staff_id === staffId)) {
-                    sourceTeam = team as Team
-                    break
+            <div className="flex-1 min-h-0">
+              <StaffPool
+                therapists={therapists}
+                pcas={pcas}
+                inactiveStaff={inactiveStaff}
+                bufferStaff={bufferStaff}
+                onEditStaff={handleEditStaff}
+                staffOverrides={staffOverrides}
+                specialPrograms={specialPrograms}
+                pcaAllocations={pcaAllocations}
+                currentStep={currentStep}
+                initializedSteps={initializedSteps}
+                weekday={selectedDate ? getWeekday(selectedDate) : undefined}
+                onBufferStaffCreated={loadStaff}
+                onSlotTransfer={(staffId: string, targetTeam: string, slots: number[]) => {
+                  // Find source team from allocations
+                  let sourceTeam: Team | null = null
+                  for (const [team, allocs] of Object.entries(pcaAllocations)) {
+                    if (allocs.some(a => a.staff_id === staffId)) {
+                      sourceTeam = team as Team
+                      break
+                    }
                   }
-                }
-                if (sourceTeam) {
-                  // Update drag state and perform transfer
-                  const staffMember = staff.find(s => s.id === staffId)
-                  const isBufferStaff = staffMember?.status === 'buffer'
-                  setPcaDragState({
-                    isActive: true,
-                    isDraggingFromPopover: false,
-                    staffId,
-                    staffName: staffMember?.name || null,
-                    sourceTeam,
-                    availableSlots: staffOverrides[staffId]?.availableSlots || [1, 2, 3, 4],
-                    selectedSlots: slots,
-                    showSlotSelection: false,
-                    popoverPosition: null,
-                    isBufferStaff: isBufferStaff || false,
-                  })
-                  performSlotTransfer(targetTeam as Team)
-                }
-              }}
-            />
+                  if (sourceTeam) {
+                    // Update drag state and perform transfer
+                    const staffMember = staff.find(s => s.id === staffId)
+                    const isBufferStaff = staffMember?.status === 'buffer'
+                    setPcaDragState({
+                      isActive: true,
+                      isDraggingFromPopover: false,
+                      staffId,
+                      staffName: staffMember?.name || null,
+                      sourceTeam,
+                      availableSlots: staffOverrides[staffId]?.availableSlots || [1, 2, 3, 4],
+                      selectedSlots: slots,
+                      showSlotSelection: false,
+                      popoverPosition: null,
+                      isBufferStaff: isBufferStaff || false,
+                    })
+                    performSlotTransfer(targetTeam as Team)
+                  }
+                }}
+              />
+            </div>
           </div>
 
           <div className="flex-1 overflow-x-auto">
             {/* Team Columns */}
-            <div className="flex-1">
+            <div className="flex-1" ref={rightContentRef}>
                 {/* Team headers row */}
                 <div className="grid grid-cols-8 gap-2 mb-4">
                   {TEAMS.map((team) => (
@@ -7807,6 +7854,20 @@ function SchedulePageContent() {
                     ))}
                   </div>
                 </div>
+
+                {/* PCA Dedicated Schedule (separate table, below entire team grid) */}
+                <PCADedicatedScheduleTable
+                  allPCAStaff={[
+                    ...staff.filter(s => s.rank === 'PCA'),
+                    ...bufferStaff.filter(s => s.rank === 'PCA'),
+                  ]}
+                  pcaAllocationsByTeam={pcaAllocations}
+                  staffOverrides={staffOverrides as any}
+                  specialPrograms={specialPrograms}
+                  weekday={currentWeekday}
+                  stepStatus={stepStatus}
+                  initializedSteps={initializedSteps}
+                />
               </div>
             </div>
           </div>

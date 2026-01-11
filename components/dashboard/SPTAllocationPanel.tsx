@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -10,13 +10,14 @@ import { getSlotLabel } from '@/lib/utils/slotHelpers'
 import { Trash2 } from 'lucide-react'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import { useToast } from '@/components/ui/toast-provider'
+import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
 
 export function SPTAllocationPanel() {
   const [allocations, setAllocations] = useState<SPTAllocation[]>([])
   const [staff, setStaff] = useState<Staff[]>([])
   const [loading, setLoading] = useState(false)
   const [editingAllocation, setEditingAllocation] = useState<SPTAllocation | null>(null)
-  const editFormRef = useRef<HTMLDivElement>(null)
+  const expand = useDashboardExpandableCard<string>({ animationMs: 220 })
   const supabase = createClientComponentClient()
   const toast = useToast()
 
@@ -90,9 +91,7 @@ export function SPTAllocationPanel() {
           <div className="space-y-4">
             <Button onClick={() => {
               setEditingAllocation({} as SPTAllocation)
-              setTimeout(() => {
-                editFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-              }, 100)
+              expand.open('new')
             }}>
               Add New SPT Allocation
             </Button>
@@ -102,13 +101,31 @@ export function SPTAllocationPanel() {
               
               if (isEditing) {
                 return (
-                  <div key={alloc.id} ref={editFormRef}>
-                    <SPTAllocationForm
-                      allocation={editingAllocation}
-                      staff={staff}
-                      onSave={handleSave}
-                      onCancel={() => setEditingAllocation(null)}
-                    />
+                  <div
+                    key={alloc.id}
+                    ref={expand.expandedRef}
+                    className={expand.getExpandedAnimationClass(alloc.id)}
+                  >
+                    <Card className="p-4 border-2">
+                      <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-semibold">
+                          Edit: {staff.find(s => s.id === alloc.staff_id)?.name || 'Unknown'}
+                        </h3>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => expand.close(() => setEditingAllocation(null))}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                      <SPTAllocationForm
+                        allocation={editingAllocation}
+                        staff={staff}
+                        onSave={handleSave}
+                        onCancel={() => expand.close(() => setEditingAllocation(null))}
+                      />
+                    </Card>
                   </div>
                 )
               }
@@ -139,9 +156,7 @@ export function SPTAllocationPanel() {
                         size="sm"
                         onClick={() => {
                           setEditingAllocation(alloc)
-                          setTimeout(() => {
-                            editFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                          }, 100)
+                          expand.open(alloc.id)
                         }}
                       >
                         Edit
@@ -161,13 +176,28 @@ export function SPTAllocationPanel() {
             })}
 
             {editingAllocation && !editingAllocation.id && (
-              <div ref={editFormRef}>
-                <SPTAllocationForm
-                  allocation={editingAllocation}
-                  staff={staff}
-                  onSave={handleSave}
-                  onCancel={() => setEditingAllocation(null)}
-                />
+              <div
+                ref={expand.expandedRef}
+                className={expand.getExpandedAnimationClass('new')}
+              >
+                <Card className="p-4 border-2">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-semibold">Add New SPT Allocation</h3>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => expand.close(() => setEditingAllocation(null))}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                  <SPTAllocationForm
+                    allocation={editingAllocation}
+                    staff={staff}
+                    onSave={handleSave}
+                    onCancel={() => expand.close(() => setEditingAllocation(null))}
+                  />
+                </Card>
               </div>
             )}
           </div>

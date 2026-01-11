@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
-**Last Updated**: 2026-01-10 
-**Latest Phase**: Phase 18 - Schedule Loading Optimization & SPT FTE=0 Edge Case Fixes  
+**Last Updated**: 2026-01-12 
+**Latest Phase**: Phase 19 - PCA Dedicated Schedule Table & Staff Pool Scroll Isolation  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -360,6 +360,51 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - **Solution**: Refactored `Tooltip` component to use direct `left/top` positioning with dynamic measurement and clamping within viewport boundaries
   - **Impact**: Tooltip stays fully visible within viewport
   - **Files Modified**: `components/ui/tooltip.tsx`
+
+### Phase 19: PCA Dedicated Schedule Table & Staff Pool Scroll Isolation (Latest)
+- ✅ **PCA Dedicated Schedule Table**
+  - **Purpose**: Read-only table presenting PCA allocation data from a PCA-per-column perspective (complement to team-based grid)
+  - **Location**: Below entire team grid (Block 6), separate from team grid with independent column widths
+  - **Layout**: 
+    - Row 1: PCA names (floating → non-floating → buffer, sorted by name)
+    - Rows 2-5: Slot assignments (Slot 1-4) showing team assignments per PCA
+  - **Display Logic**:
+    - **Substitutions**: Team name in green with underline (floating PCA substituting for non-floating)
+    - **Leave (full day)**: Merged rows showing "NA" on line 1, leave type in brackets on line 2
+    - **Leave (partial)**: Per-slot "NA (leaveType)" display
+    - **Invalid slots**: Team name + time interval (HHMM-HHMM) in blue, wrapped to 2 lines
+    - **Non-floating PCA (主位)**: Merged available slots showing "Team 主位" (主位 wraps to 2nd line as whole word)
+    - **Special programs**: Team name on line 1, program name on line 2 (red text)
+  - **Step Gating**: Shows data up to furthest completed step; Step 1 shows leave/invalid slot edits from `staffOverrides`
+  - **Scrolling**:
+    - Horizontal scrolling with wheel-to-horizontal conversion (carousel-like)
+    - Scroll isolation: wheel events inside table container prevent page scroll
+    - Auto-hide scrollbar: Shows on mouse enter/move, hides immediately on mouse leave, auto-dismisses after 3s idle
+    - Navigation buttons (left/right arrows) with same auto-hide behavior
+  - **Refresh Button**: Ghost refresh button to re-render table from current in-memory state
+  - **Component**: `components/allocation/PCADedicatedScheduleTable.tsx`
+  - **Files Modified**: `app/(dashboard)/schedule/page.tsx`, `components/allocation/PCADedicatedScheduleTable.tsx`
+- ✅ **Staff Pool Scroll Isolation**
+  - **Purpose**: Unified vertical scrollbar for entire Staff Pool list (Therapist Pool + PCA Pool + Buffer Staff Pool + Inactive Staff Pool) with isolated scrolling
+  - **Layout Changes**:
+    - Left column wrapper uses flex layout with `ResizeObserver` to match right column height (aligns bottom with PCA table)
+    - Staff Pool uses single scroll container wrapping all internal cards
+    - Summary column stays fixed above scrollable Staff Pool list
+  - **Scrolling Behavior**:
+    - **Isolated scrolling**: Wheel events inside Staff Pool scroll area prevent page scroll (native `wheel` listener with `passive: false`)
+    - **Auto-hide scrollbar**: Same behavior as PCA table (show on enter/move, hide on leave, 3s idle dismiss)
+    - **Left-side scrollbar**: Uses `direction: rtl` on scroll container + `direction: ltr` on inner wrapper to position scrollbar on left (avoids clashing with hover edit icon on staff cards)
+  - **Component**: `components/allocation/StaffPool.tsx`
+  - **Files Modified**: `app/(dashboard)/schedule/page.tsx`, `components/allocation/StaffPool.tsx`
+- ✅ **Reusable CSS Scrollbar Classes**
+  - **Purpose**: Centralized scrollbar styling for consistent appearance across components
+  - **Classes**:
+    - `.pca-like-scrollbar`: PCA table-style scrollbar (thumb: `#9ca3af`, track: `#e5e7eb`, hover: `#6b7280`)
+    - `.pca-like-scrollbar--hidden`: Hides scrollbar completely (for auto-hide behavior)
+    - `.scrollbar-visible`: Generic visible scrollbar for checkbox panels (thumb: `#cbd5e1`, track: `#f1f5f9`)
+  - **Dark Mode Support**: All scrollbar classes include dark mode variants
+  - **Usage**: Apply base class + conditional hidden variant based on visibility state
+  - **Files Modified**: `app/globals.css`
 
 ### Phase 9: Pending FTE Bug Fix & Safe Wrapper System
 - ✅ **Critical Bug Fix: Pending FTE Overwrite Issue**
@@ -1324,6 +1369,28 @@ The schedule page uses a three-layer state management pattern:
 - **Component Props**: Ensure parent and child component prop types match exactly
 - **Build Verification**: Always run `npm run build` to catch strict mode errors
 
+### Pattern 10: Reusable CSS Scrollbar Classes
+- **Purpose**: Consistent scrollbar styling across components with auto-hide capability
+- **Available Classes**:
+  - `.pca-like-scrollbar`: PCA table-style scrollbar (gray theme, 12px width/height)
+  - `.pca-like-scrollbar--hidden`: Hides scrollbar completely (for auto-hide behavior)
+  - `.scrollbar-visible`: Generic visible scrollbar for checkbox panels (lighter gray theme)
+- **Usage Pattern**:
+```typescript
+// Auto-hide scrollbar (PCA table, Staff Pool)
+<div className={`overflow-y-auto pca-like-scrollbar ${visible ? '' : 'pca-like-scrollbar--hidden'}`}>
+  {/* content */}
+</div>
+
+// Always-visible scrollbar (checkbox panels)
+<div className="overflow-y-auto scrollbar-visible">
+  {/* content */}
+</div>
+```
+- **Left-Side Scrollbar Trick**: Use `direction: rtl` on scroll container + `direction: ltr` on inner wrapper to position scrollbar on left side
+- **Dark Mode**: All classes include dark mode variants automatically
+- **Location**: `app/globals.css`
+
 ---
 
 ## Common Pitfalls & Solutions
@@ -1381,6 +1448,7 @@ The schedule page uses a three-layer state management pattern:
 - `types/allocation.ts` - Allocation-related TypeScript types
 
 ### Component Files
+- `components/allocation/PCADedicatedScheduleTable.tsx` - PCA-centric schedule table (read-only, below team grid)
 - `components/allocation/PCABlock.tsx` - PCA allocation display
 - `components/allocation/TherapistBlock.tsx` - Therapist allocation display
 - `components/allocation/CalculationBlock.tsx` - Beds Calculations display with hover pencil icon and bed counts edit dialog trigger

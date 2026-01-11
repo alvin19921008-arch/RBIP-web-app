@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import { createEmptyTeamRecordFactory } from '@/lib/utils/types'
 import { Trash2, Edit2, ChevronUp, ChevronDown } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast-provider'
+import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
 
 interface StaffSpecialProgram {
   name: string
@@ -46,7 +47,7 @@ export function SpecialProgramPanel() {
   const [savedTherapistPreferenceOrder, setSavedTherapistPreferenceOrder] = useState<Record<Team, string[]>>(createEmptyTeamRecordFactory<string[]>(() => []))
   const [showPreferenceDialog, setShowPreferenceDialog] = useState(false)
   const [pendingSave, setPendingSave] = useState<(() => Promise<void>) | null>(null)
-  const editFormRef = useRef<HTMLDivElement>(null)
+  const expand = useDashboardExpandableCard<string>({ animationMs: 220 })
   const supabase = createClientComponentClient()
   const toast = useToast()
 
@@ -156,11 +157,9 @@ export function SpecialProgramPanel() {
     // Load saved therapist preference order from existing program
     const savedTherapistOrder = existingProgram?.therapist_preference_order || {}
     setSavedTherapistPreferenceOrder(savedTherapistOrder as Record<Team, string[]>)
-    
-    // Scroll to edit form after a brief delay to allow DOM update
-    setTimeout(() => {
-      editFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }, 100)
+
+    // Expand + auto-scroll the edit card into view
+    expand.open(`staffprog:${programName}`)
   }
 
   const handleAddStaffToProgram = async (programName: string, staffIds: string[]) => {
@@ -442,12 +441,14 @@ export function SpecialProgramPanel() {
       }
       
       await loadData()
-      setEditingStaffProgram(null)
-      setShowPreferenceDialog(false)
-      setOverlaps([])
-      setPreferenceOrders(createEmptyTeamRecordFactory<string[]>(() => []))
-      setPcaPreferenceOrder([])
-      setPendingSave(null)
+      expand.close(() => {
+        setEditingStaffProgram(null)
+        setShowPreferenceDialog(false)
+        setOverlaps([])
+        setPreferenceOrders(createEmptyTeamRecordFactory<string[]>(() => []))
+        setPcaPreferenceOrder([])
+        setPendingSave(null)
+      })
     } catch (err) {
       console.error('Error saving staff program:', err)
       toast.error('Failed to save program. Please try again.')
@@ -494,7 +495,7 @@ export function SpecialProgramPanel() {
         await supabase.from('special_programs').insert(program)
       }
       await loadData()
-      setEditingProgram(null)
+      expand.close(() => setEditingProgram(null))
       toast.success('Special program saved.')
     } catch (err) {
       console.error('Error saving program:', err)
@@ -554,11 +555,19 @@ export function SpecialProgramPanel() {
                     
                     if (isEditing) {
                       return (
-                        <div key={sp.name} ref={editFormRef} className="col-span-full">
+                        <div
+                          key={sp.name}
+                          ref={expand.expandedRef}
+                          className={`col-span-full ${expand.getExpandedAnimationClass(`staffprog:${sp.name}`)}`}
+                        >
                           <Card className="p-4 border-2">
                             <div className="flex justify-between items-center mb-4">
                               <h3 className="text-lg font-semibold">Edit: {sp.name}</h3>
-                              <Button variant="ghost" size="sm" onClick={() => setEditingStaffProgram(null)}>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => expand.close(() => setEditingStaffProgram(null))}
+                              >
                                 Cancel
                               </Button>
                             </div>
@@ -579,7 +588,7 @@ export function SpecialProgramPanel() {
                                     <p>The allocation algorithm would only assign PCA to Robotic, so only PCA is needed to be included here.</p>
                                   </div>
                                 )}
-                                <div className="max-h-40 overflow-y-auto border rounded p-2">
+                                <div className="max-h-40 overflow-y-auto border rounded p-2 pr-1 scrollbar-visible">
                                   {staff
                                     .filter(s => {
                                       // For DRM, filter out PCA staff
@@ -954,9 +963,11 @@ export function SpecialProgramPanel() {
                               <div className="flex space-x-2">
                                 <Button onClick={() => handleSaveStaffProgram()}>Save All Changes</Button>
                                 <Button variant="outline" onClick={() => {
-                                  setEditingStaffProgram(null)
-                                  setPcaPreferenceOrder([])
-                                  setSavedTherapistPreferenceOrder(createEmptyTeamRecordFactory<string[]>(() => []))
+                                  expand.close(() => {
+                                    setEditingStaffProgram(null)
+                                    setPcaPreferenceOrder([])
+                                    setSavedTherapistPreferenceOrder(createEmptyTeamRecordFactory<string[]>(() => []))
+                                  })
                                 }}>
                                   Cancel
                                 </Button>
@@ -1051,7 +1062,12 @@ export function SpecialProgramPanel() {
               <div>
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="text-lg font-semibold">Configured Special Programs</h3>
-                  <Button onClick={() => setEditingProgram({} as SpecialProgram)}>
+                  <Button
+                    onClick={() => {
+                      setEditingProgram({} as SpecialProgram)
+                      expand.open('program:new')
+                    }}
+                  >
                     Add New Program
                   </Button>
                 </div>
@@ -1088,7 +1104,10 @@ export function SpecialProgramPanel() {
                         variant="outline"
                         size="sm"
                         className="mt-3"
-                        onClick={() => setEditingProgram(program)}
+                        onClick={() => {
+                          setEditingProgram(program)
+                          expand.open(`program:${program.id}`)
+                        }}
                       >
                         Edit
                       </Button>
@@ -1101,7 +1120,12 @@ export function SpecialProgramPanel() {
             {/* Add New Program Button (if no configured programs) */}
             {configuredProgramsOnly.length === 0 && (
               <div>
-                <Button onClick={() => setEditingProgram({} as SpecialProgram)}>
+                <Button
+                  onClick={() => {
+                    setEditingProgram({} as SpecialProgram)
+                    expand.open('program:new')
+                  }}
+                >
                   Add New Program
                 </Button>
               </div>
@@ -1110,12 +1134,17 @@ export function SpecialProgramPanel() {
 
             {/* Edit Configured Program Form */}
             {editingProgram && (
-              <SpecialProgramForm
-                program={editingProgram}
-                staff={staff}
-                onSave={handleSaveProgram}
-                onCancel={() => setEditingProgram(null)}
-              />
+              <div
+                ref={expand.expandedRef}
+                className={expand.getExpandedAnimationClass(`program:${(editingProgram as any).id ?? 'new'}`)}
+              >
+                <SpecialProgramForm
+                  program={editingProgram}
+                  staff={staff}
+                  onSave={handleSaveProgram}
+                  onCancel={() => expand.close(() => setEditingProgram(null))}
+                />
+              </div>
             )}
           </div>
         )}
@@ -1258,7 +1287,7 @@ function SpecialProgramForm({
 
       <div>
         <label className="block text-sm font-medium mb-1">Assigned Staff</label>
-        <div className="max-h-40 overflow-y-auto border rounded p-2">
+        <div className="max-h-40 overflow-y-auto border rounded p-2 pr-1 scrollbar-visible">
           {staff.map((s) => (
             <label key={s.id} className="flex items-center space-x-2">
               <input

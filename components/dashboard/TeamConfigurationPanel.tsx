@@ -13,6 +13,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { X } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast-provider'
+import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
 
 interface TeamSettings {
   team: Team
@@ -77,6 +78,9 @@ export function TeamConfigurationPanel() {
   const [portionPopover, setPortionPopover] = useState<PortionPopoverState | null>(null)
   const supabase = createClientComponentClient()
   const toast = useToast()
+  const teamConfigCheckboxClass =
+    'data-[state=checked]:bg-blue-600 data-[state=checked]:text-white'
+  const expand = useDashboardExpandableCard<string>({ animationMs: 220 })
 
   // Edit state for current team
   const [editDisplayName, setEditDisplayName] = useState('')
@@ -143,6 +147,7 @@ export function TeamConfigurationPanel() {
 
   const handleEditTeam = (team: Team) => {
     setEditingTeam(team)
+    expand.open(team)
     const settings = teamSettings[team]
     setEditDisplayName(settings?.display_name || team)
 
@@ -174,8 +179,10 @@ export function TeamConfigurationPanel() {
   }
 
   const handleCancelEdit = () => {
-    setEditingTeam(null)
-    setPortionPopover(null)
+    expand.close(() => {
+      setEditingTeam(null)
+      setPortionPopover(null)
+    })
   }
 
   const handleSave = async () => {
@@ -317,8 +324,10 @@ export function TeamConfigurationPanel() {
       }
 
       await loadData()
-      setEditingTeam(null)
-      setPortionPopover(null)
+      expand.close(() => {
+        setEditingTeam(null)
+        setPortionPopover(null)
+      })
       toast.success('Team configuration saved.')
     } catch (err) {
       console.error('Error saving team configuration:', err)
@@ -459,7 +468,11 @@ export function TeamConfigurationPanel() {
                 const sortedWards = sortWardsWithSelectedFirst(editSelectedWards)
 
                 return (
-                  <Card key={team} className="p-4 border-2 col-span-full">
+                  <Card
+                    key={team}
+                    ref={expand.expandedRef}
+                    className={`p-4 border-2 col-span-full ${expand.getExpandedAnimationClass(team)}`}
+                  >
                     <div className="flex justify-between items-center mb-4">
                       <h3 className="text-lg font-semibold">Edit: {team}</h3>
                       <Button variant="ghost" size="sm" onClick={handleCancelEdit}>
@@ -482,7 +495,7 @@ export function TeamConfigurationPanel() {
                       {/* Team head (APPT) */}
                       <div>
                         <Label>Team head (APPT)</Label>
-                        <div className="max-h-40 overflow-y-auto border rounded p-2 mt-1 space-y-2">
+                        <div className="max-h-40 overflow-y-auto border rounded p-2 pr-1 mt-1 space-y-2 scrollbar-visible">
                           {/* Current team members */}
                           {currentAPPT.length > 0 && (
                             <div>
@@ -490,6 +503,7 @@ export function TeamConfigurationPanel() {
                               {currentAPPT.map((s) => (
                                 <label key={s.id} className="flex items-center space-x-2 py-1">
                                   <Checkbox
+                                    className={teamConfigCheckboxClass}
                                     checked={!editRemovedAPPT.has(s.id)}
                                     onCheckedChange={(checked) => {
                                       setEditRemovedAPPT((prev) => {
@@ -517,6 +531,7 @@ export function TeamConfigurationPanel() {
                               {unassignedAPPT.map((s) => (
                             <label key={s.id} className="flex items-center space-x-2 py-1">
                               <Checkbox
+                                className={teamConfigCheckboxClass}
                                 checked={editSelectedAPPT.has(s.id)}
                                 onCheckedChange={(checked) => {
                                   const newSet = new Set(editSelectedAPPT)
@@ -544,7 +559,7 @@ export function TeamConfigurationPanel() {
                       {/* Team's RPT */}
                       <div>
                         <Label>Team's RPT</Label>
-                        <div className="max-h-40 overflow-y-auto border rounded p-2 mt-1 space-y-2">
+                        <div className="max-h-40 overflow-y-auto border rounded p-2 pr-1 mt-1 space-y-2 scrollbar-visible">
                           {/* Current team members */}
                           {currentRPT.length > 0 && (
                             <div>
@@ -552,6 +567,7 @@ export function TeamConfigurationPanel() {
                               {currentRPT.map((s) => (
                                 <label key={s.id} className="flex items-center space-x-2 py-1">
                                   <Checkbox
+                                    className={teamConfigCheckboxClass}
                                     checked={!editRemovedRPT.has(s.id)}
                                     onCheckedChange={(checked) => {
                                       setEditRemovedRPT((prev) => {
@@ -579,6 +595,7 @@ export function TeamConfigurationPanel() {
                               {unassignedRPT.map((s) => (
                             <label key={s.id} className="flex items-center space-x-2 py-1">
                               <Checkbox
+                                className={teamConfigCheckboxClass}
                                 checked={editSelectedRPT.has(s.id)}
                                 onCheckedChange={(checked) => {
                                   const newSet = new Set(editSelectedRPT)
@@ -606,7 +623,7 @@ export function TeamConfigurationPanel() {
                       {/* Team's non-floating PCA */}
                       <div>
                         <Label>Team's non-floating PCA</Label>
-                        <div className="max-h-40 overflow-y-auto border rounded p-2 mt-1 space-y-2">
+                        <div className="max-h-40 overflow-y-auto border rounded p-2 pr-1 mt-1 space-y-2 scrollbar-visible">
                           {/* Current team members */}
                           {currentPCA.length > 0 && (
                             <div>
@@ -614,6 +631,7 @@ export function TeamConfigurationPanel() {
                               {currentPCA.map((s) => (
                                 <label key={s.id} className="flex items-center space-x-2 py-1">
                                   <Checkbox
+                                    className={teamConfigCheckboxClass}
                                     checked={!editRemovedPCA.has(s.id)}
                                     onCheckedChange={(checked) => {
                                       setEditRemovedPCA((prev) => {
@@ -641,6 +659,7 @@ export function TeamConfigurationPanel() {
                               {unassignedPCA.map((s) => (
                             <label key={s.id} className="flex items-center space-x-2 py-1">
                               <Checkbox
+                                className={teamConfigCheckboxClass}
                                 checked={editSelectedPCA.has(s.id)}
                                 onCheckedChange={(checked) => {
                                       setEditSelectedPCA((prev) => {
@@ -670,10 +689,11 @@ export function TeamConfigurationPanel() {
                       {/* Designated wards */}
                       <div>
                         <Label>Designated ward & responsible bed number</Label>
-                        <div className="max-h-40 overflow-y-auto border rounded p-2 mt-1">
+                        <div className="max-h-40 overflow-y-auto border rounded p-2 pr-1 mt-1 scrollbar-visible">
                           {sortedWards.map((w) => (
                             <label key={w.id} className="flex items-center space-x-2 py-1">
                               <Checkbox
+                                className={teamConfigCheckboxClass}
                                 checked={editSelectedWards.has(w.id)}
                                 onCheckedChange={() => handleWardToggle(w.id)}
                               />
