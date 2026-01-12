@@ -441,7 +441,7 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - **Toast Alignment**: Fixed vertical centering for single-line notification text
   - **Files Modified**: `app/(dashboard)/schedule/page.tsx`, `components/layout/Navbar.tsx`, `components/allocation/StepIndicator.tsx`, `components/allocation/ScheduleCopyWizard.tsx`, `components/ui/action-toast.tsx`
 
-### Phase 21: Account Management, Access Roles, Step Clear & Step Validation Enhancements (Latest)
+### Phase 21: Account Management, Access Roles, Step Clear & Step Validation Enhancements
 - ✅ **Account Management Dashboard**
   - New Dashboard panel: list/create/edit/delete accounts + batch delete
   - Columns: username, email (nullable), created date, access badge + dropdown
