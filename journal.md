@@ -462,7 +462,18 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
 - ✅ **Staff Pool Scroll Stability**
   - Restored left-side Staff Pool vertical scrolling and aligned bottom edge to PCA Dedicated Schedule table (excluding notes board)
 
-### Phase 22: Buffer PCA FTE Display Fix & Popover Positioning Enhancement (Latest)
+### Phase 22: Contextual Menu System, Buffer PCA Fix & Popover Positioning (Latest)
+- ✅ **Contextual Menu System for Staff Cards**
+  - New `StaffContextMenu` component accessible via edit pencil icon click or right-click on staff card
+  - Menu options: Leave edit, Move slot, Discard slot, Split slot (therapist only), Merge slot (therapist only), Fill color
+  - Step-based validation: Options disabled based on current step with tooltips (e.g., therapist actions only in Step 2, PCA actions only in Step 3+)
+  - Move slot: Team picker popover → slot picker (multi-slot PCA) → confirmation; supports cross-team transfers with reminders
+  - Discard slot: Multi-select highlight mode for therapist, slot picker for multi-slot PCA; updates staff pool battery accordingly
+  - Split slot: Creates 2 standalone cards for same therapist; user inputs FTE for each portion (multiples of 0.25); supports swap input mode for non-0.25-multiple totals
+  - Merge slot: User selects multiple cards of same therapist; supports swap mode to merge current team into selected destination
+  - Fill color: Color picker with 10 color options; stored in `staffOverrides.cardColorByTeam` and savable to DB
+  - Multi-page popover system: `TeamPickerPopover`, `SlotSelectionPopover`, `ConfirmPopover` with Prev/Next navigation and page indicators
+  - Database schema change: Changed `schedule_therapist_allocations` unique constraint from `UNIQUE(schedule_id, staff_id)` to `UNIQUE(schedule_id, staff_id, team)` to support split allocations
 - ✅ **Buffer PCA FTE Display Fix**
   - Fixed bug where buffer floating PCA with `buffer_fte=0.5` was incorrectly shown as 1.0 / 4 slots in Step 2.1 and Staff Pool
   - Root cause: Buffer PCA `availableSlots` was being clamped to `[1,2]`, causing Step 2.1 to exclude it when missing slots were `[3,4]`; Staff Pool calculated true FTE from `availableSlots.length` instead of `buffer_fte`
