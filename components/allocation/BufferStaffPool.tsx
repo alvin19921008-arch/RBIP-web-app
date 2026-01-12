@@ -121,8 +121,20 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
       }
     }
     
-    // Initial True-FTE = available slots * 0.25
-    let trueFTE = availableSlots.length * 0.25
+    // Capacity FTE:
+    // - For buffer PCA, capacity should be driven by buffer_fte (or explicit override.fteRemaining), NOT by a [1,2,3,4] list.
+    // - For regular PCA, capacity is driven by availableSlots length.
+    const slotCapacityFTE = availableSlots.length * 0.25
+    const baseCapacityFTE =
+      staff.status === 'buffer' && staff.buffer_fte !== undefined
+        ? staff.buffer_fte
+        : slotCapacityFTE
+    const capacityFTE =
+      typeof override?.fteRemaining === 'number'
+        ? Math.max(0, Math.min(override.fteRemaining, baseCapacityFTE, slotCapacityFTE))
+        : Math.max(0, Math.min(baseCapacityFTE, slotCapacityFTE))
+
+    let trueFTE = capacityFTE
     
     // Subtract special program FTE (only if Step 2 has run - special programs are assigned in Step 2)
     // In Step 1, don't subtract special program FTE yet
@@ -152,7 +164,7 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
     })
     const assignedFTE = assignedSlots * 0.25
     
-    // Final True-FTE = initial - special program - assigned
+    // Final True-FTE = capacity - special program - assigned
     return Math.max(0, trueFTE - assignedFTE)
   }
 

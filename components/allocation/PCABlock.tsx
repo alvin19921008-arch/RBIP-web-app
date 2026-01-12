@@ -1049,6 +1049,8 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                 fteRemaining={undefined}
                 slotDisplay={slotDisplayNode}
                 onEdit={(e) => onEditStaff?.(allocation.staff_id, e)}
+                onOpenContextMenu={(e) => onEditStaff?.(allocation.staff_id, e)}
+                fillColorClassName={(staffOverrides as any)?.[allocation.staff_id]?.cardColorByTeam?.[team]}
                 borderColor={borderColor}
                 nameColor={nameStyle}
                 dragTeam={team}
@@ -1112,6 +1114,8 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                 fteRemaining={undefined}
                 slotDisplay={slotDisplayNode}
                 onEdit={(e) => onEditStaff?.(allocation.staff_id, e)}
+                onOpenContextMenu={(e) => onEditStaff?.(allocation.staff_id, e)}
+                fillColorClassName={(staffOverrides as any)?.[allocation.staff_id]?.cardColorByTeam?.[team]}
                 nameColor={nameColor}
                 borderColor={borderColor}
                 dragTeam={team}

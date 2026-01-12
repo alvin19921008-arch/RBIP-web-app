@@ -17,10 +17,12 @@ interface StaffCardProps {
   sptDisplay?: string
   slotDisplay?: ReactNode // Optional: slot display with leave/come back times
   onEdit?: (event?: React.MouseEvent) => void
+  onOpenContextMenu?: (event: React.MouseEvent) => void
   onConvertToInactive?: (event?: React.MouseEvent) => void // For buffer staff: convert back to inactive
   draggable?: boolean
   nameColor?: string // Optional: custom color class for name (e.g., 'text-red-600')
   borderColor?: string // Optional: custom border color class (e.g., 'border-green-700')
+  fillColorClassName?: string // Optional: background fill color classes (schedule overrides)
   dragTeam?: string // Optional: team context for drag-and-drop (used for PCA slot transfers)
   baseFTE?: number // For battery outer border (Base_FTE-remaining)
   trueFTE?: number // For battery green fill (True-FTE-remaining)
@@ -67,7 +69,7 @@ function wrapTimeRangesInNode(node: ReactNode): ReactNode {
   return node
 }
 
-export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDisplay, onEdit, onConvertToInactive, draggable = true, nameColor, borderColor, dragTeam, baseFTE, trueFTE, isFloatingPCA, showFTE, currentStep, initializedSteps }: StaffCardProps) {
+export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDisplay, onEdit, onOpenContextMenu, onConvertToInactive, draggable = true, nameColor, borderColor, fillColorClassName, dragTeam, baseFTE, trueFTE, isFloatingPCA, showFTE, currentStep, initializedSteps }: StaffCardProps) {
   // Use composite ID to ensure each team's instance has a unique draggable id
   // This prevents drag styling from applying to the same staff card in other teams
   // Use '::' as separator (unlikely to appear in UUIDs)
@@ -139,6 +141,7 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
       className={cn(
         "relative p-1 border-2 rounded-md bg-card hover:bg-accent transition-colors",
         borderColorClass,
+        fillColorClassName,
         draggable && !isHoveringEdit && !isHoveringConvert && "cursor-move",
         isDragging && "opacity-50",
         showBattery && "overflow-hidden"
@@ -148,6 +151,12 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
         setIsHoveringCard(false)
         setIsHoveringEdit(false)
         setIsHoveringConvert(false)
+      }}
+      onContextMenu={(e) => {
+        if (!onOpenContextMenu) return
+        e.preventDefault()
+        e.stopPropagation()
+        onOpenContextMenu(e)
       }}
     >
       {showBattery ? (

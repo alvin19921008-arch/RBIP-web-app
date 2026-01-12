@@ -367,16 +367,16 @@ Added three new JSONB columns to `daily_schedules` table:
 
 ## Testing Checklist
 
-- [ ] Create new blank schedule → verify snapshot created immediately
-- [ ] Copy full schedule → verify all data copied including workflow_state
-- [ ] Copy hybrid schedule → verify Step 3+ reset, Step 1+2 preserved
+- [ x] Create new blank schedule → verify snapshot created immediately
+- [ x] Copy full schedule → verify all data copied including workflow_state
+- [ x] Copy hybrid schedule → verify Step 3+ reset, Step 1+2 preserved
 - [ ] Copy with buffer staff excluded → verify buffer staff converted to inactive in target
-- [ ] Copy from legacy schedule (no snapshot) → verify snapshot built during copy
-- [ ] Edit sched ule after copy → verify edits don't affect source schedule
-- [ ] Copy "to next working day" → verify dates auto-resolved correctly
-- [ ] Copy "from a specific date" → verify calendar grid disables correct dates
-- [ ] Buffer staff detection → verify shows only buffer staff actually used in source
-- [ ] Workflow state persistence → verify step completion tracked correctly
+- [x ] Copy from legacy schedule (no snapshot) → verify snapshot built during copy
+- [ x] Edit sched ule after copy → verify edits don't affect source schedule
+- [ x] Copy "to next working day" → verify dates auto-resolved correctly
+- [ x] Copy "from a specific date" → verify calendar grid disables correct dates
+- [ x] Buffer staff detection → verify shows only buffer staff actually used in source
+- [ x] Workflow state persistence → verify step completion tracked correctly
 
 ---
 

@@ -149,6 +149,13 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
               }
             }
             // If no leave but special program FTE subtraction exists, don't show FTE (displayFTE remains undefined)
+            // If therapist split override is active, always show per-team FTE (even if it equals 1.0)
+            const splitMap = (staffOverrides as any)?.[allocation.staff_id]?.therapistTeamFTEByTeam as
+              | Partial<Record<Team, number>>
+              | undefined
+            if (!hasLeave && splitMap && typeof splitMap[team] === 'number') {
+              displayFTE = splitMap[team] as number
+            }
             
             // Buffer therapist: transferrable in Step 2 only
             // Regular therapist: transferrable in Step 2 only
@@ -170,6 +177,8 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
                 fteRemaining={displayFTE}
                 sptDisplay={sptDisplay}
                 onEdit={(e) => onEditStaff?.(allocation.staff_id, e)}
+                onOpenContextMenu={(e) => onEditStaff?.(allocation.staff_id, e)}
+                fillColorClassName={(staffOverrides as any)?.[allocation.staff_id]?.cardColorByTeam?.[team]}
                 draggable={true} // Always allow dragging (will snap back if not in correct step)
                 dragTeam={team}
               />

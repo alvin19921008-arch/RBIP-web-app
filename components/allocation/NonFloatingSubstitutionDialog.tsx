@@ -160,6 +160,20 @@ export function NonFloatingSubstitutionDialog({
     return { preferred, floor, nonFloor }
   }
 
+  const getDisplaySlotsCount = (pcaId: string, availableSlots: number[]) => {
+    const staff = allStaff.find(s => s.id === pcaId)
+    if (staff?.status === 'buffer' && typeof (staff as any)?.buffer_fte === 'number') {
+      const override = staffOverrides?.[pcaId]
+      const capFte =
+        typeof (override as any)?.fteRemaining === 'number'
+          ? Math.max(0, Math.min((override as any).fteRemaining, (staff as any).buffer_fte))
+          : (staff as any).buffer_fte
+      const capSlots = Math.max(0, Math.min(4, Math.round(capFte / 0.25)))
+      return capSlots
+    }
+    return Array.isArray(availableSlots) ? availableSlots.length : 0
+  }
+
   return (
     <Dialog open={open} onOpenChange={(open) => !open && onCancel()}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
@@ -260,7 +274,7 @@ export function NonFloatingSubstitutionDialog({
                                     htmlFor={`${sub.nonFloatingPCAId}-${pca.id}`}
                                     className="text-sm cursor-pointer flex-1"
                                   >
-                                    {pca.name} ({pca.availableSlots.length} slots available)
+                                    {pca.name} ({getDisplaySlotsCount(pca.id, pca.availableSlots)} slots available)
                                   </label>
                                 </div>
                               )
@@ -291,7 +305,7 @@ export function NonFloatingSubstitutionDialog({
                                     htmlFor={`${sub.nonFloatingPCAId}-${pca.id}`}
                                     className="text-sm cursor-pointer flex-1"
                                   >
-                                    {pca.name} ({pca.availableSlots.length} slots available)
+                                    {pca.name} ({getDisplaySlotsCount(pca.id, pca.availableSlots)} slots available)
                                   </label>
                                 </div>
                               )
@@ -320,7 +334,7 @@ export function NonFloatingSubstitutionDialog({
                                     htmlFor={`${sub.nonFloatingPCAId}-${pca.id}`}
                                     className="text-sm cursor-pointer flex-1"
                                   >
-                                    {pca.name} ({pca.availableSlots.length} slots available)
+                                    {pca.name} ({getDisplaySlotsCount(pca.id, pca.availableSlots)} slots available)
                                   </label>
                                 </div>
                               )

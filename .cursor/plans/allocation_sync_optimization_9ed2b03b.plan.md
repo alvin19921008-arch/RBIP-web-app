@@ -1,3 +1,9 @@
+---
+name: ""
+overview: ""
+todos: []
+---
+
 # Allocation Sync Optimization Plan
 
 ## Problem Analysis
@@ -197,7 +203,7 @@ function detectChanges(current: StaffOverrides, previous: StaffOverrides) {
 
 ### 3. Update Schedule Page
 
-Modify [`app/(dashboard)/schedule/page.tsx`](app/\\\\\\\\\\\\\\\\\\\\\\\\\\\(dashboard)/schedule/page.tsx):
+Modify [`app/(dashboard)/schedule/page.tsx`](app/\\\\\\\\\\\\\\\\\\\\\\\\\\\\\(dashboard)/schedule/page.tsx):
 
 - Import and use `useAllocationSync` hook
 - Remove scattered `useEffect` hooks

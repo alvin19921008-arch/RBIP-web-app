@@ -47,10 +47,14 @@ import { FloatingPCAConfigDialog } from '@/components/allocation/FloatingPCAConf
 import { NonFloatingSubstitutionDialog } from '@/components/allocation/NonFloatingSubstitutionDialog'
 import { SpecialProgramOverrideDialog } from '@/components/allocation/SpecialProgramOverrideDialog'
 import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopover'
-import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X, ArrowLeft, Copy, ChevronLeft, ChevronRight } from 'lucide-react'
+import { StaffContextMenu } from '@/components/allocation/StaffContextMenu'
+import { TeamPickerPopover } from '@/components/allocation/TeamPickerPopover'
+import { ConfirmPopover } from '@/components/allocation/ConfirmPopover'
+import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X, ArrowLeft, Copy, ChevronLeft, ChevronRight, Pencil, Trash2, Plus, Highlighter, Check, GitMerge, Split } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { CalendarGrid } from '@/components/ui/calendar-grid'
 import { Tooltip } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import { getHongKongHolidays } from '@/lib/utils/hongKongHolidays'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
 import { createClientComponentClient } from '@/lib/supabase/client'
@@ -62,6 +66,7 @@ import { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { executeSlotAssignments, SlotAssignment } from '@/lib/utils/reservationLogic'
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import {
   toDbLeaveType,
@@ -349,6 +354,11 @@ function SchedulePageContent() {
     specialProgramOverrides?: SpecialProgramOverrideEntry[]
     slotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null };
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
+    // Therapist per-team split/merge overrides (ad hoc fallback)
+    therapistTeamFTEByTeam?: Partial<Record<Team, number>>
+    therapistNoAllocation?: boolean
+    // Staff card fill color (schedule grid only)
+    cardColorByTeam?: Partial<Record<Team, string>>
   }>>({})
   const [currentScheduleId, setCurrentScheduleId] = useState<string | null>(null)
   const [savedOverrides, setSavedOverrides] = useState<Record<string, {
@@ -377,6 +387,9 @@ function SchedulePageContent() {
     specialProgramOverrides?: SpecialProgramOverrideEntry[]
     slotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null };
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
+    therapistTeamFTEByTeam?: Partial<Record<Team, number>>
+    therapistNoAllocation?: boolean
+    cardColorByTeam?: Partial<Record<Team, string>>
   }>>({})
   const [saving, setSaving] = useState(false)
   const [scheduleLoadedForDate, setScheduleLoadedForDate] = useState<string | null>(null) // Track which date's schedule is loaded
@@ -672,6 +685,138 @@ function SchedulePageContent() {
     show: false,
     position: null,
   })
+
+  // Contextual menu (schedule grid staff cards only; staff pool remains direct leave edit for now)
+  const [staffContextMenu, setStaffContextMenu] = useState<{
+    show: boolean
+    position: { x: number; y: number } | null
+    staffId: string | null
+    team: Team | null
+    kind: 'therapist' | 'pca' | null
+  }>({
+    show: false,
+    position: null,
+    staffId: null,
+    team: null,
+    kind: null,
+  })
+
+  const [pcaContextAction, setPcaContextAction] = useState<{
+    show: boolean
+    mode: 'move' | 'discard'
+    phase: 'team' | 'slots'
+    position: { x: number; y: number } | null
+    staffId: string | null
+    staffName: string | null
+    sourceTeam: Team | null
+    targetTeam: Team | null
+    availableSlots: number[]
+    selectedSlots: number[]
+  }>({
+    show: false,
+    mode: 'move',
+    phase: 'team',
+    position: null,
+    staffId: null,
+    staffName: null,
+    sourceTeam: null,
+    targetTeam: null,
+    availableSlots: [],
+    selectedSlots: [],
+  })
+
+  const [therapistContextAction, setTherapistContextAction] = useState<{
+    show: boolean
+    mode: 'move' | 'discard' | 'split' | 'merge'
+    phase: 'team' | 'splitFte' | 'mergeSelect' | 'confirmDiscard'
+    position: { x: number; y: number } | null
+    staffId: string | null
+    staffName: string | null
+    sourceTeam: Team | null
+    targetTeam: Team | null
+    movedFteQuarter: number | null
+    splitInputMode?: 'moved' | 'stay'
+    mergeInputMode?: 'intoSource' | 'intoSelected'
+    mergeTeams: Team[]
+  }>({
+    show: false,
+    mode: 'move',
+    phase: 'team',
+    position: null,
+    staffId: null,
+    staffName: null,
+    sourceTeam: null,
+    targetTeam: null,
+    movedFteQuarter: null,
+    splitInputMode: 'moved',
+    mergeInputMode: 'intoSource',
+    mergeTeams: [],
+  })
+
+  const [colorContextAction, setColorContextAction] = useState<{
+    show: boolean
+    position: { x: number; y: number } | null
+    staffId: string | null
+    team: Team | null
+    selectedClassName: string | null
+  }>({
+    show: false,
+    position: null,
+    staffId: null,
+    team: null,
+    selectedClassName: null,
+  })
+
+  // Global click-outside close for contextual popovers (non-modal)
+  useEffect(() => {
+    const anyOpen = pcaContextAction.show || therapistContextAction.show || colorContextAction.show
+    if (!anyOpen) return
+
+    const onDown = () => {
+      if (pcaContextAction.show) {
+        setPcaContextAction({
+          show: false,
+          mode: 'move',
+          phase: 'team',
+          position: null,
+          staffId: null,
+          staffName: null,
+          sourceTeam: null,
+          targetTeam: null,
+          availableSlots: [],
+          selectedSlots: [],
+        })
+      }
+      if (therapistContextAction.show) {
+        setTherapistContextAction({
+          show: false,
+          mode: 'move',
+          phase: 'team',
+          position: null,
+          staffId: null,
+          staffName: null,
+          sourceTeam: null,
+          targetTeam: null,
+          movedFteQuarter: null,
+          splitInputMode: 'moved',
+          mergeInputMode: 'intoSource',
+          mergeTeams: [],
+        })
+      }
+      if (colorContextAction.show) {
+        setColorContextAction({
+          show: false,
+          position: null,
+          staffId: null,
+          team: null,
+          selectedClassName: null,
+        })
+      }
+    }
+
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [pcaContextAction.show, therapistContextAction.show, colorContextAction.show])
 
   // Warning popover for bed relieving edit outside Step 4
   const [bedRelievingEditWarningPopover, setBedRelievingEditWarningPopover] = useState<{
@@ -2359,7 +2504,10 @@ function SchedulePageContent() {
         let popoverX: number
         let popoverY: number
         
-        // Position to the left if it would be cut off on the right
+        const scrollX = window.scrollX
+        const scrollY = window.scrollY
+
+        // Position to the left if it would be cut off on the right (viewport-relative first)
         const rightEdge = rect.left + rect.width + padding + popoverWidth
         const windowWidth = window.innerWidth
         
@@ -2373,7 +2521,8 @@ function SchedulePageContent() {
         
         setLeaveEditWarningPopover({
           show: true,
-          position: { x: popoverX, y: popoverY },
+          // Store document coords so it scrolls with page
+          position: { x: popoverX + scrollX, y: popoverY + scrollY },
         })
         
         // Auto-dismiss after 5 seconds
@@ -2386,6 +2535,211 @@ function SchedulePageContent() {
     
     setEditingStaffId(staffId)
     setEditDialogOpen(true)
+  }
+
+  const closeStaffContextMenu = () => {
+    setStaffContextMenu({
+      show: false,
+      position: null,
+      staffId: null,
+      team: null,
+      kind: null,
+    })
+  }
+
+  const openStaffContextMenu = (
+    staffId: string,
+    team: Team,
+    kind: 'therapist' | 'pca',
+    clickEvent?: React.MouseEvent
+  ) => {
+    if (!clickEvent) {
+      // Fallback: open at a reasonable default position
+      const sx = typeof window !== 'undefined' ? window.scrollX : 0
+      const sy = typeof window !== 'undefined' ? window.scrollY : 0
+      setStaffContextMenu({
+        show: true,
+        // Document-relative position (so popover scrolls with page)
+        position: { x: sx + 100, y: sy + 100 },
+        staffId,
+        team,
+        kind,
+      })
+      return
+    }
+
+    const anchor = clickEvent.currentTarget as HTMLElement
+    const rect = anchor.getBoundingClientRect()
+
+    const popoverWidth = 220
+    const padding = 10
+    const estimatedHeight = 240
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+    const scrollX = window.scrollX
+    const scrollY = window.scrollY
+
+    // Compute viewport-relative first (client coords)
+    let xClient = rect.right + padding
+    if (xClient + popoverWidth > viewportWidth - 10) {
+      xClient = Math.max(10, rect.left - popoverWidth - padding)
+    }
+
+    let yClient = rect.top
+    if (yClient + estimatedHeight > viewportHeight - 10) {
+      yClient = Math.max(10, viewportHeight - estimatedHeight - 10)
+    }
+
+    setStaffContextMenu({
+      show: true,
+      // Store document-relative coords so it scrolls away naturally.
+      position: { x: xClient + scrollX, y: yClient + scrollY },
+      staffId,
+      team,
+      kind,
+    })
+  }
+
+  const closePcaContextAction = () => {
+    setPcaContextAction({
+      show: false,
+      mode: 'move',
+      phase: 'team',
+      position: null,
+      staffId: null,
+      staffName: null,
+      sourceTeam: null,
+      targetTeam: null,
+      availableSlots: [],
+      selectedSlots: [],
+    })
+  }
+
+  const startPcaContextAction = (options: {
+    staffId: string
+    sourceTeam: Team
+    mode: 'move' | 'discard'
+    position: { x: number; y: number }
+  }) => {
+    const staffMember = staff.find(s => s.id === options.staffId) || bufferStaff.find(s => s.id === options.staffId)
+    const staffName = staffMember?.name ?? null
+
+    const allocInTeam = pcaAllocations[options.sourceTeam]?.find(a => a.staff_id === options.staffId)
+      ?? Object.values(pcaAllocations).flat().find(a => a.staff_id === options.staffId)
+
+    if (!allocInTeam) {
+      showActionToast('No PCA allocation found for this staff card.', 'error')
+      return
+    }
+
+    const assignedSlots: number[] = []
+    if (allocInTeam.slot1 === options.sourceTeam) assignedSlots.push(1)
+    if (allocInTeam.slot2 === options.sourceTeam) assignedSlots.push(2)
+    if (allocInTeam.slot3 === options.sourceTeam) assignedSlots.push(3)
+    if (allocInTeam.slot4 === options.sourceTeam) assignedSlots.push(4)
+
+    if (assignedSlots.length === 0) {
+      showActionToast('No slots found in this team for this PCA.', 'warning')
+      return
+    }
+
+    setPcaContextAction({
+      show: true,
+      mode: options.mode,
+      phase: options.mode === 'move' ? 'team' : 'slots',
+      position: options.position,
+      staffId: options.staffId,
+      staffName,
+      sourceTeam: options.sourceTeam,
+      targetTeam: null,
+      availableSlots: assignedSlots,
+      selectedSlots: assignedSlots.length === 1 ? assignedSlots : [],
+    })
+  }
+
+  const closeTherapistContextAction = () => {
+    setTherapistContextAction({
+      show: false,
+      mode: 'move',
+      phase: 'team',
+      position: null,
+      staffId: null,
+      staffName: null,
+      sourceTeam: null,
+      targetTeam: null,
+      movedFteQuarter: null,
+      splitInputMode: 'moved',
+      mergeInputMode: 'intoSource',
+      mergeTeams: [],
+    })
+  }
+
+  const startTherapistContextAction = (options: {
+    staffId: string
+    sourceTeam: Team
+    mode: 'move' | 'discard' | 'split' | 'merge'
+    position: { x: number; y: number }
+  }) => {
+    const staffMember = staff.find(s => s.id === options.staffId) || bufferStaff.find(s => s.id === options.staffId)
+    const staffName = staffMember?.name ?? null
+
+    setTherapistContextAction({
+      show: true,
+      mode: options.mode,
+      phase:
+        options.mode === 'move'
+          ? 'team'
+          : options.mode === 'split'
+            ? 'team'
+            : options.mode === 'merge'
+              ? 'mergeSelect'
+              : 'confirmDiscard',
+      position: options.position,
+      staffId: options.staffId,
+      staffName,
+      sourceTeam: options.sourceTeam,
+      targetTeam: null,
+      movedFteQuarter: null,
+      splitInputMode: 'moved',
+      mergeInputMode: 'intoSource',
+      mergeTeams: [],
+    })
+  }
+
+  const getTherapistFteByTeam = (staffId: string): Partial<Record<Team, number>> => {
+    const o = staffOverrides[staffId]
+    if (o?.therapistTeamFTEByTeam && Object.keys(o.therapistTeamFTEByTeam).length > 0) {
+      return { ...(o.therapistTeamFTEByTeam as any) }
+    }
+
+    const byTeam: Partial<Record<Team, number>> = {}
+    for (const team of TEAMS) {
+      for (const alloc of therapistAllocations[team] || []) {
+        if (alloc.staff_id !== staffId) continue
+        byTeam[team] = (byTeam[team] ?? 0) + (alloc.fte_therapist ?? 0)
+      }
+    }
+    return byTeam
+  }
+
+  const getTherapistLeaveType = (staffId: string): LeaveType | null => {
+    const o = staffOverrides[staffId]
+    if (o && 'leaveType' in o) return o.leaveType ?? null
+    for (const team of TEAMS) {
+      const alloc = therapistAllocations[team]?.find(a => a.staff_id === staffId)
+      if (alloc) return (alloc.leave_type as any) ?? null
+    }
+    return null
+  }
+
+  const closeColorContextAction = () => {
+    setColorContextAction({
+      show: false,
+      position: null,
+      staffId: null,
+      team: null,
+      selectedClassName: null,
+    })
   }
 
   // Helper function to recalculate schedule calculations using current staffOverrides
@@ -3666,6 +4020,11 @@ function SchedulePageContent() {
           // Remove substitution slots from available slots
           availableSlots = baseAvailableSlots.filter(slot => !substitutionSlots.includes(slot))
         }
+
+        // NOTE: Do NOT clamp buffer PCA availableSlots here.
+        // A floating buffer PCA with buffer_fte=0.5 does not mean it is only available for slots [1,2].
+        // It means it has CAPACITY for 2 slots, and Step 2.1 should still be able to pick which missing slots it covers.
+        // We handle "capacity" display separately in UI (and rely on fte_pca / fteRemaining to limit usage).
         
         
         
@@ -3787,7 +4146,6 @@ function SchedulePageContent() {
     setLoading(true)
     try {
       const overridesBase = cleanedOverrides ?? staffOverrides
-
       
 
       // Buffer non-floating PCA substitution (whole-day)
@@ -4044,7 +4402,12 @@ function SchedulePageContent() {
           // If this is a missing regular non-floating PCA that has a buffer non-floating substitute,
           // remove its team assignment for THIS algorithm run to prevent generating a Step 2.1 substitution need.
           const effectiveTeam = replacedNonFloatingIds.has(s.id) ? null : s.team
-          
+
+          // NOTE: Do NOT clamp buffer PCA availableSlots for Step 2.
+          // Buffer floating PCA should be treated as "any-slot flexible" up to its fte_pca capacity,
+          // otherwise Step 2.1 may exclude it when missing slots are different (e.g. missing [3,4]).
+          const effectiveAvailableSlots = override?.availableSlots
+
           return {
             id: s.id,
             name: s.name,
@@ -4054,7 +4417,7 @@ function SchedulePageContent() {
             leave_type: override ? override.leaveType : null,
             is_available: override ? (override.fteRemaining > 0) : true, // Use fteRemaining (includes special program) for availability check
             team: effectiveTeam,
-            availableSlots: override?.availableSlots, // Will be undefined if cleared, which defaults to [1,2,3,4] in algorithm
+            availableSlots: effectiveAvailableSlots, // May be [1,2,3,4]; UI will display capacity separately for buffer PCA.
             invalidSlot: override?.invalidSlot,
             leaveComebackTime: override?.leaveComebackTime,
             isLeave: override?.isLeave,
@@ -5769,30 +6132,50 @@ function SchedulePageContent() {
       }> = []
 
       // First, collect allocations from current state (therapist and PCA allocations)
-      const processedStaffIds = new Set<string>()
+      // - PCA allocations must remain unique per staff_id (DB enforces UNIQUE(schedule_id, staff_id))
+      // - Therapist allocations can now have multiple rows per staff_id across teams
+      const processedPcaStaffIds = new Set<string>()
+      const therapistStaffIdsInAllocations = new Set<string>()
+      const processedTherapistKeys = new Set<string>() // `${staffId}::${team}`
 
       // Save all therapist allocations (only actual therapists, not PCAs)
       TEAMS.forEach(team => {
         therapistAllocations[team]?.forEach(alloc => {
-          if (processedStaffIds.has(alloc.staff_id)) return
-          
           const staffMember = staff.find(s => s.id === alloc.staff_id)
           if (!staffMember) return
-          
+
           // Only save as therapist if staff is actually a therapist rank
           const isActualTherapist = ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)
           if (!isActualTherapist) return // Skip PCAs that might be in therapist allocations
-          
-          processedStaffIds.add(alloc.staff_id)
-          
-          const override = overridesToSave[alloc.staff_id]
+
+          therapistStaffIdsInAllocations.add(alloc.staff_id)
+
+          const override = overridesToSave[alloc.staff_id] as any
+          const splitMap = override?.therapistTeamFTEByTeam as Partial<Record<Team, number>> | undefined
+          const hasSplitMap = !!splitMap && Object.keys(splitMap).length > 0
+
+          // If a therapist is using split allocation overrides, we do NOT use override.team (single-team transfer)
+          // because team is part of the row identity now (UNIQUE(schedule_id, staff_id, team)).
+          const effectiveTeam: Team = hasSplitMap ? alloc.team : (override?.team ?? alloc.team)
+
+          const dedupeKey = `${alloc.staff_id}::${effectiveTeam}`
+          if (processedTherapistKeys.has(dedupeKey)) return
+          processedTherapistKeys.add(dedupeKey)
+
+          const effectiveFteRemaining =
+            hasSplitMap && typeof splitMap?.[effectiveTeam] === 'number'
+              ? (splitMap[effectiveTeam] as number)
+              : override
+                ? override.fteRemaining
+                : alloc.fte_therapist
+
           allocationsToSave.push({
             staffId: alloc.staff_id,
             isTherapist: true,
-            team: override?.team ?? alloc.team, // Use team from override if present
-            fteRemaining: override ? override.fteRemaining : alloc.fte_therapist,
+            team: effectiveTeam,
+            fteRemaining: effectiveFteRemaining,
             leaveType: override ? override.leaveType : alloc.leave_type,
-            alloc: alloc
+            alloc: alloc,
           })
         })
       })
@@ -5800,8 +6183,8 @@ function SchedulePageContent() {
       // Save all PCA allocations
       TEAMS.forEach(team => {
         pcaAllocations[team]?.forEach(alloc => {
-          if (processedStaffIds.has(alloc.staff_id)) return
-          processedStaffIds.add(alloc.staff_id)
+          if (processedPcaStaffIds.has(alloc.staff_id)) return
+          processedPcaStaffIds.add(alloc.staff_id)
           
           const staffMember = staff.find(s => s.id === alloc.staff_id)
           if (!staffMember) return
@@ -5824,7 +6207,8 @@ function SchedulePageContent() {
 
       // Also save any overrides that don't have allocations yet (e.g., staff on full leave)
       Object.entries(overridesToSave).forEach(([staffId, override]) => {
-        if (processedStaffIds.has(staffId)) return // Already processed above
+        // Already processed above (PCA allocations are unique per staff, therapists are tracked by staff_id presence)
+        if (processedPcaStaffIds.has(staffId) || therapistStaffIdsInAllocations.has(staffId)) return
         
         const staffMember = staff.find(s => s.id === staffId)
         if (!staffMember) return
@@ -6105,13 +6489,6 @@ function SchedulePageContent() {
         startSoftAdvance(0.82)
         // Client-side bulk writes (dramatically fewer round-trips than per-row update/insert)
         const upsertPromises: PromiseLike<any>[] = []
-        if (therapistRows.length > 0) {
-          upsertPromises.push(
-            supabase
-              .from('schedule_therapist_allocations')
-              .upsert(therapistRows, { onConflict: 'schedule_id,staff_id' })
-          )
-        }
         if (pcaRows.length > 0) {
           upsertPromises.push(
             supabase
@@ -6125,17 +6502,44 @@ function SchedulePageContent() {
           )
         }
 
+        // Therapist allocations are now allowed to have multiple rows per staff across teams.
+        // To correctly handle moves/deletes, we replace therapist allocations as a whole (DELETE + INSERT).
+        const therapistDeletePromise = supabase
+          .from('schedule_therapist_allocations')
+          .delete()
+          .eq('schedule_id', scheduleId)
         const bedDeletePromise = supabase.from('schedule_bed_allocations').delete().eq('schedule_id', scheduleId)
-        const [bedDeleteRes, ...upsertResults] = await Promise.all([bedDeletePromise, ...upsertPromises])
+
+        const [therapistDeleteRes, bedDeleteRes, ...upsertResults] = await Promise.all([
+          therapistDeletePromise,
+          bedDeletePromise,
+          ...upsertPromises,
+        ])
 
         const firstWriteError =
-          (bedDeleteRes as any)?.error || upsertResults.find(r => (r as any)?.error)?.error
+          (therapistDeleteRes as any)?.error ||
+          (bedDeleteRes as any)?.error ||
+          upsertResults.find(r => (r as any)?.error)?.error
         if (firstWriteError) {
           console.error('Error saving schedule:', firstWriteError)
           showActionToast(`Error saving schedule: ${firstWriteError.message || 'Unknown error'}`, 'error')
           saveError = firstWriteError
           timer.stage('writeAllocations.error')
           return
+        }
+
+        if (therapistRows.length > 0) {
+          const therapistInsertRes = await supabase.from('schedule_therapist_allocations').insert(therapistRows)
+          if (therapistInsertRes.error) {
+            console.error('Error saving therapist allocations:', therapistInsertRes.error)
+            showActionToast(
+              `Error saving therapist allocations: ${therapistInsertRes.error.message || 'Unknown error'}`,
+              'error'
+            )
+            saveError = therapistInsertRes.error
+            timer.stage('writeAllocations.error')
+            return
+          }
         }
 
         if (bedRows.length > 0) {
@@ -6996,6 +7400,16 @@ function SchedulePageContent() {
     })
   }
 
+  const handlePcaContextSlotToggle = (slot: number) => {
+    setPcaContextAction(prev => {
+      const isSelected = prev.selectedSlots.includes(slot)
+      return {
+        ...prev,
+        selectedSlots: isSelected ? prev.selectedSlots.filter(s => s !== slot) : [...prev.selectedSlots, slot],
+      }
+    })
+  }
+
   // Close the slot selection popover
   const handleCloseSlotSelection = () => {
     setPcaDragState({
@@ -7192,13 +7606,21 @@ function SchedulePageContent() {
   }
   
   // Perform the actual slot transfer
-  const performSlotTransfer = (targetTeam: Team) => {
-    const staffId = pcaDragState.staffId
-    const sourceTeam = pcaDragState.sourceTeam
-    const selectedSlots = pcaDragState.selectedSlots
+  const performSlotTransfer = (
+    targetTeam: Team,
+    options?: { staffId: string; sourceTeam: Team | null; selectedSlots: number[]; closeSlotPopover?: boolean }
+  ) => {
+    const closeIfNeeded = () => {
+      if (options?.closeSlotPopover === false) return
+      handleCloseSlotSelection()
+    }
+
+    const staffId = options?.staffId ?? pcaDragState.staffId
+    const sourceTeam = options?.sourceTeam ?? pcaDragState.sourceTeam
+    const selectedSlots = options?.selectedSlots ?? pcaDragState.selectedSlots
     
     if (!staffId || selectedSlots.length === 0) {
-      handleCloseSlotSelection()
+      closeIfNeeded()
       return
     }
     
@@ -7264,13 +7686,13 @@ function SchedulePageContent() {
         [targetTeam]: Math.max(0, (prev[targetTeam] || 0) - fteTransferred),
       }))
       
-      handleCloseSlotSelection()
+      closeIfNeeded()
       return
     }
     
     // If no existing allocation and not buffer staff, can't proceed
     if (!currentAllocation) {
-      handleCloseSlotSelection()
+      closeIfNeeded()
       return
     }
     
@@ -7364,7 +7786,7 @@ function SchedulePageContent() {
     }))
     
     // Reset drag state
-    handleCloseSlotSelection()
+    closeIfNeeded()
   }
 
   // Handle drag and drop for therapist staff cards (RPT and SPT only) AND PCA slot transfers
@@ -7724,12 +8146,914 @@ function SchedulePageContent() {
           isDiscardMode={pcaDragState.isDiscardMode}
         />
       )}
+
+      {/* Schedule-grid Staff Card Context Menu (pencil click) */}
+      <StaffContextMenu
+        open={staffContextMenu.show}
+        position={staffContextMenu.position}
+        onClose={closeStaffContextMenu}
+        items={(() => {
+          const staffId = staffContextMenu.staffId
+          const team = staffContextMenu.team
+          const kind = staffContextMenu.kind
+          if (!staffId || !team || !kind) return []
+
+          const isPCA = kind === 'pca'
+          const isTherapist = kind === 'therapist'
+
+          const canLeaveEdit = currentStep === 'leave-fte'
+          const canTherapistActions = currentStep === 'therapist-pca'
+          const canPcaActions = currentStep === 'floating-pca'
+
+          const leaveDisabledTooltip =
+            'Leave arrangement editing is only available in Step 1 (Leave & FTE).'
+          const therapistDisabledTooltip =
+            'Therapist slot actions are only available in Step 2 (Therapist & Non-floating PCA).'
+          const pcaDisabledTooltip =
+            'PCA slot actions are only available in Step 3 (Floating PCA).'
+
+          return [
+            {
+              key: 'leave-edit',
+              label: 'Leave edit',
+              icon: <Pencil className="h-4 w-4" />,
+              disabled: !canLeaveEdit,
+              disabledTooltip: leaveDisabledTooltip,
+              onSelect: () => {
+                closeStaffContextMenu()
+                handleEditStaff(staffId)
+              },
+            },
+            {
+              key: 'move-slot',
+              label: 'Move slot',
+              icon: <Copy className="h-4 w-4" />,
+              disabled: isTherapist ? !canTherapistActions : !canPcaActions,
+              disabledTooltip: isTherapist ? therapistDisabledTooltip : pcaDisabledTooltip,
+              onSelect: () => {
+                const pos = staffContextMenu.position ?? { x: 100, y: 100 }
+                closeStaffContextMenu()
+                if (isPCA) {
+                  startPcaContextAction({ staffId, sourceTeam: team, mode: 'move', position: pos })
+                } else {
+                  startTherapistContextAction({ staffId, sourceTeam: team, mode: 'move', position: pos })
+                }
+              },
+            },
+            {
+              key: 'discard-slot',
+              label: 'Discard slot',
+              icon: <Trash2 className="h-4 w-4" />,
+              disabled: isTherapist ? !canTherapistActions : !canPcaActions,
+              disabledTooltip: isTherapist ? therapistDisabledTooltip : pcaDisabledTooltip,
+              onSelect: () => {
+                const pos = staffContextMenu.position ?? { x: 100, y: 100 }
+                closeStaffContextMenu()
+                if (isPCA) {
+                  startPcaContextAction({ staffId, sourceTeam: team, mode: 'discard', position: pos })
+                } else {
+                  startTherapistContextAction({ staffId, sourceTeam: team, mode: 'discard', position: pos })
+                }
+              },
+            },
+            ...(isPCA
+              ? []
+              : [
+                  {
+                    key: 'split-slot',
+                    label: 'Split slot',
+                    icon: <Split className="h-4 w-4" />,
+                    disabled: !canTherapistActions,
+                    disabledTooltip: therapistDisabledTooltip,
+                    onSelect: () => {
+                      const pos = staffContextMenu.position ?? { x: 100, y: 100 }
+                      closeStaffContextMenu()
+                      startTherapistContextAction({ staffId, sourceTeam: team, mode: 'split', position: pos })
+                    },
+                  },
+                  {
+                    key: 'merge-slot',
+                    label: 'Merge slot',
+                    icon: <GitMerge className="h-4 w-4" />,
+                    disabled: !canTherapistActions,
+                    disabledTooltip: therapistDisabledTooltip,
+                    onSelect: () => {
+                      const pos = staffContextMenu.position ?? { x: 100, y: 100 }
+                      closeStaffContextMenu()
+                      startTherapistContextAction({ staffId, sourceTeam: team, mode: 'merge', position: pos })
+                    },
+                  },
+                ]),
+            {
+              key: 'fill-color',
+              label: 'Fill color',
+              icon: <Highlighter className="h-4 w-4" />,
+              disabled: false,
+              onSelect: () => {
+                const pos = staffContextMenu.position ?? { x: 100, y: 100 }
+                const existing = (staffOverrides as any)?.[staffId]?.cardColorByTeam?.[team] as string | undefined
+                closeStaffContextMenu()
+                setColorContextAction({
+                  show: true,
+                  position: pos,
+                  staffId,
+                  team,
+                  selectedClassName: existing ?? null,
+                })
+              },
+            },
+          ]
+        })()}
+      />
+
+      {/* PCA contextual action popovers (Move/Discard) */}
+      {pcaContextAction.show &&
+        pcaContextAction.position &&
+        pcaContextAction.staffId &&
+        pcaContextAction.sourceTeam &&
+        pcaContextAction.staffName && (
+          <>
+            {pcaContextAction.phase === 'team' && pcaContextAction.mode === 'move' ? (
+              <TeamPickerPopover
+                title="Move slot"
+                selectedTeam={pcaContextAction.targetTeam}
+                onSelectTeam={(t) => setPcaContextAction(prev => ({ ...prev, targetTeam: t }))}
+                onClose={closePcaContextAction}
+                confirmDisabled={
+                  !pcaContextAction.targetTeam ||
+                  pcaContextAction.targetTeam === pcaContextAction.sourceTeam
+                }
+                onConfirm={() => {
+                  const targetTeam = pcaContextAction.targetTeam
+                  if (!targetTeam) return
+                  if (targetTeam === pcaContextAction.sourceTeam) return
+
+                  // Single-slot: confirm immediately; Multi-slot: next page = slot picker
+                  if (pcaContextAction.availableSlots.length === 1) {
+                    performSlotTransfer(targetTeam, {
+                      staffId: pcaContextAction.staffId!,
+                      sourceTeam: pcaContextAction.sourceTeam!,
+                      selectedSlots: pcaContextAction.availableSlots,
+                      closeSlotPopover: false,
+                    })
+                    closePcaContextAction()
+                    return
+                  }
+
+                  setPcaContextAction(prev => ({ ...prev, phase: 'slots' }))
+                }}
+                position={pcaContextAction.position}
+                hint="Choose a target team, then confirm."
+                pageIndicator={
+                  pcaContextAction.availableSlots.length > 1 ? { current: 1, total: 2 } : undefined
+                }
+                onNextPage={() => {
+                  // Next = same as confirm on page 1
+                  const targetTeam = pcaContextAction.targetTeam
+                  if (!targetTeam) return
+                  if (targetTeam === pcaContextAction.sourceTeam) return
+                  if (pcaContextAction.availableSlots.length === 1) return
+                  setPcaContextAction(prev => ({ ...prev, phase: 'slots' }))
+                }}
+                onPrevPage={() => {}}
+                prevDisabled={true}
+                nextDisabled={
+                  !pcaContextAction.targetTeam ||
+                  pcaContextAction.targetTeam === pcaContextAction.sourceTeam ||
+                  pcaContextAction.availableSlots.length === 1
+                }
+              />
+            ) : null}
+
+            {pcaContextAction.phase === 'slots' ? (
+              <SlotSelectionPopover
+                staffName={pcaContextAction.staffName}
+                availableSlots={pcaContextAction.availableSlots}
+                selectedSlots={pcaContextAction.selectedSlots}
+                onSlotToggle={handlePcaContextSlotToggle}
+                onClose={closePcaContextAction}
+                onStartDrag={() => {
+                  // confirm-mode; no dragging in this flow
+                }}
+                position={pcaContextAction.position}
+                isDiscardMode={pcaContextAction.mode === 'discard'}
+                mode="confirm"
+                onConfirm={() => {
+                  if (!pcaContextAction.staffId || !pcaContextAction.sourceTeam) return
+                  if (pcaContextAction.selectedSlots.length === 0) return
+
+                  if (pcaContextAction.mode === 'discard') {
+                    performSlotDiscard(pcaContextAction.staffId, pcaContextAction.sourceTeam, pcaContextAction.selectedSlots)
+                    closePcaContextAction()
+                    return
+                  }
+
+                  const targetTeam = pcaContextAction.targetTeam
+                  if (!targetTeam) return
+                  performSlotTransfer(targetTeam, {
+                    staffId: pcaContextAction.staffId,
+                    sourceTeam: pcaContextAction.sourceTeam,
+                    selectedSlots: pcaContextAction.selectedSlots,
+                    closeSlotPopover: false,
+                  })
+                  closePcaContextAction()
+                }}
+              />
+            ) : null}
+          </>
+        )}
+
+      {/* Therapist contextual action popovers (Move/Discard/Split/Merge) */}
+      {therapistContextAction.show &&
+        therapistContextAction.position &&
+        therapistContextAction.staffId &&
+        therapistContextAction.sourceTeam && (
+          <>
+            {/* Move (team picker) */}
+            {therapistContextAction.mode === 'move' && therapistContextAction.phase === 'team' ? (
+              <TeamPickerPopover
+                title="Move slot"
+                selectedTeam={therapistContextAction.targetTeam}
+                onSelectTeam={(t) => setTherapistContextAction(prev => ({ ...prev, targetTeam: t }))}
+                onClose={closeTherapistContextAction}
+                confirmDisabled={
+                  !therapistContextAction.targetTeam ||
+                  therapistContextAction.targetTeam === therapistContextAction.sourceTeam
+                }
+                onConfirm={() => {
+                  const staffId = therapistContextAction.staffId!
+                  const sourceTeam = therapistContextAction.sourceTeam!
+                  const targetTeam = therapistContextAction.targetTeam
+                  if (!targetTeam) return
+                  if (targetTeam === sourceTeam) return
+
+                  const currentMap = getTherapistFteByTeam(staffId)
+                  const fteToMove = currentMap[sourceTeam] ?? 0
+                  if (fteToMove <= 0) {
+                    showActionToast('No FTE found to move for this staff card.', 'warning')
+                    closeTherapistContextAction()
+                    return
+                  }
+
+                  const nextMap: Partial<Record<Team, number>> = { ...currentMap }
+                  delete nextMap[sourceTeam]
+                  nextMap[targetTeam] = (nextMap[targetTeam] ?? 0) + fteToMove
+                  const total = Object.values(nextMap).reduce((sum, v) => sum + (v ?? 0), 0)
+
+                  setStaffOverrides(prev => {
+                    const existing = prev[staffId]
+                    const leaveType = existing?.leaveType ?? getTherapistLeaveType(staffId)
+                    return {
+                      ...prev,
+                      [staffId]: {
+                        ...(existing ?? { leaveType, fteRemaining: total }),
+                        leaveType,
+                        fteRemaining: total,
+                        therapistTeamFTEByTeam: nextMap,
+                        therapistNoAllocation: false,
+                        team: undefined,
+                      },
+                    }
+                  })
+
+                  closeTherapistContextAction()
+                }}
+                position={therapistContextAction.position}
+                hint="Choose a target team, then confirm."
+              />
+            ) : null}
+
+            {/* Discard (confirm) */}
+            {therapistContextAction.mode === 'discard' && therapistContextAction.phase === 'confirmDiscard' ? (
+              <ConfirmPopover
+                title="Discard slot"
+                description="This will remove this therapist allocation from the selected team (ad hoc override)."
+                onClose={closeTherapistContextAction}
+                onConfirm={() => {
+                  const staffId = therapistContextAction.staffId!
+                  const sourceTeam = therapistContextAction.sourceTeam!
+                  const currentMap = getTherapistFteByTeam(staffId)
+                  const nextMap: Partial<Record<Team, number>> = { ...currentMap }
+                  delete nextMap[sourceTeam]
+                  const total = Object.values(nextMap).reduce((sum, v) => sum + (v ?? 0), 0)
+
+                  setStaffOverrides(prev => {
+                    const existing = prev[staffId]
+                    const leaveType = existing?.leaveType ?? getTherapistLeaveType(staffId)
+                    const hasAnyAllocation = Object.values(nextMap).some(v => typeof v === 'number' && v > 0)
+                    return {
+                      ...prev,
+                      [staffId]: {
+                        ...(existing ?? { leaveType, fteRemaining: total }),
+                        leaveType,
+                        fteRemaining: total,
+                        therapistTeamFTEByTeam: nextMap,
+                        therapistNoAllocation: !hasAnyAllocation,
+                        team: undefined,
+                      },
+                    }
+                  })
+
+                  closeTherapistContextAction()
+                }}
+                position={therapistContextAction.position}
+              />
+            ) : null}
+
+            {/* Split: page 1 team picker */}
+            {therapistContextAction.mode === 'split' && therapistContextAction.phase === 'team' ? (
+              <TeamPickerPopover
+                title="Split slot"
+                selectedTeam={therapistContextAction.targetTeam}
+                onSelectTeam={(t) => setTherapistContextAction(prev => ({ ...prev, targetTeam: t }))}
+                onClose={closeTherapistContextAction}
+                confirmDisabled={
+                  !therapistContextAction.targetTeam ||
+                  therapistContextAction.targetTeam === therapistContextAction.sourceTeam
+                }
+                onConfirm={() => {
+                  if (!therapistContextAction.targetTeam) return
+                  setTherapistContextAction(prev => ({ ...prev, phase: 'splitFte' }))
+                }}
+                position={therapistContextAction.position}
+                hint="Pick the destination team for the moved portion."
+                pageIndicator={{ current: 1, total: 2 }}
+                onNextPage={() => {
+                  if (!therapistContextAction.targetTeam) return
+                  if (therapistContextAction.targetTeam === therapistContextAction.sourceTeam) return
+                  setTherapistContextAction(prev => ({ ...prev, phase: 'splitFte' }))
+                }}
+                onPrevPage={() => {}}
+                prevDisabled={true}
+                nextDisabled={
+                  !therapistContextAction.targetTeam ||
+                  therapistContextAction.targetTeam === therapistContextAction.sourceTeam
+                }
+              />
+            ) : null}
+
+            {/* Split: page 2 FTE input */}
+            {therapistContextAction.mode === 'split' && therapistContextAction.phase === 'splitFte' ? (
+              <div
+                className="absolute z-[10003] bg-white dark:bg-slate-800 rounded-lg shadow-xl border-2 border-amber-500 p-2.5 w-[240px]"
+                style={{
+                  left: therapistContextAction.position.x,
+                  top: therapistContextAction.position.y,
+                  pointerEvents: 'auto',
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    closeTherapistContextAction()
+                  }}
+                  className="absolute top-1 right-1 p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+
+                <div className="text-xs font-semibold text-slate-800 dark:text-slate-200 pr-4">
+                  Split slot
+                </div>
+                <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+                  Enter the moved portion (multiples of 0.25). The remaining portion will stay in the current team.
+                </div>
+
+                {(() => {
+                  const staffId = therapistContextAction.staffId!
+                  const sourceTeam = therapistContextAction.sourceTeam!
+                  const targetTeam = therapistContextAction.targetTeam
+                  const currentMap = getTherapistFteByTeam(staffId)
+                  const currentTeams = Object.entries(currentMap).filter(([, v]) => (v ?? 0) > 0)
+                  const sourceFte = currentMap[sourceTeam] ?? 0
+                  const hasExistingMultiTeam = currentTeams.length > 1
+
+                  const isQuarterMultiple = (n: number) => {
+                    const scaled = Math.round(n * 4)
+                    return Math.abs(n * 4 - scaled) < 1e-6
+                  }
+                  const isSourceQuarterMultiple = isQuarterMultiple(sourceFte)
+
+                  const inputMode = therapistContextAction.splitInputMode ?? 'moved'
+                  const inputValue = therapistContextAction.movedFteQuarter ?? 0
+
+                  const moved = inputMode === 'moved' ? inputValue : Math.max(0, sourceFte - inputValue)
+                  const stay = inputMode === 'moved' ? Math.max(0, sourceFte - inputValue) : inputValue
+
+                  const movedIsQuarter = isQuarterMultiple(moved)
+                  const stayIsQuarter = isQuarterMultiple(stay)
+
+                  // Validation rules:
+                  // - Both portions must be >= 0.25
+                  // - Total must equal sourceFte (up to float tolerance)
+                  // - If sourceFte is a quarter multiple: require BOTH to be quarter multiples.
+                  // - Else: require at least ONE portion to be a quarter multiple (user can choose which via inputMode).
+                  const totalOk = Math.abs((moved + stay) - sourceFte) < 1e-6
+                  const quarterOk = isSourceQuarterMultiple ? (movedIsQuarter && stayIsQuarter) : (movedIsQuarter || stayIsQuarter)
+
+                  const canConfirm =
+                    !!targetTeam &&
+                    !hasExistingMultiTeam &&
+                    Number.isFinite(inputValue) &&
+                    moved >= 0.25 &&
+                    stay >= 0.25 &&
+                    totalOk &&
+                    quarterOk
+
+                  return (
+                    <>
+                      {hasExistingMultiTeam ? (
+                        <div className="mt-2 text-[10px] text-amber-700 dark:text-amber-300">
+                          Split is currently only supported when this therapist has a single team allocation.
+                        </div>
+                      ) : (
+                        <div className="mt-2 space-y-2">
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                            Current team FTE: {sourceFte.toFixed(2)}
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <label className="text-[10px] text-slate-600 dark:text-slate-300">
+                                {inputMode === 'moved'
+                                  ? `Moved portion (to ${targetTeam ?? '—'})`
+                                  : `Stay-in portion (in ${sourceTeam})`}
+                              </label>
+                              <button
+                                type="button"
+                                className="text-[10px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 underline underline-offset-2"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setTherapistContextAction(prev => ({
+                                    ...prev,
+                                    splitInputMode: (prev.splitInputMode ?? 'moved') === 'moved' ? 'stay' : 'moved',
+                                  }))
+                                }}
+                              >
+                                Swap input
+                              </button>
+                            </div>
+                            <Input
+                              type="number"
+                              step={0.25}
+                              min={0.25}
+                              max={Math.max(0.25, sourceFte - 0.25)}
+                              value={therapistContextAction.movedFteQuarter ?? ''}
+                              onChange={(e) => {
+                                const v = parseFloat(e.target.value)
+                                setTherapistContextAction(prev => ({
+                                  ...prev,
+                                  movedFteQuarter: Number.isFinite(v) ? v : null,
+                                }))
+                              }}
+                              className="h-8 text-xs"
+                            />
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                              Move to {targetTeam ?? '—'}: {moved.toFixed(2)}{' '}
+                              {(!isSourceQuarterMultiple && movedIsQuarter) || (isSourceQuarterMultiple && movedIsQuarter) ? '' : ''}
+                            </div>
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                              Stays in {sourceTeam}: {stay.toFixed(2)}
+                            </div>
+                            {!quarterOk && (
+                              <div className="text-[10px] text-amber-700 dark:text-amber-300">
+                                For non-0.25-multiple totals, ensure either the moved portion or the stay-in portion is a multiple of 0.25 (use “Swap input”).
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Tooltip content="Previous" side="top">
+                            <button
+                              type="button"
+                              className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setTherapistContextAction(prev => ({ ...prev, phase: 'team' }))
+                              }}
+                            >
+                              <ChevronLeft className="w-4 h-4" />
+                            </button>
+                          </Tooltip>
+                          <div className="text-sm text-slate-400 dark:text-slate-500 leading-none select-none">
+                            • •
+                          </div>
+                          <Tooltip content="Next" side="top">
+                            <button
+                              type="button"
+                              className="p-1 rounded opacity-40 cursor-not-allowed text-slate-600 dark:text-slate-300"
+                              disabled
+                            >
+                              <ChevronRight className="w-4 h-4" />
+                            </button>
+                          </Tooltip>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Tooltip content="Cancel" side="top">
+                            <button
+                              type="button"
+                              className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                closeTherapistContextAction()
+                              }}
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </Tooltip>
+                          <Tooltip content="Confirm" side="top">
+                            <button
+                              type="button"
+                              className={cn(
+                                'p-1 rounded text-amber-700 dark:text-amber-300',
+                                canConfirm ? 'hover:bg-amber-100 dark:hover:bg-amber-900/40' : 'opacity-50 cursor-not-allowed'
+                              )}
+                              disabled={!canConfirm}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (!canConfirm || !targetTeam) return
+
+                                const nextMap: Partial<Record<Team, number>> = {
+                                  [sourceTeam]: stay,
+                                  [targetTeam]: moved,
+                                }
+                                const total = stay + moved
+
+                                setStaffOverrides(prev => {
+                                  const existing = prev[staffId]
+                                  const leaveType = existing?.leaveType ?? getTherapistLeaveType(staffId)
+                                  return {
+                                    ...prev,
+                                    [staffId]: {
+                                      ...(existing ?? { leaveType, fteRemaining: total }),
+                                      leaveType,
+                                      fteRemaining: total,
+                                      therapistTeamFTEByTeam: nextMap,
+                                      therapistNoAllocation: false,
+                                      team: undefined,
+                                    },
+                                  }
+                                })
+
+                                closeTherapistContextAction()
+                              }}
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                          </Tooltip>
+                        </div>
+                      </div>
+                    </>
+                  )
+                })()}
+              </div>
+            ) : null}
+
+            {/* Merge: select which team allocations to merge into current team */}
+            {therapistContextAction.mode === 'merge' && therapistContextAction.phase === 'mergeSelect' ? (
+              <div
+                className="absolute z-[10003] bg-white dark:bg-slate-800 rounded-lg shadow-xl border-2 border-amber-500 p-2.5 w-[260px]"
+                style={{
+                  left: therapistContextAction.position.x,
+                  top: therapistContextAction.position.y,
+                  pointerEvents: 'auto',
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    closeTherapistContextAction()
+                  }}
+                  className="absolute top-1 right-1 p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+
+                <div className="text-xs font-semibold text-slate-800 dark:text-slate-200 pr-4">
+                  Merge slot
+                </div>
+                <div className="mt-1 flex items-start justify-between gap-2">
+                  <div className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+                    {therapistContextAction.mergeInputMode === 'intoSelected'
+                      ? 'Swap mode: pick exactly 1 destination team to merge into.'
+                      : `Select team allocations to merge into ${therapistContextAction.sourceTeam}.`}
+                  </div>
+                  <button
+                    type="button"
+                    className="text-[10px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 underline underline-offset-2 flex-shrink-0"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setTherapistContextAction(prev => ({
+                        ...prev,
+                        mergeInputMode: (prev.mergeInputMode ?? 'intoSource') === 'intoSource' ? 'intoSelected' : 'intoSource',
+                        // clear selection when swapping direction to avoid ambiguity
+                        mergeTeams: [],
+                      }))
+                    }}
+                  >
+                    Swap
+                  </button>
+                </div>
+
+                {(() => {
+                  const staffId = therapistContextAction.staffId!
+                  const sourceTeam = therapistContextAction.sourceTeam!
+                  const currentMap = getTherapistFteByTeam(staffId)
+                  const candidates = Object.entries(currentMap)
+                    .filter(([t, v]) => t !== sourceTeam && (v ?? 0) > 0)
+                    .map(([t]) => t as Team)
+
+                  const inputMode = therapistContextAction.mergeInputMode ?? 'intoSource'
+                  const confirmDisabled =
+                    inputMode === 'intoSelected'
+                      ? therapistContextAction.mergeTeams.length !== 1
+                      : therapistContextAction.mergeTeams.length === 0
+
+                  return (
+                    <>
+                      {candidates.length === 0 ? (
+                        <div className="mt-2 text-[10px] text-slate-500 dark:text-slate-400">
+                          No other team allocations found for this therapist.
+                        </div>
+                      ) : (
+                        <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                          {candidates.map(t => (
+                            <div key={t} className="flex items-center gap-2">
+                              <Checkbox
+                                checked={therapistContextAction.mergeTeams.includes(t)}
+                                onCheckedChange={(checked) => {
+                                  setTherapistContextAction(prev => ({
+                                    ...prev,
+                                    mergeTeams:
+                                      (prev.mergeInputMode ?? 'intoSource') === 'intoSelected'
+                                        ? (checked ? [t] : [])
+                                        : (checked
+                                            ? Array.from(new Set([...prev.mergeTeams, t]))
+                                            : prev.mergeTeams.filter(x => x !== t)),
+                                  }))
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                }}
+                              />
+                              <div className="text-xs text-slate-700 dark:text-slate-200">{t}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {inputMode === 'intoSelected' && (
+                        <div className="mt-2 text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+                          Destination team: {therapistContextAction.mergeTeams[0] ?? '—'}
+                        </div>
+                      )}
+
+                      <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600 flex items-center justify-end gap-1.5">
+                        <Tooltip content="Cancel" side="top">
+                          <button
+                            type="button"
+                            className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              closeTherapistContextAction()
+                            }}
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </Tooltip>
+                        <Tooltip content="Confirm" side="top">
+                          <button
+                            type="button"
+                            className={cn(
+                              'p-1 rounded text-amber-700 dark:text-amber-300',
+                              confirmDisabled
+                                ? 'opacity-50 cursor-not-allowed'
+                                : 'hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                            )}
+                            disabled={confirmDisabled}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (confirmDisabled) return
+
+                              const nextMap: Partial<Record<Team, number>> = { ...currentMap }
+                              const mode = therapistContextAction.mergeInputMode ?? 'intoSource'
+
+                              if (mode === 'intoSelected') {
+                                const destTeam = therapistContextAction.mergeTeams[0]
+                                if (!destTeam) return
+                                // Merge sourceTeam into destTeam (swap direction)
+                                const sourceFte = nextMap[sourceTeam] ?? 0
+                                nextMap[destTeam] = (nextMap[destTeam] ?? 0) + sourceFte
+                                delete nextMap[sourceTeam]
+                              } else {
+                                // Default: merge selected teams into sourceTeam
+                                let added = 0
+                                for (const t of therapistContextAction.mergeTeams) {
+                                  added += nextMap[t] ?? 0
+                                  delete nextMap[t]
+                                }
+                                nextMap[sourceTeam] = (nextMap[sourceTeam] ?? 0) + added
+                              }
+
+                              const total = Object.values(nextMap).reduce((sum, v) => sum + (v ?? 0), 0)
+
+                              setStaffOverrides(prev => {
+                                const existing = prev[staffId]
+                                const leaveType = existing?.leaveType ?? getTherapistLeaveType(staffId)
+                                return {
+                                  ...prev,
+                                  [staffId]: {
+                                    ...(existing ?? { leaveType, fteRemaining: total }),
+                                    leaveType,
+                                    fteRemaining: total,
+                                    therapistTeamFTEByTeam: nextMap,
+                                    therapistNoAllocation: false,
+                                    team: undefined,
+                                  },
+                                }
+                              })
+
+                              closeTherapistContextAction()
+                            }}
+                          >
+                            <Check className="w-4 h-4" />
+                          </button>
+                        </Tooltip>
+                      </div>
+                    </>
+                  )
+                })()}
+              </div>
+            ) : null}
+          </>
+        )}
+
+      {/* Staff card Fill color popover (any step) */}
+      {colorContextAction.show &&
+        colorContextAction.position &&
+        colorContextAction.staffId &&
+        colorContextAction.team && (
+          <div
+            className="absolute z-[10004] bg-white dark:bg-slate-800 rounded-lg shadow-xl border-2 border-amber-500 p-2.5 w-[260px]"
+            style={{
+              left: colorContextAction.position.x,
+              top: colorContextAction.position.y,
+              pointerEvents: 'auto',
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                closeColorContextAction()
+              }}
+              className="absolute top-1 right-1 p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="text-xs font-semibold text-slate-800 dark:text-slate-200 pr-4">
+              Fill color
+            </div>
+            <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+              Choose a color for this staff card (schedule override).
+            </div>
+
+            {(() => {
+              const swatches: Array<{ label: string; className: string | null }> = [
+                { label: 'Yellow', className: 'bg-yellow-200 dark:bg-yellow-900/30' },
+                { label: 'Orange', className: 'bg-orange-200 dark:bg-orange-900/30' },
+                { label: 'Red', className: 'bg-red-200 dark:bg-red-900/30' },
+                { label: 'Green', className: 'bg-green-200 dark:bg-green-900/30' },
+                { label: 'Teal', className: 'bg-teal-200 dark:bg-teal-900/30' },
+                { label: 'Blue', className: 'bg-blue-200 dark:bg-blue-900/30' },
+                { label: 'Purple', className: 'bg-violet-200 dark:bg-violet-900/30' },
+                { label: 'Pink', className: 'bg-pink-200 dark:bg-pink-900/30' },
+                { label: 'Gray', className: 'bg-gray-200 dark:bg-slate-700/60' },
+                { label: 'None', className: null },
+              ]
+
+              const selected = colorContextAction.selectedClassName
+
+              return (
+                <>
+                  <div className="mt-2 grid grid-cols-5 gap-1">
+                    {swatches.map((s) => {
+                      const isSelected = (s.className ?? null) === (selected ?? null)
+                      return (
+                        <Tooltip key={s.label} content={s.label} side="top">
+                          <button
+                            type="button"
+                            className={cn(
+                              'h-8 w-10 rounded border',
+                              s.className ?? 'bg-background border-input',
+                              isSelected ? 'ring-2 ring-amber-500 ring-offset-1 ring-offset-background' : 'border-slate-200 dark:border-slate-600'
+                            )}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setColorContextAction(prev => ({
+                                ...prev,
+                                selectedClassName: s.className,
+                              }))
+                            }}
+                          />
+                        </Tooltip>
+                      )
+                    })}
+                  </div>
+
+                  <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600 flex items-center justify-end gap-1.5">
+                    <Tooltip content="Cancel" side="top">
+                      <button
+                        type="button"
+                        className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          closeColorContextAction()
+                        }}
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </Tooltip>
+                    <Tooltip content="Confirm" side="top">
+                      <button
+                        type="button"
+                        className="p-1 rounded text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const staffId = colorContextAction.staffId!
+                          const team = colorContextAction.team!
+                          const selectedClassName = colorContextAction.selectedClassName
+
+                          setStaffOverrides(prev => {
+                            const current = prev[staffId]
+                            // Ensure required base fields exist if we are creating a new entry.
+                            // IMPORTANT: creating a staffOverrides entry must NOT accidentally change leave/FTE.
+                            const staffMember =
+                              staff.find(s => s.id === staffId) || bufferStaff.find(s => s.id === staffId)
+
+                            const baseLeaveType: LeaveType | null =
+                              typeof current?.leaveType !== 'undefined'
+                                ? current.leaveType
+                                : (staffMember?.rank === 'PCA'
+                                    ? (Object.values(pcaAllocations).flat().find(a => a.staff_id === staffId)?.leave_type ??
+                                      null)
+                                    : getTherapistLeaveType(staffId))
+
+                            const baseFteRemaining =
+                              typeof current?.fteRemaining === 'number'
+                                ? current.fteRemaining
+                                : staffMember?.status === 'buffer' && typeof (staffMember as any)?.buffer_fte === 'number'
+                                  ? ((staffMember as any).buffer_fte as number)
+                                  : staffMember?.rank === 'PCA'
+                                    ? (Object.values(pcaAllocations).flat().find(a => a.staff_id === staffId)?.fte_pca ??
+                                      1.0)
+                                    : (() => {
+                                        // Therapist: infer from current allocations (sum across teams if split)
+                                        let sum = 0
+                                        for (const t of TEAMS) {
+                                          for (const a of therapistAllocations[t] || []) {
+                                            if (a.staff_id === staffId) sum += a.fte_therapist ?? 0
+                                          }
+                                        }
+                                        return sum > 0 ? sum : 1.0
+                                      })()
+
+                            const nextByTeam = { ...(current?.cardColorByTeam ?? {}) }
+                            if (selectedClassName) nextByTeam[team] = selectedClassName
+                            else delete nextByTeam[team]
+
+                            return {
+                              ...prev,
+                              [staffId]: {
+                                ...(current ?? { leaveType: baseLeaveType, fteRemaining: baseFteRemaining }),
+                                cardColorByTeam: nextByTeam,
+                              },
+                            }
+                          })
+
+                          closeColorContextAction()
+                        }}
+                      >
+                        <Check className="w-4 h-4" />
+                      </button>
+                    </Tooltip>
+                  </div>
+                </>
+              )
+            })()}
+          </div>
+        )}
       
       
       {/* Warning Popover for leave arrangement edit after step 1 */}
       {leaveEditWarningPopover.show && leaveEditWarningPopover.position && (
         <div
-          className="fixed z-[9999] bg-white dark:bg-slate-800 rounded-lg shadow-xl border-2 border-amber-500 p-3 w-[200px]"
+          className="absolute z-[9999] bg-white dark:bg-slate-800 rounded-lg shadow-xl border-2 border-amber-500 p-3 w-[200px]"
           style={{
             left: leaveEditWarningPopover.position.x,
             top: leaveEditWarningPopover.position.y,
@@ -7757,7 +9081,7 @@ function SchedulePageContent() {
       {/* Warning Popover for bed relieving edit outside step 4 */}
       {bedRelievingEditWarningPopover.show && bedRelievingEditWarningPopover.position && (
         <div
-          className="fixed z-[9999] bg-white dark:bg-slate-800 rounded-lg shadow-xl border-2 border-amber-500 p-3 w-[200px]"
+          className="absolute z-[9999] bg-white dark:bg-slate-800 rounded-lg shadow-xl border-2 border-amber-500 p-3 w-[200px]"
           style={{
             left: bedRelievingEditWarningPopover.position.x,
             top: bedRelievingEditWarningPopover.position.y,
@@ -8697,7 +10021,7 @@ function SchedulePageContent() {
                         specialPrograms={specialPrograms}
                         weekday={currentWeekday}
                         currentStep={currentStep}
-                        onEditStaff={handleEditStaff}
+                        onEditStaff={(staffId, e) => openStaffContextMenu(staffId, team, 'therapist', e)}
                         staffOverrides={staffOverrides}
                       />
                     ))}
@@ -8713,7 +10037,7 @@ function SchedulePageContent() {
                         <PCABlock
                           team={team}
                           allocations={pcaAllocations[team]}
-                          onEditStaff={handleEditStaff}
+                          onEditStaff={(staffId, e) => openStaffContextMenu(staffId, team, 'pca', e)}
                           requiredPCA={calculations[team]?.required_pca_per_team}
                           averagePCAPerTeam={calculations[team]?.average_pca_per_team}
                           baseAveragePCAPerTeam={calculations[team]?.base_average_pca_per_team}

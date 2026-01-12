@@ -9,9 +9,10 @@ interface TooltipProps {
   content: React.ReactNode
   side?: 'top' | 'right' | 'bottom' | 'left'
   className?: string
+  wrapperClassName?: string
 }
 
-export function Tooltip({ children, content, side = 'right', className }: TooltipProps) {
+export function Tooltip({ children, content, side = 'right', className, wrapperClassName }: TooltipProps) {
   const [isVisible, setIsVisible] = React.useState(false)
   const anchorRef = React.useRef<HTMLDivElement>(null)
   const tooltipRef = React.useRef<HTMLDivElement>(null)
@@ -90,7 +91,7 @@ export function Tooltip({ children, content, side = 'right', className }: Toolti
   return (
     <div
       ref={anchorRef}
-      className="relative inline-block"
+      className={cn('relative', wrapperClassName ?? 'inline-block')}
       onMouseEnter={() => {
         setIsVisible(true)
         setPortalPos(null)

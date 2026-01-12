@@ -29,6 +29,8 @@ export interface StaffOverride {
   invalidSlot?: number
   leaveComebackTime?: string
   isLeave?: boolean
+  therapistTeamFTEByTeam?: Partial<Record<Team, number>>
+  therapistNoAllocation?: boolean
 }
 
 export type StaffOverrides = Record<string, StaffOverride>
@@ -118,6 +120,17 @@ export function detectChanges(
       hasChange = true
     }
 
+    // Therapist split/merge override change (affects team distribution + FTE per team)
+    if (JSON.stringify(curr?.therapistTeamFTEByTeam) !== JSON.stringify(prev?.therapistTeamFTEByTeam)) {
+      result.hasTeamChange = true
+      result.hasFTEChange = true
+      hasChange = true
+    }
+    if (curr?.therapistNoAllocation !== prev?.therapistNoAllocation) {
+      result.hasTeamChange = true
+      hasChange = true
+    }
+
     if (hasChange) {
       result.changedStaffIds.push(staffId)
     }
@@ -156,8 +169,30 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
   const syncTherapistAllocations = useCallback(() => {
     if (staff.length === 0) return
 
+    const therapistSplitIds = new Set<string>()
+    const therapistNoAllocationIds = new Set<string>()
+    for (const s of staff) {
+      if (!['SPT', 'APPT', 'RPT'].includes(s.rank)) continue
+      const o = staffOverrides[s.id]
+      if (o?.therapistNoAllocation) {
+        therapistNoAllocationIds.add(s.id)
+        continue
+      }
+      if (o?.therapistTeamFTEByTeam && Object.keys(o.therapistTeamFTEByTeam).length > 0) {
+        therapistSplitIds.add(s.id)
+      }
+    }
+
     // Transform staff data for therapist allocation algorithm
-    const staffData: StaffData[] = staff.map(s => {
+    const staffData: StaffData[] = staff
+      // Exclude therapists that are explicitly overridden (split/merge) or discarded (no allocation)
+      .filter(s => {
+        if (!['SPT', 'APPT', 'RPT'].includes(s.rank)) return true
+        if (therapistNoAllocationIds.has(s.id)) return false
+        if (therapistSplitIds.has(s.id)) return false
+        return true
+      })
+      .map(s => {
       const override = staffOverrides[s.id]
       return {
         id: s.id,
@@ -220,6 +255,10 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
     // Check if each existing SPT is already in the new result (across all teams)
     // If not, preserve it but update team/FTE from staffOverrides
     allExistingSPTAllocations.forEach(sptAlloc => {
+      // If this staff is explicitly split/merged or has no allocation, do not preserve.
+      if (therapistSplitIds.has(sptAlloc.staff_id) || therapistNoAllocationIds.has(sptAlloc.staff_id)) {
+        return
+      }
       // Check if SPT exists in ANY team in the new result
       const alreadyExists = TEAMS.some(team => 
         therapistByTeam[team].some(a => a.staff_id === sptAlloc.staff_id)
@@ -241,6 +280,44 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
         therapistByTeam[targetTeam].push(updatedAlloc)
       }
     })
+
+    // Apply therapist split/merge overrides (per-team allocations)
+    for (const staffId of therapistSplitIds) {
+      const staffMember = staff.find(s => s.id === staffId)
+      if (!staffMember) continue
+      const o = staffOverrides[staffId]
+      const byTeam = o?.therapistTeamFTEByTeam
+      if (!byTeam) continue
+
+      for (const [teamKey, fte] of Object.entries(byTeam)) {
+        const t = teamKey as Team
+        if (!TEAMS.includes(t)) continue
+        if (typeof fte !== 'number' || fte <= 0) continue
+
+        const alloc: TherapistAllocation & { staff: Staff } = {
+          id: `override-therapist:${selectedDate.toISOString().slice(0, 10)}:${staffId}:${t}`,
+          schedule_id: '',
+          staff_id: staffId,
+          team: t,
+          fte_therapist: fte,
+          fte_remaining: Math.max(0, 1 - fte),
+          slot_whole: null,
+          slot1: null,
+          slot2: null,
+          slot3: null,
+          slot4: null,
+          leave_type: o?.leaveType ?? null,
+          special_program_ids: null,
+          is_substitute_team_head: false,
+          spt_slot_display: null,
+          is_manual_override: true,
+          manual_override_note: null,
+          staff: staffMember,
+        }
+
+        therapistByTeam[t].push(alloc)
+      }
+    }
 
     // Sort therapist allocations: APPT first, then others
     TEAMS.forEach(team => {

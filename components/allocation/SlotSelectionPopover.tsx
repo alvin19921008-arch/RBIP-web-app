@@ -4,6 +4,7 @@ import { useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
 import { Check, X, GripVertical } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
 
 interface SlotSelectionPopoverProps {
   staffName: string
@@ -11,9 +12,12 @@ interface SlotSelectionPopoverProps {
   selectedSlots: number[]
   onSlotToggle: (slot: number) => void
   onClose: () => void
-  onStartDrag: () => void // Called when user starts dragging a selected slot
+  onStartDrag: () => void // Called when user starts dragging a selected slot (drag mode only)
   position: { x: number; y: number }
   isDiscardMode?: boolean // True when discarding slots (opposite of transfer)
+  mode?: 'drag' | 'confirm'
+  onConfirm?: () => void
+  confirmDisabled?: boolean
 }
 
 export function SlotSelectionPopover({
@@ -25,6 +29,9 @@ export function SlotSelectionPopover({
   onStartDrag,
   position,
   isDiscardMode = false,
+  mode = 'drag',
+  onConfirm,
+  confirmDisabled = false,
 }: SlotSelectionPopoverProps) {
   // Track if mouse moved enough to be considered a drag vs click
   const dragStartRef = useRef<{ x: number; y: number } | null>(null)
@@ -34,11 +41,12 @@ export function SlotSelectionPopover({
 
   const hasSelectedSlots = selectedSlots.length > 0
 
-  // Handle mousedown on a selected slot to potentially start drag
+  // Handle mousedown on a selected slot to potentially start drag (drag mode only)
   const handleSlotMouseDown = (e: React.MouseEvent, slot: number, isSelected: boolean) => {
     e.stopPropagation()
     e.preventDefault() // Prevent default to avoid text selection and other behaviors
     
+    if (mode !== 'drag') return
     if (!isSelected) {
       // If not selected, just toggle it
       return
@@ -84,7 +92,7 @@ export function SlotSelectionPopover({
 
   return (
     <div
-      className="fixed z-[9999] bg-white dark:bg-slate-800 rounded-lg shadow-xl border-2 border-amber-500 p-2.5 w-[150px]"
+      className="absolute z-[9999] bg-white dark:bg-slate-800 rounded-lg shadow-xl border-2 border-amber-500 p-2.5 w-[150px]"
       style={{
         left: position.x,
         top: position.y,
@@ -105,9 +113,13 @@ export function SlotSelectionPopover({
       
       {/* Header */}
       <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-1.5 font-medium pr-4">
-        {isDiscardMode 
-          ? (hasSelectedSlots ? 'Click to discard selected slots:' : 'Select slots to discard:')
-          : (hasSelectedSlots ? 'Drag selected slots:' : 'Select slots to move:')
+        {mode === 'confirm'
+          ? isDiscardMode
+            ? (hasSelectedSlots ? 'Confirm discard:' : 'Select slots to discard:')
+            : (hasSelectedSlots ? 'Confirm move:' : 'Select slots to move:')
+          : isDiscardMode
+            ? (hasSelectedSlots ? 'Click to discard selected slots:' : 'Select slots to discard:')
+            : (hasSelectedSlots ? 'Drag selected slots:' : 'Select slots to move:')
         }
       </div>
       
@@ -130,20 +142,28 @@ export function SlotSelectionPopover({
               onClick={(e) => {
                 e.stopPropagation()
                 e.preventDefault()
-                if (!isSelected) {
-                  onSlotToggle(slot)
+                if (mode === 'drag') {
+                  if (!isSelected) onSlotToggle(slot)
+                  // Selected slots handle toggle in mouseup after checking for drag
+                  return
                 }
-                // Selected slots handle toggle in mouseup after checking for drag
+                // confirm mode: always toggle on click
+                onSlotToggle(slot)
               }}
               className={cn(
                 "w-full flex items-center justify-between px-2 py-1.5 rounded text-xs font-medium transition-all",
                 isSelected
-                  ? "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 border border-amber-500 cursor-grab active:cursor-grabbing"
+                  ? cn(
+                      "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 border border-amber-500",
+                      mode === 'drag' ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
+                    )
                   : "bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 border border-transparent hover:bg-slate-200 dark:hover:bg-slate-600 cursor-pointer"
               )}
             >
               <div className="flex items-center gap-1.5">
-                {isSelected && <GripVertical className="w-3 h-3 text-amber-600 dark:text-amber-400 flex-shrink-0" />}
+                {isSelected && mode === 'drag' && (
+                  <GripVertical className="w-3 h-3 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                )}
                 <span>{formattedTime}</span>
               </div>
               {isSelected && <Check className="w-3 h-3 text-amber-600 dark:text-amber-400" />}
@@ -159,9 +179,11 @@ export function SlotSelectionPopover({
             {selectedSlots.length} slot{selectedSlots.length !== 1 ? 's' : ''} selected ({(selectedSlots.length * 0.25).toFixed(2)} FTE)
           </div>
           <div className="text-[9px] text-slate-400 dark:text-slate-500 mt-0.5 italic">
-            {isDiscardMode 
-              ? 'Click to discard selected slots'
-              : 'Drag any selected slot to move'
+            {mode === 'confirm'
+              ? 'Use the buttons below to confirm'
+              : isDiscardMode
+                ? 'Click to discard selected slots'
+                : 'Drag any selected slot to move'
             }
           </div>
         </div>
@@ -170,10 +192,50 @@ export function SlotSelectionPopover({
       {/* Instruction when no slots selected */}
       {!hasSelectedSlots && (
         <div className="mt-1.5 pt-1.5 border-t border-slate-200 dark:border-slate-600 text-[10px] text-slate-400 dark:text-slate-500 italic leading-tight">
-          {isDiscardMode 
-            ? 'Click slots to select,<br/>then click to discard'
-            : 'Click slots to select,<br/>then drag to move'
+          {mode === 'confirm'
+            ? isDiscardMode
+              ? 'Click slots to select, then confirm'
+              : 'Click slots to select, then confirm'
+            : isDiscardMode
+              ? 'Click slots to select,<br/>then click to discard'
+              : 'Click slots to select,<br/>then drag to move'
           }
+        </div>
+      )}
+
+      {mode === 'confirm' && (
+        <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600 flex items-center justify-end gap-1.5">
+          <Tooltip content="Cancel" side="top">
+            <button
+              type="button"
+              className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
+              onClick={(e) => {
+                e.stopPropagation()
+                onClose()
+              }}
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </Tooltip>
+          <Tooltip content="Confirm" side="top">
+            <button
+              type="button"
+              className={cn(
+                'p-1 rounded text-amber-700 dark:text-amber-300',
+                confirmDisabled || !hasSelectedSlots
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'hover:bg-amber-100 dark:hover:bg-amber-900/40'
+              )}
+              disabled={confirmDisabled || !hasSelectedSlots}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (confirmDisabled || !hasSelectedSlots) return
+                onConfirm?.()
+              }}
+            >
+              <Check className="w-4 h-4" />
+            </button>
+          </Tooltip>
         </div>
       )}
     </div>

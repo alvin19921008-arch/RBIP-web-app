@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
-**Last Updated**: 2026-01-11
-**Latest Phase**: Phase 21 - Account Management, Access Roles, Step Clear & Step Validation Enhancements  
+**Last Updated**: 2026-01-12
+**Latest Phase**: Phase 22 - Buffer PCA FTE Display Fix & Popover Positioning Enhancement  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
 
@@ -461,6 +461,16 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Block 3 bed relieving note editing is step-gated (Step 4 only) with warning tooltip when attempted earlier
 - ✅ **Staff Pool Scroll Stability**
   - Restored left-side Staff Pool vertical scrolling and aligned bottom edge to PCA Dedicated Schedule table (excluding notes board)
+
+### Phase 22: Buffer PCA FTE Display Fix & Popover Positioning Enhancement (Latest)
+- ✅ **Buffer PCA FTE Display Fix**
+  - Fixed bug where buffer floating PCA with `buffer_fte=0.5` was incorrectly shown as 1.0 / 4 slots in Step 2.1 and Staff Pool
+  - Root cause: Buffer PCA `availableSlots` was being clamped to `[1,2]`, causing Step 2.1 to exclude it when missing slots were `[3,4]`; Staff Pool calculated true FTE from `availableSlots.length` instead of `buffer_fte`
+  - Solution: Removed algorithm-side slot clamp (buffer PCA stays flexible across all slots, capacity still enforced via `fte_pca`); fixed `BufferStaffPool.getTrueFTERemaining()` to cap by `buffer_fte/override.fteRemaining` instead of `availableSlots.length`; updated Step 2.1 dialog to display buffer capacity correctly
+- ✅ **Popover Positioning Enhancement**
+  - Changed contextual menu and all popovers from `position: fixed` to `position: absolute` so they scroll with the page
+  - Updated position calculation to store document coordinates (`client + window.scrollX/Y`) instead of viewport coordinates
+  - Affected components: `StaffContextMenu`, `TeamPickerPopover`, `ConfirmPopover`, `SlotSelectionPopover`, and inline popovers in schedule page (split/merge/color/warning)
 
 ### Phase 9: Pending FTE Bug Fix & Safe Wrapper System
 - ✅ **Critical Bug Fix: Pending FTE Overwrite Issue**
