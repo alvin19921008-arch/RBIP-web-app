@@ -537,10 +537,27 @@ export function StaffEditDialog({
           )}
 
           <div className="space-y-2">
-            <div className={cn('grid gap-4', isSPT ? 'grid-cols-3' : 'grid-cols-2')}>
-              {isSPT && (
-                <div className="space-y-1">
-                  <Label htmlFor="spt-base-fte">FTE</Label>
+            {isSPT ? (
+              <div className="space-y-2">
+                {/* Labels row */}
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <Label htmlFor="spt-base-fte">FTE</Label>
+                    {typeof sptConfiguredFTE === 'number' && (
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Configured: {roundTo2Decimals(sptConfiguredFTE).toFixed(2)}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <Label htmlFor="fte-subtraction">FTE Cost due to Leave</Label>
+                  </div>
+                  <div>
+                    <Label htmlFor="fte-remaining">FTE Remaining on Duty</Label>
+                  </div>
+                </div>
+                {/* Inputs row - aligned horizontally */}
+                <div className="grid grid-cols-3 gap-4 items-start">
                   <Input
                     id="spt-base-fte"
                     type="text"
@@ -550,41 +567,60 @@ export function StaffEditDialog({
                     onBlur={handleSPTBaseFTEBlur}
                     placeholder="0.00"
                   />
-                  {typeof sptConfiguredFTE === 'number' && (
-                    <p className="text-[11px] text-muted-foreground">
-                      Configured: {roundTo2Decimals(sptConfiguredFTE).toFixed(2)}
-                    </p>
-                  )}
+                  <Input
+                    id="fte-subtraction"
+                    type="text"
+                    inputMode="decimal"
+                    value={fteSubtractionInput}
+                    onChange={(e) => handleFTESubtractionInputChange(e.target.value)}
+                    onBlur={handleFTESubtractionBlur}
+                    className={!isValid ? 'border-red-500' : ''}
+                    placeholder="0.00"
+                  />
+                  <Input
+                    id="fte-remaining"
+                    type="text"
+                    inputMode="decimal"
+                    value={fteRemainingInput}
+                    onChange={(e) => handleFTERemainingInputChange(e.target.value)}
+                    onBlur={handleFTERemainingBlur}
+                    className={!isValid ? 'border-red-500' : ''}
+                    placeholder="0.00"
+                    disabled={isSPT}
+                  />
                 </div>
-              )}
-              <div className="space-y-1">
-                <Label htmlFor="fte-subtraction">FTE Cost due to Leave</Label>
-                <Input
-                  id="fte-subtraction"
-                  type="text"
-                  inputMode="decimal"
-                  value={fteSubtractionInput}
-                  onChange={(e) => handleFTESubtractionInputChange(e.target.value)}
-                  onBlur={handleFTESubtractionBlur}
-                  className={!isValid ? 'border-red-500' : ''}
-                  placeholder="0.00"
-                />
               </div>
-              <div className="space-y-1">
-                <Label htmlFor="fte-remaining">FTE Remaining on Duty</Label>
-                <Input
-                  id="fte-remaining"
-                  type="text"
-                  inputMode="decimal"
-                  value={fteRemainingInput}
-                  onChange={(e) => handleFTERemainingInputChange(e.target.value)}
-                  onBlur={handleFTERemainingBlur}
-                  className={!isValid ? 'border-red-500' : ''}
-                  placeholder="0.00"
-                  disabled={isSPT}
-                />
+            ) : (
+              <div className={cn('grid gap-4', 'grid-cols-2')}>
+                <div className="space-y-1">
+                  <Label htmlFor="fte-subtraction">FTE Cost due to Leave</Label>
+                  <Input
+                    id="fte-subtraction"
+                    type="text"
+                    inputMode="decimal"
+                    value={fteSubtractionInput}
+                    onChange={(e) => handleFTESubtractionInputChange(e.target.value)}
+                    onBlur={handleFTESubtractionBlur}
+                    className={!isValid ? 'border-red-500' : ''}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="fte-remaining">FTE Remaining on Duty</Label>
+                  <Input
+                    id="fte-remaining"
+                    type="text"
+                    inputMode="decimal"
+                    value={fteRemainingInput}
+                    onChange={(e) => handleFTERemainingInputChange(e.target.value)}
+                    onBlur={handleFTERemainingBlur}
+                    className={!isValid ? 'border-red-500' : ''}
+                    placeholder="0.00"
+                    disabled={isSPT}
+                  />
+                </div>
               </div>
-            </div>
+            )}
             {(fteRemaining < 0 || fteRemaining > maxFTE) && (
               <p className="text-sm text-red-500">
                 FTE must be between 0 and 1
@@ -599,7 +635,7 @@ export function StaffEditDialog({
 
           {/* AM/PM Selection for therapists when FTE = 0.5 or 0.25 */}
           {isTherapistRank && (fteRemaining === 0.5 || fteRemaining === 0.25) && (
-            <div className="space-y-2">
+            <div className="space-y-2 mt-4">
               <Label htmlFor="am-pm-selection">AM/PM Selection</Label>
               <select
                 id="am-pm-selection"
@@ -755,7 +791,7 @@ export function StaffEditDialog({
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="mt-6">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>

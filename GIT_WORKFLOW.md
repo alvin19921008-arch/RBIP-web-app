@@ -102,16 +102,28 @@ git add .
 git commit -m "Merge latest changes and resolve conflicts"
 ```
 
-#### Step 4: Verify Everything Works
+#### Step 4: Install/Update Dependencies
 
-After pulling:
+**⚠️ CRITICAL: Always run this after pulling!**
+
+New dependencies may have been added to the project. You must install them:
+
 ```bash
-# Make sure dependencies are up to date
+# Install any new dependencies from package.json
 npm install
+```
 
+This ensures all required packages (like `@tiptap/react`, `@tiptap/starter-kit`, etc.) are installed.
+
+#### Step 5: Verify Everything Works
+
+After pulling and installing dependencies:
+```bash
 # Test that everything works
 npm run dev
 ```
+
+If you see "Module not found" errors, it usually means you forgot to run `npm install` after pulling.
 
 ---
 
@@ -144,7 +156,7 @@ git log HEAD..origin/main --stat
 - [ ] Run `git status` to see if you're behind
 - [ ] If behind, run `git pull origin main`
 - [ ] If conflicts occur, resolve them before starting
-- [ ] Run `npm install` if package.json changed
+- [ ] **ALWAYS run `npm install`** (even if package.json didn't change - dependencies might be missing)
 - [ ] Test with `npm run dev`
 
 **Before ending work each day:**
