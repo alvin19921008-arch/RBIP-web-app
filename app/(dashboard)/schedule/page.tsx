@@ -209,10 +209,6 @@ function SchedulePageContent() {
   const [lastSaveTiming, setLastSaveTiming] = useState<TimingReport | null>(null)
   const [lastCopyTiming, setLastCopyTiming] = useState<TimingReport | null>(null)
   const [lastLoadTiming, setLastLoadTiming] = useState<TimingReport | null>(null)
-  const teamHeaderScrollRef = useRef<HTMLDivElement | null>(null)
-  const teamGridScrollRef = useRef<HTMLDivElement | null>(null)
-  const teamScrollSyncSourceRef = useRef<'header' | 'grid' | null>(null)
-  const teamScrollSyncRafRef = useRef<number | null>(null)
   const [topLoadingVisible, setTopLoadingVisible] = useState(false)
   const [topLoadingProgress, setTopLoadingProgress] = useState(0)
   const loadingBarIntervalRef = useRef<number | null>(null)
@@ -232,52 +228,9 @@ function SchedulePageContent() {
   }, [tieBreakResolver])
   const [tieBreakDecisions, setTieBreakDecisions] = useState<Record<string, Team>>({}) // Store tie-breaker decisions: key = `${teams.sort().join(',')}:${pendingFTE}`, value = selected team
 
-  // Sync horizontal scrolling between sticky team header and grid (Excel-like).
-  useEffect(() => {
-    const headerEl = teamHeaderScrollRef.current
-    const gridEl = teamGridScrollRef.current
-    if (!headerEl || !gridEl) return
-
-    // Align header with any existing grid scroll on mount.
-    headerEl.scrollLeft = gridEl.scrollLeft
-
-    const scheduleUnlock = () => {
-      if (teamScrollSyncRafRef.current) {
-        cancelAnimationFrame(teamScrollSyncRafRef.current)
-      }
-      teamScrollSyncRafRef.current = requestAnimationFrame(() => {
-        teamScrollSyncSourceRef.current = null
-        teamScrollSyncRafRef.current = null
-      })
-    }
-
-    const onHeaderScroll = () => {
-      if (teamScrollSyncSourceRef.current === 'grid') return
-      teamScrollSyncSourceRef.current = 'header'
-      gridEl.scrollLeft = headerEl.scrollLeft
-      scheduleUnlock()
-    }
-
-    const onGridScroll = () => {
-      if (teamScrollSyncSourceRef.current === 'header') return
-      teamScrollSyncSourceRef.current = 'grid'
-      headerEl.scrollLeft = gridEl.scrollLeft
-      scheduleUnlock()
-    }
-
-    headerEl.addEventListener('scroll', onHeaderScroll, { passive: true })
-    gridEl.addEventListener('scroll', onGridScroll, { passive: true })
-
-    return () => {
-      headerEl.removeEventListener('scroll', onHeaderScroll)
-      gridEl.removeEventListener('scroll', onGridScroll)
-      if (teamScrollSyncRafRef.current) {
-        cancelAnimationFrame(teamScrollSyncRafRef.current)
-        teamScrollSyncRafRef.current = null
-      }
-      teamScrollSyncSourceRef.current = null
-    }
-  }, [])
+  // NOTE: Team grid used to have an internal horizontal scroller with a synced sticky header scroller.
+  // That caused a mismatch where the grid could scroll horizontally while the StepIndicator / top area did not,
+  // creating an "underlay" strip on the right. We now rely on page-level horizontal scroll instead.
 
   // Keep the Staff Pool column ending at the same bottom edge as the right content (incl. PCA dedicated table),
   // while keeping Staff Pool itself internally scrollable.
@@ -9137,7 +9090,7 @@ function SchedulePageContent() {
       {/* DragOverlay for regular card drags */}
       <DragOverlay />
       
-      <div className="container mx-auto p-4 min-w-[1360px]">
+      <div className="w-full px-8 py-4 min-w-[1440px] bg-background">
         {actionToast && (
           <div ref={actionToastContainerRef} className="fixed right-4 top-4 z-[9999]">
             <ActionToast
@@ -9992,19 +9945,17 @@ function SchedulePageContent() {
           <div className="flex-1 min-w-0 bg-background">
             {/* Sticky Team headers row (Excel-like freeze) */}
             <div className="sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-border">
-              <div ref={teamHeaderScrollRef} className="overflow-x-auto bg-background">
-                <div className="grid grid-cols-8 gap-2 py-2 min-w-[960px]">
-                  {TEAMS.map((team) => (
-                    <h2 key={`header-${team}`} className="text-lg font-bold text-center">
-                      {team}
-                    </h2>
-                  ))}
-                </div>
+              <div className="grid grid-cols-8 gap-2 py-2 min-w-[960px]">
+                {TEAMS.map((team) => (
+                  <h2 key={`header-${team}`} className="text-lg font-bold text-center">
+                    {team}
+                  </h2>
+                ))}
               </div>
             </div>
 
-            {/* Team grid content (horizontal scroller) */}
-            <div ref={teamGridScrollRef} className="overflow-x-auto bg-background">
+            {/* Team grid content (page-level horizontal scroll) */}
+            <div className="bg-background">
               <div className="min-w-[960px]">
                 {/* Height anchor for Staff Pool column: stop at bottom of PCA Dedicated table (exclude notes board). */}
                 <div ref={rightContentRef}>
@@ -10625,7 +10576,7 @@ function SchedulePageContent() {
 
 export default function SchedulePage() {
   return (
-    <Suspense fallback={<div className="container mx-auto p-4 min-w-[1360px]">Loading...</div>}>
+    <Suspense fallback={<div className="w-full px-8 py-4 min-w-[1440px] bg-background">Loading...</div>}>
       <SchedulePageContent />
     </Suspense>
   )

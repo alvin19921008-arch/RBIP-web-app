@@ -10,6 +10,7 @@ import { BufferStaffPool } from './BufferStaffPool'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { ChevronRight, ChevronDown, ChevronLeft, ChevronUp } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 interface StaffPoolProps {
   therapists: Staff[]
@@ -32,6 +33,8 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [scrollbarVisible, setScrollbarVisible] = useState(false)
   const hideScrollbarTimerRef = useRef<number | null>(null)
+  const [canScrollUp, setCanScrollUp] = useState(false)
+  const [canScrollDown, setCanScrollDown] = useState(false)
   const [expandedRanks, setExpandedRanks] = useState<Record<string, boolean>>({
     SPT: false,
     APPT: false,
@@ -39,6 +42,7 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
     PCA: false,
   })
   const [showFTEFilter, setShowFTEFilter] = useState(false)
+  const [rankFilter, setRankFilter] = useState<'all' | 'therapist' | 'pca'>('all')
 
   useEffect(() => {
     const el = scrollRef.current
@@ -67,6 +71,17 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
     }
   }, [])
 
+  const updateScrollHints = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
+    const top = el.scrollTop
+    // Add a small tolerance to avoid flicker around boundaries
+    const eps = 1
+    setCanScrollUp(top > eps)
+    setCanScrollDown(top < maxScrollTop - eps)
+  }, [])
+
   const pokeScrollbar = useCallback(() => {
     setScrollbarVisible(true)
     if (hideScrollbarTimerRef.current) window.clearTimeout(hideScrollbarTimerRef.current)
@@ -77,6 +92,49 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
     if (hideScrollbarTimerRef.current) window.clearTimeout(hideScrollbarTimerRef.current)
     hideScrollbarTimerRef.current = null
     setScrollbarVisible(false)
+  }, [])
+
+  // Keep scroll hint buttons in sync (can scroll up/down).
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+
+    updateScrollHints()
+
+    const onScroll = () => updateScrollHints()
+    el.addEventListener('scroll', onScroll, { passive: true })
+
+    const ro = new ResizeObserver(() => updateScrollHints())
+    ro.observe(el)
+
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      ro.disconnect()
+    }
+  }, [updateScrollHints])
+
+  // Content height can change without triggering scroll/resize (expand/collapse, filters, data loads),
+  // so recompute scroll hints on those state changes.
+  useEffect(() => {
+    requestAnimationFrame(() => updateScrollHints())
+  }, [
+    updateScrollHints,
+    rankFilter,
+    showFTEFilter,
+    expandedRanks.SPT,
+    expandedRanks.APPT,
+    expandedRanks.RPT,
+    expandedRanks.PCA,
+    therapists.length,
+    pcas.length,
+    bufferStaff.length,
+    inactiveStaff.length,
+  ])
+
+  const scrollByDelta = useCallback((delta: number) => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollBy({ top: delta, behavior: 'smooth' })
   }, [])
 
   // Helper function to calculate Base_FTE-remaining (after leave, excluding special program)
@@ -213,12 +271,25 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
     })
   }
 
+  const visibleTherapists = rankFilter === 'pca' ? [] : therapists
+  const visiblePCAs = rankFilter === 'therapist' ? [] : pcas
   const therapistsByRank = {
-    SPT: sortStaffByRank(filterStaffByFTE(therapists.filter(t => t.rank === 'SPT'))),
-    APPT: sortStaffByRank(filterStaffByFTE(therapists.filter(t => t.rank === 'APPT'))),
-    RPT: sortStaffByRank(filterStaffByFTE(therapists.filter(t => t.rank === 'RPT'))),
+    SPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'SPT'))),
+    APPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'APPT'))),
+    RPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'RPT'))),
   }
-  const filteredPCAs = sortStaffByRank(filterStaffByFTE(pcas))
+  const visibleBufferStaff =
+    rankFilter === 'therapist'
+      ? bufferStaff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
+      : rankFilter === 'pca'
+        ? bufferStaff.filter(s => s.rank === 'PCA')
+        : bufferStaff
+  const visibleInactiveStaff =
+    rankFilter === 'therapist'
+      ? inactiveStaff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
+      : rankFilter === 'pca'
+        ? inactiveStaff.filter(s => s.rank === 'PCA')
+        : inactiveStaff
 
   // Check if all ranks are expanded
   const allExpanded = expandedRanks.SPT && expandedRanks.APPT && expandedRanks.RPT && expandedRanks.PCA
@@ -227,6 +298,8 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
   const anyTherapistExpanded = expandedRanks.SPT || expandedRanks.APPT || expandedRanks.RPT
 
   const handleShowAll = () => {
+    // Mutually exclusive with rank filter (Therapist/PCA only view)
+    if (rankFilter !== 'all') return
     if (allExpanded) {
       // Retract all
       setExpandedRanks({
@@ -244,6 +317,20 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
       PCA: true,
     })
     }
+  }
+
+  const toggleRankFilter = (next: 'therapist' | 'pca') => {
+    setRankFilter(prev => {
+      const effective = prev === next ? 'all' : next
+      return effective
+    })
+    // When filtering to a specific rank group, ensure relevant sections are expanded for a good first view.
+    setExpandedRanks(prev => {
+      if (next === 'therapist') {
+        return { ...prev, SPT: true, APPT: true, RPT: true, PCA: false }
+      }
+      return { ...prev, SPT: false, APPT: false, RPT: false, PCA: true }
+    })
   }
 
   const toggleRank = (rank: string) => {
@@ -285,7 +372,8 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
       onMouseMove={pokeScrollbar}
       onMouseLeave={hideScrollbarNow}
     >
-      <div className="flex items-center justify-between gap-1">
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center justify-between gap-1">
         <Button
           variant="outline"
           size="sm"
@@ -297,218 +385,267 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
         </Button>
         <div className="flex items-center gap-1">
           <Button
-            variant={showFTEFilter ? "default" : "ghost"}
+            variant={showFTEFilter ? "default" : "outline"}
             size="sm"
             onClick={handleFTEFilterToggle}
-            className="text-xs h-6 px-2"
+            className={cn(
+              'text-xs h-6 px-2',
+              !showFTEFilter && 'bg-muted/60 hover:bg-muted'
+            )}
           >
             On leave
         </Button>
         <Button
-            variant={allExpanded ? "default" : "ghost"}
+            variant={allExpanded ? "default" : "outline"}
           size="sm"
           onClick={handleShowAll}
-          className="text-xs h-6 px-2"
+          disabled={rankFilter !== 'all'}
+          className={cn(
+            'text-xs h-6 px-2',
+            !allExpanded && 'bg-muted/60 hover:bg-muted'
+          )}
+          title={rankFilter !== 'all' ? 'Show All is disabled when filtering to Therapist/PCA.' : undefined}
         >
           Show All
         </Button>
         </div>
       </div>
 
-      <div
-        ref={scrollRef}
-        className={`flex-1 min-h-0 overflow-y-auto overscroll-y-contain pca-like-scrollbar ${
-          scrollbarVisible ? '' : 'pca-like-scrollbar--hidden'
-        }`}
-        style={{ direction: 'rtl' }}
-      >
-        <div className="flex flex-col gap-4" style={{ direction: 'ltr' }}>
-          <Card>
-            <CardHeader className="pb-1 pt-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm">Therapist Pool</CardTitle>
-                {anyTherapistExpanded && (
+        {/* Rank filters (mutually exclusive; can overlap with On leave) */}
+        <div className="grid grid-cols-2 gap-1">
+          <Button
+            variant={rankFilter === 'therapist' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => toggleRankFilter('therapist')}
+            className={cn(
+              'text-xs h-6 px-2',
+              rankFilter !== 'therapist' && 'bg-muted/60 hover:bg-muted'
+            )}
+            title="Show therapist sections only (includes buffer therapists)"
+          >
+            Therapist
+          </Button>
+          <Button
+            variant={rankFilter === 'pca' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => toggleRankFilter('pca')}
+            className={cn(
+              'text-xs h-6 px-2',
+              rankFilter !== 'pca' && 'bg-muted/60 hover:bg-muted'
+            )}
+            title="Show PCA sections only (includes buffer PCAs)"
+          >
+            PCA
+          </Button>
+        </div>
+      </div>
+
+      <div className="relative flex-1 min-h-0">
+        <div
+          ref={scrollRef}
+          className={`h-full overflow-y-auto overscroll-y-contain pca-like-scrollbar ${
+            scrollbarVisible ? '' : 'pca-like-scrollbar--hidden'
+          }`}
+          style={{ direction: 'rtl' }}
+        >
+          <div
+            className={cn(
+              'flex flex-col gap-4 transition-[padding] duration-150',
+              canScrollUp ? 'pt-10' : 'pt-0',
+              canScrollDown ? 'pb-10' : 'pb-0'
+            )}
+            style={{ direction: 'ltr' }}
+          >
+          {rankFilter !== 'pca' ? (
+            <Card>
+              <CardHeader className="pb-1 pt-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm">Therapist Pool</CardTitle>
+                  {anyTherapistExpanded && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setExpandedRanks(prev => ({
+                          ...prev,
+                          SPT: false,
+                          APPT: false,
+                          RPT: false,
+                        }))
+                      }}
+                      className="h-5 w-5 p-0"
+                      title="Retract all therapists"
+                    >
+                      <ChevronUp className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-1 p-1">
+                {Object.entries(therapistsByRank).map(([rank, staffList]) => (
+                  <div key={rank}>
+                    <button
+                      onClick={() => toggleRank(rank)}
+                      className="flex items-center gap-1 text-xs font-semibold mb-1 hover:text-primary transition-colors"
+                    >
+                      {expandedRanks[rank] ? (
+                        <ChevronDown className="h-3 w-3" />
+                      ) : (
+                        <ChevronRight className="h-3 w-3" />
+                      )}
+                      {rank}
+                    </button>
+                    {expandedRanks[rank] && (
+                      <div className="space-y-1 ml-4">
+                        {staffList.map((staff) => {
+                          const baseFTE = getBaseFTERemaining(staff.id, staff)
+                          const showFTE =
+                            staff.rank !== 'SPT' && (baseFTE > 0 && baseFTE < 1 || baseFTE === 0)
+                          // For buffer staff, always show FTE if it's not 1.0
+                          const shouldShowFTE =
+                            showFTE ||
+                            (staff.status === 'buffer' &&
+                              staff.buffer_fte !== undefined &&
+                              staff.buffer_fte !== 1.0)
+                          const isBufferStaff = staff.status === 'buffer'
+                          const isTherapistRank = ['SPT', 'APPT', 'RPT'].includes(staff.rank)
+                          const isInCorrectStep = currentStep === 'therapist-pca'
+                          // Check if this is a fixed-team staff (APPT, RPT) that can be transferred with warning
+                          const isFixedTeamStaff =
+                            !isBufferStaff && (staff.rank === 'APPT' || staff.rank === 'RPT')
+
+                          const staffCard = (
+                            <StaffCard
+                              key={staff.id}
+                              staff={staff}
+                              onEdit={(e) => onEditStaff?.(staff.id, e)}
+                              fteRemaining={shouldShowFTE ? baseFTE : undefined}
+                              showFTE={shouldShowFTE}
+                              draggable={true} // Always allow dragging (will snap back if not in correct step)
+                            />
+                          )
+
+                          // For fixed-team staff (APPT, RPT), show warning tooltip when dragging (if in correct step)
+                          if (isFixedTeamStaff && isInCorrectStep) {
+                            return (
+                              <TeamTransferWarningTooltip
+                                key={staff.id}
+                                staffId={staff.id}
+                                content="Team transfer for fixed-team staff detected."
+                              >
+                                {staffCard}
+                              </TeamTransferWarningTooltip>
+                            )
+                          }
+
+                          // Add tooltip for regular therapist when not in correct step (buffer staff handled in BufferStaffPool)
+                          if (!isBufferStaff && isTherapistRank && !isInCorrectStep) {
+                            return (
+                              <DragValidationTooltip
+                                key={staff.id}
+                                staffId={staff.id}
+                                content="Therapist slot dragging-&-allocating is only available in Step 2 only."
+                              >
+                                {staffCard}
+                              </DragValidationTooltip>
+                            )
+                          }
+
+                          return staffCard
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {rankFilter !== 'therapist' ? (
+            <Card>
+              <CardHeader className="pb-1 pt-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm">PCA Pool</CardTitle>
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => {
-                      setExpandedRanks(prev => ({
-                        ...prev,
-                        SPT: false,
-                        APPT: false,
-                        RPT: false,
-                      }))
-                    }}
+                    onClick={() => toggleRank('PCA')}
                     className="h-5 w-5 p-0"
-                    title="Retract all therapists"
+                    title={expandedRanks.PCA ? "Retract PCA" : "Expand PCA"}
                   >
-                    <ChevronUp className="h-3 w-3" />
-                  </Button>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-1 p-1">
-              {Object.entries(therapistsByRank).map(([rank, staffList]) => (
-                <div key={rank}>
-                  <button
-                    onClick={() => toggleRank(rank)}
-                    className="flex items-center gap-1 text-xs font-semibold mb-1 hover:text-primary transition-colors"
-                  >
-                    {expandedRanks[rank] ? (
-                      <ChevronDown className="h-3 w-3" />
+                    {expandedRanks.PCA ? (
+                      <ChevronUp className="h-3 w-3" />
                     ) : (
-                      <ChevronRight className="h-3 w-3" />
+                      <ChevronDown className="h-3 w-3" />
                     )}
-                    {rank}
-                  </button>
-                  {expandedRanks[rank] && (
-                    <div className="space-y-1 ml-4">
-                      {staffList.map((staff) => {
-                        const baseFTE = getBaseFTERemaining(staff.id, staff)
-                        const showFTE =
-                          staff.rank !== 'SPT' && (baseFTE > 0 && baseFTE < 1 || baseFTE === 0)
-                        // For buffer staff, always show FTE if it's not 1.0
-                        const shouldShowFTE =
-                          showFTE ||
-                          (staff.status === 'buffer' &&
-                            staff.buffer_fte !== undefined &&
-                            staff.buffer_fte !== 1.0)
-                        const isBufferStaff = staff.status === 'buffer'
-                        const isTherapistRank = ['SPT', 'APPT', 'RPT'].includes(staff.rank)
-                        const isInCorrectStep = currentStep === 'therapist-pca'
-                        // Check if this is a fixed-team staff (APPT, RPT) that can be transferred with warning
-                        const isFixedTeamStaff =
-                          !isBufferStaff && (staff.rank === 'APPT' || staff.rank === 'RPT')
-
-                        const staffCard = (
-                          <StaffCard
-                            key={staff.id}
-                            staff={staff}
-                            onEdit={(e) => onEditStaff?.(staff.id, e)}
-                            fteRemaining={shouldShowFTE ? baseFTE : undefined}
-                            showFTE={shouldShowFTE}
-                            draggable={true} // Always allow dragging (will snap back if not in correct step)
-                          />
-                        )
-
-                        // For fixed-team staff (APPT, RPT), show warning tooltip when dragging (if in correct step)
-                        if (isFixedTeamStaff && isInCorrectStep) {
-                          return (
-                            <TeamTransferWarningTooltip
-                              key={staff.id}
-                              staffId={staff.id}
-                              content="Team transfer for fixed-team staff detected."
-                            >
-                              {staffCard}
-                            </TeamTransferWarningTooltip>
-                          )
-                        }
-
-                        // Add tooltip for regular therapist when not in correct step (buffer staff handled in BufferStaffPool)
-                        if (!isBufferStaff && isTherapistRank && !isInCorrectStep) {
-                          return (
-                            <DragValidationTooltip
-                              key={staff.id}
-                              staffId={staff.id}
-                              content="Therapist slot dragging-&-allocating is only available in Step 2 only."
-                            >
-                              {staffCard}
-                            </DragValidationTooltip>
-                          )
-                        }
-
-                        return staffCard
-                      })}
-                    </div>
-                  )}
+                  </Button>
                 </div>
-              ))}
-            </CardContent>
-          </Card>
+              </CardHeader>
+              <CardContent className="space-y-1 p-1">
+                {expandedRanks.PCA && (
+                  <div className="space-y-1 ml-4">
+                    {sortStaffByRank(filterStaffByFTE(visiblePCAs)).map((pca) => {
+                      const baseFTE = getBaseFTERemaining(pca.id, pca)
+                      const trueFTE = getTrueFTERemaining(pca.id, pca)
+                      const showFTE = (baseFTE > 0 && baseFTE < 1) || baseFTE === 0
+                      // For buffer PCA, always show FTE if buffer_fte is set
+                      const shouldShowFTE =
+                        showFTE ||
+                        (pca.status === 'buffer' && pca.buffer_fte !== undefined && pca.buffer_fte !== 1.0)
+                      const isFloatingPCA = pca.floating === true
+                      const isBufferStaff = pca.status === 'buffer'
 
-          <Card>
-            <CardHeader className="pb-1 pt-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm">PCA Pool</CardTitle>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => toggleRank('PCA')}
-                  className="h-5 w-5 p-0"
-                  title={expandedRanks.PCA ? "Retract PCA" : "Expand PCA"}
-                >
-                  {expandedRanks.PCA ? (
-                    <ChevronUp className="h-3 w-3" />
-                  ) : (
-                    <ChevronDown className="h-3 w-3" />
-                  )}
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-1 p-1">
-              {expandedRanks.PCA && (
-                <div className="space-y-1 ml-4">
-                  {filteredPCAs.map((pca) => {
-                    const baseFTE = getBaseFTERemaining(pca.id, pca)
-                    const trueFTE = getTrueFTERemaining(pca.id, pca)
-                    const showFTE = (baseFTE > 0 && baseFTE < 1) || baseFTE === 0
-                    // For buffer PCA, always show FTE if buffer_fte is set
-                    const shouldShowFTE =
-                      showFTE ||
-                      (pca.status === 'buffer' && pca.buffer_fte !== undefined && pca.buffer_fte !== 1.0)
-                    const isFloatingPCA = pca.floating === true
-                    const isBufferStaff = pca.status === 'buffer'
-
-                    // Enable drag for floating PCA (slot transfer will be validated in handleDragStart)
-                    // Apply border-green-700 to non-floating PCA (same as schedule page)
-                    // For buffer floating PCA, also show green border
-                    const borderColor = !isFloatingPCA
-                      ? 'border-green-700'
-                      : pca.status === 'buffer'
+                      // Enable drag for floating PCA (slot transfer will be validated in handleDragStart)
+                      // Apply border-green-700 to non-floating PCA (same as schedule page)
+                      // For buffer floating PCA, also show green border
+                      const borderColor = !isFloatingPCA
                         ? 'border-green-700'
-                        : undefined
-                    const isInCorrectStep = currentStep === 'floating-pca'
+                        : pca.status === 'buffer'
+                          ? 'border-green-700'
+                          : undefined
+                      const isInCorrectStep = currentStep === 'floating-pca'
 
-                    const staffCard = (
-                      <StaffCard
-                        key={pca.id}
-                        staff={pca}
-                        onEdit={() => onEditStaff?.(pca.id)}
-                        fteRemaining={shouldShowFTE ? (isFloatingPCA ? trueFTE : baseFTE) : undefined}
-                        showFTE={shouldShowFTE}
-                        baseFTE={isFloatingPCA ? Math.max(0, Math.min(baseFTE, 1.0)) : undefined}
-                        trueFTE={isFloatingPCA ? trueFTE : undefined}
-                        isFloatingPCA={isFloatingPCA}
-                        currentStep={currentStep}
-                        initializedSteps={initializedSteps}
-                        draggable={true} // Always allow dragging (will snap back if not in correct step)
-                        borderColor={borderColor}
-                      />
-                    )
-
-                    // Add tooltip for regular floating PCA when not in correct step (buffer staff handled in BufferStaffPool)
-                    if (!isBufferStaff && isFloatingPCA && !isInCorrectStep) {
-                      return (
-                        <DragValidationTooltip
+                      const staffCard = (
+                        <StaffCard
                           key={pca.id}
-                          staffId={pca.id}
-                          content="Floating PCA slot dragging-&-allocating is only available in Step 3 only."
-                        >
-                          {staffCard}
-                        </DragValidationTooltip>
+                          staff={pca}
+                          onEdit={() => onEditStaff?.(pca.id)}
+                          fteRemaining={shouldShowFTE ? (isFloatingPCA ? trueFTE : baseFTE) : undefined}
+                          showFTE={shouldShowFTE}
+                          baseFTE={isFloatingPCA ? Math.max(0, Math.min(baseFTE, 1.0)) : undefined}
+                          trueFTE={isFloatingPCA ? trueFTE : undefined}
+                          isFloatingPCA={isFloatingPCA}
+                          currentStep={currentStep}
+                          initializedSteps={initializedSteps}
+                          draggable={true} // Always allow dragging (will snap back if not in correct step)
+                          borderColor={borderColor}
+                        />
                       )
-                    }
 
-                    return staffCard
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                      // Add tooltip for regular floating PCA when not in correct step (buffer staff handled in BufferStaffPool)
+                      if (!isBufferStaff && isFloatingPCA && !isInCorrectStep) {
+                        return (
+                          <DragValidationTooltip
+                            key={pca.id}
+                            staffId={pca.id}
+                            content="Floating PCA slot dragging-&-allocating is only available in Step 3 only."
+                          >
+                            {staffCard}
+                          </DragValidationTooltip>
+                        )
+                      }
+
+                      return staffCard
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ) : null}
 
           <BufferStaffPool
-            inactiveStaff={inactiveStaff.filter(s => (s.status ?? 'active') === 'inactive')}
-            bufferStaff={bufferStaff}
+            inactiveStaff={visibleInactiveStaff.filter(s => (s.status ?? 'active') === 'inactive')}
+            bufferStaff={visibleBufferStaff}
             onBufferStaffCreated={onBufferStaffCreated || (() => {
               // Fallback: reload page if no callback provided
               window.location.reload()
@@ -520,16 +657,54 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
             weekday={weekday}
           />
 
-          {inactiveStaff.length > 0 && (
+          {visibleInactiveStaff.length > 0 && (
             <InactiveStaffPool 
-              inactiveStaff={showFTEFilter ? inactiveStaff.filter(s => {
+              inactiveStaff={showFTEFilter ? visibleInactiveStaff.filter(s => {
                 const baseFTE = getBaseFTERemaining(s.id)
                 return baseFTE !== 1.0
-              }) : inactiveStaff}
+              }) : visibleInactiveStaff}
               onEditStaff={onEditStaff}
               staffOverrides={staffOverrides}
             />
           )}
+        </div>
+        </div>
+
+        {/* Scroll hint buttons (show only when there is more content above/below) */}
+        <div className="pointer-events-none absolute inset-x-0 top-2 bottom-2 z-30">
+          <button
+            type="button"
+            className={cn(
+              'pointer-events-auto absolute left-1/2 -translate-x-1/2 top-0',
+              'h-7 w-7 rounded-full bg-background/90 border shadow-sm',
+              'flex items-center justify-center hover:bg-accent/80 z-20 transition-opacity',
+              canScrollUp ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            )}
+            onClick={(e) => {
+              e.stopPropagation()
+              scrollByDelta(-220)
+            }}
+            title="Scroll up"
+          >
+            <ChevronUp className="h-4 w-4" />
+          </button>
+
+          <button
+            type="button"
+            className={cn(
+              'pointer-events-auto absolute left-1/2 -translate-x-1/2 bottom-0',
+              'h-7 w-7 rounded-full bg-background/90 border shadow-sm',
+              'flex items-center justify-center hover:bg-accent/80 z-20 transition-opacity',
+              canScrollDown ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            )}
+            onClick={(e) => {
+              e.stopPropagation()
+              scrollByDelta(220)
+            }}
+            title="Scroll down"
+          >
+            <ChevronDown className="h-4 w-4" />
+          </button>
         </div>
       </div>
     </div>

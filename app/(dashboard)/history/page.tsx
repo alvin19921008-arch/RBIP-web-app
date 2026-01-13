@@ -256,7 +256,7 @@ export default function HistoryPage() {
   const monthGroups = groupSchedulesByMonth(schedules)
 
   return (
-    <div className="container mx-auto p-4">
+    <div className="w-full px-8 py-4">
       {/* Thin top loading bar */}
       {topLoadingVisible && (
         <div className="fixed top-0 left-0 right-0 h-[6px] z-[99999] bg-transparent">

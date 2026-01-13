@@ -80,7 +80,7 @@ export function Navbar() {
 
   return (
     <nav className="border-b bg-background">
-      <div className="container mx-auto flex h-16 items-center justify-between px-4">
+      <div className="w-full px-8 flex h-16 items-center justify-between">
         <div className="flex items-center space-x-8">
           <Link href="/schedule" className="text-xl font-bold">
             RBIP Duty List

@@ -10,7 +10,7 @@ export default async function DashboardLayout({
   await requireAuth()
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen min-w-[1440px] bg-background">
       <NavigationLoadingProvider navbarHeightPx={64}>
         <Navbar />
         <main>{children}</main>
