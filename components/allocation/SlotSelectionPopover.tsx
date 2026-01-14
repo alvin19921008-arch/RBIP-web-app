@@ -15,6 +15,7 @@ interface SlotSelectionPopoverProps {
   onStartDrag: () => void // Called when user starts dragging a selected slot (drag mode only)
   position: { x: number; y: number }
   isDiscardMode?: boolean // True when discarding slots (opposite of transfer)
+  actionLabel?: 'move' | 'discard' | 'assign'
   mode?: 'drag' | 'confirm'
   onConfirm?: () => void
   confirmDisabled?: boolean
@@ -29,6 +30,7 @@ export function SlotSelectionPopover({
   onStartDrag,
   position,
   isDiscardMode = false,
+  actionLabel,
   mode = 'drag',
   onConfirm,
   confirmDisabled = false,
@@ -40,6 +42,7 @@ export function SlotSelectionPopover({
   if (availableSlots.length === 0) return null
 
   const hasSelectedSlots = selectedSlots.length > 0
+  const effectiveAction: 'move' | 'discard' | 'assign' = actionLabel ?? (isDiscardMode ? 'discard' : 'move')
 
   // Handle mousedown on a selected slot to potentially start drag (drag mode only)
   const handleSlotMouseDown = (e: React.MouseEvent, slot: number, isSelected: boolean) => {
@@ -113,14 +116,19 @@ export function SlotSelectionPopover({
       
       {/* Header */}
       <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-1.5 font-medium pr-4">
-        {mode === 'confirm'
-          ? isDiscardMode
-            ? (hasSelectedSlots ? 'Confirm discard:' : 'Select slots to discard:')
-            : (hasSelectedSlots ? 'Confirm move:' : 'Select slots to move:')
-          : isDiscardMode
-            ? (hasSelectedSlots ? 'Click to discard selected slots:' : 'Select slots to discard:')
-            : (hasSelectedSlots ? 'Drag selected slots:' : 'Select slots to move:')
-        }
+        {mode === 'confirm' ? (
+          effectiveAction === 'assign'
+            ? (hasSelectedSlots ? 'Confirm assign:' : 'Select slots to assign:')
+            : effectiveAction === 'discard'
+              ? (hasSelectedSlots ? 'Confirm discard:' : 'Select slots to discard:')
+              : (hasSelectedSlots ? 'Confirm move:' : 'Select slots to move:')
+        ) : (
+          effectiveAction === 'assign'
+            ? (hasSelectedSlots ? 'Click to assign selected slots:' : 'Select slots to assign:')
+            : effectiveAction === 'discard'
+              ? (hasSelectedSlots ? 'Click to discard selected slots:' : 'Select slots to discard:')
+              : (hasSelectedSlots ? 'Drag selected slots:' : 'Select slots to move:')
+        )}
       </div>
       
       {/* Staff name */}
@@ -181,10 +189,11 @@ export function SlotSelectionPopover({
           <div className="text-[9px] text-slate-400 dark:text-slate-500 mt-0.5 italic">
             {mode === 'confirm'
               ? 'Use the buttons below to confirm'
-              : isDiscardMode
-                ? 'Click to discard selected slots'
-                : 'Drag any selected slot to move'
-            }
+              : effectiveAction === 'assign'
+                ? 'Click to assign selected slots'
+                : effectiveAction === 'discard'
+                  ? 'Click to discard selected slots'
+                  : 'Drag any selected slot to move'}
           </div>
         </div>
       )}
@@ -193,13 +202,12 @@ export function SlotSelectionPopover({
       {!hasSelectedSlots && (
         <div className="mt-1.5 pt-1.5 border-t border-slate-200 dark:border-slate-600 text-[10px] text-slate-400 dark:text-slate-500 italic leading-tight">
           {mode === 'confirm'
-            ? isDiscardMode
-              ? 'Click slots to select, then confirm'
-              : 'Click slots to select, then confirm'
-            : isDiscardMode
-              ? 'Click slots to select,<br/>then click to discard'
-              : 'Click slots to select,<br/>then drag to move'
-          }
+            ? 'Click slots to select, then confirm'
+            : effectiveAction === 'assign'
+              ? 'Click slots to select,<br/>then click to assign'
+              : effectiveAction === 'discard'
+                ? 'Click slots to select,<br/>then click to discard'
+                : 'Click slots to select,<br/>then drag to move'}
         </div>
       )}
 

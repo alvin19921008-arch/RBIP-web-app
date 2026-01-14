@@ -17,7 +17,7 @@ interface StaffPoolProps {
   pcas: Staff[]
   inactiveStaff?: Staff[]
   bufferStaff?: Staff[]
-  onEditStaff?: (staffId: string, event?: React.MouseEvent) => void
+  onOpenStaffContextMenu?: (staffId: string, event?: React.MouseEvent) => void
   staffOverrides?: Record<string, { leaveType?: any; fteRemaining?: number; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean }>
   specialPrograms?: any[]
   pcaAllocations?: Record<string, any[]>
@@ -26,9 +26,25 @@ interface StaffPoolProps {
   weekday?: 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
   onSlotTransfer?: (staffId: string, targetTeam: string, slots: number[]) => void
   onBufferStaffCreated?: () => void
+  disableDragging?: boolean
 }
 
-export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = [], onEditStaff, staffOverrides = {}, specialPrograms = [], pcaAllocations = {}, currentStep, initializedSteps, weekday, onSlotTransfer, onBufferStaffCreated }: StaffPoolProps) {
+export function StaffPool({
+  therapists,
+  pcas,
+  inactiveStaff = [],
+  bufferStaff = [],
+  onOpenStaffContextMenu,
+  staffOverrides = {},
+  specialPrograms = [],
+  pcaAllocations = {},
+  currentStep,
+  initializedSteps,
+  weekday,
+  onSlotTransfer,
+  onBufferStaffCreated,
+  disableDragging = false,
+}: StaffPoolProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [scrollbarVisible, setScrollbarVisible] = useState(false)
@@ -518,10 +534,11 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
                             <StaffCard
                               key={staff.id}
                               staff={staff}
-                              onEdit={(e) => onEditStaff?.(staff.id, e)}
+                              onEdit={(e) => onOpenStaffContextMenu?.(staff.id, e)}
+                              onOpenContextMenu={(e) => onOpenStaffContextMenu?.(staff.id, e)}
                               fteRemaining={shouldShowFTE ? baseFTE : undefined}
                               showFTE={shouldShowFTE}
-                              draggable={true} // Always allow dragging (will snap back if not in correct step)
+                              draggable={!disableDragging} // Disable drag when context menu is open
                             />
                           )
 
@@ -609,7 +626,8 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
                         <StaffCard
                           key={pca.id}
                           staff={pca}
-                          onEdit={() => onEditStaff?.(pca.id)}
+                          onEdit={(e) => onOpenStaffContextMenu?.(pca.id, e)}
+                          onOpenContextMenu={(e) => onOpenStaffContextMenu?.(pca.id, e)}
                           fteRemaining={shouldShowFTE ? (isFloatingPCA ? trueFTE : baseFTE) : undefined}
                           showFTE={shouldShowFTE}
                           baseFTE={isFloatingPCA ? Math.max(0, Math.min(baseFTE, 1.0)) : undefined}
@@ -617,7 +635,7 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
                           isFloatingPCA={isFloatingPCA}
                           currentStep={currentStep}
                           initializedSteps={initializedSteps}
-                          draggable={true} // Always allow dragging (will snap back if not in correct step)
+                          draggable={!disableDragging} // Disable drag when context menu is open
                           borderColor={borderColor}
                         />
                       )
@@ -655,6 +673,8 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
             pcaAllocations={pcaAllocations}
             staffOverrides={staffOverrides}
             weekday={weekday}
+            onOpenStaffContextMenu={onOpenStaffContextMenu}
+            disableDragging={disableDragging}
           />
 
           {visibleInactiveStaff.length > 0 && (
@@ -663,7 +683,7 @@ export function StaffPool({ therapists, pcas, inactiveStaff = [], bufferStaff = 
                 const baseFTE = getBaseFTERemaining(s.id)
                 return baseFTE !== 1.0
               }) : visibleInactiveStaff}
-              onEditStaff={onEditStaff}
+              onEditStaff={undefined}
               staffOverrides={staffOverrides}
             />
           )}

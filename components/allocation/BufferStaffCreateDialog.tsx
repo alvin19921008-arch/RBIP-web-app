@@ -25,6 +25,8 @@ interface BufferStaffCreateDialogProps {
   ) => void
   specialPrograms?: SpecialProgram[]
   minRequiredFTE?: number
+  staffToEdit?: Staff | null
+  initialAvailableSlots?: number[] | null
 }
 
 export function BufferStaffCreateDialog({ 
@@ -32,7 +34,9 @@ export function BufferStaffCreateDialog({
   onOpenChange, 
   onSave,
   specialPrograms = [],
-  minRequiredFTE
+  minRequiredFTE,
+  staffToEdit = null,
+  initialAvailableSlots = null,
 }: BufferStaffCreateDialogProps) {
   const supabase = createClientComponentClient()
   const toast = useToast()
@@ -47,6 +51,8 @@ export function BufferStaffCreateDialog({
   const [availableSlots, setAvailableSlots] = useState<number[]>([]) // For PCA rank
   const [specialty, setSpecialty] = useState<string | null>(null)
   const [isRbipSupervisor, setIsRbipSupervisor] = useState(false)
+
+  const isEditMode = !!staffToEdit
 
   // Reset form when dialog opens/closes
   useEffect(() => {
@@ -63,6 +69,45 @@ export function BufferStaffCreateDialog({
       setIsRbipSupervisor(false)
     }
   }, [open])
+
+  // Populate form when editing
+  useEffect(() => {
+    if (!open) return
+    if (!staffToEdit) return
+
+    setName(staffToEdit.name ?? '')
+    setRank(staffToEdit.rank ?? 'PCA')
+    setTeam((staffToEdit.team as Team | null) ?? null)
+    setSpecialProgram((staffToEdit.special_program as StaffSpecialProgram[] | null) ?? [])
+    setFloating(!!staffToEdit.floating)
+
+    // floor_pca stored as array ['upper'] | ['lower'] | ['upper','lower']
+    const floor = staffToEdit.floor_pca ?? null
+    if (Array.isArray(floor) && floor.length > 0) {
+      const hasUpper = floor.includes('upper')
+      const hasLower = floor.includes('lower')
+      setFloorPCA(hasUpper && hasLower ? 'both' : hasUpper ? 'upper' : hasLower ? 'lower' : null)
+    } else {
+      setFloorPCA(null)
+    }
+
+    const rawBufferFte = (staffToEdit as any).buffer_fte
+    const parsed = typeof rawBufferFte === 'number' ? rawBufferFte : rawBufferFte != null ? parseFloat(String(rawBufferFte)) : NaN
+    const bufferFte = Number.isFinite(parsed) ? parsed : 1.0
+    setBufferFTE(bufferFte)
+
+    // For PCA rank, seed slots from initialAvailableSlots (best), else from buffer_fte, else whole-day.
+    if ((staffToEdit.rank as StaffRank) === 'PCA') {
+      if (Array.isArray(initialAvailableSlots) && initialAvailableSlots.length > 0) {
+        setAvailableSlots([...initialAvailableSlots].sort((a, b) => a - b))
+      } else if (Number.isFinite(bufferFte) && bufferFte > 0) {
+        const numSlots = Math.max(0, Math.min(4, Math.round(bufferFte / 0.25)))
+        setAvailableSlots([1, 2, 3, 4].slice(0, numSlots))
+      } else {
+        setAvailableSlots([1, 2, 3, 4])
+      }
+    }
+  }, [open, staffToEdit, initialAvailableSlots])
 
   // Reset floor PCA and slots when rank changes
   useEffect(() => {
@@ -173,12 +218,24 @@ export function BufferStaffCreateDialog({
     }
 
     try {
-      // Insert new staff - try with buffer_fte first
-      let { data: newStaff, error: staffError } = await supabase
-        .from('staff')
-        .insert(staffData)
-        .select()
-        .single()
+      let newStaff: any = null
+      let staffError: any = null
+
+      if (isEditMode && staffToEdit?.id) {
+        ;({ data: newStaff, error: staffError } = await supabase
+          .from('staff')
+          .update(staffData)
+          .eq('id', staffToEdit.id)
+          .select()
+          .single())
+      } else {
+        // Insert new staff - try with buffer_fte first
+        ;({ data: newStaff, error: staffError } = await supabase
+          .from('staff')
+          .insert(staffData)
+          .select()
+          .single())
+      }
 
       // If buffer_fte or status column doesn't exist, show helpful error message
       if (staffError && (staffError.code === 'PGRST204' || staffError.message?.includes('buffer_fte') || staffError.message?.includes('status'))) {
@@ -195,8 +252,8 @@ export function BufferStaffCreateDialog({
         throw staffError
       }
 
-      // Create SPT allocation if needed
-      if (rank === 'SPT' && (specialty || isRbipSupervisor)) {
+      // Create SPT allocation if needed (create mode only)
+      if (!isEditMode && rank === 'SPT' && (specialty || isRbipSupervisor)) {
         const { error: sptError } = await supabase.from('spt_allocations').insert({
           staff_id: newStaff.id,
           specialty: specialty ?? null,
@@ -217,8 +274,8 @@ export function BufferStaffCreateDialog({
       })
       onOpenChange(false)
     } catch (err) {
-      console.error('Error creating buffer staff:', err)
-      toast.error('Failed to create buffer staff. Please try again.')
+      console.error(isEditMode ? 'Error updating buffer staff:' : 'Error creating buffer staff:', err)
+      toast.error(isEditMode ? 'Failed to update buffer staff. Please try again.' : 'Failed to create buffer staff. Please try again.')
     }
   }
 
@@ -236,7 +293,7 @@ export function BufferStaffCreateDialog({
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between">
-            <DialogTitle>Create Buffer Staff</DialogTitle>
+            <DialogTitle>{isEditMode ? 'Edit Buffer Staff' : 'Create Buffer Staff'}</DialogTitle>
             <button
               onClick={() => onOpenChange(false)}
               className="p-1 hover:bg-accent rounded"
@@ -462,7 +519,7 @@ export function BufferStaffCreateDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit">Create Buffer Staff</Button>
+            <Button type="submit">{isEditMode ? 'Save Changes' : 'Create Buffer Staff'}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

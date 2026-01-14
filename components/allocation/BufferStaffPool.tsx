@@ -25,10 +25,23 @@ interface BufferStaffPoolProps {
   pcaAllocations?: Record<string, any[]>
   staffOverrides?: Record<string, { leaveType?: any; fteRemaining?: number; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean }>
   weekday?: 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
+  onOpenStaffContextMenu?: (staffId: string, event?: React.MouseEvent) => void
+  disableDragging?: boolean
 }
 
 
-export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaffCreated, specialPrograms = [], currentStep, pcaAllocations = {}, staffOverrides = {}, weekday }: BufferStaffPoolProps) {
+export function BufferStaffPool({
+  inactiveStaff,
+  bufferStaff = [],
+  onBufferStaffCreated,
+  specialPrograms = [],
+  currentStep,
+  pcaAllocations = {},
+  staffOverrides = {},
+  weekday,
+  onOpenStaffContextMenu,
+  disableDragging = false,
+}: BufferStaffPoolProps) {
   const [sourceMode, setSourceMode] = useState<'select' | 'create' | null>(null)
   const [selectedStaffIds, setSelectedStaffIds] = useState<Set<string>>(new Set())
   const [showCreateDialog, setShowCreateDialog] = useState(false)
@@ -256,26 +269,6 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
     onBufferStaffCreated?.()
   }
 
-  const handleConvertToInactive = async (staffId: string) => {
-    try {
-      const { error } = await supabase
-        .from('staff')
-        .update({ status: 'inactive' as StaffStatus })
-        .eq('id', staffId)
-
-      if (error) {
-        console.error('Error converting to inactive:', error)
-        toast.error('Failed to convert to inactive. Please try again.')
-      } else {
-        onBufferStaffCreated?.()
-        toast.success('Converted to inactive.')
-      }
-    } catch (err) {
-      console.error('Error converting to inactive:', err)
-      toast.error('Failed to convert to inactive. Please try again.')
-    }
-  }
-
   // Get all inactive staff for checkbox menu (max 5 visible, scrollable)
   const allInactiveStaff = sortStaffByRank(inactiveStaff)
   const visibleStaff = allInactiveStaff.slice(0, 5)
@@ -425,7 +418,7 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
                           <StaffCard
                             key={staff.id}
                             staff={staff}
-                            draggable={true}
+                            draggable={!disableDragging}
                             showFTE={isBufferTherapist}
                             fteRemaining={staff.buffer_fte}
                             baseFTE={isFloatingPCA ? baseFTE : undefined}
@@ -433,10 +426,8 @@ export function BufferStaffPool({ inactiveStaff, bufferStaff = [], onBufferStaff
                             isFloatingPCA={isFloatingPCA}
                             borderColor={undefined}
                             currentStep={currentStep}
-                            onConvertToInactive={(e) => {
-                              e?.stopPropagation()
-                              handleConvertToInactive(staff.id)
-                            }}
+                            onEdit={(e) => onOpenStaffContextMenu?.(staff.id, e)}
+                            onOpenContextMenu={(e) => onOpenStaffContextMenu?.(staff.id, e)}
                           />
                         )
                         

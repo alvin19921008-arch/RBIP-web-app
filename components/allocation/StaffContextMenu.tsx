@@ -51,7 +51,7 @@ export function StaffContextMenu({ open, position, items, onClose, className }: 
       ref={containerRef}
       className={cn(
         // Use document-relative positioning so it scrolls with the page.
-        'absolute z-[10001] w-[220px] rounded-md border border-border bg-white dark:bg-slate-800 shadow-xl p-1',
+        'absolute z-[10001] w-[180px] rounded-md border border-border bg-white dark:bg-slate-800 shadow-xl p-0.5',
         className
       )}
       style={{
@@ -75,13 +75,13 @@ export function StaffContextMenu({ open, position, items, onClose, className }: 
               item.onSelect()
             }}
             className={cn(
-              'w-full flex items-center gap-2 px-2 py-2 rounded-sm text-sm text-left transition-colors',
+              'w-full flex items-center gap-1.5 px-1.5 py-1.5 rounded-sm text-[13px] leading-none text-left transition-colors',
               item.disabled
                 ? 'opacity-50 cursor-not-allowed'
                 : 'hover:bg-slate-100 dark:hover:bg-slate-700'
             )}
           >
-            <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+            <span className="w-3.5 h-3.5 flex items-center justify-center flex-shrink-0">
               {item.icon}
             </span>
             <span className="flex-1">{item.label}</span>

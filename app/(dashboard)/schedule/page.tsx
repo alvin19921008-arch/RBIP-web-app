@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useLayoutEffect, useRef, Fragment, useCallback, Suspense, useMemo, type ReactNode } from 'react'
 import { DndContext, DragOverlay, DragEndEvent, DragStartEvent, DragMoveEvent, Active } from '@dnd-kit/core'
+import { snapCenterToCursor } from '@dnd-kit/modifiers'
 import { Team, Weekday, LeaveType } from '@/types/staff'
 import {
   TherapistAllocation,
@@ -46,11 +47,12 @@ import { StepIndicator } from '@/components/allocation/StepIndicator'
 import { FloatingPCAConfigDialog } from '@/components/allocation/FloatingPCAConfigDialog'
 import { NonFloatingSubstitutionDialog } from '@/components/allocation/NonFloatingSubstitutionDialog'
 import { SpecialProgramOverrideDialog } from '@/components/allocation/SpecialProgramOverrideDialog'
+import { BufferStaffCreateDialog } from '@/components/allocation/BufferStaffCreateDialog'
 import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopover'
 import { StaffContextMenu } from '@/components/allocation/StaffContextMenu'
 import { TeamPickerPopover } from '@/components/allocation/TeamPickerPopover'
 import { ConfirmPopover } from '@/components/allocation/ConfirmPopover'
-import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X, ArrowLeft, Copy, ChevronLeft, ChevronRight, Pencil, Trash2, Plus, Highlighter, Check, GitMerge, Split } from 'lucide-react'
+import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X, ArrowLeft, Copy, ChevronLeft, ChevronRight, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { CalendarGrid } from '@/components/ui/calendar-grid'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -144,8 +146,11 @@ function SchedulePageContent() {
   const supabase = createClientComponentClient()
   const navLoading = useNavigationLoading()
   const rightContentRef = useRef<HTMLDivElement | null>(null)
+  const therapistAllocationBlockRef = useRef<HTMLDivElement | null>(null)
+  const pcaAllocationBlockRef = useRef<HTMLDivElement | null>(null)
   const [rightContentHeight, setRightContentHeight] = useState<number | null>(null)
   const [selectedDate, setSelectedDate] = useState<Date>(DEFAULT_DATE)
+  const [activeDragStaffForOverlay, setActiveDragStaffForOverlay] = useState<Staff | null>(null)
   
   // Read date from URL query parameter on mount and when searchParams change
   useEffect(() => {
@@ -639,7 +644,7 @@ function SchedulePageContent() {
     position: null,
   })
 
-  // Contextual menu (schedule grid staff cards only; staff pool remains direct leave edit for now)
+  // Contextual menus (schedule grid + staff pool)
   const [staffContextMenu, setStaffContextMenu] = useState<{
     show: boolean
     position: { x: number; y: number } | null
@@ -652,6 +657,77 @@ function SchedulePageContent() {
     staffId: null,
     team: null,
     kind: null,
+  })
+
+  const [staffPoolContextMenu, setStaffPoolContextMenu] = useState<{
+    show: boolean
+    position: { x: number; y: number } | null
+    staffId: string | null
+  }>({
+    show: false,
+    position: null,
+    staffId: null,
+  })
+
+  // Staff Pool: Assign slot (floating PCA) popover flow (team -> slots)
+  const [pcaPoolAssignAction, setPcaPoolAssignAction] = useState<{
+    show: boolean
+    phase: 'team' | 'slots'
+    position: { x: number; y: number } | null
+    staffId: string | null
+    staffName: string | null
+    targetTeam: Team | null
+    availableSlots: number[]
+    selectedSlots: number[]
+  }>({
+    show: false,
+    phase: 'team',
+    position: null,
+    staffId: null,
+    staffName: null,
+    targetTeam: null,
+    availableSlots: [],
+    selectedSlots: [],
+  })
+
+  // Staff Pool: Assign slot (SPT) flow (team picker only; assigns remaining weekday FTE)
+  const [sptPoolAssignAction, setSptPoolAssignAction] = useState<{
+    show: boolean
+    position: { x: number; y: number } | null
+    staffId: string | null
+    staffName: string | null
+    targetTeam: Team | null
+    remainingFte: number
+  }>({
+    show: false,
+    position: null,
+    staffId: null,
+    staffName: null,
+    targetTeam: null,
+    remainingFte: 0,
+  })
+
+  // Staff Pool: Buffer staff edit + convert confirmation
+  const [bufferStaffEditDialog, setBufferStaffEditDialog] = useState<{
+    open: boolean
+    staff: Staff | null
+    initialAvailableSlots: number[] | null
+  }>({
+    open: false,
+    staff: null,
+    initialAvailableSlots: null,
+  })
+
+  const [bufferStaffConvertConfirm, setBufferStaffConvertConfirm] = useState<{
+    show: boolean
+    position: { x: number; y: number } | null
+    staffId: string | null
+    staffName: string | null
+  }>({
+    show: false,
+    position: null,
+    staffId: null,
+    staffName: null,
   })
 
   const [pcaContextAction, setPcaContextAction] = useState<{
@@ -722,7 +798,13 @@ function SchedulePageContent() {
 
   // Global click-outside close for contextual popovers (non-modal)
   useEffect(() => {
-    const anyOpen = pcaContextAction.show || therapistContextAction.show || colorContextAction.show
+    const anyOpen =
+      pcaContextAction.show ||
+      therapistContextAction.show ||
+      colorContextAction.show ||
+      pcaPoolAssignAction.show ||
+      sptPoolAssignAction.show ||
+      bufferStaffConvertConfirm.show
     if (!anyOpen) return
 
     const onDown = () => {
@@ -765,11 +847,48 @@ function SchedulePageContent() {
           selectedClassName: null,
         })
       }
+      if (pcaPoolAssignAction.show) {
+        setPcaPoolAssignAction({
+          show: false,
+          phase: 'team',
+          position: null,
+          staffId: null,
+          staffName: null,
+          targetTeam: null,
+          availableSlots: [],
+          selectedSlots: [],
+        })
+      }
+      if (sptPoolAssignAction.show) {
+        setSptPoolAssignAction({
+          show: false,
+          position: null,
+          staffId: null,
+          staffName: null,
+          targetTeam: null,
+          remainingFte: 0,
+        })
+      }
+      if (bufferStaffConvertConfirm.show) {
+        setBufferStaffConvertConfirm({
+          show: false,
+          position: null,
+          staffId: null,
+          staffName: null,
+        })
+      }
     }
 
     window.addEventListener('mousedown', onDown)
     return () => window.removeEventListener('mousedown', onDown)
-  }, [pcaContextAction.show, therapistContextAction.show, colorContextAction.show])
+  }, [
+    pcaContextAction.show,
+    therapistContextAction.show,
+    colorContextAction.show,
+    pcaPoolAssignAction.show,
+    sptPoolAssignAction.show,
+    bufferStaffConvertConfirm.show,
+  ])
 
   // Warning popover for bed relieving edit outside Step 4
   const [bedRelievingEditWarningPopover, setBedRelievingEditWarningPopover] = useState<{
@@ -2550,6 +2669,88 @@ function SchedulePageContent() {
       staffId,
       team,
       kind,
+    })
+  }
+
+  const closeStaffPoolContextMenu = () => {
+    setStaffPoolContextMenu({
+      show: false,
+      position: null,
+      staffId: null,
+    })
+  }
+
+  const openStaffPoolContextMenu = (staffId: string, clickEvent?: React.MouseEvent) => {
+    if (!clickEvent) {
+      const sx = typeof window !== 'undefined' ? window.scrollX : 0
+      const sy = typeof window !== 'undefined' ? window.scrollY : 0
+      setStaffPoolContextMenu({
+        show: true,
+        position: { x: sx + 100, y: sy + 100 },
+        staffId,
+      })
+      return
+    }
+
+    const anchor = clickEvent.currentTarget as HTMLElement
+    const rect = anchor.getBoundingClientRect()
+
+    const popoverWidth = 220
+    const padding = 10
+    const estimatedHeight = 260
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+    const scrollX = window.scrollX
+    const scrollY = window.scrollY
+
+    let xClient = rect.right + padding
+    if (xClient + popoverWidth > viewportWidth - 10) {
+      xClient = Math.max(10, rect.left - popoverWidth - padding)
+    }
+
+    // IMPORTANT (Staff Pool UX):
+    // Always align the menu's top border with the staff card's top border.
+    // If the menu would be truncated by viewport, auto-scroll the *page* to make room,
+    // instead of clamping the Y position (which breaks alignment).
+    const margin = 12
+    const yClient = rect.top
+
+    const overflowBottom = (yClient + estimatedHeight) - (viewportHeight - margin)
+    const overflowTop = margin - yClient
+    if (overflowBottom > 0) {
+      window.scrollBy({ top: overflowBottom, behavior: 'smooth' })
+    } else if (overflowTop > 0) {
+      window.scrollBy({ top: -overflowTop, behavior: 'smooth' })
+    }
+
+    setStaffPoolContextMenu({
+      show: true,
+      position: { x: xClient + scrollX, y: yClient + scrollY },
+      staffId,
+    })
+  }
+
+  const closePcaPoolAssignAction = () => {
+    setPcaPoolAssignAction({
+      show: false,
+      phase: 'team',
+      position: null,
+      staffId: null,
+      staffName: null,
+      targetTeam: null,
+      availableSlots: [],
+      selectedSlots: [],
+    })
+  }
+
+  const closeSptPoolAssignAction = () => {
+    setSptPoolAssignAction({
+      show: false,
+      position: null,
+      staffId: null,
+      staffName: null,
+      targetTeam: null,
+      remainingFte: 0,
     })
   }
 
@@ -7062,6 +7263,19 @@ function SchedulePageContent() {
     // Find the staff member
     const staffMember = staff.find(s => s.id === staffId)
     if (!staffMember) return
+    setActiveDragStaffForOverlay(staffMember)
+
+    // Auto-scroll to the relevant allocation block when dragging in the correct step.
+    // - Therapists (SPT/APPT/RPT) in Step 2 → Block 1 (Therapist Allocation)
+    // - Floating PCAs in Step 3 → Block 2 (PCA Allocation)
+    const activeRank = (active.data.current as any)?.staff?.rank ?? staffMember.rank
+    const isTherapistRank = ['RPT', 'SPT', 'APPT'].includes(activeRank)
+    const isPcaRank = activeRank === 'PCA'
+    if (isTherapistRank && currentStep === 'therapist-pca') {
+      therapistAllocationBlockRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    } else if (isPcaRank && currentStep === 'floating-pca' && staffMember.floating) {
+      pcaAllocationBlockRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
     
     // Track therapist drag state for validation (including buffer therapists)
     if (['RPT', 'SPT', 'APPT'].includes(staffMember.rank)) {
@@ -7742,8 +7956,131 @@ function SchedulePageContent() {
     closeIfNeeded()
   }
 
+  // Staff Pool: Assign remaining/unassigned slots (floating PCA)
+  const performPcaSlotAssignFromPool = (
+    targetTeam: Team,
+    options: { staffId: string; selectedSlots: number[] }
+  ) => {
+    const staffId = options.staffId
+    const selectedSlots = options.selectedSlots
+    if (!staffId || selectedSlots.length === 0) return
+
+    const staffMember =
+      staff.find(s => s.id === staffId) ||
+      bufferStaff.find(s => s.id === staffId)
+    if (!staffMember) return
+    if (staffMember.rank !== 'PCA' || !staffMember.floating) return
+
+    const currentAllocation = Object.values(pcaAllocations).flat().find(a => a.staff_id === staffId)
+
+    // Capacity FTE (base) for the day
+    const override = staffOverrides[staffId]
+    const bufferFTEraw = (staffMember as any).buffer_fte
+    const bufferFTE =
+      typeof bufferFTEraw === 'number' ? bufferFTEraw : bufferFTEraw != null ? parseFloat(String(bufferFTEraw)) : NaN
+    const capacityFTE =
+      typeof override?.fteRemaining === 'number'
+        ? override.fteRemaining
+        : staffMember.status === 'buffer' && Number.isFinite(bufferFTE)
+          ? bufferFTE
+          : 1.0
+
+    const baseAlloc = currentAllocation
+      ? { ...currentAllocation }
+      : ({
+          id: `temp-assign-${staffId}-${Date.now()}`,
+          schedule_id: currentScheduleId || '',
+          staff_id: staffId,
+          team: targetTeam,
+          fte_pca: capacityFTE,
+          fte_remaining: capacityFTE,
+          slot_assigned: 0,
+          slot_whole: null,
+          slot1: null,
+          slot2: null,
+          slot3: null,
+          slot4: null,
+          leave_type: null,
+          special_program_ids: null,
+          invalid_slot: undefined,
+          leave_comeback_time: undefined,
+          leave_mode: undefined,
+          fte_subtraction: 0,
+          staff: staffMember,
+        } as any)
+
+    // Assign selected slots to target team
+    const updatedAllocation: any = { ...baseAlloc }
+    for (const slot of selectedSlots) {
+      if (slot === 1) updatedAllocation.slot1 = targetTeam
+      if (slot === 2) updatedAllocation.slot2 = targetTeam
+      if (slot === 3) updatedAllocation.slot3 = targetTeam
+      if (slot === 4) updatedAllocation.slot4 = targetTeam
+    }
+
+    // Recalculate slot_assigned
+    let slotCount = 0
+    if (updatedAllocation.slot1) slotCount++
+    if (updatedAllocation.slot2) slotCount++
+    if (updatedAllocation.slot3) slotCount++
+    if (updatedAllocation.slot4) slotCount++
+    updatedAllocation.slot_assigned = slotCount * 0.25
+
+    // Rebuild pcaAllocations across teams (mirrors performSlotTransfer)
+    setPcaAllocations(prev => {
+      const next: any = { ...prev }
+      for (const team of TEAMS) {
+        next[team] = (next[team] || []).filter((a: any) => a.staff_id !== staffId)
+      }
+
+      const teamsWithSlots = new Set<Team>()
+      if (updatedAllocation.slot1) teamsWithSlots.add(updatedAllocation.slot1)
+      if (updatedAllocation.slot2) teamsWithSlots.add(updatedAllocation.slot2)
+      if (updatedAllocation.slot3) teamsWithSlots.add(updatedAllocation.slot3)
+      if (updatedAllocation.slot4) teamsWithSlots.add(updatedAllocation.slot4)
+
+      for (const team of teamsWithSlots) {
+        next[team] = [...(next[team] || []), { ...updatedAllocation, team }]
+      }
+      return next
+    })
+
+    // Track slot overrides
+    setStaffOverrides(prev => {
+      const currentOverride = prev[staffId] || {}
+      const existingAlloc = baseAlloc
+      const newSlot1 = selectedSlots.includes(1) ? targetTeam : existingAlloc?.slot1 ?? null
+      const newSlot2 = selectedSlots.includes(2) ? targetTeam : existingAlloc?.slot2 ?? null
+      const newSlot3 = selectedSlots.includes(3) ? targetTeam : existingAlloc?.slot3 ?? null
+      const newSlot4 = selectedSlots.includes(4) ? targetTeam : existingAlloc?.slot4 ?? null
+      return {
+        ...prev,
+        [staffId]: {
+          ...currentOverride,
+          slotOverrides: {
+            slot1: newSlot1,
+            slot2: newSlot2,
+            slot3: newSlot3,
+            slot4: newSlot4,
+          },
+          // Preserve base capacity for display/logic (StaffPool trueFTE subtracts assigned slots)
+          fteRemaining: currentOverride.fteRemaining ?? capacityFTE,
+          leaveType: currentOverride.leaveType ?? existingAlloc?.leave_type ?? null,
+        },
+      }
+    })
+
+    // Reduce target team's pending by assigned FTE (slot-based)
+    const delta = selectedSlots.length * 0.25
+    setPendingPCAFTEPerTeam(prev => ({
+      ...prev,
+      [targetTeam]: Math.max(0, (prev[targetTeam] || 0) - delta),
+    }))
+  }
+
   // Handle drag and drop for therapist staff cards (RPT and SPT only) AND PCA slot transfers
   const handleDragEnd = (event: DragEndEvent) => {
+    setActiveDragStaffForOverlay(null)
     const { active, over } = event
     const activeId = active.id as string
     // Extract staff ID from composite ID (format: staffId or staffId::team)
@@ -8218,6 +8555,565 @@ function SchedulePageContent() {
           ]
         })()}
       />
+
+      {/* Staff Pool Staff Card Context Menu (pencil click / right click) */}
+      <StaffContextMenu
+        open={staffPoolContextMenu.show}
+        position={staffPoolContextMenu.position}
+        onClose={closeStaffPoolContextMenu}
+        items={(() => {
+          const staffId = staffPoolContextMenu.staffId
+          if (!staffId) return []
+
+          const s =
+            staff.find(x => x.id === staffId) ||
+            bufferStaff.find(x => x.id === staffId) ||
+            inactiveStaff.find(x => x.id === staffId)
+          if (!s) return []
+
+          const isBuffer = s.status === 'buffer'
+          const isTherapistRank = ['SPT', 'APPT', 'RPT'].includes(s.rank)
+          const isSPT = s.rank === 'SPT'
+          const isPCA = s.rank === 'PCA'
+          const isFloatingPCA = isPCA && !!s.floating
+          const isNonFloatingPCA = isPCA && !s.floating
+
+          const canLeaveEdit = currentStep === 'leave-fte'
+          const canTherapistActions = currentStep === 'therapist-pca'
+          const canPcaActions = currentStep === 'floating-pca'
+
+          const leaveDisabledTooltip = 'Leave arrangement editing is only available in Step 1 (Leave & FTE).'
+          const therapistDisabledTooltip =
+            'Slot assignment/actions for therapists are only available in Step 2 (Therapist & Non-floating PCA).'
+          const pcaDisabledTooltip =
+            'Slot assignment/actions for floating PCA are only available in Step 3 (Floating PCA).'
+
+          // Infer a single team context for actions that require it (Move/Discard/Fill color).
+          const inferSingleTherapistTeam = (): Team | null => {
+            const byTeam = getTherapistFteByTeam(staffId)
+            const teams = Object.entries(byTeam)
+              .filter(([, v]) => (v ?? 0) > 0)
+              .map(([t]) => t as Team)
+            return teams.length === 1 ? teams[0] : null
+          }
+          const inferSinglePcaTeam = (): Team | null => {
+            const alloc = Object.values(pcaAllocations).flat().find(a => a.staff_id === staffId)
+            if (!alloc) return null
+            const teams = new Set<Team>()
+            if (alloc.slot1) teams.add(alloc.slot1 as Team)
+            if (alloc.slot2) teams.add(alloc.slot2 as Team)
+            if (alloc.slot3) teams.add(alloc.slot3 as Team)
+            if (alloc.slot4) teams.add(alloc.slot4 as Team)
+            return teams.size === 1 ? Array.from(teams)[0] : null
+          }
+
+          const inferredTeam = isPCA ? inferSinglePcaTeam() : isTherapistRank ? inferSingleTherapistTeam() : null
+
+          const needsTeamTooltip =
+            'This action requires a single team allocation. Please use the team-grid card (per-team) instead.'
+
+          // Compute remaining slots (floating PCA only) for Assign slot.
+          const computeRemainingSlots = (): number[] => {
+            const override = staffOverrides[staffId]
+            const bufferFteRaw = (s as any).buffer_fte
+            const bufferFte =
+              typeof bufferFteRaw === 'number' ? bufferFteRaw : bufferFteRaw != null ? parseFloat(String(bufferFteRaw)) : NaN
+            const capacitySlots =
+              Array.isArray(override?.availableSlots) && override!.availableSlots.length > 0
+                ? override!.availableSlots
+                : isBuffer && Number.isFinite(bufferFte)
+                  ? [1, 2, 3, 4].slice(0, Math.max(0, Math.min(4, Math.round(bufferFte / 0.25))))
+                  : [1, 2, 3, 4]
+
+            const assigned = new Set<number>()
+            Object.values(pcaAllocations).forEach((teamAllocs: any[]) => {
+              teamAllocs.forEach((a: any) => {
+                if (a.staff_id !== staffId) return
+                if (a.slot1) assigned.add(1)
+                if (a.slot2) assigned.add(2)
+                if (a.slot3) assigned.add(3)
+                if (a.slot4) assigned.add(4)
+              })
+            })
+            return capacitySlots.filter(slot => !assigned.has(slot)).sort((a, b) => a - b)
+          }
+
+          const remainingSlots = isFloatingPCA ? computeRemainingSlots() : []
+
+          // Compute remaining SPT FTE for Assign slot (Step 2 only).
+          const computeRemainingSptFte = (): number => {
+            const base =
+              typeof staffOverrides[staffId]?.fteRemaining === 'number'
+                ? (staffOverrides[staffId]!.fteRemaining as number)
+                : (sptBaseFteByStaffId as any)?.[staffId] ?? 0
+            const byTeam = getTherapistFteByTeam(staffId)
+            const assigned = Object.values(byTeam).reduce((sum, v) => sum + (v ?? 0), 0)
+            return Math.max(0, base - assigned)
+          }
+
+          const remainingSptFte = isSPT && !isBuffer ? computeRemainingSptFte() : 0
+
+          const pos = staffPoolContextMenu.position ?? { x: 100, y: 100 }
+
+          const items: any[] = []
+
+          // 1) First action: Leave edit OR buffer edit
+          if (isBuffer) {
+            items.push({
+              key: 'buffer-edit',
+              label: 'Edit buffer staff',
+              icon: <FilePenLine className="h-4 w-4" />,
+              disabled: false,
+              onSelect: () => {
+                closeStaffPoolContextMenu()
+                setBufferStaffEditDialog({
+                  open: true,
+                  staff: s,
+                  initialAvailableSlots: Array.isArray(staffOverrides[staffId]?.availableSlots)
+                    ? (staffOverrides[staffId]!.availableSlots as number[])
+                    : null,
+                })
+              },
+            })
+          } else {
+            items.push({
+              key: 'leave-edit',
+              label: 'Leave edit',
+              icon: <Pencil className="h-4 w-4" />,
+              disabled: !canLeaveEdit,
+              disabledTooltip: leaveDisabledTooltip,
+              onSelect: () => {
+                closeStaffPoolContextMenu()
+                handleEditStaff(staffId)
+              },
+            })
+          }
+
+          // SPT smart behavior (Staff Pool only):
+          // If this SPT has NO duty on the current weekday per dashboard config, show ONLY "Leave edit".
+          // Hide all other actions (assign/move/split/merge/discard/fill), because there is nothing to allocate.
+          if (!isBuffer && isSPT) {
+            const dutyFte =
+              typeof staffOverrides[staffId]?.fteRemaining === 'number'
+                ? (staffOverrides[staffId]!.fteRemaining as number)
+                : ((sptBaseFteByStaffId as any)?.[staffId] ?? 0)
+            if (!(dutyFte > 0)) {
+              return items
+            }
+          }
+
+          // 2) Assign slot (staff pool only)
+          const canShowAssign =
+            (isFloatingPCA && !isNonFloatingPCA) ||
+            (isSPT && !isBuffer) ||
+            (isBuffer && isTherapistRank) ||
+            (isBuffer && isFloatingPCA)
+
+          if (canShowAssign && !isNonFloatingPCA) {
+            const stepOk = isFloatingPCA ? canPcaActions : canTherapistActions
+            const allSlotsAssigned = isFloatingPCA && remainingSlots.length === 0
+            const allSptFteAssigned = isSPT && !isBuffer && remainingSptFte <= 0
+            const disabled =
+              !stepOk || allSlotsAssigned || allSptFteAssigned
+
+            const disabledTooltip = !stepOk
+              ? (isFloatingPCA ? pcaDisabledTooltip : therapistDisabledTooltip)
+              : allSlotsAssigned
+                ? 'All slots are already assigned.'
+                : allSptFteAssigned
+                  ? 'All available SPT FTE is already assigned. Use Move slot / Split slot to amend existing assignments.'
+                  : undefined
+
+            items.push({
+              key: 'assign-slot',
+              label: 'Assign slot',
+              icon: <PlusCircle className="h-4 w-4" />,
+              disabled,
+              disabledTooltip,
+              onSelect: () => {
+                closeStaffPoolContextMenu()
+                if (disabled) return
+
+                if (isFloatingPCA) {
+                  setPcaPoolAssignAction({
+                    show: true,
+                    phase: 'team',
+                    position: pos,
+                    staffId,
+                    staffName: s.name,
+                    targetTeam: null,
+                    availableSlots: remainingSlots,
+                    selectedSlots: remainingSlots.length === 1 ? remainingSlots : [],
+                  })
+                  return
+                }
+
+                if (isBuffer && isTherapistRank) {
+                  // Buffer therapists: assign whole staff to a team (team picker)
+                  setSptPoolAssignAction({
+                    show: true,
+                    position: pos,
+                    staffId,
+                    staffName: s.name,
+                    targetTeam: null,
+                    remainingFte: -1, // sentinel (buffer therapist)
+                  })
+                  return
+                }
+
+                // SPT: assign remaining weekday FTE (team picker)
+                setSptPoolAssignAction({
+                  show: true,
+                  position: pos,
+                  staffId,
+                  staffName: s.name,
+                  targetTeam: null,
+                  remainingFte: remainingSptFte,
+                })
+              },
+            })
+          }
+
+          // 3) Move/Discard/Split/Merge (reuse existing contextual actions, but only when team is unambiguous)
+          const therapistActionDisabled = !canTherapistActions
+          const pcaActionDisabled = !canPcaActions
+
+          if (isPCA) {
+            items.push({
+              key: 'move-slot',
+              label: 'Move slot',
+              icon: <Copy className="h-4 w-4" />,
+              disabled: pcaActionDisabled || !inferredTeam,
+              disabledTooltip: pcaActionDisabled ? pcaDisabledTooltip : !inferredTeam ? needsTeamTooltip : undefined,
+              onSelect: () => {
+                if (!inferredTeam) return
+                closeStaffPoolContextMenu()
+                startPcaContextAction({ staffId, sourceTeam: inferredTeam, mode: 'move', position: pos })
+              },
+            })
+            items.push({
+              key: 'discard-slot',
+              label: 'Discard slot',
+              icon: <Trash2 className="h-4 w-4" />,
+              disabled: pcaActionDisabled || !inferredTeam,
+              disabledTooltip: pcaActionDisabled ? pcaDisabledTooltip : !inferredTeam ? needsTeamTooltip : undefined,
+              onSelect: () => {
+                if (!inferredTeam) return
+                closeStaffPoolContextMenu()
+                startPcaContextAction({ staffId, sourceTeam: inferredTeam, mode: 'discard', position: pos })
+              },
+            })
+          } else if (isTherapistRank) {
+            items.push({
+              key: 'move-slot',
+              label: 'Move slot',
+              icon: <Copy className="h-4 w-4" />,
+              disabled: therapistActionDisabled || !inferredTeam,
+              disabledTooltip: therapistActionDisabled ? therapistDisabledTooltip : !inferredTeam ? needsTeamTooltip : undefined,
+              onSelect: () => {
+                if (!inferredTeam) return
+                closeStaffPoolContextMenu()
+                startTherapistContextAction({ staffId, sourceTeam: inferredTeam, mode: 'move', position: pos })
+              },
+            })
+            items.push({
+              key: 'discard-slot',
+              label: 'Discard slot',
+              icon: <Trash2 className="h-4 w-4" />,
+              disabled: therapistActionDisabled || !inferredTeam,
+              disabledTooltip: therapistActionDisabled ? therapistDisabledTooltip : !inferredTeam ? needsTeamTooltip : undefined,
+              onSelect: () => {
+                if (!inferredTeam) return
+                closeStaffPoolContextMenu()
+                startTherapistContextAction({ staffId, sourceTeam: inferredTeam, mode: 'discard', position: pos })
+              },
+            })
+            items.push({
+              key: 'split-slot',
+              label: 'Split slot',
+              icon: <Split className="h-4 w-4" />,
+              disabled: therapistActionDisabled || !inferredTeam,
+              disabledTooltip: therapistActionDisabled ? therapistDisabledTooltip : !inferredTeam ? needsTeamTooltip : undefined,
+              onSelect: () => {
+                if (!inferredTeam) return
+                closeStaffPoolContextMenu()
+                startTherapistContextAction({ staffId, sourceTeam: inferredTeam, mode: 'split', position: pos })
+              },
+            })
+            items.push({
+              key: 'merge-slot',
+              label: 'Merge slot',
+              icon: <GitMerge className="h-4 w-4" />,
+              disabled: therapistActionDisabled || !inferredTeam,
+              disabledTooltip: therapistActionDisabled ? therapistDisabledTooltip : !inferredTeam ? needsTeamTooltip : undefined,
+              onSelect: () => {
+                if (!inferredTeam) return
+                closeStaffPoolContextMenu()
+                startTherapistContextAction({ staffId, sourceTeam: inferredTeam, mode: 'merge', position: pos })
+              },
+            })
+          }
+
+          // 4) Buffer convert (before Fill color)
+          if (isBuffer) {
+            items.push({
+              key: 'buffer-convert',
+              label: 'Convert to inactive',
+              icon: <UserX className="h-4 w-4" />,
+              disabled: false,
+              onSelect: () => {
+                closeStaffPoolContextMenu()
+                setBufferStaffConvertConfirm({
+                  show: true,
+                  position: pos,
+                  staffId,
+                  staffName: s.name,
+                })
+              },
+            })
+          }
+
+          // 5) Fill color (only when a team context is unambiguous)
+          items.push({
+            key: 'fill-color',
+            label: 'Fill color',
+            icon: <Highlighter className="h-4 w-4" />,
+            disabled: !inferredTeam,
+            disabledTooltip: !inferredTeam ? needsTeamTooltip : undefined,
+            onSelect: () => {
+              if (!inferredTeam) return
+              const existing = (staffOverrides as any)?.[staffId]?.cardColorByTeam?.[inferredTeam] as string | undefined
+              closeStaffPoolContextMenu()
+              setColorContextAction({
+                show: true,
+                position: pos,
+                staffId,
+                team: inferredTeam,
+                selectedClassName: existing ?? null,
+              })
+            },
+          })
+
+          return items
+        })()}
+      />
+
+      {/* Staff Pool: Assign slot (floating PCA) */}
+      {pcaPoolAssignAction.show &&
+        pcaPoolAssignAction.position &&
+        pcaPoolAssignAction.staffId &&
+        pcaPoolAssignAction.staffName && (
+          <>
+            {pcaPoolAssignAction.phase === 'team' ? (
+              <TeamPickerPopover
+                title="Assign slot"
+                selectedTeam={pcaPoolAssignAction.targetTeam}
+                onSelectTeam={(t) => setPcaPoolAssignAction(prev => ({ ...prev, targetTeam: t }))}
+                onClose={closePcaPoolAssignAction}
+                confirmDisabled={!pcaPoolAssignAction.targetTeam}
+                onConfirm={() => {
+                  const targetTeam = pcaPoolAssignAction.targetTeam
+                  if (!targetTeam) return
+                  if (pcaPoolAssignAction.availableSlots.length === 1) {
+                    performPcaSlotAssignFromPool(targetTeam, {
+                      staffId: pcaPoolAssignAction.staffId!,
+                      selectedSlots: pcaPoolAssignAction.availableSlots,
+                    })
+                    closePcaPoolAssignAction()
+                    return
+                  }
+                  setPcaPoolAssignAction(prev => ({ ...prev, phase: 'slots' }))
+                }}
+                position={pcaPoolAssignAction.position}
+                hint="Choose a target team, then confirm."
+                pageIndicator={pcaPoolAssignAction.availableSlots.length > 1 ? { current: 1, total: 2 } : undefined}
+                onNextPage={() => {
+                  const targetTeam = pcaPoolAssignAction.targetTeam
+                  if (!targetTeam) return
+                  if (pcaPoolAssignAction.availableSlots.length === 1) return
+                  setPcaPoolAssignAction(prev => ({ ...prev, phase: 'slots' }))
+                }}
+                onPrevPage={() => {}}
+                prevDisabled={true}
+                nextDisabled={!pcaPoolAssignAction.targetTeam || pcaPoolAssignAction.availableSlots.length === 1}
+              />
+            ) : null}
+
+            {pcaPoolAssignAction.phase === 'slots' && pcaPoolAssignAction.targetTeam ? (
+              <SlotSelectionPopover
+                staffName={pcaPoolAssignAction.staffName}
+                availableSlots={pcaPoolAssignAction.availableSlots}
+                selectedSlots={pcaPoolAssignAction.selectedSlots}
+                onSlotToggle={(slot) =>
+                  setPcaPoolAssignAction(prev => {
+                    const selected = prev.selectedSlots.includes(slot)
+                      ? prev.selectedSlots.filter(s => s !== slot)
+                      : [...prev.selectedSlots, slot].sort((a, b) => a - b)
+                    return { ...prev, selectedSlots: selected }
+                  })
+                }
+                onClose={closePcaPoolAssignAction}
+                onStartDrag={() => {}}
+                position={pcaPoolAssignAction.position}
+                mode="confirm"
+                actionLabel="assign"
+                onConfirm={() => {
+                  const targetTeam = pcaPoolAssignAction.targetTeam
+                  if (!targetTeam) return
+                  if (pcaPoolAssignAction.selectedSlots.length === 0) return
+                  performPcaSlotAssignFromPool(targetTeam, {
+                    staffId: pcaPoolAssignAction.staffId!,
+                    selectedSlots: pcaPoolAssignAction.selectedSlots,
+                  })
+                  closePcaPoolAssignAction()
+                }}
+                confirmDisabled={pcaPoolAssignAction.selectedSlots.length === 0}
+              />
+            ) : null}
+          </>
+        )}
+
+      {/* Staff Pool: Assign slot (SPT remaining FTE / buffer therapist team assignment) */}
+      {sptPoolAssignAction.show &&
+        sptPoolAssignAction.position &&
+        sptPoolAssignAction.staffId &&
+        sptPoolAssignAction.staffName && (
+          <TeamPickerPopover
+            title="Assign slot"
+            selectedTeam={sptPoolAssignAction.targetTeam}
+            onSelectTeam={(t) => setSptPoolAssignAction(prev => ({ ...prev, targetTeam: t }))}
+            onClose={closeSptPoolAssignAction}
+            confirmDisabled={!sptPoolAssignAction.targetTeam}
+            onConfirm={() => {
+              const staffId = sptPoolAssignAction.staffId!
+              const targetTeam = sptPoolAssignAction.targetTeam
+              if (!targetTeam) return
+
+              const staffMember =
+                staff.find(x => x.id === staffId) ||
+                bufferStaff.find(x => x.id === staffId) ||
+                null
+              if (!staffMember) return
+
+              // Buffer therapist: assign whole staff to team (override.team + DB update)
+              if (staffMember.status === 'buffer' && ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)) {
+                const fte =
+                  typeof staffOverrides[staffId]?.fteRemaining === 'number'
+                    ? (staffOverrides[staffId]!.fteRemaining as number)
+                    : typeof (staffMember as any).buffer_fte === 'number'
+                      ? ((staffMember as any).buffer_fte as number)
+                      : 1.0
+
+                setStaffOverrides(prev => ({
+                  ...prev,
+                  [staffId]: {
+                    ...prev[staffId],
+                    team: targetTeam,
+                    fteRemaining: fte,
+                    leaveType: prev[staffId]?.leaveType ?? null,
+                  },
+                }))
+
+                supabase
+                  .from('staff')
+                  .update({ team: targetTeam })
+                  .eq('id', staffId)
+                  .then(() => {
+                    setBufferStaff(prev => prev.map(s => (s.id === staffId ? { ...s, team: targetTeam } : s)))
+                  })
+
+                closeSptPoolAssignAction()
+                return
+              }
+
+              // SPT: assign remaining weekday FTE to team (ad hoc override)
+              const remaining = sptPoolAssignAction.remainingFte
+              if (remaining <= 0) {
+                closeSptPoolAssignAction()
+                return
+              }
+
+              const currentMap = getTherapistFteByTeam(staffId)
+              const nextMap: Partial<Record<Team, number>> = { ...currentMap }
+              nextMap[targetTeam] = (nextMap[targetTeam] ?? 0) + remaining
+              const total = Object.values(nextMap).reduce((sum, v) => sum + (v ?? 0), 0)
+
+              setStaffOverrides(prev => {
+                const existing = prev[staffId]
+                const leaveType = existing?.leaveType ?? getTherapistLeaveType(staffId)
+                return {
+                  ...prev,
+                  [staffId]: {
+                    ...(existing ?? { leaveType, fteRemaining: total }),
+                    leaveType,
+                    fteRemaining: total,
+                    therapistTeamFTEByTeam: nextMap,
+                    therapistNoAllocation: false,
+                    team: undefined,
+                  },
+                }
+              })
+
+              closeSptPoolAssignAction()
+            }}
+            position={sptPoolAssignAction.position}
+            hint="Choose a target team, then confirm."
+          />
+        )}
+
+      {/* Staff Pool: Convert buffer staff to inactive (confirm) */}
+      {bufferStaffConvertConfirm.show &&
+        bufferStaffConvertConfirm.position &&
+        bufferStaffConvertConfirm.staffId && (
+          <ConfirmPopover
+            title="Convert to inactive"
+            description={
+              bufferStaffConvertConfirm.staffName
+                ? `Convert "${bufferStaffConvertConfirm.staffName}" to inactive staff?`
+                : 'Convert to inactive staff?'
+            }
+            onClose={() =>
+              setBufferStaffConvertConfirm({ show: false, position: null, staffId: null, staffName: null })
+            }
+            onConfirm={async () => {
+              const id = bufferStaffConvertConfirm.staffId
+              if (!id) return
+              const { error } = await supabase
+                .from('staff')
+                .update({ status: 'inactive', team: null })
+                .eq('id', id)
+
+              if (error) {
+                showActionToast('Failed to convert to inactive. Please try again.', 'error')
+              } else {
+                showActionToast('Converted to inactive.', 'success')
+                loadStaff()
+              }
+
+              setBufferStaffConvertConfirm({ show: false, position: null, staffId: null, staffName: null })
+            }}
+            position={bufferStaffConvertConfirm.position}
+          />
+        )}
+
+      {/* Staff Pool: Edit buffer staff dialog */}
+      {bufferStaffEditDialog.open && (
+        <BufferStaffCreateDialog
+          open={bufferStaffEditDialog.open}
+          onOpenChange={(open) => {
+            if (!open) {
+              setBufferStaffEditDialog({ open: false, staff: null, initialAvailableSlots: null })
+            }
+          }}
+          onSave={() => {
+            setBufferStaffEditDialog({ open: false, staff: null, initialAvailableSlots: null })
+            loadStaff()
+          }}
+          specialPrograms={specialPrograms}
+          staffToEdit={bufferStaffEditDialog.staff}
+          initialAvailableSlots={bufferStaffEditDialog.initialAvailableSlots}
+        />
+      )}
 
       {/* PCA contextual action popovers (Move/Discard) */}
       {pcaContextAction.show &&
@@ -9088,7 +9984,18 @@ function SchedulePageContent() {
       )}
       
       {/* DragOverlay for regular card drags */}
-      <DragOverlay />
+      <DragOverlay modifiers={[snapCenterToCursor]}>
+        {!pcaDragState.isDraggingFromPopover && activeDragStaffForOverlay ? (
+          <div className="pointer-events-none select-none">
+            <div className="bg-white dark:bg-slate-800 rounded-md shadow-lg border border-slate-300 dark:border-slate-600 px-2 py-1">
+              <div className="text-sm font-medium text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                {activeDragStaffForOverlay.name}
+                {activeDragStaffForOverlay.status === 'buffer' ? '*' : ''}
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </DragOverlay>
       
       <div className="w-full px-8 py-4 min-w-[1440px] bg-background">
         {actionToast && (
@@ -9902,7 +10809,7 @@ function SchedulePageContent() {
                 pcas={pcas}
                 inactiveStaff={inactiveStaff}
                 bufferStaff={bufferStaff}
-                onEditStaff={handleEditStaff}
+                onOpenStaffContextMenu={openStaffPoolContextMenu}
                 staffOverrides={staffOverrides}
                 specialPrograms={specialPrograms}
                 pcaAllocations={pcaAllocations}
@@ -9910,6 +10817,7 @@ function SchedulePageContent() {
                 initializedSteps={initializedSteps}
                 weekday={selectedDate ? getWeekday(selectedDate) : undefined}
                 onBufferStaffCreated={loadStaff}
+                disableDragging={staffPoolContextMenu.show}
                 onSlotTransfer={(staffId: string, targetTeam: string, slots: number[]) => {
                   // Find source team from allocations
                   let sourceTeam: Team | null = null
@@ -9961,7 +10869,7 @@ function SchedulePageContent() {
                 <div ref={rightContentRef}>
                 
                 {/* Block 1: Therapist Allocation */}
-                <div className="mb-4">
+                <div ref={therapistAllocationBlockRef} className="mb-4">
                   <h3 className="text-xs font-semibold text-center mb-2">Therapist Allocation</h3>
                   <div className="grid grid-cols-8 gap-2">
                     {TEAMS.map((team) => (
@@ -9980,7 +10888,7 @@ function SchedulePageContent() {
                 </div>
                 
                 {/* Block 2: PCA Allocation */}
-                <div className="mb-4">
+                <div ref={pcaAllocationBlockRef} className="mb-4">
                   <h3 className="text-xs font-semibold text-center mb-2">PCA Allocation</h3>
                   <div className="grid grid-cols-8 gap-2">
                     {TEAMS.map((team) => (
