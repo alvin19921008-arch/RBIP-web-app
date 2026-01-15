@@ -57,8 +57,10 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     ? active.data.current.staff.rank === 'PCA'
     : false
   
-  // Combine dnd-kit hover and external hover, but only if PCA is being dragged
-  const showHoverEffect = (isOver || externalHover) && isPCADragging
+  // Combine dnd-kit hover and external hover.
+  // - dnd-kit hover should only apply when a PCA is being dragged via dnd-kit
+  // - externalHover is used for "drag from slot picker" mode (not dnd-kit), so allow it directly
+  const showHoverEffect = (isOver && isPCADragging) || externalHover
 
   // Filter out staff with FTE = 0 (they should only appear in leave block)
   // Check both allocation FTE and current override FTE (in case allocations haven't been regenerated)
@@ -1005,7 +1007,11 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
   const assignedPcaFteRounded = roundToNearestQuarterWithMidpoint(assignedPcaFteRaw)
 
   return (
-    <Card ref={setNodeRef} className={showHoverEffect ? 'border-2 border-slate-900 dark:border-slate-100' : ''} data-pca-team={team}>
+    <Card
+      ref={setNodeRef}
+      className={showHoverEffect ? 'border-2 border-slate-900 dark:border-slate-100' : ''}
+      data-pca-team={team}
+    >
       <CardContent className="p-2 pt-1 flex flex-col min-h-full">
         <div className="space-y-1 flex-1">
           {/* Regular PCA first */}
@@ -1045,6 +1051,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
               <StaffCard
                 key={`${allocation.id}-regular-${team}`}
                 staff={allocation.staff}
+                useDragOverlay={true}
                 allocation={allocation as any}
                 fteRemaining={undefined}
                 slotDisplay={slotDisplayNode}
@@ -1110,6 +1117,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
               <StaffCard
                 key={`${allocation.id}-special-${team}`}
                 staff={allocation.staff}
+                useDragOverlay={true}
                 allocation={allocation as any}
                 fteRemaining={undefined}
                 slotDisplay={slotDisplayNode}

@@ -88,6 +88,7 @@ export function InactiveStaffPool({ inactiveStaff, onEditStaff, staffOverrides =
                     <StaffCard
                       key={staff.id}
                       staff={staff}
+                      useDragOverlay={true}
                       onEdit={(e) => onEditStaff?.(staff.id, e)}
                       draggable={false}
                         fteRemaining={showFTE ? baseFTE : undefined}

@@ -817,7 +817,25 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Added refs (`therapistAllocationBlockRef`, `pcaAllocationBlockRef`) to Block 1 and Block 2 wrappers
   - Enables precise scroll targeting for snap-scroll behavior
 
-## Phase 24: Staff Pool Context Menu & Assign Slot Feature (Latest)
+## Phase 25: Drag & Drop UI Fixes & Popover Positioning (Latest)
+- ✅ **Floating PCA Slot Transfer Popover Fixes**
+  - Fixed popover positioning: now uses document coordinates (adds scrollX/scrollY) to match SlotSelectionPopover's absolute positioning
+  - Changed popover to show **only after drop** (not during drag-move) to prevent "jump" from origin to drop target
+  - Popover now appears correctly positioned next to drop target after auto-scroll/snap
+- ✅ **Staff Card Drag Visual Fix**
+  - Fixed "double/ghost" staff card during drag: added `useDragOverlay` prop to `StaffCard`
+  - When `useDragOverlay=true` and dragging, original card stays stationary (no transform) while DragOverlay follows cursor
+  - Applied to all StaffCard instances in schedule allocation UI
+- ✅ **Bed Edit Warning Tooltip**
+  - Converted bed relieving "Edit" invalid-step warning from popover to tooltip-style (matches other warnings)
+  - Fixed positioning: now uses cursor coordinates with viewport clamping, appears near click point
+  - Dismisses on any click or Escape (no auto-timer)
+- ✅ **Slot Picker Drag Hover State**
+  - Added hover pre-select state for PCA blocks when dragging selected slots from slot-picker popover
+  - `externalHover` prop now triggers border highlight even when dnd-kit isn't active (slot-picker uses mouse listeners)
+  - Source team excluded from hover highlight (only valid drop targets show pre-select)
+
+## Phase 24: Staff Pool Context Menu & Assign Slot Feature
 - ✅ **Staff Pool Contextual Menu System**
   - Added schedule-grid style contextual menu to Staff Pool cards (therapist pool, PCA pool, buffer staff pool)
   - Accessible via **right-click** or **hover pencil click** on staff cards

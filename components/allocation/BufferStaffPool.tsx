@@ -418,6 +418,7 @@ export function BufferStaffPool({
                           <StaffCard
                             key={staff.id}
                             staff={staff}
+                            useDragOverlay={true}
                             draggable={!disableDragging}
                             showFTE={isBufferTherapist}
                             fteRemaining={staff.buffer_fte}

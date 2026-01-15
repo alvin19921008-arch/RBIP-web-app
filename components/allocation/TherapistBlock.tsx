@@ -173,6 +173,7 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
               <StaffCard
                 key={allocation.id}
                 staff={allocation.staff}
+                useDragOverlay={true}
                 allocation={allocation}
                 fteRemaining={displayFTE}
                 sptDisplay={sptDisplay}

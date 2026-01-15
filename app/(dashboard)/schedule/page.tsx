@@ -898,6 +898,23 @@ function SchedulePageContent() {
     show: false,
     position: null,
   })
+
+  // Tooltip-like: dismiss on any outside click / Escape (no timer).
+  useEffect(() => {
+    if (!bedRelievingEditWarningPopover.show) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setBedRelievingEditWarningPopover({ show: false, position: null })
+    }
+    const onPointerDown = () => {
+      setBedRelievingEditWarningPopover({ show: false, position: null })
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('pointerdown', onPointerDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('pointerdown', onPointerDown, true)
+    }
+  }, [bedRelievingEditWarningPopover.show])
   
   // PCA Drag-and-Drop state for slot transfer
   const [pcaDragState, setPcaDragState] = useState<{
@@ -995,7 +1012,9 @@ function SchedulePageContent() {
       mousePositionRef.current = { x: e.clientX, y: e.clientY }
       
       // Track which team we're hovering over for visual feedback
-      const hoveredTeam = findTeamAtPoint(e.clientX, e.clientY)
+      const hoveredTeamRaw = findTeamAtPoint(e.clientX, e.clientY)
+      // Only highlight valid drop targets (exclude source team)
+      const hoveredTeam = hoveredTeamRaw && hoveredTeamRaw !== pcaDragState.sourceTeam ? hoveredTeamRaw : null
       if (hoveredTeam !== popoverDragHoverTeam) {
         setPopoverDragHoverTeam(hoveredTeam)
       }
@@ -7168,6 +7187,8 @@ function SchedulePageContent() {
     const estimatedPopoverHeight = 250 // Estimate based on max slots (4) + header + padding
     const viewportWidth = window.innerWidth
     const viewportHeight = window.innerHeight
+    const scrollX = window.scrollX
+    const scrollY = window.scrollY
     
     // Calculate X position - prefer right side, but flip to left if it would be truncated
     let popoverX: number
@@ -7188,7 +7209,9 @@ function SchedulePageContent() {
       popoverY = Math.max(10, viewportHeight - estimatedPopoverHeight - 10)
     }
     
-    return { x: popoverX, y: popoverY }
+    // IMPORTANT: SlotSelectionPopover is absolutely positioned in document space,
+    // so convert viewport (client) coords to document coords.
+    return { x: popoverX + scrollX, y: popoverY + scrollY }
   }
 
   // Helper function to get slots assigned to a specific team for a PCA
@@ -7536,21 +7559,10 @@ function SchedulePageContent() {
       return
     }
     
-    // For multi-slot PCAs, show slot selection when leaving source team
+    // For multi-slot PCAs, we USED to show slot selection when leaving source team (pre-drop).
+    // This caused the popover to appear near the origin card, then "jump" to the drop target after drop.
+    // New behavior: ONLY show slot selection AFTER drop (handled in handleDragEnd).
     if (pcaDragState.availableSlots.length > 1 && !pcaDragState.showSlotSelection && isOverDifferentTeam) {
-      // Calculate popover position from the current drag position
-      // Use the initial rect of the dragged element (where it started)
-      const activeRect = active.rect.current.initial
-      const translatedRect = active.rect.current.translated
-      const cardRect = activeRect || translatedRect
-      
-      const popoverPos = cardRect ? calculatePopoverPosition(cardRect, 150) : { x: 100, y: 100 }
-      
-      setPcaDragState(prev => ({
-        ...prev,
-        showSlotSelection: true,
-        popoverPosition: popoverPos,
-      }))
     }
   }
 
@@ -8089,21 +8101,23 @@ function SchedulePageContent() {
     
     
     // Show popover again after unsuccessful drag from popover
-    const showPopoverAgain = () => {
+    const showPopoverAgain = (dropTargetPosition?: { x: number; y: number } | null) => {
       setPcaDragState(prev => ({
         ...prev,
         isActive: false,
         isDraggingFromPopover: false,
         showSlotSelection: true,
+        ...(dropTargetPosition !== undefined && { popoverPosition: dropTargetPosition }),
       }))
     }
     
     // Keep popover visible but mark drag as inactive (for multi-slot selection)
-    const pausePcaDrag = () => {
+    const pausePcaDrag = (newPosition?: { x: number; y: number } | null) => {
       setPcaDragState(prev => ({
         ...prev,
         isActive: false,
         isDraggingFromPopover: false,
+        ...(newPosition !== undefined && { popoverPosition: newPosition }),
       }))
     }
     
@@ -8234,11 +8248,32 @@ function SchedulePageContent() {
       // If same team - if was dragging from popover, show it again
       if (targetTeam === sourceTeam) {
         if (pcaDragState.isDraggingFromPopover) {
-          showPopoverAgain()
+          // Recalculate position from drop target after scroll/snap
+          // Use requestAnimationFrame to ensure DOM has updated after scroll/snap
+          requestAnimationFrame(() => {
+            const dropTargetElement = document.querySelector(`[data-pca-team="${targetTeam}"]`) as HTMLElement
+            const dropTargetPosition = dropTargetElement 
+              ? calculatePopoverPosition(dropTargetElement.getBoundingClientRect(), 150)
+              : null
+            setPcaDragState(prev => ({
+              ...prev,
+              isActive: false,
+              isDraggingFromPopover: false,
+              showSlotSelection: true,
+              ...(dropTargetPosition && { popoverPosition: dropTargetPosition }),
+            }))
+          })
           return
         }
         if (pcaDragState.showSlotSelection && pcaDragState.availableSlots.length > 1) {
-          pausePcaDrag()
+          // Recalculate position from drop target after scroll/snap
+          requestAnimationFrame(() => {
+            const dropTargetElement = document.querySelector(`[data-pca-team="${targetTeam}"]`) as HTMLElement
+            const dropTargetPosition = dropTargetElement 
+              ? calculatePopoverPosition(dropTargetElement.getBoundingClientRect(), 150)
+              : null
+            pausePcaDrag(dropTargetPosition)
+          })
           return
         }
         resetPcaDragState()
@@ -8248,7 +8283,22 @@ function SchedulePageContent() {
       // If no slots selected but multi-slot, keep popover visible
       if (selectedSlots.length === 0) {
         if (pcaDragState.availableSlots.length > 1) {
-          pausePcaDrag()
+          // Calculate position from drop target (block 2) after auto-scroll/snap
+          // Use requestAnimationFrame to ensure DOM has updated after scroll/snap
+          requestAnimationFrame(() => {
+            const dropTargetElement = document.querySelector(`[data-pca-team="${targetTeam}"]`) as HTMLElement
+            const dropTargetPosition = dropTargetElement 
+              ? calculatePopoverPosition(dropTargetElement.getBoundingClientRect(), 150)
+              : null
+            // IMPORTANT (post-fix): show popover ONLY after drop
+            setPcaDragState(prev => ({
+              ...prev,
+              isActive: false,
+              isDraggingFromPopover: false,
+              showSlotSelection: true,
+              ...(dropTargetPosition && { popoverPosition: dropTargetPosition }),
+            }))
+          })
           return
         }
         resetPcaDragState()
@@ -9930,28 +9980,14 @@ function SchedulePageContent() {
       {/* Warning Popover for bed relieving edit outside step 4 */}
       {bedRelievingEditWarningPopover.show && bedRelievingEditWarningPopover.position && (
         <div
-          className="absolute z-[9999] bg-white dark:bg-slate-800 rounded-lg shadow-xl border-2 border-amber-500 p-3 w-[200px]"
+          className="fixed z-[9999] px-2 py-1 text-xs text-popover-foreground bg-popover border border-amber-500 rounded-md shadow-md whitespace-normal max-w-[260px]"
           style={{
             left: bedRelievingEditWarningPopover.position.x,
             top: bedRelievingEditWarningPopover.position.y,
-            pointerEvents: 'auto',
+            pointerEvents: 'none',
           }}
         >
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              setBedRelievingEditWarningPopover({ show: false, position: null })
-            }}
-            className="absolute top-1 right-1 p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-          <div className="text-xs font-semibold text-amber-800 dark:text-amber-200 mb-1 pr-4">
-            Bed Relieving Edit Not Available
-          </div>
-          <div className="text-[10px] text-slate-600 dark:text-slate-400 leading-tight">
-            Bed relieving note editing is only available in Step 4 (Bed Relieving). Please return to Step 4 to edit.
-          </div>
+          Bed relieving note editing is only available in Step 4 (Bed Relieving). Please return to Step 4 to edit.
         </div>
       )}
       
@@ -10936,10 +10972,17 @@ function SchedulePageContent() {
                           onSaveBedRelievingNotesForToTeam={saveBedRelievingNotesForToTeam}
                           currentStep={currentStep}
                           onInvalidEditAttempt={(position) => {
-                            setBedRelievingEditWarningPopover({ show: true, position })
-                            setTimeout(() => {
-                              setBedRelievingEditWarningPopover(prev => ({ ...prev, show: false }))
-                            }, 5000)
+                            // Position is client coords (cursor). Render as fixed tooltip near cursor.
+                            const pad = 8
+                            const estW = 260
+                            const estH = 80
+                            let x = position.x + 12
+                            let y = position.y + 12
+                            if (x + estW > window.innerWidth - pad) x = window.innerWidth - estW - pad
+                            if (y + estH > window.innerHeight - pad) y = window.innerHeight - estH - pad
+                            x = Math.max(pad, x)
+                            y = Math.max(pad, y)
+                            setBedRelievingEditWarningPopover({ show: true, position: { x, y } })
                           }}
                         />
                       ))

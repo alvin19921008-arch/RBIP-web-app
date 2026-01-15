@@ -534,6 +534,7 @@ export function StaffPool({
                             <StaffCard
                               key={staff.id}
                               staff={staff}
+                              useDragOverlay={true}
                               onEdit={(e) => onOpenStaffContextMenu?.(staff.id, e)}
                               onOpenContextMenu={(e) => onOpenStaffContextMenu?.(staff.id, e)}
                               fteRemaining={shouldShowFTE ? baseFTE : undefined}
@@ -626,6 +627,7 @@ export function StaffPool({
                         <StaffCard
                           key={pca.id}
                           staff={pca}
+                          useDragOverlay={true}
                           onEdit={(e) => onOpenStaffContextMenu?.(pca.id, e)}
                           onOpenContextMenu={(e) => onOpenStaffContextMenu?.(pca.id, e)}
                           fteRemaining={shouldShowFTE ? (isFloatingPCA ? trueFTE : baseFTE) : undefined}

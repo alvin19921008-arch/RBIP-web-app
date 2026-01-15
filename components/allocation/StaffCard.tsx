@@ -30,6 +30,7 @@ interface StaffCardProps {
   showFTE?: boolean // Show FTE next to name
   currentStep?: string // For slot transfer validation
   initializedSteps?: Set<string> // For slot transfer validation
+  useDragOverlay?: boolean // If true, keep original card stationary while DragOverlay follows cursor
 }
 
 function wrapTimeRangesInNode(node: ReactNode): ReactNode {
@@ -69,7 +70,7 @@ function wrapTimeRangesInNode(node: ReactNode): ReactNode {
   return node
 }
 
-export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDisplay, onEdit, onOpenContextMenu, onConvertToInactive, draggable = true, nameColor, borderColor, fillColorClassName, dragTeam, baseFTE, trueFTE, isFloatingPCA, showFTE, currentStep, initializedSteps }: StaffCardProps) {
+export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDisplay, onEdit, onOpenContextMenu, onConvertToInactive, draggable = true, nameColor, borderColor, fillColorClassName, dragTeam, baseFTE, trueFTE, isFloatingPCA, showFTE, currentStep, initializedSteps, useDragOverlay = false }: StaffCardProps) {
   // Use composite ID to ensure each team's instance has a unique draggable id
   // This prevents drag styling from applying to the same staff card in other teams
   // Use '::' as separator (unlikely to appear in UUIDs)
@@ -87,10 +88,9 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
   const effectiveListeners = draggable ? listeners : {}
   const effectiveSetNodeRef = draggable ? setNodeRef : undefined
 
-  const style = transform
-    ? {
-        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-      }
+  const shouldApplyTransform = !!transform && !(useDragOverlay && isDragging)
+  const style = shouldApplyTransform
+    ? { transform: `translate3d(${transform!.x}px, ${transform!.y}px, 0)` }
     : undefined
 
   // Display name (FTE will be shown separately on the right)
@@ -134,9 +134,7 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
   return (
     <div
       ref={effectiveSetNodeRef}
-      style={transform ? {
-        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-      } : undefined}
+      style={style}
       {...(draggable && !isHoveringEdit && !isHoveringConvert ? { ...effectiveListeners, ...effectiveAttributes } : {})}
       className={cn(
         "relative p-1 border-2 rounded-md bg-card hover:bg-accent transition-colors",

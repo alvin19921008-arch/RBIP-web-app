@@ -8,6 +8,7 @@ import type { SpecialProgram } from '@/types/allocation'
 import { Button } from '@/components/ui/button'
 import { RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
+import { useToast } from '@/components/ui/toast-provider'
 
 type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
 
@@ -123,6 +124,7 @@ export function PCADedicatedScheduleTable({
   stepStatus,
   initializedSteps,
 }: PCADedicatedScheduleTableProps) {
+  const toast = useToast()
   const [refreshKey, setRefreshKey] = useState(0)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [controlsVisible, setControlsVisible] = useState(false)
@@ -450,6 +452,10 @@ export function PCADedicatedScheduleTable({
       }
 
       // Floating PCA (Step 2/3): show team assignment per slot; program line if applicable.
+      // First, build base cells for each slot
+      const baseCells: Record<RowSlot, CellKind> = { 1: { kind: 'empty' }, 2: { kind: 'empty' }, 3: { kind: 'empty' }, 4: { kind: 'empty' } }
+      const substitutionBySlot: Record<RowSlot, boolean> = { 1: false, 2: false, 3: false, 4: false }
+      
       for (const slot of [1, 2, 3, 4] as const) {
         const assignedTeam = slotTeams[slot]
         const inv = invalids[slot]
@@ -457,30 +463,83 @@ export function PCADedicatedScheduleTable({
 
         const isSubstitution =
           !!assignedTeam && assignedTeam === substitutedTeam && substitutedSlots.has(slot)
+        substitutionBySlot[slot] = isSubstitution
 
         if (!assignedTeam) {
-          specs[slot] = { rowSpan: 1, hidden: false, cell: { kind: 'empty' } }
+          baseCells[slot] = { kind: 'empty' }
           continue
         }
 
         if (inv) {
-          specs[slot] = {
-            rowSpan: 1,
-            hidden: false,
-            cell: { kind: 'invalidSlot', team: assignedTeam, timeRange: inv, isSubstitution },
-          }
+          baseCells[slot] = { kind: 'invalidSlot', team: assignedTeam, timeRange: inv, isSubstitution }
           continue
         }
 
         if (prog) {
-          specs[slot] = {
-            rowSpan: 1,
-            hidden: false,
-            cell: { kind: 'teamAndProgram', team: assignedTeam, programName: prog, isSubstitution },
+          baseCells[slot] = { kind: 'teamAndProgram', team: assignedTeam, programName: prog, isSubstitution }
+        } else {
+          baseCells[slot] = { kind: 'team', team: assignedTeam, isSubstitution }
+        }
+      }
+
+      // Merge adjacent slots assigned to the same team (only for plain 'team' cells, not program/invalid)
+      const slots = [1, 2, 3, 4] as const
+      let i = 0
+      while (i < slots.length) {
+        const slot = slots[i]
+        const cell = baseCells[slot]
+        
+        // Only merge plain 'team' cells (not program, invalid, or empty)
+        const canMerge = cell.kind === 'team'
+        if (!canMerge) {
+          specs[slot] = { rowSpan: 1, hidden: false, cell }
+          i += 1
+          continue
+        }
+
+        // Find run length: adjacent slots with same team, same substitution status, and no program/invalid
+        let j = i
+        const firstTeam = (cell as any).team as Team
+        const firstSubstitution = substitutionBySlot[slot]
+        
+        while (j < slots.length) {
+          const checkSlot = slots[j]
+          const checkCell = baseCells[checkSlot]
+          
+          // Can merge if:
+          // 1. Same kind ('team')
+          // 2. Same team
+          // 3. Same substitution status
+          if (
+            checkCell.kind === 'team' &&
+            (checkCell as any).team === firstTeam &&
+            substitutionBySlot[checkSlot] === firstSubstitution
+          ) {
+            j += 1
+          } else {
+            break
+          }
+        }
+        
+        const runLen = j - i
+        
+        if (runLen >= 2) {
+          // Merge adjacent slots: show first slot with rowSpan, hide others
+          specs[slot] = { 
+            rowSpan: runLen, 
+            hidden: false, 
+            cell // Use the original cell (already verified to have same team/substitution)
+          }
+          for (let k = i + 1; k < j; k++) {
+            const hiddenSlot = slots[k]
+            specs[hiddenSlot] = { rowSpan: 1, hidden: true, cell: { kind: 'empty' } }
           }
         } else {
-          specs[slot] = { rowSpan: 1, hidden: false, cell: { kind: 'team', team: assignedTeam, isSubstitution } }
+          // Single slot: show as-is
+          specs[slot] = { rowSpan: 1, hidden: false, cell }
         }
+        
+        i = j
       }
 
       specsByStaffId.set(s.id, specs)
@@ -567,7 +626,10 @@ export function PCADedicatedScheduleTable({
           variant="ghost"
           size="icon"
           className="h-6 w-6 opacity-60 hover:opacity-100"
-          onClick={() => setRefreshKey((x) => x + 1)}
+          onClick={() => {
+            setRefreshKey((x) => x + 1)
+            toast.success('Table refreshed')
+          }}
           title="Refresh"
         >
           <RefreshCw className="h-3.5 w-3.5" />

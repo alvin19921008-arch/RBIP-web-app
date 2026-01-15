@@ -111,9 +111,9 @@ export function BedBlock({
   const reportInvalidEdit = React.useCallback(
     (e: React.MouseEvent) => {
       if (!onInvalidEditAttempt) return
-      const rect = (e.currentTarget as HTMLElement | null)?.getBoundingClientRect()
-      const x = rect ? rect.left : e.clientX
-      const y = rect ? rect.top : e.clientY
+      // Use cursor position so the warning appears next to the click.
+      const x = e.clientX
+      const y = e.clientY
       onInvalidEditAttempt({ x, y })
     },
     [onInvalidEditAttempt]
