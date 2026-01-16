@@ -204,10 +204,10 @@ export function SlotSelectionPopover({
           {mode === 'confirm'
             ? 'Click slots to select, then confirm'
             : effectiveAction === 'assign'
-              ? 'Click slots to select,<br/>then click to assign'
+              ? 'Click slots to select, then click to assign'
               : effectiveAction === 'discard'
-                ? 'Click slots to select,<br/>then click to discard'
-                : 'Click slots to select,<br/>then drag to move'}
+                ? 'Click slots to select, then click to discard'
+                : 'Click slots to select, then drag to move'}
         </div>
       )}
 

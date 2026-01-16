@@ -584,7 +584,9 @@ export function PCADedicatedScheduleTable({
     }
 
     if (cell.kind === 'invalidSlot') {
-      const teamClass = cell.isSubstitution ? 'text-green-700 underline font-medium' : 'font-medium'
+      const teamClass = cell.isSubstitution
+        ? 'text-green-700 dark:text-green-400 underline underline-offset-2 decoration-2 font-medium'
+        : 'font-medium'
       return (
         <div className="flex flex-col items-center justify-center px-1">
           <div className={`${commonLine1} ${teamClass}`}>{cell.team}</div>
@@ -596,7 +598,9 @@ export function PCADedicatedScheduleTable({
     }
 
     if (cell.kind === 'teamAndProgram') {
-      const teamClass = cell.isSubstitution ? 'text-green-700 underline font-medium' : 'font-medium'
+      const teamClass = cell.isSubstitution
+        ? 'text-green-700 dark:text-green-400 underline underline-offset-2 decoration-2 font-medium'
+        : 'font-medium'
       return (
         <div className="flex flex-col items-center justify-center px-1">
           <div className={`${commonLine1} ${teamClass}`}>{cell.team}</div>
@@ -606,7 +610,9 @@ export function PCADedicatedScheduleTable({
     }
 
     if (cell.kind === 'team') {
-      const teamClass = cell.isSubstitution ? 'text-green-700 underline font-medium' : 'font-medium'
+      const teamClass = cell.isSubstitution
+        ? 'text-green-700 dark:text-green-400 underline underline-offset-2 decoration-2 font-medium'
+        : 'font-medium'
       return (
         <div className="flex items-center justify-center px-1">
           <div className={`${commonLine1} ${teamClass}`}>{cell.team}</div>

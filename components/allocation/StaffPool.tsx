@@ -60,7 +60,27 @@ export function StaffPool({
   const [showFTEFilter, setShowFTEFilter] = useState(false)
   const [rankFilter, setRankFilter] = useState<'all' | 'therapist' | 'pca'>('all')
 
+  const updateScrollHints = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
+    const top = el.scrollTop
+    // Avoid flicker and ignore tiny 1px overflows from rounding/padding.
+    const eps = 4
+    if (maxScrollTop <= eps) {
+      setCanScrollUp(false)
+      setCanScrollDown(false)
+      return
+    }
+    const clampedTop = Math.min(Math.max(0, top), maxScrollTop)
+    const nextUp = clampedTop > eps
+    const nextDown = clampedTop < maxScrollTop - eps
+    setCanScrollUp(nextUp)
+    setCanScrollDown(nextDown)
+  }, [])
+
   useEffect(() => {
+    if (!isExpanded) return
     const el = scrollRef.current
     if (!el) return
 
@@ -73,29 +93,19 @@ export function StaffPool({
       ev.stopPropagation()
 
       el.scrollTop += ev.deltaY
+      updateScrollHints()
     }
 
     el.addEventListener('wheel', onWheelNative, { passive: false })
     return () => {
       el.removeEventListener('wheel', onWheelNative as EventListener)
     }
-  }, [])
+  }, [isExpanded, updateScrollHints])
 
   useEffect(() => {
     return () => {
       if (hideScrollbarTimerRef.current) window.clearTimeout(hideScrollbarTimerRef.current)
     }
-  }, [])
-
-  const updateScrollHints = useCallback(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
-    const top = el.scrollTop
-    // Add a small tolerance to avoid flicker around boundaries
-    const eps = 1
-    setCanScrollUp(top > eps)
-    setCanScrollDown(top < maxScrollTop - eps)
   }, [])
 
   const pokeScrollbar = useCallback(() => {
@@ -112,12 +122,15 @@ export function StaffPool({
 
   // Keep scroll hint buttons in sync (can scroll up/down).
   useEffect(() => {
+    if (!isExpanded) return
     const el = scrollRef.current
     if (!el) return
 
     updateScrollHints()
 
-    const onScroll = () => updateScrollHints()
+    const onScroll = () => {
+      updateScrollHints()
+    }
     el.addEventListener('scroll', onScroll, { passive: true })
 
     const ro = new ResizeObserver(() => updateScrollHints())
@@ -127,7 +140,7 @@ export function StaffPool({
       el.removeEventListener('scroll', onScroll)
       ro.disconnect()
     }
-  }, [updateScrollHints])
+  }, [isExpanded, updateScrollHints])
 
   // Content height can change without triggering scroll/resize (expand/collapse, filters, data loads),
   // so recompute scroll hints on those state changes.
@@ -151,7 +164,9 @@ export function StaffPool({
     const el = scrollRef.current
     if (!el) return
     el.scrollBy({ top: delta, behavior: 'smooth' })
-  }, [])
+    // Some browsers can be flaky about emitting scroll events during smooth programmatic scroll.
+    requestAnimationFrame(() => updateScrollHints())
+  }, [updateScrollHints])
 
   // Helper function to calculate Base_FTE-remaining (after leave, excluding special program)
   const getBaseFTERemaining = (staffId: string, staff?: Staff): number => {

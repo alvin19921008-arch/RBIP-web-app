@@ -114,7 +114,6 @@ export function CalculationBlock({
           <span className="font-semibold">PT:</span> {calculations.pt_per_team.toFixed(2)}
         </div>
         <div>
-          <span className="font-semibold">Relieving:</span>{' '}
           <span className={isNegative ? 'text-red-600' : 'text-green-600'}>
             {relievingText}
           </span>

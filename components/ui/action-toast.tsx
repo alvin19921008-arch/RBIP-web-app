@@ -52,21 +52,44 @@ export function ActionToast({
   const styles = getVariantStyles(variant)
   const hasDescription = typeof description === 'string' && description.trim().length > 0
   const hasActions = actions != null
+  const exitTimerRef = React.useRef<number | null>(null)
+  const EXIT_MS = 220
+
+  React.useEffect(() => {
+    // If we're closing, schedule onExited even if no CSS animation events fire.
+    if (!open) {
+      if (exitTimerRef.current) window.clearTimeout(exitTimerRef.current)
+      exitTimerRef.current = window.setTimeout(() => {
+        onExited()
+      }, EXIT_MS)
+      return
+    }
+
+    // If reopened, cancel any pending exit.
+    if (exitTimerRef.current) window.clearTimeout(exitTimerRef.current)
+    exitTimerRef.current = null
+  }, [open, onExited])
+
+  React.useEffect(() => {
+    return () => {
+      if (exitTimerRef.current) window.clearTimeout(exitTimerRef.current)
+    }
+  }, [])
 
   return (
     <div
       role="status"
       aria-live="polite"
-      onAnimationEnd={() => {
+      onAnimationEnd={(e) => {
+        if (e.currentTarget !== e.target) return
         if (!open) onExited()
       }}
       className={cn(
         'relative pointer-events-auto w-[360px] max-w-[calc(100vw-2rem)] rounded-xl border bg-background shadow-lg',
         'px-4 py-3 pr-10',
         styles.border,
-        open
-          ? 'animate-in fade-in slide-in-from-right-full duration-300'
-          : 'animate-out fade-out slide-out-to-right-full duration-200'
+        // Tailwind v4 CSS-first animation tokens (defined in app/globals.css @theme).
+        open ? 'animate-toast-in' : 'animate-toast-out'
       )}
     >
       <button

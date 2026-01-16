@@ -946,15 +946,22 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     const specialProgramSlots = getSpecialProgramSlotsForTeam(alloc, team)
     const regularSlots = slotsForThisTeam.filter(slot => !specialProgramSlots.includes(slot))
     
+    // If this team has NO special-program slots for this PCA, treat it as regular for THIS team.
+    // (The PCA may still be special-program in another team, but that should not disable dragging here.)
+    if (specialProgramSlots.length === 0) {
+      regularPCA.push(alloc)
+      return
+    }
+
     // If this allocation has both special program slots and regular slots in this team, split it
-    if (specialProgramSlots.length > 0 && regularSlots.length > 0) {
+    if (regularSlots.length > 0) {
       // Track which slots to show in each section
       splitAllocationSlots.set(`${alloc.id}-${team}`, { regularSlots, specialProgramSlots })
       // Add to both sections
       regularPCA.push(alloc)
       specialProgramPCA.push(alloc)
     } else {
-      // All slots are either all special program or all regular - keep as single entry
+      // All slots in this team are special program slots.
       specialProgramPCA.push(alloc)
     }
   })

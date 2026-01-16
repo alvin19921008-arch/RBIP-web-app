@@ -4877,6 +4877,7 @@ function SchedulePageContent() {
 
       // Update step status (don't auto-advance)
       setStepStatus(prev => ({ ...prev, 'therapist-pca': 'completed' }))
+      showActionToast('Step 2 allocation completed.', 'success', 'Therapist & non-floating PCA allocations updated.')
 
       // Return the allocations for use in substitution detection
       return pcaByTeam
@@ -5104,6 +5105,7 @@ function SchedulePageContent() {
 
     // Update step status (don't auto-advance)
     setStepStatus(prev => ({ ...prev, 'bed-relieving': 'completed' }))
+    showActionToast('Step 4 calculation completed.', 'success', 'Bed relieving values updated.')
   }
 
   /**
@@ -6109,6 +6111,7 @@ function SchedulePageContent() {
     // Mark Step 3 as initialized and completed
     setInitializedSteps(prev => new Set(prev).add('floating-pca'))
     setStepStatus(prev => ({ ...prev, 'floating-pca': 'completed' }))
+    showActionToast('Step 3 allocation completed.', 'success', 'Floating PCA assignments updated.')
   }
   
   /**
@@ -8099,6 +8102,15 @@ function SchedulePageContent() {
     const staffId = activeId.includes('::') ? activeId.split('::')[0] : activeId
     const staffMember = staff.find(s => s.id === staffId)
     
+    // For discard flow: when dropped "elsewhere" (no destination drop zone), anchor the popover
+    // near the drag's final position (same viewport-safe positioning helper).
+    const dndRectForPopover = (active.rect.current.translated ?? active.rect.current.initial) as
+      | { left: number; top: number; width: number; height: number }
+      | null
+    const discardPopoverPosition = dndRectForPopover
+      ? calculatePopoverPosition(dndRectForPopover, 150)
+      : null
+    
     
     // Show popover again after unsuccessful drag from popover
     const showPopoverAgain = (dropTargetPosition?: { x: number; y: number } | null) => {
@@ -8173,7 +8185,10 @@ function SchedulePageContent() {
             showSlotSelection: true,
             availableSlots: assignedSlots,
             selectedSlots: [], // User will select which slots to discard
-            popoverPosition: prev.popoverPosition || calculatePopoverPosition({ left: 100, top: 100, width: 0, height: 0 }, 150),
+            popoverPosition:
+              discardPopoverPosition ??
+              prev.popoverPosition ??
+              calculatePopoverPosition({ left: 100, top: 100, width: 0, height: 0 }, 150),
             isDiscardMode: true, // Flag to indicate this is discard, not transfer
           }))
           return
@@ -8231,7 +8246,10 @@ function SchedulePageContent() {
             showSlotSelection: true,
             availableSlots: assignedSlots,
             selectedSlots: [],
-            popoverPosition: prev.popoverPosition || calculatePopoverPosition({ left: 100, top: 100, width: 0, height: 0 }, 150),
+            popoverPosition:
+              discardPopoverPosition ??
+              prev.popoverPosition ??
+              calculatePopoverPosition({ left: 100, top: 100, width: 0, height: 0 }, 150),
             isDiscardMode: true,
           }))
           return
