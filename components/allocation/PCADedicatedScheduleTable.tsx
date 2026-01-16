@@ -736,7 +736,7 @@ export function PCADedicatedScheduleTable({
         {/* Horizontal scroll controls - ensuring z-index to stay on top */}
         <button
           type="button"
-          className={`absolute left-1 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-background/90 border shadow-sm flex items-center justify-center hover:bg-accent/80 z-20 transition-opacity ${
+          className={`absolute left-1 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-background/90 border border-border shadow-xs flex items-center justify-center hover:bg-accent/80 z-20 transition-opacity ${
             controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
           }`}
           onClick={() => {
@@ -749,7 +749,7 @@ export function PCADedicatedScheduleTable({
         </button>
         <button
           type="button"
-          className={`absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-background/90 border shadow-sm flex items-center justify-center hover:bg-accent/80 z-20 transition-opacity ${
+          className={`absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-background/90 border border-border shadow-xs flex items-center justify-center hover:bg-accent/80 z-20 transition-opacity ${
             controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
           }`}
           onClick={() => {

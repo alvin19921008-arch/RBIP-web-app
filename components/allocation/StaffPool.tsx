@@ -698,7 +698,7 @@ export function StaffPool({
             type="button"
             className={cn(
               'pointer-events-auto absolute left-1/2 -translate-x-1/2 top-0',
-              'h-7 w-7 rounded-full bg-background/90 border shadow-sm',
+              'h-7 w-7 rounded-full bg-background/90 border border-border shadow-xs',
               'flex items-center justify-center hover:bg-accent/80 z-20 transition-opacity',
               canScrollUp ? 'opacity-100' : 'opacity-0 pointer-events-none'
             )}
@@ -715,7 +715,7 @@ export function StaffPool({
             type="button"
             className={cn(
               'pointer-events-auto absolute left-1/2 -translate-x-1/2 bottom-0',
-              'h-7 w-7 rounded-full bg-background/90 border shadow-sm',
+              'h-7 w-7 rounded-full bg-background/90 border border-border shadow-xs',
               'flex items-center justify-center hover:bg-accent/80 z-20 transition-opacity',
               canScrollDown ? 'opacity-100' : 'opacity-0 pointer-events-none'
             )}

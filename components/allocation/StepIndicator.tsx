@@ -55,7 +55,7 @@ export function StepIndicator({
   const canInitialize = !!onInitialize && ['therapist-pca', 'floating-pca', 'bed-relieving'].includes(currentStep)
 
   return (
-    <div className={cn("bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 shadow-sm", className)}>
+    <div className={cn("bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 shadow-xs", className)}>
       {/* Step Progress Bar with Titles */}
       <div className="relative mb-4">
         {/* Connector Lines (behind circles) - positioned at center of w-14 circles (28px) for alignment */}

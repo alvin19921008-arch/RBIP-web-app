@@ -10146,7 +10146,7 @@ function SchedulePageContent() {
                 const nextLabel = `${formatDateDDMMYYYY(nextWorkingDay)} (${WEEKDAY_NAMES[WEEKDAYS.indexOf(getWeekday(nextWorkingDay))]})`
 
                 return (
-                  <div className="inline-flex items-center border border-border rounded-md overflow-hidden bg-background shadow-sm">
+                  <div className="inline-flex items-center border border-border rounded-md overflow-hidden bg-background shadow-xs">
                     <Tooltip side="bottom" content={`Previous working day: ${prevLabel}`}>
                       <button
                         type="button"
