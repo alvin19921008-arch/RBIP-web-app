@@ -3,8 +3,6 @@
 import * as React from 'react'
 import { usePathname } from 'next/navigation'
 
-import { LoadingAnimation } from '@/components/ui/loading-animation'
-
 type NavigationLoadingApi = {
   start: (targetHref?: string) => void
   stop: () => void
@@ -22,11 +20,9 @@ export function useNavigationLoading(): NavigationLoadingApi {
 
 type ProviderProps = {
   children: React.ReactNode
-  /** Keep Navbar undimmed by starting overlay below it. Default = 64px (h-16). */
-  navbarHeightPx?: number
 }
 
-export function NavigationLoadingProvider({ children, navbarHeightPx = 64 }: ProviderProps) {
+export function NavigationLoadingProvider({ children }: ProviderProps) {
   const pathname = usePathname()
   const [active, setActive] = React.useState(false)
   const [targetHref, setTargetHref] = React.useState<string | null>(null)
@@ -40,6 +36,12 @@ export function NavigationLoadingProvider({ children, navbarHeightPx = 64 }: Pro
     setActive(false)
     setTargetHref(null)
     targetHrefRef.current = null
+    try {
+      window.sessionStorage.removeItem('rbip_nav_start_ms')
+      window.sessionStorage.removeItem('rbip_nav_target_href')
+    } catch {
+      // ignore
+    }
   }, [])
 
   const start = React.useCallback((nextTargetHref?: string) => {
@@ -48,6 +50,17 @@ export function NavigationLoadingProvider({ children, navbarHeightPx = 64 }: Pro
     const href = nextTargetHref ?? null
     setTargetHref(href)
     targetHrefRef.current = href
+    try {
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+      if (href) window.sessionStorage.setItem('rbip_nav_target_href', href)
+      window.sessionStorage.setItem('rbip_nav_start_ms', String(now))
+      // Clear prior per-route marks so we don't show stale timing.
+      window.sessionStorage.removeItem('rbip_nav_schedule_loading_shown_ms')
+      window.sessionStorage.removeItem('rbip_nav_schedule_mounted_ms')
+      window.sessionStorage.removeItem('rbip_nav_schedule_grid_ready_ms')
+    } catch {
+      // ignore
+    }
     // Fail-safe: never leave the overlay stuck.
     timeoutRef.current = window.setTimeout(() => {
       setActive(false)
@@ -106,8 +119,6 @@ export function NavigationLoadingProvider({ children, navbarHeightPx = 64 }: Pro
 
   const api = React.useMemo<NavigationLoadingApi>(() => ({ start, stop, active, targetHref }), [active, start, stop, targetHref])
 
-  const isScheduleTarget = (targetHref ?? '').startsWith('/schedule')
-
   return (
     <NavigationLoadingContext.Provider value={api}>
       {children}
@@ -119,20 +130,6 @@ export function NavigationLoadingProvider({ children, navbarHeightPx = 64 }: Pro
               <div className="h-full w-1/2 bg-sky-500 animate-[navbar-indeterminate_1.1s_ease-in-out_infinite]" />
             </div>
           </div>
-
-          {/* Dimming overlay below Navbar */}
-          {!isScheduleTarget ? (
-            <div
-              className="fixed inset-x-0 bottom-0 z-[99999] pointer-events-auto"
-              style={{ top: navbarHeightPx }}
-              aria-hidden="true"
-            >
-              <div className="absolute inset-0 bg-slate-950/25 backdrop-blur-[1px]" />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <LoadingAnimation className="w-[180px] h-[180px]" />
-              </div>
-            </div>
-          ) : null}
         </>
       ) : null}
     </NavigationLoadingContext.Provider>

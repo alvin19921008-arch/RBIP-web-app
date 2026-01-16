@@ -2,10 +2,10 @@
 
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
-**Last Updated**: 2026-01-14
-**Latest Phase**: Phase 24 - Staff Pool Context Menu & Assign Slot Feature  
+**Last Updated**: 2026-01-16
+**Latest Phase**: Phase 25 - Frontend Toolchain Upgrade & Loading Optimization  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
-**Tech Stack**: Next.js 14+ (App Router), TypeScript, Supabase (PostgreSQL), Tailwind CSS, Shadcn/ui
+**Tech Stack**: Next.js 16.1+ (App Router, Turbopack), React 19.2+, TypeScript, Supabase (PostgreSQL), Tailwind CSS 4.1+ (CSS-first config), ESLint 9+, Shadcn/ui
 
 ---
 
@@ -875,6 +875,44 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - `StaffPool` / `BufferStaffPool`: Wired `onOpenStaffContextMenu` callback, added `disableDragging` prop to prevent drag while menu open
 - ✅ **Files Modified**: `app/(dashboard)/schedule/page.tsx`, `components/allocation/StaffPool.tsx`, `components/allocation/BufferStaffPool.tsx`, `components/allocation/BufferStaffCreateDialog.tsx`, `components/allocation/SlotSelectionPopover.tsx`, `components/allocation/StaffContextMenu.tsx`
 
+## Phase 25: Frontend Toolchain Upgrade & Loading Optimization
+- ✅ **Major Dependency Upgrades**
+  - Next.js: 14 → 16.1.2 (App Router, Turbopack enabled by default)
+  - React & React-DOM: 18 → 19.2.x (React 19 strict mode, improved `React.cloneElement` typing)
+  - Tailwind CSS: 3.4 → 4.1.x (full CSS-first config migration, removed `tailwind.config.ts`)
+  - ESLint: 8 → 9+ (flat config `eslint.config.mjs`, disabled non-critical rules for migration stability)
+  - `@dnd-kit`: Updated to latest ~6.x
+- ✅ **Tailwind v4 CSS-First Migration**
+  - Removed `tailwind.config.ts` (configuration moved to `app/globals.css`)
+  - Added `@theme` block in `globals.css` for Shadcn token mapping and custom keyframes
+  - Added `@source` directives for file scanning
+  - Added `@custom-variant dark` for class-based dark mode
+  - Custom animations: `toast-in`/`toast-out` keyframes for toast notifications
+  - Updated utility classes: `shadow-sm` → `shadow-xs`, `border` → `border-border` for v4 compatibility
+- ✅ **Next.js Loading.tsx Implementation**
+  - Added `app/(dashboard)/schedule/loading.tsx` with skeleton UI for route transitions
+  - Added `app/(dashboard)/dashboard/loading.tsx` and `app/(dashboard)/history/loading.tsx`
+  - Created `ScheduleLoadingMetricsPing` client component for navigation timing diagnostics
+  - Navigation timing integration: tracks `start → loading.tsx shown → mount → grid ready` deltas
+  - Load diagnostics tooltip: displays navigation timing metrics for developer role
+- ✅ **Legacy Loading Overlay Removal**
+  - Removed dimming overlay + spinner (`LoadingAnimation` component deleted)
+  - Replaced with non-dimming skeleton overlay for team grid (opaque `bg-background`, blocks interaction until data ready)
+  - Removed `navbarHeightPx` prop from `NavigationLoadingProvider` (legacy dimming overlay remnant)
+  - Navigation loading now uses top progress bar + `loading.tsx` skeletons only
+- ✅ **Team Grid Skeleton Overlay**
+  - Skeleton overlay activates on initial load and in-page date switches (prevents editing stale data)
+  - Covers only team grid column (not summary/staff pool)
+  - `beginDateTransition()` helper ensures skeleton shows immediately on date change
+- ✅ **Navigation Timing Diagnostics**
+  - Mount-time fallback: computes `navToScheduleTiming` when cached data skips loading overlay
+  - Tooltip shows navigation deltas even when `lastLoadTiming` is missing
+  - Developer-only tooltip with detailed timing breakdown
+- ✅ **Build & Type Safety**
+  - TypeScript strict mode compliance maintained throughout upgrades
+  - All builds pass (`npm run build` successful)
+  - React 19 compatibility: fixed `React.cloneElement` strict typing issues
+
 ### Technical Achievements
 - ✅ **Type Safety**: Comprehensive database type conversion utilities
 - ✅ **State Management**: Three-layer architecture (Saved → Algorithm → Override)
@@ -1619,8 +1657,12 @@ The schedule page uses a three-layer state management pattern:
 ## File Reference Guide
 
 ### Core Files
-- `app/(dashboard)/schedule/page.tsx` - Main schedule page (2828 lines)
+- `app/(dashboard)/schedule/page.tsx` - Main schedule page
+- `app/(dashboard)/schedule/loading.tsx` - Schedule page skeleton UI for route transitions
+- `app/(dashboard)/schedule/schedule-loading-metrics-ping.tsx` - Client component for navigation timing diagnostics
+- `app/(dashboard)/dashboard/loading.tsx` - Dashboard page skeleton UI
 - `app/(dashboard)/history/page.tsx` - Schedule history page with batch operations
+- `app/(dashboard)/history/loading.tsx` - History page skeleton UI
 - `lib/algorithms/pcaAllocation.ts` - PCA allocation algorithm (2084 lines)
 - `lib/algorithms/therapistAllocation.ts` - Therapist allocation algorithm
 - `lib/algorithms/bedAllocation.ts` - Bed allocation algorithm
@@ -1650,8 +1692,7 @@ The schedule page uses a three-layer state management pattern:
 - `components/history/DeleteConfirmDialog.tsx` - Confirmation dialog for schedule deletion
 - `components/ui/action-toast.tsx` - Reusable toast notification component (success/warning/error variants)
 - `components/ui/toast-provider.tsx` - Global toast context provider with `useToast` hook
-- `components/ui/loading-animation.tsx` - Lottie animation component for loading overlays
-- `components/ui/navigation-loading.tsx` - Global navigation loading provider with progress bar and dimming overlay
+- `components/ui/navigation-loading.tsx` - Global navigation loading provider with top progress bar (legacy dimming overlay removed)
 
 ### Dashboard Component Files
 - `components/dashboard/TeamConfigurationPanel.tsx` - Team configuration management (staff assignments, ward responsibilities, portion settings)

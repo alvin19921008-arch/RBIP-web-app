@@ -39,7 +39,6 @@ import { SummaryColumn } from '@/components/allocation/SummaryColumn'
 import { ScheduleCopyWizard } from '@/components/allocation/ScheduleCopyWizard'
 import { Button } from '@/components/ui/button'
 import { ActionToast, type ActionToastVariant } from '@/components/ui/action-toast'
-import { LoadingAnimation } from '@/components/ui/loading-animation'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
 import { StaffEditDialog } from '@/components/allocation/StaffEditDialog'
 import { TieBreakDialog } from '@/components/allocation/TieBreakDialog'
@@ -214,6 +213,13 @@ function SchedulePageContent() {
   const [lastSaveTiming, setLastSaveTiming] = useState<TimingReport | null>(null)
   const [lastCopyTiming, setLastCopyTiming] = useState<TimingReport | null>(null)
   const [lastLoadTiming, setLastLoadTiming] = useState<TimingReport | null>(null)
+  const [navToScheduleTiming, setNavToScheduleTiming] = useState<{
+    targetHref: string
+    startMs: number
+    loadingShownMs: number | null
+    mountedMs: number | null
+    gridReadyMs: number
+  } | null>(null)
   const [topLoadingVisible, setTopLoadingVisible] = useState(false)
   const [topLoadingProgress, setTopLoadingProgress] = useState(0)
   const loadingBarIntervalRef = useRef<number | null>(null)
@@ -1189,6 +1195,37 @@ function SchedulePageContent() {
     // - Do NOT preload base tables here (staff/programs/wards). Saved schedules should rely on baseline_snapshot.
     // - Do NOT preload calendar dots here. Dates are loaded lazily when calendar/copy wizard opens.
   }, [])
+
+  // Record when the schedule page client code is mounted (used for nav diagnostics tooltip).
+  useEffect(() => {
+    try {
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+      window.sessionStorage.setItem('rbip_nav_schedule_mounted_ms', String(now))
+      // If we skipped the schedule loading overlay due to cached data, we may never hit the "grid ready" timing path.
+      // In that case, compute a lightweight nav timing fallback so the diagnostics tooltip can still show nav deltas.
+      const navStartStr = window.sessionStorage.getItem('rbip_nav_start_ms')
+      const navTarget = window.sessionStorage.getItem('rbip_nav_target_href') ?? ''
+      if (navStartStr && navTarget.startsWith('/schedule')) {
+        const startMs = Number(navStartStr)
+        if (Number.isFinite(startMs)) {
+          const loadingShownStr = window.sessionStorage.getItem('rbip_nav_schedule_loading_shown_ms')
+          const loadingShownMs = loadingShownStr != null ? Number(loadingShownStr) : null
+          const safeLoadingShownMs = loadingShownMs != null && Number.isFinite(loadingShownMs) ? loadingShownMs : null
+          const navMeta = {
+            targetHref: navTarget,
+            startMs,
+            loadingShownMs: safeLoadingShownMs,
+            mountedMs: now,
+            gridReadyMs: now,
+          }
+          window.sessionStorage.setItem('rbip_nav_schedule_grid_ready_ms', String(now))
+          setNavToScheduleTiming(navMeta)
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
   // Check for return path from history page
   useEffect(() => {
     if (typeof sessionStorage !== 'undefined') {
@@ -1222,11 +1259,53 @@ function SchedulePageContent() {
       if ((navLoading.targetHref ?? '').startsWith('/schedule')) {
         navLoading.stop()
       }
+
+      // Persist + surface navigation timings in the existing load diagnostics tooltip.
+      try {
+        const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+        window.sessionStorage.setItem('rbip_nav_schedule_grid_ready_ms', String(now))
+
+        const startMs = parseFloat(window.sessionStorage.getItem('rbip_nav_start_ms') || '')
+        const targetHref = window.sessionStorage.getItem('rbip_nav_target_href')
+        const loadingShownMs = parseFloat(window.sessionStorage.getItem('rbip_nav_schedule_loading_shown_ms') || '')
+        const mountedMs = parseFloat(window.sessionStorage.getItem('rbip_nav_schedule_mounted_ms') || '')
+        const gridReadyMs = now
+
+        if (Number.isFinite(startMs) && targetHref && targetHref.startsWith('/schedule')) {
+          const navMeta = {
+            targetHref,
+            startMs,
+            loadingShownMs: Number.isFinite(loadingShownMs) ? loadingShownMs : null,
+            mountedMs: Number.isFinite(mountedMs) ? mountedMs : null,
+            gridReadyMs,
+          }
+          setNavToScheduleTiming(navMeta)
+          setLastLoadTiming(prev => {
+            if (!prev) return prev
+            const metaPrev = (prev.meta as any) || {}
+            return { ...prev, meta: { ...metaPrev, nav: navMeta } }
+          })
+        }
+      } catch {
+        // ignore
+      }
     }
 
     // Wait for the next paint (and a follow-up) so the grid content is on screen.
     window.requestAnimationFrame(() => window.requestAnimationFrame(finish))
   }, [gridLoading, loading, staff.length, scheduleLoadedForDate, selectedDate, navLoading])
+
+  // If we captured nav timing before lastLoadTiming was available, merge it in once load timing exists.
+  useEffect(() => {
+    if (!navToScheduleTiming) return
+    setLastLoadTiming(prev => {
+      if (!prev) return prev
+      const metaPrev = (prev.meta as any) || {}
+      const existing = metaPrev.nav as any
+      if (existing && typeof existing.startMs === 'number') return prev
+      return { ...prev, meta: { ...metaPrev, nav: navToScheduleTiming } }
+    })
+  }, [navToScheduleTiming])
 
 
   // Load schedule when date changes (cold start should NOT require preloading base tables).
@@ -7001,8 +7080,7 @@ function SchedulePageContent() {
       setHighlightDateKey(formatDateForInput(toDate))
 
       // Navigate to copied schedule date and reload schedule metadata
-      setSelectedDate(toDate)
-      setScheduleLoadedForDate(null)
+      beginDateTransition(toDate, { resetLoadedForDate: true, useLocalTopBar: false })
       timer.stage('navigate')
       bumpTopLoadingTo(0.92)
 
@@ -7043,10 +7121,25 @@ function SchedulePageContent() {
     JSON.stringify(bedCountsOverridesByTeam) !== JSON.stringify(savedBedCountsOverridesByTeam) ||
     JSON.stringify(bedRelievingNotesByToTeam) !== JSON.stringify(savedBedRelievingNotesByToTeam)
 
+  const beginDateTransition = (nextDate: Date, options?: { resetLoadedForDate?: boolean; useLocalTopBar?: boolean }) => {
+    // Prevent editing stale grid content while the next date's data is still loading.
+    setGridLoading(true)
+    const useLocalTopBar = options?.useLocalTopBar ?? true
+    gridLoadingUsesLocalBarRef.current = useLocalTopBar
+    if (useLocalTopBar) {
+      startTopLoading(0.08)
+      startSoftAdvance(0.75)
+    }
+    setSelectedDate(nextDate)
+    if (options?.resetLoadedForDate) {
+      setScheduleLoadedForDate(null)
+    }
+  }
+
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newDate = parseDateFromInput(e.target.value)
     if (!isNaN(newDate.getTime())) {
-      setSelectedDate(newDate)
+      beginDateTransition(newDate)
       setCalendarOpen(false) // Close calendar dialog when date is selected
     }
   }
@@ -10113,6 +10206,16 @@ function SchedulePageContent() {
                               typeof meta.snapshotBytes === 'number'
                                 ? Math.round(meta.snapshotBytes / 1024)
                                 : null
+                            const nav = (meta.nav as
+                              | {
+                                  targetHref: string
+                                  startMs: number
+                                  loadingShownMs: number | null
+                                  mountedMs: number | null
+                                  gridReadyMs: number
+                                }
+                              | undefined) ?? (navToScheduleTiming ?? undefined)
+                            const fmtDelta = (from: number, to: number) => `${Math.max(0, Math.round(to - from))}ms`
                             return (
                               <div className="text-[11px] text-slate-400 space-y-0.5">
                                 <div>
@@ -10124,6 +10227,23 @@ function SchedulePageContent() {
                                   calcs:{meta.calculationsSource || 'unknown'}
                                   {snapshotKb != null ? `, snapshot:${snapshotKb}KB` : ''}
                                 </div>
+                                {nav && typeof nav.startMs === 'number' ? (
+                                  <div className="pt-1 space-y-0.5">
+                                    <div className="text-slate-500">nav → schedule</div>
+                                    <div>
+                                      <span className="text-slate-400">start→loading.tsx:</span>{' '}
+                                      {nav.loadingShownMs != null ? fmtDelta(nav.startMs, nav.loadingShownMs) : 'n/a'}
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-400">start→mount:</span>{' '}
+                                      {nav.mountedMs != null ? fmtDelta(nav.startMs, nav.mountedMs) : 'n/a'}
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-400">start→gridReady:</span>{' '}
+                                      {fmtDelta(nav.startMs, nav.gridReadyMs)}
+                                    </div>
+                                  </div>
+                                ) : null}
                                 {meta.counts ? (
                                   <div>
                                     rows: th={meta.counts.therapistAllocs ?? 0}, pca={meta.counts.pcaAllocs ?? 0},
@@ -10145,7 +10265,31 @@ function SchedulePageContent() {
                           ) : null}
                         </>
                       ) : (
-                        <div className="text-slate-500">No load timing captured yet.</div>
+                        <>
+                          <div className="text-slate-500">No load timing captured yet.</div>
+                          {(() => {
+                            const nav = navToScheduleTiming ?? undefined
+                            if (!nav || typeof nav.startMs !== 'number') return null
+                            const fmtDelta = (from: number, to: number) => `${Math.max(0, Math.round(to - from))}ms`
+                            return (
+                              <div className="pt-1 text-[11px] text-slate-400 space-y-0.5">
+                                <div className="text-slate-500">nav → schedule</div>
+                                <div>
+                                  <span className="text-slate-400">start→loading.tsx:</span>{' '}
+                                  {nav.loadingShownMs != null ? fmtDelta(nav.startMs, nav.loadingShownMs) : 'n/a'}
+                                </div>
+                                <div>
+                                  <span className="text-slate-400">start→mount:</span>{' '}
+                                  {nav.mountedMs != null ? fmtDelta(nav.startMs, nav.mountedMs) : 'n/a'}
+                                </div>
+                                <div>
+                                  <span className="text-slate-400">start→gridReady:</span>{' '}
+                                  {fmtDelta(nav.startMs, nav.gridReadyMs)}
+                                </div>
+                              </div>
+                            )
+                          })()}
+                        </>
                       )}
                     </div>
                   </div>
@@ -10171,7 +10315,7 @@ function SchedulePageContent() {
                         aria-label="Previous working day"
                         onClick={() => {
                           setCalendarOpen(false)
-                          setSelectedDate(prevWorkingDay)
+                          beginDateTransition(prevWorkingDay)
                         }}
                         className="px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-110 active:scale-95 border-r border-border"
                       >
@@ -10186,7 +10330,7 @@ function SchedulePageContent() {
                         setCalendarOpen(false)
                         const today = new Date()
                         const target = isWorkingDay(today) ? today : getNextWorkingDay(today)
-                        setSelectedDate(target)
+                        beginDateTransition(target)
                       }}
                       className="px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-105 active:scale-95 border-r border-border"
                     >
@@ -10199,7 +10343,7 @@ function SchedulePageContent() {
                         aria-label="Next working day"
                         onClick={() => {
                           setCalendarOpen(false)
-                          setSelectedDate(nextWorkingDay)
+                          beginDateTransition(nextWorkingDay)
                         }}
                         className="px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-110 active:scale-95"
                       >
@@ -10595,15 +10739,6 @@ function SchedulePageContent() {
         </div>
 
         <div className="relative flex gap-4 min-w-0">
-          {/* Grid loading overlay: dim only below StepIndicator */}
-          {gridLoading && (
-            <div className="absolute inset-0 z-50 pointer-events-auto">
-              <div className="absolute inset-0 bg-slate-950/25 backdrop-blur-[1px]" />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <LoadingAnimation className="w-[200px] h-[200px]" />
-              </div>
-            </div>
-          )}
           <div
             className="shrink-0 flex flex-col gap-4 self-start min-h-0"
             style={typeof rightContentHeight === 'number' && rightContentHeight > 0 ? { height: rightContentHeight } : undefined}
@@ -10904,7 +11039,37 @@ function SchedulePageContent() {
             </div>
           </div>
 
-          <div className="flex-1 min-w-0 bg-background">
+          <div className="flex-1 min-w-0 bg-background relative">
+            {/* Team grid loading: prefer native skeleton (no dimming overlay) */}
+            {gridLoading && (
+              <div className="absolute inset-0 z-50 pointer-events-auto bg-background">
+                <div className="p-4 space-y-4">
+                  <div className="grid grid-cols-8 gap-2">
+                    {Array.from({ length: 8 }).map((_, i) => (
+                      <div key={`hdr-skel-${i}`} className="h-6 rounded-md bg-muted animate-pulse" />
+                    ))}
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="h-4 w-40 rounded-md bg-muted animate-pulse" />
+                    <div className="grid grid-cols-8 gap-2">
+                      {Array.from({ length: 8 }).map((_, i) => (
+                        <div key={`b1-skel-${i}`} className="h-24 rounded-lg border border-border bg-card animate-pulse" />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="h-4 w-32 rounded-md bg-muted animate-pulse" />
+                    <div className="grid grid-cols-8 gap-2">
+                      {Array.from({ length: 8 }).map((_, i) => (
+                        <div key={`b2-skel-${i}`} className="h-28 rounded-lg border border-border bg-card animate-pulse" />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             {/* Sticky Team headers row (Excel-like freeze) */}
             <div className="sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-border">
               <div className="grid grid-cols-8 gap-2 py-2 min-w-[960px]">
@@ -11529,7 +11694,7 @@ function SchedulePageContent() {
               <CalendarGrid
                 selectedDate={selectedDate}
                 onDateSelect={(date) => {
-                  setSelectedDate(date)
+                  beginDateTransition(date)
                   setCalendarOpen(false)
                 }}
                 datesWithData={datesWithData}
@@ -11545,7 +11710,7 @@ function SchedulePageContent() {
 
 export default function SchedulePage() {
   return (
-    <Suspense fallback={<div className="w-full px-8 py-4 min-w-[1440px] bg-background">Loading...</div>}>
+    <Suspense fallback={null}>
       <SchedulePageContent />
     </Suspense>
   )

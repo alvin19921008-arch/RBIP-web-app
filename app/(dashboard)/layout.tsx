@@ -11,7 +11,7 @@ export default async function DashboardLayout({
 
   return (
     <div className="min-h-screen min-w-[1440px] bg-background">
-      <NavigationLoadingProvider navbarHeightPx={64}>
+      <NavigationLoadingProvider>
         <Navbar />
         <main>{children}</main>
       </NavigationLoadingProvider>
