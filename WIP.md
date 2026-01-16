@@ -468,4 +468,23 @@ Once a schedule has a non-empty `baseline_snapshot`:
 
 ---
 
+## Frontend Toolchain Upgrade Notes (Next 16 / React 19 / Tailwind 4)
+
+### Current Tailwind v4 setup (hybrid)
+
+- `app/globals.css` uses Tailwind v4’s CSS entrypoint:
+  - `@import "tailwindcss";`
+  - `@config "../tailwind.config.ts";` (keeps the existing shadcn-style theme extension)
+- `postcss.config.js` uses Tailwind v4’s PostCSS plugin: `@tailwindcss/postcss`
+- `tailwind.config.ts` remains in place for theme extension/plugins; `darkMode` is `"class"`
+
+### Later migration steps to full Tailwind v4 CSS-first config
+
+1. Move theme tokens into `app/globals.css` using `@theme { ... }` (keep CSS variables as the single source of truth).
+2. Replace `content: [...]` globs with Tailwind v4 `@source` directives (or Tailwind’s recommended source auto-detection) scoped to `./app` and `./components`.
+3. Reduce `tailwind.config.ts` to only the pieces that *cannot* move to CSS (ideally none), then remove the `@config` directive.
+4. Drop `tailwindcss-animate` if possible by keeping only the keyframes/utilities you actually use (many are already defined in CSS).
+5. Optionally run `npx @tailwindcss/upgrade` to mass-update renamed utilities once you’re ready for a larger UI-only diff.
+6. Delete `tailwind.config.ts` once no longer needed.
+
 **End of WIP Document**

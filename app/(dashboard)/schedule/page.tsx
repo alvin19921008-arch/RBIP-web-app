@@ -1320,8 +1320,8 @@ function SchedulePageContent() {
 
       if (hasPCAData) {
         // Saved schedule: use saved allocations directly (no algorithm regen).
-        useSavedAllocations(resultAny.therapistAllocs, resultAny.pcaAllocs, resultAny.overrides, staffFromSnapshot)
-        timer.stage('useSavedAllocations')
+        applySavedAllocations(resultAny.therapistAllocs, resultAny.pcaAllocs, resultAny.overrides, staffFromSnapshot)
+        timer.stage('applySavedAllocations')
 
         setInitializedSteps(
           new Set<string>([
@@ -2974,7 +2974,7 @@ function SchedulePageContent() {
       therapistByTeam = therapistAllocations
     }
     
-    // Reuse the calculation logic from useSavedAllocations
+    // Reuse the calculation logic from applySavedAllocations
     // CRITICAL: Use staffOverrides for current FTE values (not stale alloc.fte_therapist)
     const totalBedsAllTeams = wards.reduce((sum, ward) => sum + ward.total_beds, 0)
     const totalPTOnDutyAllTeams = TEAMS.reduce((sum, team) => {
@@ -3331,7 +3331,7 @@ function SchedulePageContent() {
 
   // Use saved allocations directly from database without regenerating.
   // IMPORTANT: This path should be cheap (no recalculation, no bed algorithm).
-  const useSavedAllocations = (
+  const applySavedAllocations = (
     therapistAllocs: any[],
     pcaAllocs: any[],
     _overrides: Record<string, any>,

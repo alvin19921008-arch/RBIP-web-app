@@ -778,33 +778,33 @@ export function FloatingPCAConfigDialog({
           <Lightbulb className="h-4 w-4 text-amber-500" />
           <strong>Suggestion:</strong> If among the tie-breaker group, the pending slots value is high (&gt;= 0.75) or there are &gt;=3 teams within same tie-breaker condition, manual force adjustment of the pending value may be needed.
         </span>
-        
-        {/* Tick-to-do list */}
-        <div className="mt-3 space-y-1.5 text-sm">
-          {bufferStaff.some(s => s.rank === 'PCA' && s.status === 'buffer' && s.floating) && (
-            <div className="flex items-center gap-2">
-              {bufferPCAAssigned.length > 0 ? (
-                <div className="relative h-4 w-4 flex items-center justify-center">
-                  <div className="absolute inset-0 bg-green-600 rounded-full" />
-                  <Check className="h-3 w-3 relative text-white stroke-[3]" />
-                </div>
-              ) : (
-                <Circle className="h-4 w-4 text-green-600 border-2 border-green-600 rounded-full" />
-              )}
-              <span>Buffer floating PCA assigned</span>
-            </div>
-          )}
-          {hasNonFloatingPCAAssigned && (
-            <div className="flex items-center gap-2">
+      </DialogDescription>
+
+      {/* Tick-to-do list (must be outside DialogDescription since it renders a <p>) */}
+      <div className="mt-3 space-y-1.5 text-sm text-muted-foreground">
+        {bufferStaff.some(s => s.rank === 'PCA' && s.status === 'buffer' && s.floating) && (
+          <div className="flex items-center gap-2">
+            {bufferPCAAssigned.length > 0 ? (
               <div className="relative h-4 w-4 flex items-center justify-center">
                 <div className="absolute inset-0 bg-green-600 rounded-full" />
                 <Check className="h-3 w-3 relative text-white stroke-[3]" />
               </div>
-              <span>Non-floating PCA assigned</span>
+            ) : (
+              <Circle className="h-4 w-4 text-green-600 border-2 border-green-600 rounded-full" />
+            )}
+            <span>Buffer floating PCA assigned</span>
+          </div>
+        )}
+        {hasNonFloatingPCAAssigned && (
+          <div className="flex items-center gap-2">
+            <div className="relative h-4 w-4 flex items-center justify-center">
+              <div className="absolute inset-0 bg-green-600 rounded-full" />
+              <Check className="h-3 w-3 relative text-white stroke-[3]" />
             </div>
-          )}
-        </div>
-      </DialogDescription>
+            <span>Non-floating PCA assigned</span>
+          </div>
+        )}
+      </div>
       
       <div className="py-4">
         <DndContext

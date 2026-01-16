@@ -64,7 +64,9 @@ function wrapTimeRangesInNode(node: ReactNode): ReactNode {
   if (React.isValidElement(node)) {
     const children = (node.props as { children?: ReactNode }).children
     if (children === undefined) return node
-    return React.cloneElement(node, node.props, wrapTimeRangesInNode(children))
+    // React 19 typings are stricter: don't pass `node.props` (often inferred as `unknown`)
+    // since we are not overriding any props here.
+    return React.cloneElement(node, undefined, wrapTimeRangesInNode(children))
   }
 
   return node
