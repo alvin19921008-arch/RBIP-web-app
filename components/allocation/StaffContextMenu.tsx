@@ -62,7 +62,7 @@ export function StaffContextMenu({ open, position, items, onClose, className }: 
             <button
               key={item.key}
               type="button"
-              disabled={!!item.disabled}
+              aria-disabled={!!item.disabled}
               onClick={(e) => {
                 e.stopPropagation()
                 if (item.disabled) return
@@ -71,7 +71,7 @@ export function StaffContextMenu({ open, position, items, onClose, className }: 
               className={cn(
                 'w-full flex items-center gap-1.5 px-1.5 py-1.5 rounded-sm text-[13px] leading-none text-left transition-colors',
                 item.disabled
-                  ? 'opacity-50 cursor-not-allowed'
+                  ? 'opacity-50 cursor-default'
                   : 'hover:bg-slate-100 dark:hover:bg-slate-700'
               )}
             >
