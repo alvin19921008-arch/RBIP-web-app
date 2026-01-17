@@ -785,19 +785,50 @@ export function FloatingPCAConfigDialog({
     )
   }
   
+  const renderBufferNameChips = (list: Staff[]) => (
+    <span className="ml-2 inline-flex flex-wrap gap-1">
+      {list.map((p) => (
+        <span
+          key={p.id}
+          className="inline-flex items-center rounded-md border bg-background px-1.5 py-0.5 text-[12px] font-semibold text-foreground"
+        >
+          {p.name}*
+        </span>
+      ))}
+    </span>
+  )
+
   // Render Step 3.1 content
   const renderStep31 = () => (
     <>
       <DialogDescription>
-        Adjust the floating PCA's slot(s) a team would be receiving (if needed).
-        <br />
-        <span className="text-sm mt-1 block">
-          The values here is already <span className="underline">AFTER</span> the assignment of fixed-team PCA. The "Assigned" value is the no. of <span className="underline">floating</span> PCA's slot(s) assigned to the team from step 3 onwards.
+        Set the processing order for the floating PCA algorithm (drag within tie-breaker groups).
+        <span className="mt-1 block text-sm">
+          Most days: keep the numbers as-is and only adjust order when ties look unfair.
         </span>
-        <span className="flex items-center gap-1.5 mt-2">
-          <Lightbulb className="h-4 w-4 text-amber-500" />
-          <strong>Suggestion:</strong> If among the tie-breaker group, the pending slots value is high (&gt;= 0.75) or there are &gt;=3 teams within same tie-breaker condition, manual force adjustment of the pending value may be needed.
-        </span>
+
+        <details className="mt-3 rounded-md border bg-muted/30 p-3">
+          <summary className="cursor-pointer select-none font-medium text-foreground">
+            How to read this (click to expand)
+          </summary>
+          <ul className="mt-2 list-disc pl-5 text-sm text-muted-foreground space-y-1">
+            <li>
+              Values shown are <span className="underline">after</span> fixed-team PCA assignment.
+            </li>
+            <li>
+              <span className="font-medium text-foreground">Assigned</span>: floating PCA slots already allocated from Step 3 onwards.
+            </li>
+            <li>
+              <span className="font-medium text-foreground">Pending</span>: remaining floating PCA slots the team should receive.
+            </li>
+            <li className="flex items-start gap-2">
+              <Lightbulb className="mt-0.5 h-4 w-4 text-amber-500 flex-shrink-0" />
+              <span>
+                Consider manual adjustment when a tie group has ≥ 3 teams or pending ≥ 0.75.
+              </span>
+            </li>
+          </ul>
+        </details>
       </DialogDescription>
 
       {/* Tick-to-do list (must be outside DialogDescription since it renders a <p>) */}
@@ -810,10 +841,8 @@ export function FloatingPCAConfigDialog({
                   <div className="absolute inset-0 bg-green-600 rounded-full" />
                   <Check className="h-3 w-3 relative text-white stroke-[3]" />
                 </div>
-                <span>
-                  Buffer floating PCA fully assigned:{' '}
-                  {bufferPCAFullyAssigned.map(p => `${p.name}*`).join(', ')}
-                </span>
+                <span className="text-muted-foreground">Buffer floating PCA fully assigned:</span>
+                {renderBufferNameChips(bufferPCAFullyAssigned)}
               </div>
             )}
 
@@ -822,20 +851,16 @@ export function FloatingPCAConfigDialog({
                 <div className="relative h-4 w-4 rounded-full border-2 border-green-600 overflow-hidden">
                   <div className="absolute left-0 top-0 h-full w-1/2 bg-green-600" />
                 </div>
-                <span>
-                  Buffer floating PCA partially assigned:{' '}
-                  {bufferPCAPartiallyAssigned.map(p => `${p.name}*`).join(', ')}
-                </span>
+                <span className="text-muted-foreground">Buffer floating PCA partially assigned:</span>
+                {renderBufferNameChips(bufferPCAPartiallyAssigned)}
               </div>
             )}
 
             {bufferPCAPendingToAssign.length > 0 && (
               <div className="flex items-center gap-2">
                 <Circle className="h-4 w-4 text-green-600 border-2 border-green-600 rounded-full" />
-                <span>
-                  Buffer floating PCA pending to be assigned:{' '}
-                  {bufferPCAPendingToAssign.map(p => `${p.name}*`).join(', ')}
-                </span>
+                <span className="text-muted-foreground">Buffer floating PCA pending to be assigned:</span>
+                {renderBufferNameChips(bufferPCAPendingToAssign)}
               </div>
             )}
           </>
