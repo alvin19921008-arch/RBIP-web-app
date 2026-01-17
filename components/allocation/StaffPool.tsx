@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Staff } from '@/types/staff'
 import { StaffCard } from './StaffCard'
 import { DragValidationTooltip } from './DragValidationTooltip'
@@ -107,6 +107,26 @@ export function StaffPool({
       if (hideScrollbarTimerRef.current) window.clearTimeout(hideScrollbarTimerRef.current)
     }
   }, [])
+
+  const assignedSlotsByStaffId = useMemo(() => {
+    const map = new Map<string, Set<number>>()
+    Object.values(pcaAllocations).forEach((teamAllocs: any[]) => {
+      teamAllocs.forEach((alloc: any) => {
+        const staffId = alloc?.staff_id
+        if (!staffId) return
+        let set = map.get(staffId)
+        if (!set) {
+          set = new Set<number>()
+          map.set(staffId, set)
+        }
+        if (alloc.slot1) set.add(1)
+        if (alloc.slot2) set.add(2)
+        if (alloc.slot3) set.add(3)
+        if (alloc.slot4) set.add(4)
+      })
+    })
+    return map
+  }, [pcaAllocations])
 
   const pokeScrollbar = useCallback(() => {
     setScrollbarVisible(true)
@@ -244,19 +264,7 @@ export function StaffPool({
     
     // Subtract already assigned slots (from pcaAllocations)
     // This includes both regular assignments and special program assignments
-    const assignedSlotSet = new Set<number>()
-    Object.values(pcaAllocations).forEach((teamAllocs: any[]) => {
-      teamAllocs.forEach((alloc: any) => {
-        if (alloc.staff_id === staffId) {
-          // Count slots assigned to any team
-          if (alloc.slot1) assignedSlotSet.add(1)
-          if (alloc.slot2) assignedSlotSet.add(2)
-          if (alloc.slot3) assignedSlotSet.add(3)
-          if (alloc.slot4) assignedSlotSet.add(4)
-        }
-      })
-    })
-    const assignedFTE = assignedSlotSet.size * 0.25
+    const assignedFTE = (assignedSlotsByStaffId.get(staffId)?.size ?? 0) * 0.25
     
     // Final True-FTE = capacity - assigned slots
     return Math.max(0, capacityFTE - assignedFTE)
@@ -302,25 +310,48 @@ export function StaffPool({
     })
   }
 
-  const visibleTherapists = rankFilter === 'pca' ? [] : therapists
-  const visiblePCAs = rankFilter === 'therapist' ? [] : pcas
-  const therapistsByRank = {
-    SPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'SPT'))),
-    APPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'APPT'))),
-    RPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'RPT'))),
-  }
-  const visibleBufferStaff =
-    rankFilter === 'therapist'
+  const visibleTherapists = useMemo(() => (rankFilter === 'pca' ? [] : therapists), [rankFilter, therapists])
+  const visiblePCAs = useMemo(() => (rankFilter === 'therapist' ? [] : pcas), [rankFilter, pcas])
+
+  const therapistsByRank = useMemo(() => {
+    return {
+      SPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'SPT'))),
+      APPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'APPT'))),
+      RPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'RPT'))),
+    }
+  }, [visibleTherapists, showFTEFilter, staffOverrides])
+
+  const visiblePCAsSorted = useMemo(() => {
+    return sortStaffByRank(filterStaffByFTE(visiblePCAs))
+  }, [visiblePCAs, showFTEFilter, staffOverrides])
+
+  const visibleBufferStaff = useMemo(() => {
+    return rankFilter === 'therapist'
       ? bufferStaff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
       : rankFilter === 'pca'
         ? bufferStaff.filter(s => s.rank === 'PCA')
         : bufferStaff
-  const visibleInactiveStaff =
-    rankFilter === 'therapist'
+  }, [rankFilter, bufferStaff])
+
+  const visibleInactiveStaff = useMemo(() => {
+    return rankFilter === 'therapist'
       ? inactiveStaff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
       : rankFilter === 'pca'
         ? inactiveStaff.filter(s => s.rank === 'PCA')
         : inactiveStaff
+  }, [rankFilter, inactiveStaff])
+
+  const inactiveStaffOnly = useMemo(() => {
+    return visibleInactiveStaff.filter(s => (s.status ?? 'active') === 'inactive')
+  }, [visibleInactiveStaff])
+
+  const inactiveStaffForInactivePool = useMemo(() => {
+    if (!showFTEFilter) return visibleInactiveStaff
+    return visibleInactiveStaff.filter(s => {
+      const baseFTE = getBaseFTERemaining(s.id)
+      return baseFTE !== 1.0
+    })
+  }, [visibleInactiveStaff, showFTEFilter, staffOverrides])
 
   // Check if all ranks are expanded
   const allExpanded = expandedRanks.SPT && expandedRanks.APPT && expandedRanks.RPT && expandedRanks.PCA
@@ -617,7 +648,7 @@ export function StaffPool({
               <CardContent className="space-y-1 p-1">
                 {expandedRanks.PCA && (
                   <div className="space-y-1 ml-4">
-                    {sortStaffByRank(filterStaffByFTE(visiblePCAs)).map((pca) => {
+                    {visiblePCAsSorted.map((pca) => {
                       const baseFTE = getBaseFTERemaining(pca.id, pca)
                       const trueFTE = getTrueFTERemaining(pca.id, pca)
                       const showFTE = (baseFTE > 0 && baseFTE < 1) || baseFTE === 0
@@ -679,7 +710,7 @@ export function StaffPool({
           ) : null}
 
           <BufferStaffPool
-            inactiveStaff={visibleInactiveStaff.filter(s => (s.status ?? 'active') === 'inactive')}
+            inactiveStaff={inactiveStaffOnly}
             bufferStaff={visibleBufferStaff}
             onBufferStaffCreated={onBufferStaffCreated || (() => {
               // Fallback: reload page if no callback provided
@@ -696,10 +727,7 @@ export function StaffPool({
 
           {visibleInactiveStaff.length > 0 && (
             <InactiveStaffPool 
-              inactiveStaff={showFTEFilter ? visibleInactiveStaff.filter(s => {
-                const baseFTE = getBaseFTERemaining(s.id)
-                return baseFTE !== 1.0
-              }) : visibleInactiveStaff}
+              inactiveStaff={inactiveStaffForInactivePool}
               onEditStaff={undefined}
               staffOverrides={staffOverrides}
             />

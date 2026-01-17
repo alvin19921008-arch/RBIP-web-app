@@ -1,5 +1,6 @@
 'use client'
 
+import { memo, useMemo } from 'react'
 import { Team } from '@/types/staff'
 import { TherapistAllocation } from '@/types/schedule'
 import { Staff } from '@/types/staff'
@@ -27,7 +28,7 @@ interface TherapistBlockProps {
   }>
 }
 
-export function TherapistBlock({ team, allocations, specialPrograms = [], weekday, onEditStaff, currentStep, staffOverrides }: TherapistBlockProps) {
+export const TherapistBlock = memo(function TherapistBlock({ team, allocations, specialPrograms = [], weekday, onEditStaff, currentStep, staffOverrides }: TherapistBlockProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: `therapist-${team}`,
     data: { type: 'therapist', team },
@@ -42,52 +43,63 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
   
   const showDragZone = isOver && isTherapistDragging
 
+  const specialProgramsById = useMemo(() => {
+    const map = new Map<string, SpecialProgram>()
+    for (const p of specialPrograms) map.set(p.id, p)
+    return map
+  }, [specialPrograms])
+
   // Filter out PCA staff - only show therapists (SPT, APPT, RPT)
   // Also filter out staff with FTE = 0 (they should only appear in leave block),
   // EXCEPT SPT with configured FTE=0 that are still on-duty (leave_type null) and have SPT slot display.
-  const therapistAllocations = allocations.filter(alloc => {
-    const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-    const fte = alloc.fte_therapist ?? 0
-    const isOnDuty = isOnDutyLeaveType(alloc.leave_type as any)
-    const isOnDutyZeroFteSPT =
-      alloc.staff.rank === 'SPT' &&
-      fte === 0 &&
-      isOnDuty &&
-      !!alloc.spt_slot_display
-    return isTherapist && (fte > 0 || isOnDutyZeroFteSPT)
-  })
+  const therapistAllocations = useMemo(() => {
+    return allocations.filter(alloc => {
+      const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
+      const fte = alloc.fte_therapist ?? 0
+      const isOnDuty = isOnDutyLeaveType(alloc.leave_type as any)
+      const isOnDutyZeroFteSPT =
+        alloc.staff.rank === 'SPT' &&
+        fte === 0 &&
+        isOnDuty &&
+        !!alloc.spt_slot_display
+      return isTherapist && (fte > 0 || isOnDutyZeroFteSPT)
+    })
+  }, [allocations])
 
   // Calculate sum of therapist FTE per team
-  const ptPerTeam = therapistAllocations.reduce((sum, alloc) => {
-    return sum + (alloc.fte_therapist ?? 0)
-  }, 0)
+  const ptPerTeam = useMemo(() => {
+    return therapistAllocations.reduce((sum, alloc) => sum + (alloc.fte_therapist ?? 0), 0)
+  }, [therapistAllocations])
 
   // Collect special program information for this team
   // Only therapists assigned to special programs (via preference order) will have special_program_ids
-  const teamSpecialPrograms: { name: string; fteSubtraction: number }[] = []
-  if (weekday && specialPrograms.length > 0) {
-    therapistAllocations.forEach(allocation => {
-      if (allocation.special_program_ids && allocation.special_program_ids.length > 0) {
-        allocation.special_program_ids.forEach(programId => {
-          const program = specialPrograms.find(p => p.id === programId)
-          if (program && program.weekdays.includes(weekday)) {
-            const staffFTE = program.fte_subtraction[allocation.staff_id]
-            const subtraction = staffFTE?.[weekday] || 0
-            if (subtraction > 0) {
-              // Check if program already added (shouldn't happen with preference system, but keep for safety)
-              const existing = teamSpecialPrograms.find(p => p.name === program.name)
-              if (existing) {
-                // Use maximum FTE subtraction if somehow multiple staff have same program
-                existing.fteSubtraction = Math.max(existing.fteSubtraction, subtraction)
-              } else {
-                teamSpecialPrograms.push({ name: program.name, fteSubtraction: subtraction })
+  const teamSpecialPrograms = useMemo((): { name: string; fteSubtraction: number }[] => {
+    const teamSpecialPrograms: { name: string; fteSubtraction: number }[] = []
+    if (weekday && specialPrograms.length > 0) {
+      therapistAllocations.forEach(allocation => {
+        if (allocation.special_program_ids && allocation.special_program_ids.length > 0) {
+          allocation.special_program_ids.forEach(programId => {
+            const program = specialProgramsById.get(programId)
+            if (program && program.weekdays.includes(weekday)) {
+              const staffFTE = program.fte_subtraction[allocation.staff_id]
+              const subtraction = staffFTE?.[weekday] || 0
+              if (subtraction > 0) {
+                // Check if program already added (shouldn't happen with preference system, but keep for safety)
+                const existing = teamSpecialPrograms.find(p => p.name === program.name)
+                if (existing) {
+                  // Use maximum FTE subtraction if somehow multiple staff have same program
+                  existing.fteSubtraction = Math.max(existing.fteSubtraction, subtraction)
+                } else {
+                  teamSpecialPrograms.push({ name: program.name, fteSubtraction: subtraction })
+                }
               }
             }
-          }
-        })
-      }
-    })
-  }
+          })
+        }
+      })
+    }
+    return teamSpecialPrograms
+  }, [weekday, specialPrograms.length, specialProgramsById, therapistAllocations])
 
   return (
     <Card ref={setNodeRef} className={showDragZone ? 'border-2 border-slate-900 dark:border-slate-100' : ''}>
@@ -114,7 +126,7 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
             let specialProgramFTE = 0
             if (hasSpecialProgram && weekday && specialPrograms.length > 0 && allocation.special_program_ids) {
               allocation.special_program_ids.forEach(programId => {
-                const program = specialPrograms.find(p => p.id === programId)
+                const program = specialProgramsById.get(programId)
                 if (program && program.weekdays.includes(weekday)) {
                   const staffFTE = program.fte_subtraction[allocation.staff_id]
                   const subtraction = staffFTE?.[weekday] || 0
@@ -248,5 +260,5 @@ export function TherapistBlock({ team, allocations, specialPrograms = [], weekda
       </CardContent>
     </Card>
   )
-}
+})
 

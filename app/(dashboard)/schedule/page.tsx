@@ -36,17 +36,12 @@ import {
 } from '@/components/allocation/BedCountsEditDialog'
 import { PCACalculationBlock } from '@/components/allocation/PCACalculationBlock'
 import { SummaryColumn } from '@/components/allocation/SummaryColumn'
-import { ScheduleCopyWizard } from '@/components/allocation/ScheduleCopyWizard'
 import { Button } from '@/components/ui/button'
 import { ActionToast } from '@/components/ui/action-toast'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
-import { StaffEditDialog } from '@/components/allocation/StaffEditDialog'
 import { TieBreakDialog } from '@/components/allocation/TieBreakDialog'
 import { StepIndicator } from '@/components/allocation/StepIndicator'
-import { FloatingPCAConfigDialog } from '@/components/allocation/FloatingPCAConfigDialog'
-import { NonFloatingSubstitutionDialog } from '@/components/allocation/NonFloatingSubstitutionDialog'
-import { SpecialProgramOverrideDialog } from '@/components/allocation/SpecialProgramOverrideDialog'
-import { BufferStaffCreateDialog } from '@/components/allocation/BufferStaffCreateDialog'
+import dynamic from 'next/dynamic'
 import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopover'
 import { StaffContextMenu } from '@/components/allocation/StaffContextMenu'
 import { TeamPickerPopover } from '@/components/allocation/TeamPickerPopover'
@@ -78,6 +73,36 @@ import { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { executeSlotAssignments, SlotAssignment } from '@/lib/utils/reservationLogic'
 import { Input } from '@/components/ui/input'
+
+const ScheduleCopyWizard = dynamic(
+  () => import('@/components/allocation/ScheduleCopyWizard').then(m => m.ScheduleCopyWizard),
+  { ssr: false }
+)
+const StaffEditDialog = dynamic(() => import('@/components/allocation/StaffEditDialog').then(m => m.StaffEditDialog), {
+  ssr: false,
+})
+const FloatingPCAConfigDialog = dynamic(
+  () => import('@/components/allocation/FloatingPCAConfigDialog').then(m => m.FloatingPCAConfigDialog),
+  { ssr: false }
+)
+const NonFloatingSubstitutionDialog = dynamic(
+  () => import('@/components/allocation/NonFloatingSubstitutionDialog').then(m => m.NonFloatingSubstitutionDialog),
+  { ssr: false }
+)
+const SpecialProgramOverrideDialog = dynamic(
+  () => import('@/components/allocation/SpecialProgramOverrideDialog').then(m => m.SpecialProgramOverrideDialog),
+  { ssr: false }
+)
+const BufferStaffCreateDialog = dynamic(
+  () => import('@/components/allocation/BufferStaffCreateDialog').then(m => m.BufferStaffCreateDialog),
+  { ssr: false }
+)
+
+const prefetchScheduleCopyWizard = () => import('@/components/allocation/ScheduleCopyWizard')
+const prefetchStaffEditDialog = () => import('@/components/allocation/StaffEditDialog')
+const prefetchFloatingPCAConfigDialog = () => import('@/components/allocation/FloatingPCAConfigDialog')
+const prefetchSpecialProgramOverrideDialog = () => import('@/components/allocation/SpecialProgramOverrideDialog')
+const prefetchNonFloatingSubstitutionDialog = () => import('@/components/allocation/NonFloatingSubstitutionDialog')
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import {
@@ -1579,6 +1604,32 @@ function SchedulePageContent() {
     }
   }, [scheduleLoadedForDate])
 
+  // Code-split dialog prefetch: keep initial bundle smaller, but hide first-open latency.
+  useEffect(() => {
+    if (!scheduleLoadedForDate) return
+    let cancelled = false
+    const run = () => {
+      if (cancelled) return
+      prefetchStaffEditDialog().catch(() => {})
+      prefetchScheduleCopyWizard().catch(() => {})
+    }
+
+    const w = window as any
+    if (typeof w?.requestIdleCallback === 'function') {
+      const id = w.requestIdleCallback(run, { timeout: 2500 })
+      return () => {
+        cancelled = true
+        if (typeof w?.cancelIdleCallback === 'function') w.cancelIdleCallback(id)
+      }
+    }
+
+    const t = window.setTimeout(run, 800)
+    return () => {
+      cancelled = true
+      window.clearTimeout(t)
+    }
+  }, [scheduleLoadedForDate])
+
   // -----------------------------------------------------------------------------
   // Thin top loading bar (stage-driven, shown for everyone during Save/Copy)
   // -----------------------------------------------------------------------------
@@ -2565,7 +2616,7 @@ function SchedulePageContent() {
     setEditDialogOpen(true)
   }
 
-  const closeStaffContextMenu = () => {
+  const closeStaffContextMenu = useCallback(() => {
     setStaffContextMenu({
       show: false,
       position: null,
@@ -2573,9 +2624,9 @@ function SchedulePageContent() {
       team: null,
       kind: null,
     })
-  }
+  }, [])
 
-  const openStaffContextMenu = (
+  const openStaffContextMenu = useCallback((
     staffId: string,
     team: Team,
     kind: 'therapist' | 'pca',
@@ -2626,17 +2677,17 @@ function SchedulePageContent() {
       team,
       kind,
     })
-  }
+  }, [])
 
-  const closeStaffPoolContextMenu = () => {
+  const closeStaffPoolContextMenu = useCallback(() => {
     setStaffPoolContextMenu({
       show: false,
       position: null,
       staffId: null,
     })
-  }
+  }, [])
 
-  const openStaffPoolContextMenu = (staffId: string, clickEvent?: React.MouseEvent) => {
+  const openStaffPoolContextMenu = useCallback((staffId: string, clickEvent?: React.MouseEvent) => {
     if (!clickEvent) {
       const sx = typeof window !== 'undefined' ? window.scrollX : 0
       const sy = typeof window !== 'undefined' ? window.scrollY : 0
@@ -2684,7 +2735,7 @@ function SchedulePageContent() {
       position: { x: xClient + scrollX, y: yClient + scrollY },
       staffId,
     })
-  }
+  }, [])
 
   const closePcaPoolAssignAction = () => {
     setPcaPoolAssignAction({
@@ -4988,6 +5039,9 @@ function SchedulePageContent() {
             
             setSpecialProgramOverrideResolver(() => resolver)
             specialProgramOverrideResolverRef.current = resolver
+            prefetchSpecialProgramOverrideDialog().catch(() => {})
+            // Step 2 can also pause into substitution flow; warm it up too.
+            prefetchNonFloatingSubstitutionDialog().catch(() => {})
             setShowSpecialProgramOverrideDialog(true)
           })
         }
@@ -5195,6 +5249,7 @@ function SchedulePageContent() {
         
         setPendingPCAFTEPerTeam(recalculatedPendingFTE)
         // Step 3.1: Open the configuration dialog instead of running algo directly
+        prefetchFloatingPCAConfigDialog().catch(() => {})
         setFloatingPCAConfigOpen(true)
         break
       case 'bed-relieving':
@@ -6763,6 +6818,102 @@ function SchedulePageContent() {
 
   const currentWeekday = getWeekday(selectedDate)
   const weekdayName = WEEKDAY_NAMES[WEEKDAYS.indexOf(currentWeekday)]
+
+  const allPCAAllocationsFlat = useMemo(() => Object.values(pcaAllocations).flat(), [pcaAllocations])
+
+  const onEditTherapistByTeam = useMemo(() => {
+    const next = createEmptyTeamRecordFactory<(staffId: string, e?: React.MouseEvent) => void>(() => () => {})
+    for (const team of TEAMS) {
+      next[team] = (staffId, e) => openStaffContextMenu(staffId, team, 'therapist', e)
+    }
+    return next
+  }, [openStaffContextMenu])
+
+  const onEditPcaByTeam = useMemo(() => {
+    const next = createEmptyTeamRecordFactory<(staffId: string, e?: React.MouseEvent) => void>(() => () => {})
+    for (const team of TEAMS) {
+      next[team] = (staffId, e) => openStaffContextMenu(staffId, team, 'pca', e)
+    }
+    return next
+  }, [openStaffContextMenu])
+
+  // Per-team override slices with caching: preserve object identity when unrelated staffOverrides entries change.
+  const overridesSliceCacheRef = useRef<{
+    therapist: Partial<Record<Team, { idsKey: string; slice: Record<string, any> }>>
+    pca: Partial<Record<Team, { idsKey: string; slice: Record<string, any> }>>
+  }>({ therapist: {}, pca: {} })
+
+  const therapistOverridesByTeam = useMemo(() => {
+    const prev = overridesSliceCacheRef.current.therapist
+    const next: Record<Team, Record<string, any>> = createEmptyTeamRecord<Record<string, any>>({})
+
+    for (const team of TEAMS) {
+      const ids = Array.from(
+        new Set((therapistAllocations[team] || []).map((a: any) => a.staff_id).filter(Boolean))
+      ).sort()
+      const idsKey = ids.join('|')
+
+      const cached = prev[team]
+      let canReuse = !!cached && cached.idsKey === idsKey
+      if (canReuse && cached) {
+        for (const id of ids) {
+          if (cached.slice[id] !== staffOverrides[id]) {
+            canReuse = false
+            break
+          }
+        }
+      }
+
+      if (canReuse && cached) {
+        next[team] = cached.slice
+      } else {
+        const slice: Record<string, any> = {}
+        for (const id of ids) {
+          if (staffOverrides[id] !== undefined) slice[id] = staffOverrides[id]
+        }
+        prev[team] = { idsKey, slice }
+        next[team] = slice
+      }
+    }
+
+    overridesSliceCacheRef.current.therapist = prev
+    return next
+  }, [therapistAllocations, staffOverrides])
+
+  const pcaOverridesByTeam = useMemo(() => {
+    const prev = overridesSliceCacheRef.current.pca
+    const next: Record<Team, Record<string, any>> = createEmptyTeamRecord<Record<string, any>>({})
+
+    for (const team of TEAMS) {
+      const ids = Array.from(new Set((pcaAllocations[team] || []).map((a: any) => a.staff_id).filter(Boolean))).sort()
+      const idsKey = ids.join('|')
+
+      const cached = prev[team]
+      let canReuse = !!cached && cached.idsKey === idsKey
+      if (canReuse && cached) {
+        for (const id of ids) {
+          if (cached.slice[id] !== staffOverrides[id]) {
+            canReuse = false
+            break
+          }
+        }
+      }
+
+      if (canReuse && cached) {
+        next[team] = cached.slice
+      } else {
+        const slice: Record<string, any> = {}
+        for (const id of ids) {
+          if (staffOverrides[id] !== undefined) slice[id] = staffOverrides[id]
+        }
+        prev[team] = { idsKey, slice }
+        next[team] = slice
+      }
+    }
+
+    overridesSliceCacheRef.current.pca = prev
+    return next
+  }, [pcaAllocations, staffOverrides])
 
   // ---------------------------------------------------------------------------
   // Copy button helpers (dynamic labels and source/target resolution)
@@ -10135,6 +10286,12 @@ function SchedulePageContent() {
                         setCopyMenuOpen(next)
                         if (next) loadDatesWithData()
                       }}
+                      onMouseEnter={() => {
+                        prefetchScheduleCopyWizard().catch(() => {})
+                      }}
+                      onFocus={() => {
+                        prefetchScheduleCopyWizard().catch(() => {})
+                      }}
                       type="button"
                       className="flex items-center"
                       disabled={copying || saving}
@@ -10150,6 +10307,12 @@ function SchedulePageContent() {
                       const next = !copyMenuOpen
                       setCopyMenuOpen(next)
                       if (next) loadDatesWithData()
+                    }}
+                    onMouseEnter={() => {
+                      prefetchScheduleCopyWizard().catch(() => {})
+                    }}
+                    onFocus={() => {
+                      prefetchScheduleCopyWizard().catch(() => {})
                     }}
                     type="button"
                     className="flex items-center"
@@ -10741,8 +10904,8 @@ function SchedulePageContent() {
                         specialPrograms={specialPrograms}
                         weekday={currentWeekday}
                         currentStep={currentStep}
-                        onEditStaff={(staffId, e) => openStaffContextMenu(staffId, team, 'therapist', e)}
-                        staffOverrides={staffOverrides}
+                        onEditStaff={onEditTherapistByTeam[team]}
+                        staffOverrides={therapistOverridesByTeam[team]}
                       />
                     ))}
                   </div>
@@ -10757,18 +10920,18 @@ function SchedulePageContent() {
                         <PCABlock
                           team={team}
                           allocations={pcaAllocations[team]}
-                          onEditStaff={(staffId, e) => openStaffContextMenu(staffId, team, 'pca', e)}
+                          onEditStaff={onEditPcaByTeam[team]}
                           requiredPCA={calculations[team]?.required_pca_per_team}
                           averagePCAPerTeam={calculations[team]?.average_pca_per_team}
                           baseAveragePCAPerTeam={calculations[team]?.base_average_pca_per_team}
                         specialPrograms={specialPrograms}
-                          allPCAAllocations={Object.values(pcaAllocations).flat()}
-                          staffOverrides={staffOverrides}
+                          allPCAAllocations={allPCAAllocationsFlat}
+                          staffOverrides={pcaOverridesByTeam[team]}
                           allPCAStaff={pcas}
                           currentStep={currentStep}
                           step2Initialized={initializedSteps.has('therapist-pca')}
                           initializedSteps={initializedSteps}
-                          weekday={getWeekday(selectedDate)}
+                          weekday={currentWeekday}
                           externalHover={popoverDragHoverTeam === team}
                           allocationLog={allocationTracker?.[team]}
                       />
