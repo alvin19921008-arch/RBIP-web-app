@@ -24,6 +24,12 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Cursor local logs (keep .cursor/plans and rules tracked)
+.cursor/debug.log
+.cursor/*.log
+.cursor/.DS_Store
+yarn-error.log*
+
 # local env files
 .env*.local
 .env
