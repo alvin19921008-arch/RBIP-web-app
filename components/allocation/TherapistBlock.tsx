@@ -54,16 +54,16 @@ export const TherapistBlock = memo(function TherapistBlock({ team, allocations, 
   // EXCEPT SPT with configured FTE=0 that are still on-duty (leave_type null) and have SPT slot display.
   const therapistAllocations = useMemo(() => {
     return allocations.filter(alloc => {
-      const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-      const fte = alloc.fte_therapist ?? 0
-      const isOnDuty = isOnDutyLeaveType(alloc.leave_type as any)
-      const isOnDutyZeroFteSPT =
-        alloc.staff.rank === 'SPT' &&
-        fte === 0 &&
-        isOnDuty &&
-        !!alloc.spt_slot_display
-      return isTherapist && (fte > 0 || isOnDutyZeroFteSPT)
-    })
+    const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
+    const fte = alloc.fte_therapist ?? 0
+    const isOnDuty = isOnDutyLeaveType(alloc.leave_type as any)
+    const isOnDutyZeroFteSPT =
+      alloc.staff.rank === 'SPT' &&
+      fte === 0 &&
+      isOnDuty &&
+      !!alloc.spt_slot_display
+    return isTherapist && (fte > 0 || isOnDutyZeroFteSPT)
+  })
   }, [allocations])
 
   // Calculate sum of therapist FTE per team
@@ -74,30 +74,30 @@ export const TherapistBlock = memo(function TherapistBlock({ team, allocations, 
   // Collect special program information for this team
   // Only therapists assigned to special programs (via preference order) will have special_program_ids
   const teamSpecialPrograms = useMemo((): { name: string; fteSubtraction: number }[] => {
-    const teamSpecialPrograms: { name: string; fteSubtraction: number }[] = []
-    if (weekday && specialPrograms.length > 0) {
-      therapistAllocations.forEach(allocation => {
-        if (allocation.special_program_ids && allocation.special_program_ids.length > 0) {
-          allocation.special_program_ids.forEach(programId => {
+  const teamSpecialPrograms: { name: string; fteSubtraction: number }[] = []
+  if (weekday && specialPrograms.length > 0) {
+    therapistAllocations.forEach(allocation => {
+      if (allocation.special_program_ids && allocation.special_program_ids.length > 0) {
+        allocation.special_program_ids.forEach(programId => {
             const program = specialProgramsById.get(programId)
-            if (program && program.weekdays.includes(weekday)) {
-              const staffFTE = program.fte_subtraction[allocation.staff_id]
-              const subtraction = staffFTE?.[weekday] || 0
-              if (subtraction > 0) {
-                // Check if program already added (shouldn't happen with preference system, but keep for safety)
-                const existing = teamSpecialPrograms.find(p => p.name === program.name)
-                if (existing) {
-                  // Use maximum FTE subtraction if somehow multiple staff have same program
-                  existing.fteSubtraction = Math.max(existing.fteSubtraction, subtraction)
-                } else {
-                  teamSpecialPrograms.push({ name: program.name, fteSubtraction: subtraction })
-                }
+          if (program && program.weekdays.includes(weekday)) {
+            const staffFTE = program.fte_subtraction[allocation.staff_id]
+            const subtraction = staffFTE?.[weekday] || 0
+            if (subtraction > 0) {
+              // Check if program already added (shouldn't happen with preference system, but keep for safety)
+              const existing = teamSpecialPrograms.find(p => p.name === program.name)
+              if (existing) {
+                // Use maximum FTE subtraction if somehow multiple staff have same program
+                existing.fteSubtraction = Math.max(existing.fteSubtraction, subtraction)
+              } else {
+                teamSpecialPrograms.push({ name: program.name, fteSubtraction: subtraction })
               }
             }
-          })
-        }
-      })
-    }
+          }
+        })
+      }
+    })
+  }
     return teamSpecialPrograms
   }, [weekday, specialPrograms.length, specialProgramsById, therapistAllocations])
 

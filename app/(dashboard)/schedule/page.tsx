@@ -48,7 +48,7 @@ import { TeamPickerPopover } from '@/components/allocation/TeamPickerPopover'
 import { ConfirmPopover } from '@/components/allocation/ConfirmPopover'
 import { ScheduleOverlays } from '@/components/schedule/ScheduleOverlays'
 import { ScheduleCalendarPopover } from '@/components/schedule/ScheduleCalendarPopover'
-import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X, ArrowLeft, Copy, ChevronLeft, ChevronRight, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX } from 'lucide-react'
+import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X, ArrowLeft, Copy, ChevronLeft, ChevronRight, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, AlertCircle } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -120,6 +120,10 @@ import { useAllocationSync } from '@/lib/hooks/useAllocationSync'
 import { useActionToast } from '@/lib/hooks/useActionToast'
 import { useResizeObservedHeight } from '@/lib/hooks/useResizeObservedHeight'
 import { useScheduleDateParam } from '@/lib/hooks/useScheduleDateParam'
+import { computeStep3ResetForReentry, resetStep2OverridesForAlgoEntry } from '@/lib/features/schedule/stepReset'
+import { diffBaselineSnapshot, type SnapshotDiffResult } from '@/lib/features/schedule/snapshotDiff'
+import { useAnchoredPopoverPosition } from '@/lib/hooks/useAnchoredPopoverPosition'
+import { useOnClickOutside } from '@/lib/hooks/useOnClickOutside'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
@@ -5003,33 +5007,11 @@ function SchedulePageContent() {
               // Continue with Step 2 algorithm
               setStaffOverrides(mergedOverrides)
               
-              // RESET Step 2-related data when initializing the algorithm
-              // This ensures the algorithm computes based on fresh state, not from previous Step 2/3 runs
-              // Clear availableSlots for floating PCAs from staffOverrides (preserve Step 1 data)
-              const cleanedOverrides = { ...mergedOverrides }
-              
-              // Find all floating PCA staff IDs
-              const floatingPCAIds = new Set(
-                staff
-                  .filter(s => s.rank === 'PCA' && s.floating)
-                  .map(s => s.id)
-              )
-              
-              
-              // Clear availableSlots for floating PCAs, but preserve other override data (leaveType, fteRemaining, etc.)
-              floatingPCAIds.forEach(pcaId => {
-                if (cleanedOverrides[pcaId]) {
-                  const staffMember = staff.find(s => s.id === pcaId)
-                  const isBuffer = staffMember?.status === 'buffer'
-                  if (isBuffer) return
-                  const { availableSlots, ...otherOverrides } = cleanedOverrides[pcaId]
-                  // Keep the override with other data (leaveType, fteRemaining, etc.)
-                  cleanedOverrides[pcaId] = otherOverrides
-                }
+              // RESET Step 2-related data when initializing the algorithm (shared helper)
+              const cleanedOverrides = resetStep2OverridesForAlgoEntry({
+                staffOverrides: mergedOverrides,
+                allStaff: [...staff, ...bufferStaff],
               })
-              
-              
-              // Update state with cleaned overrides
               setStaffOverrides(cleanedOverrides)
               
               
@@ -5050,28 +5032,11 @@ function SchedulePageContent() {
         }
         
         // No active special programs - proceed directly to Step 2 algorithm
-        // RESET Step 2-related data when initializing the algorithm
-        // This ensures the algorithm computes based on fresh state, not from previous Step 2/3 runs
-        // Clear availableSlots for floating PCAs from staffOverrides (preserve Step 1 data)
-        const cleanedOverrides = { ...staffOverrides }
-        
-        // Find all floating PCA staff IDs
-        const floatingPCAIds = new Set(
-          staff
-            .filter(s => s.rank === 'PCA' && s.floating)
-            .map(s => s.id)
-        )
-        
-        // Clear availableSlots for floating PCAs, but preserve other override data (leaveType, fteRemaining, etc.)
-        floatingPCAIds.forEach(pcaId => {
-          if (cleanedOverrides[pcaId]) {
-            const { availableSlots, ...otherOverrides } = cleanedOverrides[pcaId]
-            // Keep the override with other data (leaveType, fteRemaining, etc.)
-            cleanedOverrides[pcaId] = otherOverrides
-          }
+        // RESET Step 2-related data when initializing the algorithm (shared helper)
+        const cleanedOverrides = resetStep2OverridesForAlgoEntry({
+          staffOverrides,
+          allStaff: [...staff, ...bufferStaff],
         })
-        
-        // Update state with cleaned overrides
         setStaffOverrides(cleanedOverrides)
         
         // Run Step 2 algorithm with cleaned overrides - it will pause for substitution dialog if needed
@@ -5089,199 +5054,10 @@ function SchedulePageContent() {
 
         
         
-        // RESET Step 3-related data when re-running the algorithm
-        // This ensures the algorithm computes based on fresh state, not from previous Step 3 runs
-        
-        // 1. Clear floating PCA allocations from pcaAllocations (keep non-floating PCA from Step 2)
-        // IMPORTANT: Preserve:
-        // - floating PCA allocations that have special_program_ids (from Step 2)
-        // - Step 2.1 substitution floating allocations
-        // - buffer floating PCA allocations that were manually assigned by user before running Step 3
-        // Calculate cleaned allocations FIRST (before state update) so we can use it for pending FTE calculation
-        const cleanedPcaAllocations: Record<Team, (PCAAllocation & { staff: Staff })[]> = {
-          FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
-        }
+        // RESET Step 3-related data when re-running the algorithm (shared helper)
+        clearStep3StateOnly()
+        clearStep3AllocationsPreserveStep2()
 
-        const bufferFloatingPCAIds = new Set(
-          [...staff, ...bufferStaff]
-            .filter(s => s.rank === 'PCA' && s.floating && s.status === 'buffer')
-            .map(s => s.id)
-        )
-        
-        TEAMS.forEach(team => {
-          // Keep:
-          // 1. Non-floating PCA allocations (from Step 2)
-          // 2. Floating PCA allocations with special_program_ids (from Step 2 special program allocation)
-          // 3. Floating PCA allocations used as substitutions for non-floating missing slots (Step 2.1 / Step 2.0)
-          const preservedAllocs = (pcaAllocations[team] || []).filter(alloc => {
-            const staffMember =
-              staff.find(s => s.id === alloc.staff_id) ??
-              bufferStaff.find(s => s.id === alloc.staff_id)
-            if (!staffMember) return false
-            
-            // Keep non-floating PCAs
-            if (!staffMember.floating) return true
-
-            // Preserve buffer floating PCA manual assignments (Step 3.0 user actions)
-            if (bufferFloatingPCAIds.has(staffMember.id)) return true
-            
-            // Keep floating PCAs that have special_program_ids (allocated to special programs in Step 2)
-            if (alloc.special_program_ids && alloc.special_program_ids.length > 0) {
-              return true
-            }
-
-            // Keep floating PCAs that are explicitly substituting for a non-floating PCA for THIS team
-            const sf = staffOverrides[alloc.staff_id]?.substitutionFor
-            if (sf && sf.team === team) {
-              return true
-            }
-            
-            // Remove other floating PCA allocations (will be re-allocated in Step 3)
-            return false
-          })
-          cleanedPcaAllocations[team] = preservedAllocs
-        })
-
-        
-        
-        // Now update state with cleaned allocations
-        setPcaAllocations(cleanedPcaAllocations)
-        
-        // 2. Clear slotOverrides for floating PCAs from staffOverrides (preserve Step 1 & 2 data)
-        //    BUT preserve buffer floating PCA manual slot overrides so Step 3.0 detection doesn't wipe them.
-        setStaffOverrides(prev => {
-          const cleaned = { ...prev }
-          
-          // Find all floating PCA staff IDs
-          const floatingPCAIds = new Set(
-            staff
-              .filter(s => s.rank === 'PCA' && s.floating)
-              .map(s => s.id)
-          )
-          
-          // Clear slotOverrides for floating PCAs, but preserve other override data (leaveType, fteRemaining, substitutionFor, etc.)
-          floatingPCAIds.forEach(pcaId => {
-            if (cleaned[pcaId]) {
-              const staffMember =
-                staff.find(s => s.id === pcaId) ??
-                bufferStaff.find(s => s.id === pcaId)
-              if (staffMember && bufferFloatingPCAIds.has(pcaId)) {
-                const o: any = cleaned[pcaId]
-                const manual = o.bufferManualSlotOverrides ?? o.slotOverrides
-                if (manual) {
-                  cleaned[pcaId] = {
-                    ...o,
-                    bufferManualSlotOverrides: manual,
-                    slotOverrides: manual,
-                  }
-                }
-                return
-              }
-              const { slotOverrides, ...otherOverrides } = cleaned[pcaId]
-              // CRITICAL: Preserve substitutionFor - it's needed for Step 3.2 to exclude substitution slots
-              // Always keep the override if it has substitutionFor, even if no other properties
-              const hasSubstitutionFor = !!otherOverrides.substitutionFor
-              const hasOtherKeys = Object.keys(otherOverrides).length > 0
-              
-              if (hasSubstitutionFor || hasOtherKeys) {
-                cleaned[pcaId] = otherOverrides
-              } else {
-                delete cleaned[pcaId]
-              }
-            }
-          })
-          
-          return cleaned
-        })
-        
-        const recalculatedPendingFTE: Record<Team, number> = {
-          FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
-        }
-        
-        // Calculate buffer floating PCA slots assigned per team (manual assignments)
-        const bufferFloatingPCAFTEPerTeam: Record<Team, number> = {
-          FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
-        }
-        
-        // Calculate assigned PCA per team from CLEANED allocations (not state)
-        // - nonFloatingPCAAssignedPerTeam: only non-floating PCAs
-        // - preservedFloatingAssignedPerTeam: preserved floating PCAs (special programs + substitutions)
-        const nonFloatingPCAAssignedPerTeam: Record<Team, number> = {
-          FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
-        }
-        const preservedFloatingAssignedPerTeam: Record<Team, number> = {
-          FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
-        }
-        
-        Object.entries(cleanedPcaAllocations).forEach(([team, allocs]) => {
-          allocs.forEach(alloc => {
-            const staffMember =
-              staff.find(s => s.id === alloc.staff_id) ??
-              bufferStaff.find(s => s.id === alloc.staff_id)
-            if (!staffMember) return
-            
-            let slotsInTeam = 0
-            if (alloc.slot1 === team) slotsInTeam++
-            if (alloc.slot2 === team) slotsInTeam++
-            if (alloc.slot3 === team) slotsInTeam++
-            if (alloc.slot4 === team) slotsInTeam++
-            
-            // Exclude invalid slot from count
-            const invalidSlot = (alloc as any).invalid_slot
-            if (invalidSlot) {
-              const slotField = `slot${invalidSlot}` as keyof PCAAllocation
-              if (alloc[slotField] === team) {
-                slotsInTeam = Math.max(0, slotsInTeam - 1)
-              }
-            }
-            
-            // Add FTE contribution (0.25 per slot)
-            if (!staffMember.floating) {
-              nonFloatingPCAAssignedPerTeam[team as Team] += slotsInTeam * 0.25
-              return
-            }
-
-            if (bufferFloatingPCAIds.has(staffMember.id)) {
-              bufferFloatingPCAFTEPerTeam[team as Team] += slotsInTeam * 0.25
-              return
-            }
-
-            // Floating PCAs are only counted here if they are preserved (special programs or substitutions)
-            const hasSpecial = Array.isArray(alloc.special_program_ids) && alloc.special_program_ids.length > 0
-            const sf = staffOverrides[alloc.staff_id]?.substitutionFor
-            const isSubForThisTeam = !!sf && sf.team === (team as Team)
-            if (hasSpecial || isSubForThisTeam) {
-              preservedFloatingAssignedPerTeam[team as Team] += slotsInTeam * 0.25
-            }
-          })
-        })
-        
-        TEAMS.forEach(team => {
-          // Use displayed avg PCA/team from calculations (accounts for CRP -0.4 therapist FTE adjustment for CPPC)
-          // This matches what the user sees in Block 6, not the raw value from step2Result
-          // For DRO: use the final value (with +0.4 DRM add-on) since the add-on is part of DRO's requirement
-          const displayedAvgPCA = calculations[team]?.average_pca_per_team || 0
-          
-          // Get non-floating PCA assigned (only non-floating, excluding floating substitutions)
-          const nonFloatingPCAAssigned = nonFloatingPCAAssignedPerTeam[team] || 0
-
-          // Get preserved floating PCA assigned (special programs + non-floating substitutions)
-          const preservedFloatingAssigned = preservedFloatingAssignedPerTeam[team] || 0
-          
-          // Get buffer floating PCA slots assigned (manually assigned by user before Step 3.1)
-          const bufferFloatingFTE = bufferFloatingPCAFTEPerTeam[team] || 0
-          
-          // Calculate pending: displayedAvg - nonFloating - preservedFloating - bufferFloating (subtract FIRST, then round)
-          // This ensures mathematical consistency: rounding happens on the actual pending amount, not the requirement
-          const rawPending = Math.max(0, displayedAvgPCA - nonFloatingPCAAssigned - preservedFloatingAssigned - bufferFloatingFTE)
-          const pending = roundToNearestQuarterWithMidpoint(rawPending)
-          
-          recalculatedPendingFTE[team] = pending
-        })
-
-        
-        
-        setPendingPCAFTEPerTeam(recalculatedPendingFTE)
         // Step 3.1: Open the configuration dialog instead of running algo directly
         prefetchFloatingPCAConfigDialog().catch(() => {})
         setFloatingPCAConfigOpen(true)
@@ -5506,186 +5282,24 @@ function SchedulePageContent() {
   }
 
   const clearStep3AllocationsPreserveStep2 = () => {
-    // Preserve manual buffer floating PCA assignments (Step 3.0 user actions) across Step 3 reset.
-    const bufferFloatingIds = new Set(
-      staff.filter(s => s.rank === 'PCA' && s.floating && s.status === 'buffer').map(s => s.id)
-    )
-    const step3AlreadyRun = initializedSteps.has('floating-pca') || stepStatus['floating-pca'] === 'completed'
-    const getManualBufferSlots = (staffId: string) => {
-      const o: any = staffOverrides?.[staffId]
-      if (!o) return null
-      if (o.bufferManualSlotOverrides) return o.bufferManualSlotOverrides as any
-      // Back-compat: before Step 3 has run, treat slotOverrides as manual for buffer PCA.
-      if (!step3AlreadyRun && o.slotOverrides) return o.slotOverrides as any
-      return null
-    }
+    const averagePcaByTeam = TEAMS.reduce((acc, team) => {
+      acc[team] = calculations[team]?.average_pca_per_team || 0
+      return acc
+    }, {} as Record<Team, number>)
 
-    // Remove floating PCA allocations except: (a) special program allocations from Step 2, (b) Step 2.1 substitutions,
-    // and (c) manual buffer floating PCA assignments.
-    const cleanedPcaAllocations = createEmptyPCAAllocationsByTeam()
-    TEAMS.forEach(team => {
-      const preservedAllocs = (pcaAllocations[team] || []).filter(alloc => {
-        const staffMember = staff.find(s => s.id === alloc.staff_id)
-        if (!staffMember) return false
-        if (!staffMember.floating) return true
-        // Preserve manual buffer floating PCA allocations (Step 3.0)
-        if (staffMember.status === 'buffer' && staffMember.rank === 'PCA') {
-          const manual = getManualBufferSlots(alloc.staff_id)
-          if (manual) {
-            const anyInThisTeam =
-              (manual.slot1 === team) ||
-              (manual.slot2 === team) ||
-              (manual.slot3 === team) ||
-              (manual.slot4 === team)
-            if (anyInThisTeam) return true
-          }
-        }
-        if (alloc.special_program_ids && alloc.special_program_ids.length > 0) return true
-        const sf = staffOverrides[alloc.staff_id]?.substitutionFor
-        if (sf && sf.team === team) return true
-        return false
-      })
-      cleanedPcaAllocations[team] = preservedAllocs
+    const res = computeStep3ResetForReentry({
+      pcaAllocations,
+      staff,
+      bufferStaff,
+      staffOverrides,
+      averagePcaByTeam,
+      allocationIdPrefix: formatDateForInput(selectedDate),
+      scheduleId: currentScheduleId || '',
     })
 
-    // Ensure manual buffer allocations exist (even if the allocation objects were cleared elsewhere)
-    // by rebuilding from bufferManualSlotOverrides.
-    for (const staffId of bufferFloatingIds) {
-      const manual = getManualBufferSlots(staffId)
-      if (!manual) continue
-      const staffMember = staff.find(s => s.id === staffId)
-      if (!staffMember) continue
-
-      const slot1 = manual.slot1 ?? null
-      const slot2 = manual.slot2 ?? null
-      const slot3 = manual.slot3 ?? null
-      const slot4 = manual.slot4 ?? null
-      const teamsWithSlots = new Set<Team>()
-      if (slot1) teamsWithSlots.add(slot1)
-      if (slot2) teamsWithSlots.add(slot2)
-      if (slot3) teamsWithSlots.add(slot3)
-      if (slot4) teamsWithSlots.add(slot4)
-      if (teamsWithSlots.size === 0) continue
-
-      const bufferFTEraw = (staffMember as any).buffer_fte
-      const bufferFTE =
-        typeof bufferFTEraw === 'number' ? bufferFTEraw : bufferFTEraw != null ? parseFloat(String(bufferFTEraw)) : NaN
-      const capacityFTE = Number.isFinite(bufferFTE) ? bufferFTE : 1.0
-      const slotCount = [slot1, slot2, slot3, slot4].filter(Boolean).length
-
-      const baseAlloc: any = {
-        id: `manual-buffer:${formatDateForInput(selectedDate)}:${staffId}`,
-        schedule_id: currentScheduleId || '',
-        staff_id: staffId,
-        team: null,
-        fte_pca: capacityFTE,
-        fte_remaining: capacityFTE,
-        slot_assigned: slotCount * 0.25,
-        slot_whole: null,
-        slot1,
-        slot2,
-        slot3,
-        slot4,
-        leave_type: null,
-        special_program_ids: null,
-        invalid_slot: undefined,
-        leave_comeback_time: undefined,
-        leave_mode: undefined,
-        fte_subtraction: 0,
-        staff: staffMember,
-      }
-
-      for (const team of teamsWithSlots) {
-        // De-dupe by staffId + team
-        const existing = cleanedPcaAllocations[team].some(a => a.staff_id === staffId)
-        if (existing) continue
-        cleanedPcaAllocations[team] = [...cleanedPcaAllocations[team], { ...baseAlloc, team }]
-      }
-    }
-    setPcaAllocations(cleanedPcaAllocations)
-
-    // Clear slotOverrides for floating PCAs, but preserve manual buffer floating PCA slotOverrides.
-    setStaffOverrides(prev => {
-      const cleaned = { ...prev }
-      const floatingPCAIds = new Set(staff.filter(s => s.rank === 'PCA' && s.floating).map(s => s.id))
-      floatingPCAIds.forEach(pcaId => {
-        if (!cleaned[pcaId]) return
-        const staffMember = staff.find(s => s.id === pcaId)
-        const manual = bufferFloatingIds.has(pcaId) ? getManualBufferSlots(pcaId) : null
-
-        const { slotOverrides, ...otherOverrides } = cleaned[pcaId]
-        if (staffMember?.status === 'buffer' && staffMember.floating && manual) {
-          cleaned[pcaId] = {
-            ...otherOverrides,
-            bufferManualSlotOverrides: manual,
-            slotOverrides: manual,
-          }
-          return
-        }
-        const hasSubstitutionFor = !!otherOverrides.substitutionFor
-        const hasOtherKeys = Object.keys(otherOverrides).length > 0
-        if (hasSubstitutionFor || hasOtherKeys) {
-          cleaned[pcaId] = otherOverrides
-        } else {
-          delete cleaned[pcaId]
-        }
-      })
-      return cleaned
-    })
-
-    // Recompute pending needs from cleaned allocations (so Step 3 re-entry has correct starting point).
-    const recalculatedPendingFTE: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
-    const nonFloatingPCAAssignedPerTeam: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
-    const preservedFloatingAssignedPerTeam: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
-    const bufferFloatingAssignedPerTeam: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
-
-    Object.entries(cleanedPcaAllocations).forEach(([team, allocs]) => {
-      allocs.forEach(alloc => {
-        const staffMember = staff.find(s => s.id === alloc.staff_id)
-        if (!staffMember) return
-        let slotsInTeam = 0
-        if (alloc.slot1 === team) slotsInTeam++
-        if (alloc.slot2 === team) slotsInTeam++
-        if (alloc.slot3 === team) slotsInTeam++
-        if (alloc.slot4 === team) slotsInTeam++
-
-        const invalidSlot = (alloc as any).invalid_slot
-        if (invalidSlot) {
-          const slotField = `slot${invalidSlot}` as keyof PCAAllocation
-          if (alloc[slotField] === team) slotsInTeam = Math.max(0, slotsInTeam - 1)
-        }
-
-        if (!staffMember.floating) {
-          nonFloatingPCAAssignedPerTeam[team as Team] += slotsInTeam * 0.25
-          return
-        }
-
-        if (staffMember.status === 'buffer') {
-          bufferFloatingAssignedPerTeam[team as Team] += slotsInTeam * 0.25
-          return
-        }
-
-        const hasSpecial = Array.isArray(alloc.special_program_ids) && alloc.special_program_ids.length > 0
-        const sf = staffOverrides[alloc.staff_id]?.substitutionFor
-        const isSubForThisTeam = !!sf && sf.team === (team as Team)
-        if (hasSpecial || isSubForThisTeam) {
-          preservedFloatingAssignedPerTeam[team as Team] += slotsInTeam * 0.25
-        }
-      })
-    })
-
-    TEAMS.forEach(team => {
-      const displayedAvgPCA = calculations[team]?.average_pca_per_team || 0
-      const rawPending = Math.max(
-        0,
-        displayedAvgPCA -
-          (nonFloatingPCAAssignedPerTeam[team] || 0) -
-          (preservedFloatingAssignedPerTeam[team] || 0) -
-          (bufferFloatingAssignedPerTeam[team] || 0)
-      )
-      recalculatedPendingFTE[team] = roundToNearestQuarterWithMidpoint(rawPending)
-    })
-    setPendingPCAFTEPerTeam(recalculatedPendingFTE)
+    setPcaAllocations(res.cleanedPcaAllocations)
+    setStaffOverrides(res.cleanedStaffOverrides)
+    setPendingPCAFTEPerTeam(res.pendingPCAFTEPerTeam)
   }
 
   const clearStepOnly = async (stepId: ScheduleStepId) => {
@@ -7056,6 +6670,104 @@ function SchedulePageContent() {
   // ---------------------------------------------------------------------------
   const selectedDateStr = formatDateForInput(selectedDate)
   const currentHasData = datesWithData.has(selectedDateStr)
+  const isToday = selectedDateStr === formatDateForInput(new Date())
+  const showSnapshotUiReminder = !isToday && !!baselineSnapshot
+
+  // Snapshot differences (non-modal, on-demand)
+  const snapshotDiffButtonRef = useRef<HTMLButtonElement | null>(null)
+  const snapshotDiffPanelRef = useRef<HTMLDivElement | null>(null)
+  const [snapshotDiffOpen, setSnapshotDiffOpen] = useState(false)
+  const [snapshotDiffLoading, setSnapshotDiffLoading] = useState(false)
+  const [snapshotDiffError, setSnapshotDiffError] = useState<string | null>(null)
+  const [snapshotDiffResult, setSnapshotDiffResult] = useState<SnapshotDiffResult | null>(null)
+
+  const snapshotDiffPos = useAnchoredPopoverPosition({
+    open: snapshotDiffOpen,
+    anchorRef: snapshotDiffButtonRef,
+    popoverRef: snapshotDiffPanelRef,
+    placement: 'bottom-end',
+    offset: 8,
+    pad: 8,
+  })
+
+  useOnClickOutside([snapshotDiffButtonRef, snapshotDiffPanelRef], () => setSnapshotDiffOpen(false), {
+    enabled: snapshotDiffOpen,
+    event: 'pointerdown',
+  })
+
+  useEffect(() => {
+    if (!snapshotDiffOpen) return
+    if (!baselineSnapshot) return
+
+    let cancelled = false
+    setSnapshotDiffLoading(true)
+    setSnapshotDiffError(null)
+
+    ;(async () => {
+      const [staffRes, wardsRes, prefsRes, programsRes, sptRes] = await Promise.all([
+        supabase
+          .from('staff')
+          .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program'),
+        supabase.from('wards').select('id,name,total_beds,team_assignments,team_assignment_portions'),
+        supabase.from('pca_preferences').select('*'),
+        supabase.from('special_programs').select('*'),
+        supabase.from('spt_allocations').select('*'),
+      ])
+
+      // Back-compat: some DBs do not have wards.team_assignment_portions
+      let effectiveWardsRes: typeof wardsRes = wardsRes
+      if ((wardsRes as any)?.error?.message?.includes('team_assignment_portions')) {
+        effectiveWardsRes = await supabase.from('wards').select('id,name,total_beds,team_assignments')
+      }
+
+      const firstError =
+        (staffRes as any).error ||
+        (effectiveWardsRes as any).error ||
+        (prefsRes as any).error ||
+        (programsRes as any).error ||
+        (sptRes as any).error
+
+      if (firstError) {
+        if (cancelled) return
+        setSnapshotDiffError((firstError as any)?.message || 'Failed to load live dashboard config.')
+        setSnapshotDiffResult(null)
+        return
+      }
+
+      const diff = diffBaselineSnapshot({
+        snapshot: baselineSnapshot,
+        live: {
+          staff: (staffRes as any).data || [],
+          wards: (effectiveWardsRes as any).data || [],
+          pcaPreferences: (prefsRes as any).data || [],
+          specialPrograms: (programsRes as any).data || [],
+          sptAllocations: (sptRes as any).data || [],
+        },
+      })
+
+      if (cancelled) return
+      setSnapshotDiffResult(diff)
+    })()
+      .catch((e) => {
+        if (cancelled) return
+        setSnapshotDiffError(e?.message || 'Failed to compute differences.')
+        setSnapshotDiffResult(null)
+      })
+      .finally(() => {
+        if (cancelled) return
+        setSnapshotDiffLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [snapshotDiffOpen, baselineSnapshot, supabase])
+
+  useEffect(() => {
+    if (!showSnapshotUiReminder && snapshotDiffOpen) {
+      setSnapshotDiffOpen(false)
+    }
+  }, [showSnapshotUiReminder, snapshotDiffOpen])
 
   let nextWorkingLabel = 'Copy to next working day'
   let nextWorkingEnabled = false
@@ -10281,82 +9993,313 @@ function SchedulePageContent() {
               <h1 className="text-2xl font-bold">Schedule Allocation</h1>
             )}
             <div className="flex items-center space-x-2 relative">
-              {(() => {
-                const prevWorkingDay = getPreviousWorkingDay(selectedDate)
-                const nextWorkingDay = getNextWorkingDay(selectedDate)
-                const prevLabel = `${formatDateDDMMYYYY(prevWorkingDay)} (${WEEKDAY_NAMES[WEEKDAYS.indexOf(getWeekday(prevWorkingDay))]})`
-                const nextLabel = `${formatDateDDMMYYYY(nextWorkingDay)} (${WEEKDAY_NAMES[WEEKDAYS.indexOf(getWeekday(nextWorkingDay))]})`
+                {(() => {
+                  const prevWorkingDay = getPreviousWorkingDay(selectedDate)
+                  const nextWorkingDay = getNextWorkingDay(selectedDate)
+                  const prevLabel = `${formatDateDDMMYYYY(prevWorkingDay)} (${WEEKDAY_NAMES[WEEKDAYS.indexOf(getWeekday(prevWorkingDay))]})`
+                  const nextLabel = `${formatDateDDMMYYYY(nextWorkingDay)} (${WEEKDAY_NAMES[WEEKDAYS.indexOf(getWeekday(nextWorkingDay))]})`
 
-                return (
-                  <div className="inline-flex items-center border border-border rounded-md overflow-hidden bg-background shadow-xs">
-                    <Tooltip side="bottom" content={`Previous working day: ${prevLabel}`}>
+                  return (
+                    <div className="inline-flex items-center border border-border rounded-md overflow-hidden bg-background shadow-xs">
+                      <Tooltip side="bottom" content={`Previous working day: ${prevLabel}`}>
+                        <button
+                          type="button"
+                          aria-label="Previous working day"
+                          onClick={() => {
+                            setCalendarOpen(false)
+                            beginDateTransition(prevWorkingDay)
+                          }}
+                          className="px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-110 active:scale-95 border-r border-border"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </button>
+                      </Tooltip>
+
                       <button
                         type="button"
-                        aria-label="Previous working day"
+                        aria-label="Go to today"
                         onClick={() => {
                           setCalendarOpen(false)
-                          beginDateTransition(prevWorkingDay)
+                          const today = new Date()
+                          const target = isWorkingDay(today) ? today : getNextWorkingDay(today)
+                          beginDateTransition(target)
                         }}
-                        className="px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-110 active:scale-95 border-r border-border"
+                        className="px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-105 active:scale-95 border-r border-border"
                       >
-                        <ChevronLeft className="h-4 w-4" />
+                        Today
                       </button>
-                    </Tooltip>
 
-                    <button
-                      type="button"
-                      aria-label="Go to today"
-                      onClick={() => {
-                        setCalendarOpen(false)
-                        const today = new Date()
-                        const target = isWorkingDay(today) ? today : getNextWorkingDay(today)
-                        beginDateTransition(target)
-                      }}
-                      className="px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-105 active:scale-95 border-r border-border"
-                    >
-                      Today
-                    </button>
-
-                    <Tooltip side="bottom" content={`Next working day: ${nextLabel}`}>
-                      <button
-                        type="button"
-                        aria-label="Next working day"
-                        onClick={() => {
-                          setCalendarOpen(false)
-                          beginDateTransition(nextWorkingDay)
-                        }}
-                        className="px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-110 active:scale-95"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </button>
-                    </Tooltip>
-                  </div>
-                )
-              })()}
-              <span
-                className={`text-lg font-semibold rounded px-2 py-1 transition-shadow transition-colors ${
-                  isDateHighlighted
-                    ? 'bg-amber-50 ring-2 ring-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.55)]'
-                    : ''
-                }`}
-              >
-                {formatDateDDMMYYYY(selectedDate)} ({weekdayName})
-              </span>
-              <button
-                ref={calendarButtonRef}
-                onClick={() => setCalendarOpen(!calendarOpen)}
-                className="cursor-pointer flex items-center"
-                type="button"
-                aria-label="Open date picker"
-              >
-                <Tooltip side="bottom" content="Open calendar">
-                  <span className="inline-flex">
-                    <Calendar className="h-5 w-5 text-muted-foreground hover:text-foreground transition-colors" />
-                  </span>
-                </Tooltip>
-              </button>
+                      <Tooltip side="bottom" content={`Next working day: ${nextLabel}`}>
+                        <button
+                          type="button"
+                          aria-label="Next working day"
+                          onClick={() => {
+                            setCalendarOpen(false)
+                            beginDateTransition(nextWorkingDay)
+                          }}
+                          className="px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-110 active:scale-95"
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </Tooltip>
+                    </div>
+                  )
+                })()}
+                <span
+                  className={`text-lg font-semibold rounded px-2 py-1 transition-shadow transition-colors ${
+                    isDateHighlighted
+                      ? 'bg-amber-50 ring-2 ring-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.55)]'
+                      : ''
+                  }`}
+                >
+                  {formatDateDDMMYYYY(selectedDate)} ({weekdayName})
+                </span>
+                <button
+                  ref={calendarButtonRef}
+                  onClick={() => setCalendarOpen(!calendarOpen)}
+                  className="cursor-pointer flex items-center"
+                  type="button"
+                  aria-label="Open date picker"
+                >
+                  <Tooltip side="bottom" content="Open calendar">
+                    <span className="inline-flex">
+                      <Calendar className="h-5 w-5 text-muted-foreground hover:text-foreground transition-colors" />
+                    </span>
+                  </Tooltip>
+                </button>
             </div>
           </div>
+          {showSnapshotUiReminder ? (
+            <div className="mx-3 min-w-0">
+              <div className="inline-flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-950 leading-snug max-w-[420px] whitespace-normal">
+                <AlertCircle className="mt-0.5 h-4 w-4 text-amber-700 flex-shrink-0" />
+                <span className="break-words">
+                  You’re viewing the saved snapshot for this date. Later dashboard changes may not appear here.
+                </span>
+                <button
+                  ref={snapshotDiffButtonRef}
+                  type="button"
+                  onClick={() => setSnapshotDiffOpen((v) => !v)}
+                  className="ml-1 inline-flex items-center rounded-md border border-amber-300 bg-amber-100 px-2 py-1 text-[11px] font-medium text-amber-950 hover:bg-amber-200 transition-colors"
+                >
+                  Show differences
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {showSnapshotUiReminder && snapshotDiffOpen ? (
+            <div
+              ref={snapshotDiffPanelRef}
+              className="fixed z-[10500] w-[min(520px,calc(100vw-24px))] rounded-lg border border-border bg-background shadow-lg"
+              style={snapshotDiffPos ? { left: snapshotDiffPos.left, top: snapshotDiffPos.top } : undefined}
+            >
+              <div className="flex items-start justify-between gap-3 border-b border-border px-3 py-2">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold">Snapshot differences</div>
+                  <div className="text-xs text-muted-foreground">
+                    Snapshot for {formatDateDDMMYYYY(selectedDate)} vs current dashboard configuration
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  onClick={() => setSnapshotDiffOpen(false)}
+                  className="p-1 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="max-h-[70vh] overflow-y-auto p-3 text-sm">
+                {snapshotDiffLoading ? (
+                  <div className="text-sm text-muted-foreground">Loading current dashboard config…</div>
+                ) : snapshotDiffError ? (
+                  <div className="text-sm text-destructive">
+                    Failed to load differences: {snapshotDiffError}
+                  </div>
+                ) : snapshotDiffResult ? (
+                  (() => {
+                    const MAX = 20
+                    const formatChanges = (changes: Array<{ field: string; from: string; to: string }>) =>
+                      changes.map((c) => `${c.field}: ${c.from} → ${c.to}`)
+
+                    const renderList = (items: string[]) => {
+                      const shown = items.slice(0, MAX)
+                      const rest = Math.max(0, items.length - shown.length)
+                      return (
+                        <div className="space-y-1">
+                          {shown.map((s, i) => (
+                            <div key={`${s}-${i}`} className="text-xs text-muted-foreground">
+                              - {s}
+                            </div>
+                          ))}
+                          {rest > 0 ? (
+                            <div className="text-xs text-muted-foreground">…and {rest} more</div>
+                          ) : null}
+                        </div>
+                      )
+                    }
+
+                    const staffAdded = snapshotDiffResult.staff.added.map((s) => s.name)
+                    const staffRemoved = snapshotDiffResult.staff.removed.map((s) => s.name)
+                    const staffChanged = snapshotDiffResult.staff.changed.map((s) => `${s.name} (${formatChanges(s.changes).join('; ')})`)
+
+                    const wardsAdded = snapshotDiffResult.wards.added.map((w) => w.name)
+                    const wardsRemoved = snapshotDiffResult.wards.removed.map((w) => w.name)
+                    const wardsChanged = snapshotDiffResult.wards.changed.map((w) => `${w.name} (${formatChanges(w.changes).join('; ')})`)
+
+                    const prefsChanged = snapshotDiffResult.pcaPreferences.changed.map(
+                      (p) => `${p.team} (${formatChanges(p.changes).join('; ')})`
+                    )
+
+                    const spAdded = snapshotDiffResult.specialPrograms.added.map((p) => p.name)
+                    const spRemoved = snapshotDiffResult.specialPrograms.removed.map((p) => p.name)
+                    const spChanged = snapshotDiffResult.specialPrograms.changed.map((p) => `${p.name} (${formatChanges(p.changes).join('; ')})`)
+
+                    const sptAdded = snapshotDiffResult.sptAllocations.added.map((a) => a.staff_id)
+                    const sptRemoved = snapshotDiffResult.sptAllocations.removed.map((a) => a.staff_id)
+                    const sptChanged = snapshotDiffResult.sptAllocations.changed.map(
+                      (a) => `${a.staff_id} (${formatChanges(a.changes).join('; ')})`
+                    )
+
+                    return (
+                      <div className="space-y-3">
+                        <details className="rounded-md border border-border bg-muted/20 p-2">
+                          <summary className="cursor-pointer select-none text-sm font-medium">
+                            Staff{' '}
+                            <span className="text-xs text-muted-foreground">
+                              (added {staffAdded.length}, removed {staffRemoved.length}, changed {snapshotDiffResult.staff.changed.length})
+                            </span>
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            {staffAdded.length > 0 ? (
+                              <div>
+                                <div className="text-xs font-semibold">Added</div>
+                                {renderList(staffAdded)}
+                              </div>
+                            ) : null}
+                            {staffRemoved.length > 0 ? (
+                              <div>
+                                <div className="text-xs font-semibold">Removed</div>
+                                {renderList(staffRemoved)}
+                              </div>
+                            ) : null}
+                            {staffChanged.length > 0 ? (
+                              <div>
+                                <div className="text-xs font-semibold">Changed</div>
+                                {renderList(staffChanged)}
+                              </div>
+                            ) : null}
+                          </div>
+                        </details>
+
+                        <details className="rounded-md border border-border bg-muted/20 p-2">
+                          <summary className="cursor-pointer select-none text-sm font-medium">
+                            Wards{' '}
+                            <span className="text-xs text-muted-foreground">
+                              (added {wardsAdded.length}, removed {wardsRemoved.length}, changed {snapshotDiffResult.wards.changed.length})
+                            </span>
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            {wardsAdded.length > 0 ? (
+                              <div>
+                                <div className="text-xs font-semibold">Added</div>
+                                {renderList(wardsAdded)}
+                              </div>
+                            ) : null}
+                            {wardsRemoved.length > 0 ? (
+                              <div>
+                                <div className="text-xs font-semibold">Removed</div>
+                                {renderList(wardsRemoved)}
+                              </div>
+                            ) : null}
+                            {wardsChanged.length > 0 ? (
+                              <div>
+                                <div className="text-xs font-semibold">Changed</div>
+                                {renderList(wardsChanged)}
+                              </div>
+                            ) : null}
+                          </div>
+                        </details>
+
+                        <details className="rounded-md border border-border bg-muted/20 p-2">
+                          <summary className="cursor-pointer select-none text-sm font-medium">
+                            PCA preferences{' '}
+                            <span className="text-xs text-muted-foreground">(changed {prefsChanged.length})</span>
+                          </summary>
+                          <div className="mt-2">
+                            {prefsChanged.length > 0 ? renderList(prefsChanged) : (
+                              <div className="text-xs text-muted-foreground">No changes detected.</div>
+                            )}
+                          </div>
+                        </details>
+
+                        <details className="rounded-md border border-border bg-muted/20 p-2">
+                          <summary className="cursor-pointer select-none text-sm font-medium">
+                            Special programs{' '}
+                            <span className="text-xs text-muted-foreground">
+                              (added {spAdded.length}, removed {spRemoved.length}, changed {snapshotDiffResult.specialPrograms.changed.length})
+                            </span>
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            {spAdded.length > 0 ? (
+                              <div>
+                                <div className="text-xs font-semibold">Added</div>
+                                {renderList(spAdded)}
+                              </div>
+                            ) : null}
+                            {spRemoved.length > 0 ? (
+                              <div>
+                                <div className="text-xs font-semibold">Removed</div>
+                                {renderList(spRemoved)}
+                              </div>
+                            ) : null}
+                            {spChanged.length > 0 ? (
+                              <div>
+                                <div className="text-xs font-semibold">Changed</div>
+                                {renderList(spChanged)}
+                              </div>
+                            ) : null}
+                          </div>
+                        </details>
+
+                        <details className="rounded-md border border-border bg-muted/20 p-2">
+                          <summary className="cursor-pointer select-none text-sm font-medium">
+                            SPT allocations{' '}
+                            <span className="text-xs text-muted-foreground">
+                              (added {sptAdded.length}, removed {sptRemoved.length}, changed {snapshotDiffResult.sptAllocations.changed.length})
+                            </span>
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            {sptAdded.length > 0 ? (
+                              <div>
+                                <div className="text-xs font-semibold">Added</div>
+                                {renderList(sptAdded)}
+                              </div>
+                            ) : null}
+                            {sptRemoved.length > 0 ? (
+                              <div>
+                                <div className="text-xs font-semibold">Removed</div>
+                                {renderList(sptRemoved)}
+                              </div>
+                            ) : null}
+                            {sptChanged.length > 0 ? (
+                              <div>
+                                <div className="text-xs font-semibold">Changed</div>
+                                {renderList(sptChanged)}
+                              </div>
+                            ) : null}
+                          </div>
+                        </details>
+                      </div>
+                    )
+                  })()
+                ) : (
+                  <div className="text-sm text-muted-foreground">No differences computed yet.</div>
+                )}
+              </div>
+            </div>
+          ) : null}
           <div className="flex items-center space-x-2">
               {/* Copy dropdown button */}
               <div className="relative">
@@ -10984,22 +10927,26 @@ function SchedulePageContent() {
               )
             })()}
 
-            <div className="flex-1 min-h-0">
-              <StaffPool
-                therapists={therapists}
-                pcas={pcas}
-                inactiveStaff={inactiveStaff}
-                bufferStaff={bufferStaff}
-                onOpenStaffContextMenu={openStaffPoolContextMenu}
-                staffOverrides={staffOverrides}
-                specialPrograms={specialPrograms}
-                pcaAllocations={pcaAllocations}
-                currentStep={currentStep}
-                initializedSteps={initializedSteps}
-                weekday={selectedDate ? getWeekday(selectedDate) : undefined}
-                onBufferStaffCreated={loadStaff}
-                disableDragging={staffPoolContextMenu.show}
-                onSlotTransfer={(staffId: string, targetTeam: string, slots: number[]) => {
+            <div className="w-40 flex-1 min-h-0 flex flex-col min-w-0">
+              <div className="flex-1 min-h-0">
+                <StaffPool
+                  therapists={therapists}
+                  pcas={pcas}
+                  inactiveStaff={inactiveStaff}
+                  bufferStaff={bufferStaff}
+                  onOpenStaffContextMenu={openStaffPoolContextMenu}
+                  staffOverrides={staffOverrides}
+                  specialPrograms={specialPrograms}
+                  pcaAllocations={pcaAllocations}
+                  currentStep={currentStep}
+                  initializedSteps={initializedSteps}
+                  weekday={selectedDate ? getWeekday(selectedDate) : undefined}
+                  onBufferStaffCreated={loadStaff}
+                  disableDragging={staffPoolContextMenu.show}
+                  snapshotNotice={
+                    showSnapshotUiReminder ? 'Staff pool is shown from the saved snapshot for this date.' : undefined
+                  }
+                  onSlotTransfer={(staffId: string, targetTeam: string, slots: number[]) => {
                   // Find source team from allocations
                   let sourceTeam: Team | null = null
                   for (const [team, allocs] of Object.entries(pcaAllocations)) {
@@ -11026,8 +10973,9 @@ function SchedulePageContent() {
                     })
                     performSlotTransfer(targetTeam as Team)
                   }
-                }}
-              />
+                  }}
+                />
+              </div>
             </div>
           </div>
 

@@ -606,9 +606,9 @@ export function SpecialProgramOverrideDialog({
     if (!staff.special_program) return false
 
     // IMPORTANT: This function is used for "existing staff" auto-pick + dropdown.
-    // Do NOT treat inactive/buffer staff as eligible here; they must be chosen via the
-    // substitution dialog sourceType ('buffer' / 'inactive').
-    if (staff.status === 'inactive' || staff.status === 'buffer') return false
+    // Inactive staff should never be surfaced here.
+    // Buffer staff ARE allowed (per UI requirement) if they have compatible special_program + slots.
+    if (staff.status === 'inactive') return false
     if (staff.active === false) return false
     
     // Check if PCA has required slots available
@@ -1090,7 +1090,7 @@ export function SpecialProgramOverrideDialog({
                     return (
                       <Card
                         key={program.id}
-                        className="min-w-[390px] max-w-[450px] w-[min(450px,calc(100vw-120px))] flex-shrink-0 max-h-[80vh] overflow-y-auto"
+                        className="min-w-[360px] max-w-[420px] w-[min(420px,calc(100vw-120px))] flex-shrink-0 max-h-[80vh] overflow-y-auto"
                         style={{ scrollSnapAlign: 'start' }}
                       >
                         <CardHeader>
@@ -1178,7 +1178,7 @@ export function SpecialProgramOverrideDialog({
                           <div className="p-3 border rounded space-y-2">
                             <Label>Select Therapist</Label>
                             <select
-                              className="w-full px-3 py-2 border rounded-md"
+                              className="w-full max-w-[320px] px-3 py-2 border rounded-md"
                               value={override.therapistId || ''}
                               onChange={(e) => {
                                 if (e.target.value) {
@@ -1256,7 +1256,7 @@ export function SpecialProgramOverrideDialog({
                                         }
                                       }))
                                     }}
-                                    className="mt-1"
+                                    className="mt-1 max-w-[180px]"
                                   />
                                 )}
                               </div>
@@ -1346,7 +1346,7 @@ export function SpecialProgramOverrideDialog({
                             <div className="p-3 border rounded space-y-2">
                               <Label>Select PCA</Label>
                               <select
-                                className="w-full px-3 py-2 border rounded-md"
+                                className="w-full max-w-[320px] px-3 py-2 border rounded-md"
                                 value={override.pcaId || ''}
                                 onChange={(e) => {
                                   if (e.target.value) {
@@ -1357,7 +1357,7 @@ export function SpecialProgramOverrideDialog({
                                 <option value="">-- Select PCA --</option>
                                 {availablePCAs.map(p => (
                                   <option key={p.id} value={p.id}>
-                                    {p.name} ({p.floating ? 'Floating' : 'Non-floating'})
+                                    {p.name} ({p.status === 'buffer' ? 'Buffer ' : ''}{p.floating ? 'Floating' : 'Non-floating'})
                                   </option>
                                 ))}
                               </select>
@@ -1374,7 +1374,7 @@ export function SpecialProgramOverrideDialog({
                           {/* Slot Selection */}
                           <div>
                             <Label>Slots</Label>
-                            <div className="flex gap-1.5 mt-2 w-full">
+                            <div className="grid grid-cols-4 gap-1.5 mt-2 w-full">
                               {[1, 2, 3, 4].map(slot => {
                                 const isSelected = currentSlots.includes(slot)
                                 const pcaAvailableSlots = override.pcaId ? (staffOverrides[override.pcaId]?.availableSlots || [1, 2, 3, 4]) : [1, 2, 3, 4]
@@ -1386,7 +1386,7 @@ export function SpecialProgramOverrideDialog({
                                     onClick={() => !isDisabled && handleSlotToggle(program.id, slot)}
                                     disabled={!!isDisabled}
                                     className={cn(
-                                      'flex-1 px-2 py-2 rounded text-sm font-medium',
+                                      'w-full px-2 py-2 rounded text-sm font-medium',
                                       isSelected
                                         ? 'bg-blue-600 text-white'
                                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
@@ -1404,7 +1404,7 @@ export function SpecialProgramOverrideDialog({
                                     <span
                                       key={slot}
                                       title="Slot not available"
-                                      className="inline-block cursor-not-allowed"
+                                      className="inline-block w-full cursor-not-allowed"
                                     >
                                       {button}
                                     </span>
@@ -1412,7 +1412,7 @@ export function SpecialProgramOverrideDialog({
                                 }
 
                                 return (
-                                  <span key={slot}>
+                                  <span key={slot} className="w-full">
                                     {button}
                                   </span>
                                 )
@@ -1451,7 +1451,7 @@ export function SpecialProgramOverrideDialog({
                                 }
                               }))
                             }}
-                            className="mt-1"
+                            className="mt-1 max-w-[180px]"
                           />
                         </div>
                       )}

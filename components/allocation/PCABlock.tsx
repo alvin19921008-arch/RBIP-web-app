@@ -50,7 +50,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     for (const p of specialPrograms) map.set(p.id, p)
     return map
   }, [specialPrograms])
-
+  
   const { setNodeRef, isOver } = useDroppable({
     id: `pca-${team}`,
     data: { type: 'pca', team },
@@ -72,14 +72,14 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
   // Check both allocation FTE and current override FTE (in case allocations haven't been regenerated)
   const pcaAllocationsWithFTE = useMemo(() => {
     return allocations.filter(alloc => {
-      // Check allocation FTE first
-      const allocationFTE = alloc.fte_pca || 0
-      // Check override FTE (current value from edits, may be more up-to-date)
-      const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
-      // Use override FTE if available, otherwise use allocation FTE
-      const currentFTE = overrideFTE !== undefined ? overrideFTE : allocationFTE
+    // Check allocation FTE first
+    const allocationFTE = alloc.fte_pca || 0
+    // Check override FTE (current value from edits, may be more up-to-date)
+    const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
+    // Use override FTE if available, otherwise use allocation FTE
+    const currentFTE = overrideFTE !== undefined ? overrideFTE : allocationFTE
       return currentFTE > 0
-    })
+  })
   }, [allocations, staffOverrides])
 
   // Helper function to determine if slots in a team are part of special program assignment
@@ -947,95 +947,95 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
       const slots = getSpecialProgramSlotsForTeam(alloc, team)
       specialProgramSlotsByAllocId.set(alloc.id, slots)
       return slots
-    }
+  }
 
-    // Separate regular PCA from special program PCA
+  // Separate regular PCA from special program PCA
     const regularPCA: (PCAAllocation & { staff: Staff })[] = pcaAllocationsWithFTE.filter(
       alloc => !alloc.special_program_ids || alloc.special_program_ids.length === 0
-    )
-    const specialProgramPCA: (PCAAllocation & { staff: Staff })[] = []
-
-    // Track split allocations: allocations that need to appear in both sections with different slot filters
+  )
+  const specialProgramPCA: (PCAAllocation & { staff: Staff })[] = []
+  
+  // Track split allocations: allocations that need to appear in both sections with different slot filters
     const splitAllocationSlots = new Map<string, { regularSlots: number[]; specialProgramSlots: number[] }>()
-
-    // Process allocations with special programs - split those with both regular and special program slots in the same team
-    pcaAllocationsWithFTE.forEach(alloc => {
-      if (!alloc.special_program_ids || alloc.special_program_ids.length === 0) {
-        return // Already in regularPCA
-      }
-
+  
+  // Process allocations with special programs - split those with both regular and special program slots in the same team
+  pcaAllocationsWithFTE.forEach(alloc => {
+    if (!alloc.special_program_ids || alloc.special_program_ids.length === 0) {
+      return // Already in regularPCA
+    }
+    
       const slotsForThisTeam = getSlotsForThisTeam(alloc)
-      if (slotsForThisTeam.length === 0) return // No slots in this team
-
-      // Determine which slots are special program slots
+    if (slotsForThisTeam.length === 0) return // No slots in this team
+    
+    // Determine which slots are special program slots
       const specialProgramSlots = getSpecialSlotsCached(alloc)
-      const regularSlots = slotsForThisTeam.filter(slot => !specialProgramSlots.includes(slot))
+    const regularSlots = slotsForThisTeam.filter(slot => !specialProgramSlots.includes(slot))
+    
+    // If this team has NO special-program slots for this PCA, treat it as regular for THIS team.
+    // (The PCA may still be special-program in another team, but that should not disable dragging here.)
+    if (specialProgramSlots.length === 0) {
+      regularPCA.push(alloc)
+      return
+    }
 
-      // If this team has NO special-program slots for this PCA, treat it as regular for THIS team.
-      // (The PCA may still be special-program in another team, but that should not disable dragging here.)
-      if (specialProgramSlots.length === 0) {
-        regularPCA.push(alloc)
-        return
-      }
-
-      // If this allocation has both special program slots and regular slots in this team, split it
-      if (regularSlots.length > 0) {
-        // Track which slots to show in each section
-        splitAllocationSlots.set(`${alloc.id}-${team}`, { regularSlots, specialProgramSlots })
-        // Add to both sections
-        regularPCA.push(alloc)
-        specialProgramPCA.push(alloc)
-      } else {
-        // All slots in this team are special program slots.
-        specialProgramPCA.push(alloc)
-      }
-    })
+    // If this allocation has both special program slots and regular slots in this team, split it
+    if (regularSlots.length > 0) {
+      // Track which slots to show in each section
+      splitAllocationSlots.set(`${alloc.id}-${team}`, { regularSlots, specialProgramSlots })
+      // Add to both sections
+      regularPCA.push(alloc)
+      specialProgramPCA.push(alloc)
+    } else {
+      // All slots in this team are special program slots.
+      specialProgramPCA.push(alloc)
+    }
+  })
 
     const substitutionInfoByAllocId = new Map<string, ReturnType<typeof getSubstitutionInfo>>()
     for (const alloc of regularPCA) {
       substitutionInfoByAllocId.set(alloc.id, getSubstitutionInfo(alloc))
     }
-
-    // Sort regular PCA: whole day substituting floating PCAs first, then non-floating, then other floating
-    regularPCA.sort((a, b) => {
+  
+  // Sort regular PCA: whole day substituting floating PCAs first, then non-floating, then other floating
+  regularPCA.sort((a, b) => {
       const aSubInfo = substitutionInfoByAllocId.get(a.id) ?? getSubstitutionInfo(a)
       const bSubInfo = substitutionInfoByAllocId.get(b.id) ?? getSubstitutionInfo(b)
-      const aIsWholeDaySub = aSubInfo.isWholeDaySubstitution
-      const bIsWholeDaySub = bSubInfo.isWholeDaySubstitution
+    const aIsWholeDaySub = aSubInfo.isWholeDaySubstitution
+    const bIsWholeDaySub = bSubInfo.isWholeDaySubstitution
+    
+    if (aIsWholeDaySub && !bIsWholeDaySub) return -1
+    if (!aIsWholeDaySub && bIsWholeDaySub) return 1
+    
+    const aIsNonFloating = !a.staff.floating
+    const bIsNonFloating = !b.staff.floating
+    if (aIsNonFloating && !bIsNonFloating) return -1
+    if (!aIsNonFloating && bIsNonFloating) return 1
+    
+    return 0
+  })
 
-      if (aIsWholeDaySub && !bIsWholeDaySub) return -1
-      if (!aIsWholeDaySub && bIsWholeDaySub) return 1
-
-      const aIsNonFloating = !a.staff.floating
-      const bIsNonFloating = !b.staff.floating
-      if (aIsNonFloating && !bIsNonFloating) return -1
-      if (!aIsNonFloating && bIsNonFloating) return 1
-
-      return 0
-    })
-
-    // Calculate assigned PCA-FTE per team (excluding special program slots)
-    // This is for display only - not used in computation
-    let assignedPcaFteRaw = 0
+  // Calculate assigned PCA-FTE per team (excluding special program slots)
+  // This is for display only - not used in computation
+  let assignedPcaFteRaw = 0
     pcaAllocationsWithFTE.forEach(allocation => {
       const slotsForThisTeam = getSlotsForThisTeam(allocation)
-
+      
       // Exclude invalid slot from FTE calculation
       const invalidSlot = (allocation as any).invalid_slot
       const validSlotsForTeam = invalidSlot ? slotsForThisTeam.filter(s => s !== invalidSlot) : slotsForThisTeam
-
+      
       // Identify which slots are special program slots (if any)
       const specialProgramSlots = getSpecialSlotsCached(allocation)
-
+      
       // Count only regular slots (exclude special program slots)
       const regularSlotsForTeam = validSlotsForTeam.filter(slot => !specialProgramSlots.includes(slot))
-
+      
       // Add 0.25 FTE per regular slot (special program slots are excluded, invalid slots already excluded)
       assignedPcaFteRaw += regularSlotsForTeam.length * 0.25
     })
-
-    // Round to nearest 0.25 using the same rounding logic as pending values
-    const assignedPcaFteRounded = roundToNearestQuarterWithMidpoint(assignedPcaFteRaw)
+  
+  // Round to nearest 0.25 using the same rounding logic as pending values
+  const assignedPcaFteRounded = roundToNearestQuarterWithMidpoint(assignedPcaFteRaw)
 
     return { regularPCA, specialProgramPCA, splitAllocationSlots, assignedPcaFteRounded, substitutionInfoByAllocId }
   }, [pcaAllocationsWithFTE, staffOverrides, allocations, allPCAAllocations, allPCAStaff, specialProgramsById, weekday, team])

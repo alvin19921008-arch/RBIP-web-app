@@ -9,7 +9,7 @@ import { InactiveStaffPool } from './InactiveStaffPool'
 import { BufferStaffPool } from './BufferStaffPool'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { ChevronRight, ChevronDown, ChevronLeft, ChevronUp } from 'lucide-react'
+import { ChevronRight, ChevronDown, ChevronLeft, ChevronUp, AlertCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAutoHideFlag } from '@/lib/hooks/useAutoHideFlag'
 import { useIsolatedWheelScroll } from '@/lib/hooks/useIsolatedWheelScroll'
@@ -29,6 +29,7 @@ interface StaffPoolProps {
   onSlotTransfer?: (staffId: string, targetTeam: string, slots: number[]) => void
   onBufferStaffCreated?: () => void
   disableDragging?: boolean
+  snapshotNotice?: string
 }
 
 export function StaffPool({
@@ -46,6 +47,7 @@ export function StaffPool({
   onSlotTransfer,
   onBufferStaffCreated,
   disableDragging = false,
+  snapshotNotice,
 }: StaffPoolProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -99,7 +101,7 @@ export function StaffPool({
         if (!set) {
           set = new Set<number>()
           map.set(staffId, set)
-        }
+    }
         if (alloc.slot1) set.add(1)
         if (alloc.slot2) set.add(2)
         if (alloc.slot3) set.add(3)
@@ -286,10 +288,10 @@ export function StaffPool({
 
   const therapistsByRank = useMemo(() => {
     return {
-      SPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'SPT'))),
-      APPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'APPT'))),
-      RPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'RPT'))),
-    }
+    SPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'SPT'))),
+    APPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'APPT'))),
+    RPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'RPT'))),
+  }
   }, [visibleTherapists, showFTEFilter, staffOverrides])
 
   const visiblePCAsSorted = useMemo(() => {
@@ -489,6 +491,16 @@ export function StaffPool({
             )}
             style={{ direction: 'ltr' }}
           >
+          {snapshotNotice ? (
+            <div className="sticky top-0 z-20 -mt-1">
+              <div className="px-1 pt-1 pb-1 bg-background/95 backdrop-blur">
+                <div className="flex w-full items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-950 leading-snug whitespace-normal box-border">
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 text-amber-700 flex-shrink-0" />
+                  <span className="break-words">{snapshotNotice}</span>
+                </div>
+              </div>
+            </div>
+          ) : null}
           {rankFilter !== 'pca' ? (
             <Card>
               <CardHeader className="pb-1 pt-2">
