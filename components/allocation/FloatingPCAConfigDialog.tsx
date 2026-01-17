@@ -802,9 +802,9 @@ export function FloatingPCAConfigDialog({
   const renderStep31 = () => (
     <>
       <DialogDescription>
-        Set the processing order for the floating PCA algorithm (drag within tie-breaker groups).
+        Set the floating PCA processing order: drag <GripVertical className="inline h-3 w-3 mx-0.5" /> within the colored tie-breaker groups.
         <span className="mt-1 block text-sm">
-          Most days: keep the numbers as-is and only adjust order when ties look unfair.
+          Usually: keep the numbers as-is and only adjust order when ties feel unfair.
         </span>
 
         <details className="mt-3 rounded-md border bg-muted/30 p-3">
@@ -911,14 +911,6 @@ export function FloatingPCAConfigDialog({
             </div>
           </SortableContext>
         </DndContext>
-        
-        {/* Legend */}
-        {tieGroups.length > 0 && (
-          <div className="mt-4 text-center text-sm text-muted-foreground">
-            <p>Colored borders indicate tie-breaker groups. Drag <GripVertical className="inline h-3 w-3 mx-0.5" /> within a group to set priority order.</p>
-            <p className="mt-1 font-bold">This order would set the final team order the floating PCA algorithm would process.</p>
-          </div>
-        )}
       </div>
       
       <DialogFooter className="flex justify-between">
