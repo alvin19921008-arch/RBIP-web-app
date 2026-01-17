@@ -5093,11 +5093,20 @@ function SchedulePageContent() {
         // This ensures the algorithm computes based on fresh state, not from previous Step 3 runs
         
         // 1. Clear floating PCA allocations from pcaAllocations (keep non-floating PCA from Step 2)
-        // IMPORTANT: Preserve floating PCA allocations that have special_program_ids (from Step 2)
+        // IMPORTANT: Preserve:
+        // - floating PCA allocations that have special_program_ids (from Step 2)
+        // - Step 2.1 substitution floating allocations
+        // - buffer floating PCA allocations that were manually assigned by user before running Step 3
         // Calculate cleaned allocations FIRST (before state update) so we can use it for pending FTE calculation
         const cleanedPcaAllocations: Record<Team, (PCAAllocation & { staff: Staff })[]> = {
           FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
         }
+
+        const bufferFloatingPCAIds = new Set(
+          [...staff, ...bufferStaff]
+            .filter(s => s.rank === 'PCA' && s.floating && s.status === 'buffer')
+            .map(s => s.id)
+        )
         
         TEAMS.forEach(team => {
           // Keep:
@@ -5105,11 +5114,16 @@ function SchedulePageContent() {
           // 2. Floating PCA allocations with special_program_ids (from Step 2 special program allocation)
           // 3. Floating PCA allocations used as substitutions for non-floating missing slots (Step 2.1 / Step 2.0)
           const preservedAllocs = (pcaAllocations[team] || []).filter(alloc => {
-            const staffMember = staff.find(s => s.id === alloc.staff_id)
+            const staffMember =
+              staff.find(s => s.id === alloc.staff_id) ??
+              bufferStaff.find(s => s.id === alloc.staff_id)
             if (!staffMember) return false
             
             // Keep non-floating PCAs
             if (!staffMember.floating) return true
+
+            // Preserve buffer floating PCA manual assignments (Step 3.0 user actions)
+            if (bufferFloatingPCAIds.has(staffMember.id)) return true
             
             // Keep floating PCAs that have special_program_ids (allocated to special programs in Step 2)
             if (alloc.special_program_ids && alloc.special_program_ids.length > 0) {
@@ -5134,6 +5148,7 @@ function SchedulePageContent() {
         setPcaAllocations(cleanedPcaAllocations)
         
         // 2. Clear slotOverrides for floating PCAs from staffOverrides (preserve Step 1 & 2 data)
+        //    BUT preserve buffer floating PCA manual slot overrides so Step 3.0 detection doesn't wipe them.
         setStaffOverrides(prev => {
           const cleaned = { ...prev }
           
@@ -5147,6 +5162,21 @@ function SchedulePageContent() {
           // Clear slotOverrides for floating PCAs, but preserve other override data (leaveType, fteRemaining, substitutionFor, etc.)
           floatingPCAIds.forEach(pcaId => {
             if (cleaned[pcaId]) {
+              const staffMember =
+                staff.find(s => s.id === pcaId) ??
+                bufferStaff.find(s => s.id === pcaId)
+              if (staffMember && bufferFloatingPCAIds.has(pcaId)) {
+                const o: any = cleaned[pcaId]
+                const manual = o.bufferManualSlotOverrides ?? o.slotOverrides
+                if (manual) {
+                  cleaned[pcaId] = {
+                    ...o,
+                    bufferManualSlotOverrides: manual,
+                    slotOverrides: manual,
+                  }
+                }
+                return
+              }
               const { slotOverrides, ...otherOverrides } = cleaned[pcaId]
               // CRITICAL: Preserve substitutionFor - it's needed for Step 3.2 to exclude substitution slots
               // Always keep the override if it has substitutionFor, even if no other properties
@@ -5168,15 +5198,10 @@ function SchedulePageContent() {
           FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
         }
         
-        // Calculate buffer floating PCA slots assigned per team
-        // Note: After reset, buffer floating PCA allocations should also be cleared
-        // But we check the current state before reset for buffer PCA that might have been manually assigned
+        // Calculate buffer floating PCA slots assigned per team (manual assignments)
         const bufferFloatingPCAFTEPerTeam: Record<Team, number> = {
           FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
         }
-        
-        // After reset, pcaAllocations no longer has floating PCAs, so buffer floating PCA count will be 0
-        // This is correct - buffer floating PCA should be re-assigned by the algorithm
         
         // Calculate assigned PCA per team from CLEANED allocations (not state)
         // - nonFloatingPCAAssignedPerTeam: only non-floating PCAs
@@ -5190,7 +5215,9 @@ function SchedulePageContent() {
         
         Object.entries(cleanedPcaAllocations).forEach(([team, allocs]) => {
           allocs.forEach(alloc => {
-            const staffMember = staff.find(s => s.id === alloc.staff_id)
+            const staffMember =
+              staff.find(s => s.id === alloc.staff_id) ??
+              bufferStaff.find(s => s.id === alloc.staff_id)
             if (!staffMember) return
             
             let slotsInTeam = 0
@@ -5211,6 +5238,11 @@ function SchedulePageContent() {
             // Add FTE contribution (0.25 per slot)
             if (!staffMember.floating) {
               nonFloatingPCAAssignedPerTeam[team as Team] += slotsInTeam * 0.25
+              return
+            }
+
+            if (bufferFloatingPCAIds.has(staffMember.id)) {
+              bufferFloatingPCAFTEPerTeam[team as Team] += slotsInTeam * 0.25
               return
             }
 
@@ -5236,8 +5268,7 @@ function SchedulePageContent() {
           // Get preserved floating PCA assigned (special programs + non-floating substitutions)
           const preservedFloatingAssigned = preservedFloatingAssignedPerTeam[team] || 0
           
-          // Get buffer floating PCA slots assigned (manually assigned in Step 3)
-          // After reset, this will be 0, which is correct
+          // Get buffer floating PCA slots assigned (manually assigned by user before Step 3.1)
           const bufferFloatingFTE = bufferFloatingPCAFTEPerTeam[team] || 0
           
           // Calculate pending: displayedAvg - nonFloating - preservedFloating - bufferFloating (subtract FIRST, then round)

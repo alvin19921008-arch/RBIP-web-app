@@ -304,8 +304,8 @@ export function BufferStaffCreateDialog({
           </div>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="flex flex-col min-h-0">
-          <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-4">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1 space-y-4">
           {typeof minRequiredFTE === 'number' && minRequiredFTE > 0 && (
             <div className="p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
               <p className="font-medium mb-1">Special program requirement</p>
