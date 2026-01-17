@@ -9,6 +9,8 @@ import { Button } from '@/components/ui/button'
 import { RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { useToast } from '@/components/ui/toast-provider'
+import { useAutoHideFlag } from '@/lib/hooks/useAutoHideFlag'
+import { useIsolatedWheelScroll } from '@/lib/hooks/useIsolatedWheelScroll'
 
 type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
 
@@ -127,49 +129,16 @@ export function PCADedicatedScheduleTable({
   const toast = useToast()
   const [refreshKey, setRefreshKey] = useState(0)
   const scrollRef = useRef<HTMLDivElement | null>(null)
-  const [controlsVisible, setControlsVisible] = useState(false)
-  const hideControlsTimerRef = useRef<number | null>(null)
+  const { visible: controlsVisible, poke: pokeControls, hideNow: hideControlsNow } = useAutoHideFlag({
+    hideAfterMs: 3000,
+  })
 
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-
-    const onWheelNative = (ev: WheelEvent) => {
-      const hasOverflow = el.scrollWidth > el.clientWidth + 1
-      if (!hasOverflow) return
-
-      // Convert wheel vertical -> horizontal, and block page scroll.
-      ev.preventDefault()
-      ev.stopPropagation()
-
-      const delta = Math.abs(ev.deltaY) > Math.abs(ev.deltaX) ? ev.deltaY : ev.deltaX
-      el.scrollLeft += delta
-    }
-
-    el.addEventListener('wheel', onWheelNative, { passive: false })
-
-    return () => {
-      el.removeEventListener('wheel', onWheelNative as EventListener)
-    }
-  }, [])
-
-  useEffect(() => {
-    return () => {
-      if (hideControlsTimerRef.current) window.clearTimeout(hideControlsTimerRef.current)
-    }
-  }, [])
-
-  const pokeControls = useCallback(() => {
-    setControlsVisible(true)
-    if (hideControlsTimerRef.current) window.clearTimeout(hideControlsTimerRef.current)
-    hideControlsTimerRef.current = window.setTimeout(() => setControlsVisible(false), 3000)
-  }, [])
-
-  const hideControlsNow = useCallback(() => {
-    if (hideControlsTimerRef.current) window.clearTimeout(hideControlsTimerRef.current)
-    hideControlsTimerRef.current = null
-    setControlsVisible(false)
-  }, [])
+  useIsolatedWheelScroll(scrollRef, {
+    enabled: true,
+    mode: 'horizontal',
+    horizontalUsesDominantDelta: true,
+    onlyWhenOverflowing: true,
+  })
 
   const stage = useMemo(() => getFurthestPCAStage(stepStatus, initializedSteps), [stepStatus, initializedSteps])
 

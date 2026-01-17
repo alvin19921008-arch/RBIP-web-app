@@ -1,9 +1,9 @@
 import { useEffect, type RefObject } from 'react'
 
-type AnyRef<T> = RefObject<T | null>
+type AnyElRef = RefObject<HTMLElement | null>
 
-export function useOnClickOutside<T extends HTMLElement>(
-  refs: AnyRef<T> | Array<AnyRef<T>>,
+export function useOnClickOutside(
+  refs: AnyElRef | AnyElRef[],
   onOutside: (event: MouseEvent | PointerEvent) => void,
   opts?: {
     enabled?: boolean

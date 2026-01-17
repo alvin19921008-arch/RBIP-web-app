@@ -1,7 +1,8 @@
 'use client'
 
-import { Fragment, memo, type RefObject } from 'react'
+import { Fragment, memo, useRef, type RefObject } from 'react'
 import { CalendarGrid } from '@/components/ui/calendar-grid'
+import { useAnchoredPopoverPosition } from '@/lib/hooks/useAnchoredPopoverPosition'
 
 export const ScheduleCalendarPopover = memo(function ScheduleCalendarPopover(props: {
   open: boolean
@@ -14,6 +15,17 @@ export const ScheduleCalendarPopover = memo(function ScheduleCalendarPopover(pro
   popoverRef?: RefObject<HTMLDivElement | null>
 }) {
   const { open, selectedDate, datesWithData, holidays, onClose, onDateSelect, anchorRef, popoverRef } = props
+  const internalPopoverRef = useRef<HTMLDivElement | null>(null)
+  const effectivePopoverRef = popoverRef ?? internalPopoverRef
+
+  const pos = useAnchoredPopoverPosition({
+    open,
+    anchorRef,
+    popoverRef: effectivePopoverRef,
+    placement: 'bottom-start',
+    offset: 8,
+    pad: 8,
+  })
 
   if (!open) return null
 
@@ -24,14 +36,9 @@ export const ScheduleCalendarPopover = memo(function ScheduleCalendarPopover(pro
 
       {/* Calendar popover */}
       <div
-        ref={popoverRef}
+        ref={effectivePopoverRef}
         className="fixed z-50 bg-background border border-border rounded-lg shadow-lg"
-        style={{
-          top: anchorRef.current ? anchorRef.current.getBoundingClientRect().bottom + 8 : 0,
-          left: anchorRef.current
-            ? Math.max(8, Math.min(anchorRef.current.getBoundingClientRect().left, window.innerWidth - 320))
-            : 0,
-        }}
+        style={pos ? { left: pos.left, top: pos.top } : undefined}
       >
         <CalendarGrid selectedDate={selectedDate} onDateSelect={onDateSelect} datesWithData={datesWithData} holidays={holidays} />
       </div>

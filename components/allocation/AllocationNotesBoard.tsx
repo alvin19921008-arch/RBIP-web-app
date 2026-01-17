@@ -10,6 +10,8 @@ import Underline from '@tiptap/extension-underline'
 import { TextStyle } from '@tiptap/extension-text-style'
 import Color from '@tiptap/extension-color'
 import Highlight from '@tiptap/extension-highlight'
+import { useAnchoredPopoverPosition } from '@/lib/hooks/useAnchoredPopoverPosition'
+import { useOnClickOutside } from '@/lib/hooks/useOnClickOutside'
 
 type NotesDoc = unknown
 
@@ -63,42 +65,15 @@ function SwatchPopover({
   const [open, setOpen] = React.useState(false)
   const anchorRef = React.useRef<HTMLButtonElement | null>(null)
   const popRef = React.useRef<HTMLDivElement | null>(null)
-  const [pos, setPos] = React.useState<{ left: number; top: number } | null>(null)
-
-  React.useLayoutEffect(() => {
-    if (!open) return
-    const anchor = anchorRef.current
-    const pop = popRef.current
-    if (!anchor || !pop) return
-
-    const rect = anchor.getBoundingClientRect()
-    const popRect = pop.getBoundingClientRect()
-    const padding = 8
-
-    let left = rect.left
-    let top = rect.bottom + padding
-
-    // Clamp within viewport
-    const maxLeft = window.innerWidth - popRect.width - 8
-    left = Math.max(8, Math.min(left, maxLeft))
-
-    const maxTop = window.innerHeight - popRect.height - 8
-    top = Math.max(8, Math.min(top, maxTop))
-
-    setPos({ left, top })
-  }, [open])
-
-  React.useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node
-      if (anchorRef.current?.contains(t)) return
-      if (popRef.current?.contains(t)) return
-      setOpen(false)
-    }
-    window.addEventListener('mousedown', onDown)
-    return () => window.removeEventListener('mousedown', onDown)
-  }, [open])
+  const pos = useAnchoredPopoverPosition({
+    open,
+    anchorRef,
+    popoverRef: popRef,
+    placement: 'bottom-start',
+    offset: 8,
+    pad: 8,
+  })
+  useOnClickOutside([anchorRef, popRef], () => setOpen(false), { enabled: open, event: 'pointerdown' })
 
   return (
     <div className="relative">

@@ -11,6 +11,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { ChevronRight, ChevronDown, ChevronLeft, ChevronUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useAutoHideFlag } from '@/lib/hooks/useAutoHideFlag'
+import { useIsolatedWheelScroll } from '@/lib/hooks/useIsolatedWheelScroll'
 
 interface StaffPoolProps {
   therapists: Staff[]
@@ -47,8 +49,9 @@ export function StaffPool({
 }: StaffPoolProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
-  const [scrollbarVisible, setScrollbarVisible] = useState(false)
-  const hideScrollbarTimerRef = useRef<number | null>(null)
+  const { visible: scrollbarVisible, poke: pokeScrollbar, hideNow: hideScrollbarNow } = useAutoHideFlag({
+    hideAfterMs: 3000,
+  })
   const [canScrollUp, setCanScrollUp] = useState(false)
   const [canScrollDown, setCanScrollDown] = useState(false)
   const [expandedRanks, setExpandedRanks] = useState<Record<string, boolean>>({
@@ -79,34 +82,12 @@ export function StaffPool({
     setCanScrollDown(nextDown)
   }, [])
 
-  useEffect(() => {
-    if (!isExpanded) return
-    const el = scrollRef.current
-    if (!el) return
-
-    const onWheelNative = (ev: WheelEvent) => {
-      const hasOverflow = el.scrollHeight > el.clientHeight + 1
-      if (!hasOverflow) return
-
-      // Isolate scroll to Staff Pool (block page scroll).
-      ev.preventDefault()
-      ev.stopPropagation()
-
-      el.scrollTop += ev.deltaY
-      updateScrollHints()
-    }
-
-    el.addEventListener('wheel', onWheelNative, { passive: false })
-    return () => {
-      el.removeEventListener('wheel', onWheelNative as EventListener)
-    }
-  }, [isExpanded, updateScrollHints])
-
-  useEffect(() => {
-    return () => {
-      if (hideScrollbarTimerRef.current) window.clearTimeout(hideScrollbarTimerRef.current)
-    }
-  }, [])
+  useIsolatedWheelScroll(scrollRef, {
+    enabled: isExpanded,
+    mode: 'vertical',
+    onlyWhenOverflowing: true,
+    onApplied: updateScrollHints,
+  })
 
   const assignedSlotsByStaffId = useMemo(() => {
     const map = new Map<string, Set<number>>()
@@ -128,17 +109,7 @@ export function StaffPool({
     return map
   }, [pcaAllocations])
 
-  const pokeScrollbar = useCallback(() => {
-    setScrollbarVisible(true)
-    if (hideScrollbarTimerRef.current) window.clearTimeout(hideScrollbarTimerRef.current)
-    hideScrollbarTimerRef.current = window.setTimeout(() => setScrollbarVisible(false), 3000)
-  }, [])
-
-  const hideScrollbarNow = useCallback(() => {
-    if (hideScrollbarTimerRef.current) window.clearTimeout(hideScrollbarTimerRef.current)
-    hideScrollbarTimerRef.current = null
-    setScrollbarVisible(false)
-  }, [])
+  // pokeScrollbar/hideScrollbarNow are provided by useAutoHideFlag
 
   // Keep scroll hint buttons in sync (can scroll up/down).
   useEffect(() => {
