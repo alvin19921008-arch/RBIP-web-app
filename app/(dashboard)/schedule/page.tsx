@@ -263,6 +263,8 @@ function SchedulePageContent() {
     // Step 2.0: special program overrides
     specialProgramOverrides?: SpecialProgramOverrideEntry[]
     slotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null };
+    // Step 3: Manual buffer floating PCA assignments (persist across Step 3 resets)
+    bufferManualSlotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null };
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
     // Therapist per-team split/merge overrides (ad hoc fallback)
     therapistTeamFTEByTeam?: Partial<Record<Team, number>>
@@ -296,6 +298,7 @@ function SchedulePageContent() {
     // Step 2.0: special program overrides
     specialProgramOverrides?: SpecialProgramOverrideEntry[]
     slotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null };
+    bufferManualSlotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null };
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
     therapistTeamFTEByTeam?: Partial<Record<Team, number>>
     therapistNoAllocation?: boolean
@@ -5472,13 +5475,40 @@ function SchedulePageContent() {
   }
 
   const clearStep3AllocationsPreserveStep2 = () => {
-    // Remove floating PCA allocations except: (a) special program allocations from Step 2, (b) Step 2.1 substitutions.
+    // Preserve manual buffer floating PCA assignments (Step 3.0 user actions) across Step 3 reset.
+    const bufferFloatingIds = new Set(
+      staff.filter(s => s.rank === 'PCA' && s.floating && s.status === 'buffer').map(s => s.id)
+    )
+    const step3AlreadyRun = initializedSteps.has('floating-pca') || stepStatus['floating-pca'] === 'completed'
+    const getManualBufferSlots = (staffId: string) => {
+      const o: any = staffOverrides?.[staffId]
+      if (!o) return null
+      if (o.bufferManualSlotOverrides) return o.bufferManualSlotOverrides as any
+      // Back-compat: before Step 3 has run, treat slotOverrides as manual for buffer PCA.
+      if (!step3AlreadyRun && o.slotOverrides) return o.slotOverrides as any
+      return null
+    }
+
+    // Remove floating PCA allocations except: (a) special program allocations from Step 2, (b) Step 2.1 substitutions,
+    // and (c) manual buffer floating PCA assignments.
     const cleanedPcaAllocations = createEmptyPCAAllocationsByTeam()
     TEAMS.forEach(team => {
       const preservedAllocs = (pcaAllocations[team] || []).filter(alloc => {
         const staffMember = staff.find(s => s.id === alloc.staff_id)
         if (!staffMember) return false
         if (!staffMember.floating) return true
+        // Preserve manual buffer floating PCA allocations (Step 3.0)
+        if (staffMember.status === 'buffer' && staffMember.rank === 'PCA') {
+          const manual = getManualBufferSlots(alloc.staff_id)
+          if (manual) {
+            const anyInThisTeam =
+              (manual.slot1 === team) ||
+              (manual.slot2 === team) ||
+              (manual.slot3 === team) ||
+              (manual.slot4 === team)
+            if (anyInThisTeam) return true
+          }
+        }
         if (alloc.special_program_ids && alloc.special_program_ids.length > 0) return true
         const sf = staffOverrides[alloc.staff_id]?.substitutionFor
         if (sf && sf.team === team) return true
@@ -5486,15 +5516,81 @@ function SchedulePageContent() {
       })
       cleanedPcaAllocations[team] = preservedAllocs
     })
+
+    // Ensure manual buffer allocations exist (even if the allocation objects were cleared elsewhere)
+    // by rebuilding from bufferManualSlotOverrides.
+    for (const staffId of bufferFloatingIds) {
+      const manual = getManualBufferSlots(staffId)
+      if (!manual) continue
+      const staffMember = staff.find(s => s.id === staffId)
+      if (!staffMember) continue
+
+      const slot1 = manual.slot1 ?? null
+      const slot2 = manual.slot2 ?? null
+      const slot3 = manual.slot3 ?? null
+      const slot4 = manual.slot4 ?? null
+      const teamsWithSlots = new Set<Team>()
+      if (slot1) teamsWithSlots.add(slot1)
+      if (slot2) teamsWithSlots.add(slot2)
+      if (slot3) teamsWithSlots.add(slot3)
+      if (slot4) teamsWithSlots.add(slot4)
+      if (teamsWithSlots.size === 0) continue
+
+      const bufferFTEraw = (staffMember as any).buffer_fte
+      const bufferFTE =
+        typeof bufferFTEraw === 'number' ? bufferFTEraw : bufferFTEraw != null ? parseFloat(String(bufferFTEraw)) : NaN
+      const capacityFTE = Number.isFinite(bufferFTE) ? bufferFTE : 1.0
+      const slotCount = [slot1, slot2, slot3, slot4].filter(Boolean).length
+
+      const baseAlloc: any = {
+        id: `manual-buffer:${formatDateForInput(selectedDate)}:${staffId}`,
+        schedule_id: currentScheduleId || '',
+        staff_id: staffId,
+        team: null,
+        fte_pca: capacityFTE,
+        fte_remaining: capacityFTE,
+        slot_assigned: slotCount * 0.25,
+        slot_whole: null,
+        slot1,
+        slot2,
+        slot3,
+        slot4,
+        leave_type: null,
+        special_program_ids: null,
+        invalid_slot: undefined,
+        leave_comeback_time: undefined,
+        leave_mode: undefined,
+        fte_subtraction: 0,
+        staff: staffMember,
+      }
+
+      for (const team of teamsWithSlots) {
+        // De-dupe by staffId + team
+        const existing = cleanedPcaAllocations[team].some(a => a.staff_id === staffId)
+        if (existing) continue
+        cleanedPcaAllocations[team] = [...cleanedPcaAllocations[team], { ...baseAlloc, team }]
+      }
+    }
     setPcaAllocations(cleanedPcaAllocations)
 
-    // Clear slotOverrides for floating PCAs (preserve Step 1 + Step 2 fields like substitutionFor).
+    // Clear slotOverrides for floating PCAs, but preserve manual buffer floating PCA slotOverrides.
     setStaffOverrides(prev => {
       const cleaned = { ...prev }
       const floatingPCAIds = new Set(staff.filter(s => s.rank === 'PCA' && s.floating).map(s => s.id))
       floatingPCAIds.forEach(pcaId => {
         if (!cleaned[pcaId]) return
+        const staffMember = staff.find(s => s.id === pcaId)
+        const manual = bufferFloatingIds.has(pcaId) ? getManualBufferSlots(pcaId) : null
+
         const { slotOverrides, ...otherOverrides } = cleaned[pcaId]
+        if (staffMember?.status === 'buffer' && staffMember.floating && manual) {
+          cleaned[pcaId] = {
+            ...otherOverrides,
+            bufferManualSlotOverrides: manual,
+            slotOverrides: manual,
+          }
+          return
+        }
         const hasSubstitutionFor = !!otherOverrides.substitutionFor
         const hasOtherKeys = Object.keys(otherOverrides).length > 0
         if (hasSubstitutionFor || hasOtherKeys) {
@@ -5510,6 +5606,7 @@ function SchedulePageContent() {
     const recalculatedPendingFTE: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
     const nonFloatingPCAAssignedPerTeam: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
     const preservedFloatingAssignedPerTeam: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
+    const bufferFloatingAssignedPerTeam: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
 
     Object.entries(cleanedPcaAllocations).forEach(([team, allocs]) => {
       allocs.forEach(alloc => {
@@ -5532,6 +5629,11 @@ function SchedulePageContent() {
           return
         }
 
+        if (staffMember.status === 'buffer') {
+          bufferFloatingAssignedPerTeam[team as Team] += slotsInTeam * 0.25
+          return
+        }
+
         const hasSpecial = Array.isArray(alloc.special_program_ids) && alloc.special_program_ids.length > 0
         const sf = staffOverrides[alloc.staff_id]?.substitutionFor
         const isSubForThisTeam = !!sf && sf.team === (team as Team)
@@ -5545,7 +5647,10 @@ function SchedulePageContent() {
       const displayedAvgPCA = calculations[team]?.average_pca_per_team || 0
       const rawPending = Math.max(
         0,
-        displayedAvgPCA - (nonFloatingPCAAssignedPerTeam[team] || 0) - (preservedFloatingAssignedPerTeam[team] || 0)
+        displayedAvgPCA -
+          (nonFloatingPCAAssignedPerTeam[team] || 0) -
+          (preservedFloatingAssignedPerTeam[team] || 0) -
+          (bufferFloatingAssignedPerTeam[team] || 0)
       )
       recalculatedPendingFTE[team] = roundToNearestQuarterWithMidpoint(rawPending)
     })
@@ -7637,12 +7742,23 @@ function SchedulePageContent() {
         slot3: slotsToDiscard.includes(3) ? null : (slotOverrides.slot3 ?? currentSlot3),
         slot4: slotsToDiscard.includes(4) ? null : (slotOverrides.slot4 ?? currentSlot4),
       }
+
+      const manual = (current as any).bufferManualSlotOverrides || {}
+      const updatedManualSlotOverrides = isBufferStaff
+        ? {
+            slot1: slotsToDiscard.includes(1) ? null : (manual.slot1 ?? updatedSlotOverrides.slot1 ?? null),
+            slot2: slotsToDiscard.includes(2) ? null : (manual.slot2 ?? updatedSlotOverrides.slot2 ?? null),
+            slot3: slotsToDiscard.includes(3) ? null : (manual.slot3 ?? updatedSlotOverrides.slot3 ?? null),
+            slot4: slotsToDiscard.includes(4) ? null : (manual.slot4 ?? updatedSlotOverrides.slot4 ?? null),
+          }
+        : undefined
       
       return {
         ...prev,
         [staffId]: {
           ...current,
           slotOverrides: updatedSlotOverrides,
+          ...(isBufferStaff ? { bufferManualSlotOverrides: updatedManualSlotOverrides } : {}),
         },
       }
     })
@@ -7713,6 +7829,12 @@ function SchedulePageContent() {
         [staffId]: {
           ...prev[staffId],
           slotOverrides: {
+            slot1: selectedSlots.includes(1) ? targetTeam : null,
+            slot2: selectedSlots.includes(2) ? targetTeam : null,
+            slot3: selectedSlots.includes(3) ? targetTeam : null,
+            slot4: selectedSlots.includes(4) ? targetTeam : null,
+          },
+          bufferManualSlotOverrides: {
             slot1: selectedSlots.includes(1) ? targetTeam : null,
             slot2: selectedSlots.includes(2) ? targetTeam : null,
             slot3: selectedSlots.includes(3) ? targetTeam : null,
@@ -7812,6 +7934,29 @@ function SchedulePageContent() {
             slot3: newSlot3,
             slot4: newSlot4,
           },
+          ...(isBufferStaff
+            ? {
+                bufferManualSlotOverrides: {
+                  ...(currentOverride as any).bufferManualSlotOverrides,
+                  slot1:
+                    selectedSlots.includes(1)
+                      ? targetTeam
+                      : (currentOverride as any).bufferManualSlotOverrides?.slot1 ?? existingAlloc?.slot1 ?? null,
+                  slot2:
+                    selectedSlots.includes(2)
+                      ? targetTeam
+                      : (currentOverride as any).bufferManualSlotOverrides?.slot2 ?? existingAlloc?.slot2 ?? null,
+                  slot3:
+                    selectedSlots.includes(3)
+                      ? targetTeam
+                      : (currentOverride as any).bufferManualSlotOverrides?.slot3 ?? existingAlloc?.slot3 ?? null,
+                  slot4:
+                    selectedSlots.includes(4)
+                      ? targetTeam
+                      : (currentOverride as any).bufferManualSlotOverrides?.slot4 ?? existingAlloc?.slot4 ?? null,
+                },
+              }
+            : {}),
           fteRemaining: currentOverride.fteRemaining ?? existingAlloc?.fte_pca ?? 1.0,
           leaveType: currentOverride.leaveType ?? existingAlloc?.leave_type ?? null,
         },
@@ -7939,6 +8084,17 @@ function SchedulePageContent() {
             slot3: newSlot3,
             slot4: newSlot4,
           },
+          ...(staffMember.status === 'buffer'
+            ? {
+                bufferManualSlotOverrides: {
+                  ...(currentOverride as any).bufferManualSlotOverrides,
+                  slot1: newSlot1,
+                  slot2: newSlot2,
+                  slot3: newSlot3,
+                  slot4: newSlot4,
+                },
+              }
+            : {}),
           // Preserve base capacity for display/logic (StaffPool trueFTE subtracts assigned slots)
           fteRemaining: currentOverride.fteRemaining ?? capacityFTE,
           leaveType: currentOverride.leaveType ?? existingAlloc?.leave_type ?? null,

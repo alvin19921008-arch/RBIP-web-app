@@ -163,7 +163,10 @@ export function FloatingPCAConfigDialog({
   const [currentMiniStep, setCurrentMiniStep] = useState<MiniStep>('3.0')
   
   // Step 3.0: Buffer PCA detection and confirmation
-  const [bufferPCAAssigned, setBufferPCAAssigned] = useState<Staff[]>([])
+  const [bufferPCAFullyAssigned, setBufferPCAFullyAssigned] = useState<Staff[]>([])
+  const [bufferPCAPartiallyAssigned, setBufferPCAPartiallyAssigned] = useState<Staff[]>([])
+  const [bufferPCAPendingToAssign, setBufferPCAPendingToAssign] = useState<Staff[]>([])
+  // Remaining capacity > 0 (includes partial + pending)
   const [bufferPCAUnassigned, setBufferPCAUnassigned] = useState<Staff[]>([])
   const [bufferPCAConfirmed, setBufferPCAConfirmed] = useState(false)
   
@@ -205,14 +208,16 @@ export function FloatingPCAConfigDialog({
   useEffect(() => {
     if (open && bufferStaff.length > 0) {
       // Filter buffer staff to only PCA rank
-      const bufferPCAs = bufferStaff.filter(s => s.rank === 'PCA' && s.status === 'buffer')
+      const bufferPCAs = bufferStaff.filter(s => s.rank === 'PCA' && s.status === 'buffer' && s.floating)
       
-      // Check which buffer PCAs have remaining capacity (need to be processed in Step 3)
-      const assigned: Staff[] = []
-      const unassigned: Staff[] = []
+      const fullyAssigned: Staff[] = []
+      const partiallyAssigned: Staff[] = []
+      const pendingToAssign: Staff[] = []
+      const unassigned: Staff[] = [] // remaining capacity > 0
       
       bufferPCAs.forEach(pca => {
         const baseFTE = pca.buffer_fte || 0
+        const totalSlots = Math.max(0, Math.min(4, Math.round(baseFTE / 0.25)))
         
         // Find all allocations for this buffer PCA
         const allocations = existingAllocations.filter(alloc => alloc.staff_id === pca.id)
@@ -232,17 +237,32 @@ export function FloatingPCAConfigDialog({
         // Calculate remaining FTE
         const assignedFTE = uniqueAssignedSlots.length * 0.25
         const remainingFTE = Math.max(0, baseFTE - assignedFTE)
+        const assignedCount = uniqueAssignedSlots.length
+        const remainingSlots = Math.max(0, totalSlots - assignedCount)
         
-        // If fully assigned (remaining FTE <= 0), mark as assigned
-        // Otherwise, mark as unassigned (will show in Step 3.0 with remaining FTE)
-        if (remainingFTE <= 0.001) {
-          assigned.push(pca)
-        } else {
-          unassigned.push(pca)
+        if (totalSlots === 0) return
+
+        // Fully assigned: no a/v slots remaining
+        if (remainingSlots === 0) {
+          fullyAssigned.push(pca)
+          return
         }
+
+        // Partially assigned: some slots assigned, some remaining
+        if (assignedCount > 0) {
+          partiallyAssigned.push(pca)
+          unassigned.push(pca)
+          return
+        }
+
+        // Pending to assign: nothing assigned yet
+        pendingToAssign.push(pca)
+        unassigned.push(pca)
       })
       
-      setBufferPCAAssigned(assigned)
+      setBufferPCAFullyAssigned(fullyAssigned)
+      setBufferPCAPartiallyAssigned(partiallyAssigned)
+      setBufferPCAPendingToAssign(pendingToAssign)
       setBufferPCAUnassigned(unassigned)
       
       // If all assigned (no remaining capacity) or none exist, proceed to 3.1
@@ -783,17 +803,42 @@ export function FloatingPCAConfigDialog({
       {/* Tick-to-do list (must be outside DialogDescription since it renders a <p>) */}
       <div className="mt-3 space-y-1.5 text-sm text-muted-foreground">
         {bufferStaff.some(s => s.rank === 'PCA' && s.status === 'buffer' && s.floating) && (
-          <div className="flex items-center gap-2">
-            {bufferPCAAssigned.length > 0 ? (
-              <div className="relative h-4 w-4 flex items-center justify-center">
-                <div className="absolute inset-0 bg-green-600 rounded-full" />
-                <Check className="h-3 w-3 relative text-white stroke-[3]" />
+          <>
+            {bufferPCAFullyAssigned.length > 0 && (
+              <div className="flex items-center gap-2">
+                <div className="relative h-4 w-4 flex items-center justify-center">
+                  <div className="absolute inset-0 bg-green-600 rounded-full" />
+                  <Check className="h-3 w-3 relative text-white stroke-[3]" />
+                </div>
+                <span>
+                  Buffer floating PCA fully assigned:{' '}
+                  {bufferPCAFullyAssigned.map(p => `${p.name}*`).join(', ')}
+                </span>
               </div>
-            ) : (
-              <Circle className="h-4 w-4 text-green-600 border-2 border-green-600 rounded-full" />
             )}
-            <span>Buffer floating PCA assigned</span>
-          </div>
+
+            {bufferPCAPartiallyAssigned.length > 0 && (
+              <div className="flex items-center gap-2">
+                <div className="relative h-4 w-4 rounded-full border-2 border-green-600 overflow-hidden">
+                  <div className="absolute left-0 top-0 h-full w-1/2 bg-green-600" />
+                </div>
+                <span>
+                  Buffer floating PCA partially assigned:{' '}
+                  {bufferPCAPartiallyAssigned.map(p => `${p.name}*`).join(', ')}
+                </span>
+              </div>
+            )}
+
+            {bufferPCAPendingToAssign.length > 0 && (
+              <div className="flex items-center gap-2">
+                <Circle className="h-4 w-4 text-green-600 border-2 border-green-600 rounded-full" />
+                <span>
+                  Buffer floating PCA pending to be assigned:{' '}
+                  {bufferPCAPendingToAssign.map(p => `${p.name}*`).join(', ')}
+                </span>
+              </div>
+            )}
+          </>
         )}
         {hasNonFloatingPCAAssigned && (
           <div className="flex items-center gap-2">

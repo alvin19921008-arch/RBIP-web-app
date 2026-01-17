@@ -290,7 +290,7 @@ export function BufferStaffCreateDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <div className="flex items-center justify-between">
             <DialogTitle>{isEditMode ? 'Edit Buffer Staff' : 'Create Buffer Staff'}</DialogTitle>
@@ -304,7 +304,8 @@ export function BufferStaffCreateDialog({
           </div>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="flex flex-col min-h-0">
+          <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-4">
           {typeof minRequiredFTE === 'number' && minRequiredFTE > 0 && (
             <div className="p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
               <p className="font-medium mb-1">Special program requirement</p>
@@ -514,6 +515,7 @@ export function BufferStaffCreateDialog({
             </div>
           )}
 
+          </div>
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
