@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
+import { clampFixedPositionToViewport } from '@/lib/utils/overlayPosition'
 
 type CursorTooltipProps = {
   open: boolean
@@ -38,17 +39,10 @@ export function CursorTooltip({
       if (!el) return
       const rect = el.getBoundingClientRect()
 
-      const pad = 8
       let left = clientX + offset.x
       let top = clientY + offset.y
-
-      // Clamp in viewport
-      const maxLeft = Math.max(pad, window.innerWidth - rect.width - pad)
-      const maxTop = Math.max(pad, window.innerHeight - rect.height - pad)
-      left = Math.min(Math.max(pad, left), maxLeft)
-      top = Math.min(Math.max(pad, top), maxTop)
-
-      setPos({ left, top })
+      const clamped = clampFixedPositionToViewport({ left, top, width: rect.width, height: rect.height, pad: 8 })
+      setPos(clamped)
     })
   }, [open, clientX, clientY, offset.x, offset.y])
 

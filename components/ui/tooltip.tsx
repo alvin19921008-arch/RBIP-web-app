@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
+import { clampFixedPositionToViewport } from '@/lib/utils/overlayPosition'
 
 interface TooltipProps {
   children: React.ReactNode
@@ -45,12 +46,8 @@ export function Tooltip({ children, content, side = 'right', className, wrapperC
       top = a.top + a.height / 2 - tip.height / 2
     }
 
-    const maxLeft = Math.max(pad, window.innerWidth - tip.width - pad)
-    const maxTop = Math.max(pad, window.innerHeight - tip.height - pad)
-    const clampedLeft = Math.min(Math.max(pad, left), maxLeft)
-    const clampedTop = Math.min(Math.max(pad, top), maxTop)
-
-    setPortalPos({ left: clampedLeft, top: clampedTop })
+    const clamped = clampFixedPositionToViewport({ left, top, width: tip.width, height: tip.height, pad })
+    setPortalPos(clamped)
   }, [side])
 
   React.useLayoutEffect(() => {

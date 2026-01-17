@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
+import { useOnClickOutside } from '@/lib/hooks/useOnClickOutside'
 import { CalendarDays, LayoutDashboard, History, UserCircle, LogOut, KeyRound, ChevronDown, UserRoundCog } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { ChangePasswordDialog } from '@/components/auth/ChangePasswordDialog'
@@ -66,17 +67,7 @@ export function Navbar() {
     }
   }, [supabase, profileRefreshKey])
 
-  useEffect(() => {
-    if (!menuOpen) return
-    const onMouseDown = (e: MouseEvent) => {
-      const el = menuRef.current
-      if (!el) return
-      if (el.contains(e.target as Node)) return
-      setMenuOpen(false)
-    }
-    document.addEventListener('mousedown', onMouseDown)
-    return () => document.removeEventListener('mousedown', onMouseDown)
-  }, [menuOpen])
+  useOnClickOutside(menuRef, () => setMenuOpen(false), { enabled: menuOpen, event: 'pointerdown' })
 
   return (
     <nav className="border-b bg-background">

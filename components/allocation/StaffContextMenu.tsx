@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { CursorTooltip } from '@/components/ui/cursor-tooltip'
+import { useOnClickOutside } from '@/lib/hooks/useOnClickOutside'
 
 export type StaffContextMenuItem = {
   key: string
@@ -32,19 +33,7 @@ export function StaffContextMenu({ open, position, items, onClose, className }: 
   const [disabledTooltipContent, setDisabledTooltipContent] = useState<React.ReactNode>(null)
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
 
-  useEffect(() => {
-    if (!isOpen) return
-
-    const onPointerDown = (e: PointerEvent) => {
-      const el = containerRef.current
-      if (!el) return
-      if (el.contains(e.target as Node)) return
-      onClose()
-    }
-
-    document.addEventListener('pointerdown', onPointerDown)
-    return () => document.removeEventListener('pointerdown', onPointerDown)
-  }, [isOpen, onClose])
+  useOnClickOutside(containerRef, onClose, { enabled: isOpen, event: 'pointerdown' })
 
   const renderedItems = useMemo(() => items, [items])
 
