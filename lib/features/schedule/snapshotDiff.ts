@@ -84,6 +84,9 @@ function toStr(v: unknown): string {
   }
 }
 
+const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri'] as const
+type WeekdayKey = (typeof WEEKDAYS)[number]
+
 function normStrArray(v: unknown): string {
   if (!Array.isArray(v)) return '∅'
   return v
@@ -109,6 +112,60 @@ function normIdArray(v: unknown): string {
     .slice()
     .sort()
     .join(', ')
+}
+
+function normNameArrayFromIds(ids: unknown, idToName: Map<string, string>): string {
+  if (!Array.isArray(ids)) return '∅'
+  const names = ids
+    .filter((x) => typeof x === 'string')
+    .map((id) => idToName.get(id as string) ?? (id as string))
+    .slice()
+    .sort((a, b) => a.localeCompare(b))
+  return names.length > 0 ? names.join(', ') : '∅'
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function summarizeWeekdaySlotsMap(value: unknown): string {
+  if (!isPlainObject(value)) return '∅'
+  const parts: string[] = []
+  for (const d of WEEKDAYS) {
+    const raw = (value as any)[d]
+    if (!Array.isArray(raw)) continue
+    const slots = raw.filter((x: any) => typeof x === 'number').slice().sort((a: number, b: number) => a - b)
+    if (slots.length === 0) continue
+    parts.push(`${d}:[${slots.join(',')}]`)
+  }
+  return parts.length > 0 ? parts.join(' ') : '∅'
+}
+
+function summarizeSpecialProgramSlots(value: unknown, idToName: Map<string, string>): string {
+  if (value == null) return '∅'
+  if (!isPlainObject(value)) return toStr(value)
+
+  // Weekday-keyed: { mon: [1,2], ... }
+  const hasAnyWeekdayKey = WEEKDAYS.some((d) => Object.prototype.hasOwnProperty.call(value, d))
+  if (hasAnyWeekdayKey) {
+    return summarizeWeekdaySlotsMap(value)
+  }
+
+  // Staff-keyed: { [staffId]: { mon: [1,2], ... }, ... }
+  const entries: Array<{ label: string; summary: string }> = []
+  for (const [staffId, map] of Object.entries(value)) {
+    if (!isPlainObject(map)) continue
+    const summary = summarizeWeekdaySlotsMap(map)
+    if (summary === '∅') continue
+    const label = idToName.get(staffId) ?? staffId
+    entries.push({ label, summary })
+  }
+
+  entries.sort((a, b) => a.label.localeCompare(b.label))
+  const shown = entries.slice(0, 5)
+  const rest = Math.max(0, entries.length - shown.length)
+  const rendered = shown.map((e) => `${e.label} ${e.summary}`).join('; ')
+  return rest > 0 ? `${rendered}; …and ${rest} more` : rendered || '∅'
 }
 
 function shallowDiff(fields: Array<{ key: string; label: string; a: unknown; b: unknown }>): FieldChange[] {
@@ -333,12 +390,12 @@ export function diffBaselineSnapshot(params: {
     const wA = normStrArray(snap.weekdays)
     const wB = normStrArray(live.weekdays)
     if (wA !== wB) changes.push({ field: 'weekdays', from: wA, to: wB })
-    const sA = normIdArray(snap.staff_ids)
-    const sB = normIdArray(live.staff_ids)
+    const sA = normNameArrayFromIds(snap.staff_ids, idToName)
+    const sB = normNameArrayFromIds(live.staff_ids, idToName)
     if (sA !== sB) changes.push({ field: 'staff_ids', from: sA, to: sB })
-    const slotsA = toStr(snap.slots)
-    const slotsB = toStr(live.slots)
-    if (slotsA !== slotsB) changes.push({ field: 'slots', from: 'changed', to: 'changed' })
+    const slotsA = summarizeSpecialProgramSlots(snap.slots, idToName)
+    const slotsB = summarizeSpecialProgramSlots(live.slots, idToName)
+    if (slotsA !== slotsB) changes.push({ field: 'slots', from: slotsA, to: slotsB })
     if (changes.length > 0) programsChanged.push({ id, name: live.name || snap.name || id, changes })
   })
   programsAdded.sort((a, b) => a.name.localeCompare(b.name))

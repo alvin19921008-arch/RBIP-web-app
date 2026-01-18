@@ -26,17 +26,107 @@ const scheduleCache = new Map<string, CachedScheduleData>()
 // Cache TTL: 5 minutes (300000 ms)
 const CACHE_TTL = 5 * 60 * 1000
 
+// Optional sessionStorage persistence to survive browser refresh.
+const PERSIST_PREFIX = 'rbip:scheduleCache:'
+const PERSIST_INDEX_KEY = `${PERSIST_PREFIX}__index`
+const PERSIST_MAX_ENTRIES = 8
+const PERSIST_MAX_BYTES = 1_500_000 // ~1.5MB per entry (avoid storage quota issues)
+
+function canUseSessionStorage(): boolean {
+  return typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined'
+}
+
+function persistKey(dateStr: string): string {
+  return `${PERSIST_PREFIX}${dateStr}`
+}
+
+function readPersistIndex(): string[] {
+  if (!canUseSessionStorage()) return []
+  try {
+    const raw = window.sessionStorage.getItem(PERSIST_INDEX_KEY)
+    if (!raw) return []
+    const arr = JSON.parse(raw)
+    return Array.isArray(arr) ? (arr.filter((x) => typeof x === 'string') as string[]) : []
+  } catch {
+    return []
+  }
+}
+
+function writePersistIndex(ids: string[]): void {
+  if (!canUseSessionStorage()) return
+  try {
+    window.sessionStorage.setItem(PERSIST_INDEX_KEY, JSON.stringify(ids))
+  } catch {
+    // ignore
+  }
+}
+
+function persistSchedule(dateStr: string, data: CachedScheduleData): void {
+  if (!canUseSessionStorage()) return
+  try {
+    const json = JSON.stringify(data)
+    if (json.length > PERSIST_MAX_BYTES) return
+    window.sessionStorage.setItem(persistKey(dateStr), json)
+
+    // Maintain LRU-ish index (most recent at end)
+    const idx = readPersistIndex().filter((d) => d !== dateStr)
+    idx.push(dateStr)
+    while (idx.length > PERSIST_MAX_ENTRIES) {
+      const evict = idx.shift()
+      if (evict) window.sessionStorage.removeItem(persistKey(evict))
+    }
+    writePersistIndex(idx)
+  } catch {
+    // ignore (quota / serialization issues)
+  }
+}
+
+function readPersistedSchedule(dateStr: string): CachedScheduleData | null {
+  if (!canUseSessionStorage()) return null
+  try {
+    const raw = window.sessionStorage.getItem(persistKey(dateStr))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as any
+    if (!parsed || typeof parsed !== 'object') return null
+    if (typeof parsed.scheduleId !== 'string') return null
+    if (typeof parsed.cachedAt !== 'number') return null
+    // validate TTL
+    const age = Date.now() - parsed.cachedAt
+    if (age > CACHE_TTL) {
+      window.sessionStorage.removeItem(persistKey(dateStr))
+      return null
+    }
+    return parsed as CachedScheduleData
+  } catch {
+    return null
+  }
+}
+
 /**
  * Get cached schedule data for a date
  */
 export function getCachedSchedule(dateStr: string): CachedScheduleData | null {
   const cached = scheduleCache.get(dateStr)
-  if (!cached) return null
+  if (!cached) {
+    // Fallback: sessionStorage persistence (survives refresh).
+    const persisted = readPersistedSchedule(dateStr)
+    if (!persisted) return null
+    // Rehydrate into memory cache for faster subsequent hits.
+    scheduleCache.set(dateStr, persisted)
+    return persisted
+  }
 
   // Check if cache is still valid
   const age = Date.now() - cached.cachedAt
   if (age > CACHE_TTL) {
     scheduleCache.delete(dateStr)
+    if (canUseSessionStorage()) {
+      try {
+        window.sessionStorage.removeItem(persistKey(dateStr))
+      } catch {
+        // ignore
+      }
+    }
     return null
   }
 
@@ -47,10 +137,12 @@ export function getCachedSchedule(dateStr: string): CachedScheduleData | null {
  * Cache schedule data for a date
  */
 export function cacheSchedule(dateStr: string, data: CachedScheduleData): void {
-  scheduleCache.set(dateStr, {
+  const stored = {
     ...data,
     cachedAt: Date.now(),
-  })
+  }
+  scheduleCache.set(dateStr, stored)
+  persistSchedule(dateStr, stored)
 }
 
 /**
@@ -58,6 +150,14 @@ export function cacheSchedule(dateStr: string, data: CachedScheduleData): void {
  */
 export function clearCachedSchedule(dateStr: string): void {
   scheduleCache.delete(dateStr)
+  if (!canUseSessionStorage()) return
+  try {
+    window.sessionStorage.removeItem(persistKey(dateStr))
+    const idx = readPersistIndex().filter((d) => d !== dateStr)
+    writePersistIndex(idx)
+  } catch {
+    // ignore
+  }
 }
 
 /**
@@ -65,6 +165,14 @@ export function clearCachedSchedule(dateStr: string): void {
  */
 export function clearAllCachedSchedules(): void {
   scheduleCache.clear()
+  if (!canUseSessionStorage()) return
+  try {
+    const idx = readPersistIndex()
+    idx.forEach((d) => window.sessionStorage.removeItem(persistKey(d)))
+    window.sessionStorage.removeItem(PERSIST_INDEX_KEY)
+  } catch {
+    // ignore
+  }
 }
 
 /**

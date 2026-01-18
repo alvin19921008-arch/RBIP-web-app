@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, Fragment, useCallback, Suspense, useMemo, type ReactNode } from 'react'
+import { useState, useEffect, useRef, Fragment, useCallback, Suspense, useMemo, Profiler, type ReactNode } from 'react'
 import { DndContext, DragOverlay, DragEndEvent, DragStartEvent, DragMoveEvent, Active } from '@dnd-kit/core'
 import { snapCenterToCursor } from '@dnd-kit/modifiers'
 import { Team, Weekday, LeaveType } from '@/types/staff'
@@ -48,7 +48,11 @@ import { TeamPickerPopover } from '@/components/allocation/TeamPickerPopover'
 import { ConfirmPopover } from '@/components/allocation/ConfirmPopover'
 import { ScheduleOverlays } from '@/components/schedule/ScheduleOverlays'
 import { ScheduleCalendarPopover } from '@/components/schedule/ScheduleCalendarPopover'
-import { Save, Calendar, MoreVertical, RefreshCw, RotateCcw, X, ArrowLeft, Copy, ChevronLeft, ChevronRight, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, AlertCircle } from 'lucide-react'
+import { SnapshotDiffPopover } from '@/components/schedule/SnapshotDiffPopover'
+import { ScheduleHeaderBar } from '@/components/schedule/ScheduleHeaderBar'
+import { ScheduleDialogsLayer } from '@/components/schedule/ScheduleDialogsLayer'
+import { ScheduleMainLayout } from '@/components/schedule/ScheduleMainLayout'
+import { Save, MoreVertical, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -120,7 +124,7 @@ import { useAllocationSync } from '@/lib/hooks/useAllocationSync'
 import { useActionToast } from '@/lib/hooks/useActionToast'
 import { useResizeObservedHeight } from '@/lib/hooks/useResizeObservedHeight'
 import { useScheduleDateParam } from '@/lib/hooks/useScheduleDateParam'
-import { computeStep3ResetForReentry, resetStep2OverridesForAlgoEntry } from '@/lib/features/schedule/stepReset'
+import { resetStep2OverridesForAlgoEntry } from '@/lib/features/schedule/stepReset'
 import { diffBaselineSnapshot, type SnapshotDiffResult } from '@/lib/features/schedule/snapshotDiff'
 import { useAnchoredPopoverPosition } from '@/lib/hooks/useAnchoredPopoverPosition'
 import { useOnClickOutside } from '@/lib/hooks/useOnClickOutside'
@@ -129,29 +133,12 @@ import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/l
 import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
 import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
 import { createTimingCollector, type TimingReport } from '@/lib/utils/timing'
-import { getCachedSchedule, cacheSchedule, clearCachedSchedule } from '@/lib/utils/scheduleCache'
+import { getCachedSchedule, cacheSchedule, clearCachedSchedule, getCacheSize } from '@/lib/utils/scheduleCache'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
+import { ALLOCATION_STEPS, DEFAULT_DATE, EMPTY_BED_ALLOCATIONS, TEAMS, WEEKDAYS, WEEKDAY_NAMES } from '@/lib/features/schedule/constants'
+import { useScheduleController } from '@/lib/features/schedule/controller/useScheduleController'
+import type { PCAAllocationErrors } from '@/lib/features/schedule/controller/useScheduleController'
 
-const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
-const WEEKDAYS: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri']
-const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-const EMPTY_BED_ALLOCATIONS: BedAllocation[] = []
-
-// Cache RPC availability to avoid repeated failing calls when migrations aren't applied yet.
-let cachedSaveScheduleRpcAvailable: boolean | null = null
-let cachedLoadScheduleRpcAvailable: boolean | null = null
-
-// Step definitions for step-wise allocation workflow
-const ALLOCATION_STEPS = [
-  { id: 'leave-fte', number: 1, title: 'Leave & FTE', description: 'Set staff leave types and FTE remaining' },
-  { id: 'therapist-pca', number: 2, title: 'Therapist & PCA', description: 'Generate therapist and non-floating PCA allocations' },
-  { id: 'floating-pca', number: 3, title: 'Floating PCA', description: 'Distribute floating PCAs to teams' },
-  { id: 'bed-relieving', number: 4, title: 'Bed Relieving', description: 'Calculate bed distribution' },
-  { id: 'review', number: 5, title: 'Review', description: 'Review and finalize schedule' },
-]
-
-// Default date: 1/12/2025 (Monday)
-const DEFAULT_DATE = new Date(2025, 11, 1) // Month is 0-indexed, so 11 = December
 
 function SchedulePageContent() {
   const router = useRouter()
@@ -164,34 +151,101 @@ function SchedulePageContent() {
   // Keep the Staff Pool column ending at the same bottom edge as the right content (incl. PCA dedicated table),
   // while keeping Staff Pool itself internally scrollable.
   const rightContentHeight = useResizeObservedHeight({ targetRef: rightContentRef })
-  const [selectedDate, setSelectedDate] = useState<Date>(DEFAULT_DATE)
+
+  const schedule = useScheduleController({ defaultDate: DEFAULT_DATE, supabase })
+  const { state: scheduleState, actions: scheduleActions } = schedule
+  const {
+    selectedDate,
+    therapistAllocations,
+    pcaAllocations,
+    bedAllocations,
+    calculations,
+    hasLoadedStoredCalculations,
+    isHydratingSchedule,
+    staff,
+    inactiveStaff,
+    bufferStaff,
+    specialPrograms,
+    sptAllocations,
+    wards,
+    pcaPreferences,
+    loading,
+    gridLoading,
+    deferBelowFold,
+    currentScheduleId,
+    staffOverrides,
+    savedOverrides,
+    saving,
+    scheduleLoadedForDate,
+    hasSavedAllocations,
+    bedCountsOverridesByTeam,
+    savedBedCountsOverridesByTeam,
+    bedRelievingNotesByToTeam,
+    savedBedRelievingNotesByToTeam,
+    allocationNotesDoc,
+    savedAllocationNotesDoc,
+    currentStep,
+    stepStatus,
+    initializedSteps,
+    pendingPCAFTEPerTeam,
+    persistedWorkflowState,
+    baselineSnapshot,
+    snapshotHealthReport,
+    step2Result,
+    pcaAllocationErrors,
+    tieBreakDecisions,
+  } = scheduleState
+  const {
+    beginDateTransition: controllerBeginDateTransition,
+    loadScheduleForDate,
+    loadAndHydrateDate,
+    runStep4BedRelieving,
+    goToStep,
+    goToNextStep,
+    goToPreviousStep,
+    _unsafe,
+  } = scheduleActions
+
+  // Remaining raw setters live behind an explicit escape hatch.
+  const {
+    setTherapistAllocations,
+    setPcaAllocations,
+    setBedAllocations,
+    setCalculations,
+    setHasLoadedStoredCalculations,
+    setIsHydratingSchedule,
+    setStaff,
+    setInactiveStaff,
+    setBufferStaff,
+    setSpecialPrograms,
+    setSptAllocations,
+    setWards,
+    setPcaPreferences,
+    setLoading,
+    setGridLoading,
+    setDeferBelowFold,
+    setCurrentScheduleId,
+    setStaffOverrides,
+    setSaving,
+    setHasSavedAllocations,
+    setBedCountsOverridesByTeam,
+    setBedRelievingNotesByToTeam,
+    setAllocationNotesDoc,
+    setSavedAllocationNotesDoc,
+    setStepStatus,
+    setInitializedSteps,
+    setPendingPCAFTEPerTeam,
+    setPersistedWorkflowState,
+    setBaselineSnapshot,
+    setSnapshotHealthReport,
+    setStep2Result,
+    setPcaAllocationErrors,
+    setTieBreakDecisions,
+  } = _unsafe
   const [activeDragStaffForOverlay, setActiveDragStaffForOverlay] = useState<Staff | null>(null)
   
-  useScheduleDateParam({ searchParams, selectedDate, setSelectedDate })
+  useScheduleDateParam({ searchParams, selectedDate, setSelectedDate: controllerBeginDateTransition })
   const [showBackButton, setShowBackButton] = useState(false)
-  const [therapistAllocations, setTherapistAllocations] = useState<Record<Team, (TherapistAllocation & { staff: Staff })[]>>({
-    FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
-  })
-  const [pcaAllocations, setPcaAllocations] = useState<Record<Team, (PCAAllocation & { staff: Staff })[]>>({
-    FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
-  })
-  const [bedAllocations, setBedAllocations] = useState<BedAllocation[]>([])
-  const [calculations, setCalculations] = useState<Record<Team, ScheduleCalculations | null>>({
-    FO: null, SMM: null, SFM: null, CPPC: null, MC: null, GMC: null, NSM: null, DRO: null
-  })
-  // Flag to track if we've loaded stored calculations (prevents useEffect from recalculating)
-  const [hasLoadedStoredCalculations, setHasLoadedStoredCalculations] = useState(false)
-  // Flag to prevent recalculation during initial hydration when stored calculations exist
-  const [isHydratingSchedule, setIsHydratingSchedule] = useState(false)
-  const [staff, setStaff] = useState<Staff[]>([])
-  const [inactiveStaff, setInactiveStaff] = useState<Staff[]>([])
-  const [bufferStaff, setBufferStaff] = useState<Staff[]>([])
-  const [specialPrograms, setSpecialPrograms] = useState<SpecialProgram[]>([])
-  const [sptAllocations, setSptAllocations] = useState<SPTAllocation[]>([])
-  const [wards, setWards] = useState<{ name: string; total_beds: number; team_assignments: Record<Team, number>; team_assignment_portions?: Record<Team, string> }[]>([])
-  const [pcaPreferences, setPcaPreferences] = useState<PCAPreference[]>([])
-  const [loading, setLoading] = useState(false)
-  const [gridLoading, setGridLoading] = useState(true)
   const gridLoadingUsesLocalBarRef = useRef(false)
   const [userRole, setUserRole] = useState<'developer' | 'admin' | 'user'>('user')
   const { actionToast, actionToastContainerRef, showActionToast, dismissActionToast, handleToastExited } = useActionToast()
@@ -201,6 +255,70 @@ function SchedulePageContent() {
   const [lastSaveTiming, setLastSaveTiming] = useState<TimingReport | null>(null)
   const [lastCopyTiming, setLastCopyTiming] = useState<TimingReport | null>(null)
   const [lastLoadTiming, setLastLoadTiming] = useState<TimingReport | null>(null)
+  const perfStatsRef = useRef<
+    Record<
+      string,
+      {
+        commits: number
+        totalActualMs: number
+        maxActualMs: number
+        lastActualMs: number
+        lastPhase: 'mount' | 'update' | 'nested-update'
+        lastCommitAtMs: number
+      }
+    >
+  >({})
+  const lastPerfTickAtRef = useRef(0)
+  const [perfTick, setPerfTick] = useState(0)
+
+  const onPerfRender = useCallback(
+    (
+      id: string,
+      phase: 'mount' | 'update' | 'nested-update',
+      actualDuration: number,
+      _baseDuration: number,
+      _startTime: number,
+      commitTime: number
+    ) => {
+      if (userRole !== 'developer') return
+      const current = perfStatsRef.current[id] ?? {
+        commits: 0,
+        totalActualMs: 0,
+        maxActualMs: 0,
+        lastActualMs: 0,
+        lastPhase: 'mount' as const,
+        lastCommitAtMs: 0,
+      }
+      current.commits += 1
+      current.totalActualMs += actualDuration
+      current.maxActualMs = Math.max(current.maxActualMs, actualDuration)
+      current.lastActualMs = actualDuration
+      current.lastPhase = phase
+      current.lastCommitAtMs = commitTime
+      perfStatsRef.current[id] = current
+
+      const now =
+        typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now()
+      if (now - lastPerfTickAtRef.current > 750) {
+        lastPerfTickAtRef.current = now
+        setPerfTick((t) => t + 1)
+      }
+    },
+    [userRole]
+  )
+
+  const MaybeProfiler = useCallback(
+    ({ id, children }: { id: string; children: ReactNode }) => {
+      // Profiler adds overhead; keep it developer-only.
+      if (userRole !== 'developer') return <>{children}</>
+      return (
+        <Profiler id={id} onRender={onPerfRender}>
+          {children}
+        </Profiler>
+      )
+    },
+    [onPerfRender, userRole]
+  )
   const [navToScheduleTiming, setNavToScheduleTiming] = useState<{
     targetHref: string
     startMs: number
@@ -225,7 +343,7 @@ function SchedulePageContent() {
   useEffect(() => {
     tieBreakResolverRef.current = tieBreakResolver
   }, [tieBreakResolver])
-  const [tieBreakDecisions, setTieBreakDecisions] = useState<Record<string, Team>>({}) // Store tie-breaker decisions: key = `${teams.sort().join(',')}:${pendingFTE}`, value = selected team
+  // tieBreakDecisions moved into useScheduleController() (domain state)
 
   // NOTE: Team grid used to have an internal horizontal scroller with a synced sticky header scroller.
   // That caused a mismatch where the grid could scroll horizontally while the StepIndicator / top area did not,
@@ -241,95 +359,11 @@ function SchedulePageContent() {
     drmAddOn?: number
   }
 
-  // Store staff leave/FTE overrides for the current date
-  const [staffOverrides, setStaffOverrides] = useState<Record<string, {
-    leaveType: LeaveType | null;
-    fteRemaining: number;
-    team?: Team;
-    fteSubtraction?: number;
-    availableSlots?: number[];
-    // Backward-compatible leave/come-back fields (used by PCA allocation algorithm + DB columns)
-    invalidSlot?: number;
-    leaveComebackTime?: string;
-    isLeave?: boolean;
-    // NEW: Invalid slots with time ranges
-    invalidSlots?: Array<{
-      slot: number  // 1, 2, 3, or 4
-      timeRange: {
-        start: string  // "1030" (HHMM format)
-        end: string    // "1100" (HHMM format)
-      }
-    }>
-    // NEW: Therapist AM/PM selection
-    amPmSelection?: 'AM' | 'PM'  // Only when fteRemaining = 0.5 or 0.25
-    // NEW: Therapist special program availability
-    specialProgramAvailable?: boolean  // Only for therapists with special_program (not DRO)
-    // Step 2.0: special program overrides
-    specialProgramOverrides?: SpecialProgramOverrideEntry[]
-    slotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null };
-    // Step 3: Manual buffer floating PCA assignments (persist across Step 3 resets)
-    bufferManualSlotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null };
-    substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
-    // Therapist per-team split/merge overrides (ad hoc fallback)
-    therapistTeamFTEByTeam?: Partial<Record<Team, number>>
-    therapistNoAllocation?: boolean
-    // Staff card fill color (schedule grid only)
-    cardColorByTeam?: Partial<Record<Team, string>>
-  }>>({})
-  const [currentScheduleId, setCurrentScheduleId] = useState<string | null>(null)
-  const [savedOverrides, setSavedOverrides] = useState<Record<string, {
-    leaveType: LeaveType | null;
-    fteRemaining: number;
-    team?: Team;
-    fteSubtraction?: number;
-    availableSlots?: number[];
-    // Backward-compatible leave/come-back fields (used by PCA allocation algorithm + DB columns)
-    invalidSlot?: number;
-    leaveComebackTime?: string;
-    isLeave?: boolean;
-    // NEW: Invalid slots with time ranges
-    invalidSlots?: Array<{
-      slot: number  // 1, 2, 3, or 4
-      timeRange: {
-        start: string  // "1030" (HHMM format)
-        end: string    // "1100" (HHMM format)
-      }
-    }>
-    // NEW: Therapist AM/PM selection
-    amPmSelection?: 'AM' | 'PM'  // Only when fteRemaining = 0.5 or 0.25
-    // NEW: Therapist special program availability
-    specialProgramAvailable?: boolean  // Only for therapists with special_program (not DRO)
-    // Step 2.0: special program overrides
-    specialProgramOverrides?: SpecialProgramOverrideEntry[]
-    slotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null };
-    bufferManualSlotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null };
-    substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
-    therapistTeamFTEByTeam?: Partial<Record<Team, number>>
-    therapistNoAllocation?: boolean
-    cardColorByTeam?: Partial<Record<Team, string>>
-  }>>({})
-  const [saving, setSaving] = useState(false)
-  const [scheduleLoadedForDate, setScheduleLoadedForDate] = useState<string | null>(null) // Track which date's schedule is loaded
-  const [hasSavedAllocations, setHasSavedAllocations] = useState(false) // Track if we loaded allocations from DB (to skip regeneration)
-  type BedCountsOverridesByTeam = Partial<Record<Team, BedCountsOverrideState>>
-  const [bedCountsOverridesByTeam, setBedCountsOverridesByTeam] = useState<BedCountsOverridesByTeam>({})
-  const [savedBedCountsOverridesByTeam, setSavedBedCountsOverridesByTeam] = useState<BedCountsOverridesByTeam>({})
-  type BedRelievingNotesState = BedRelievingNotesByToTeam
-  const [bedRelievingNotesByToTeam, setBedRelievingNotesByToTeam] = useState<BedRelievingNotesState>({})
-  const [savedBedRelievingNotesByToTeam, setSavedBedRelievingNotesByToTeam] = useState<BedRelievingNotesState>({})
-  const [allocationNotesDoc, setAllocationNotesDoc] = useState<any>(null)
-  const [savedAllocationNotesDoc, setSavedAllocationNotesDoc] = useState<any>(null)
+  // Domain state moved into useScheduleController() (Stage 2 / Option A).
   const [editingBedTeam, setEditingBedTeam] = useState<Team | null>(null)
   const saveBedRelievingNotesForToTeam = useCallback(
     (toTeam: Team, notes: Partial<Record<Team, BedRelievingNoteRow[]>>) => {
-      setBedRelievingNotesByToTeam(prev => ({
-        ...(prev as any),
-        [toTeam]: notes,
-      }))
-      setStepStatus(prev => ({
-        ...prev,
-        'bed-relieving': 'modified',
-      }))
+      scheduleActions.updateBedRelievingNotes({ toTeam, notes: notes as any })
     },
     []
   )
@@ -381,9 +415,6 @@ function SchedulePageContent() {
     },
     [currentScheduleId, selectedDate, supabase]
   )
-  const [pendingPCAFTEPerTeam, setPendingPCAFTEPerTeam] = useState<Record<Team, number>>({
-    FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
-  })
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [datesWithData, setDatesWithData] = useState<Set<string>>(new Set())
   const [datesWithDataLoading, setDatesWithDataLoading] = useState(false)
@@ -401,38 +432,10 @@ function SchedulePageContent() {
     direction: 'to' | 'from'
   } | null>(null)
   const [copyWizardOpen, setCopyWizardOpen] = useState(false)
-  // Step-wise allocation workflow state
-  const [currentStep, setCurrentStep] = useState<string>('leave-fte')
-  const [stepStatus, setStepStatus] = useState<Record<string, 'pending' | 'completed' | 'modified'>>({
-    'leave-fte': 'pending',
-    'therapist-pca': 'pending',
-    'floating-pca': 'pending',
-    'bed-relieving': 'pending',
-    'review': 'pending',
-  })
-  // Persisted workflow state from database (daily_schedules.workflow_state)
-  const [persistedWorkflowState, setPersistedWorkflowState] = useState<WorkflowState | null>(null)
-  // Baseline snapshot for this schedule date (daily_schedules.baseline_snapshot)
-  const [baselineSnapshot, setBaselineSnapshot] = useState<BaselineSnapshot | null>(null)
-  // Runtime-only snapshot health report (for admin dev panel)
-  const [snapshotHealthReport, setSnapshotHealthReport] = useState<SnapshotHealthReport | null>(null)
-  // Intermediate state for step-wise allocation (passed between steps)
-  const [step2Result, setStep2Result] = useState<{
-    pcaData: PCAData[]
-    teamPCAAssigned: Record<Team, number>
-    nonFloatingAllocations: PCAAllocation[]
-    rawAveragePCAPerTeam: Record<Team, number>
-  } | null>(null)
-  // PCA allocation errors (for display in step indicator)
-  const [pcaAllocationErrors, setPcaAllocationErrors] = useState<{
-    missingSlotSubstitution?: string
-    specialProgramAllocation?: string
-    preferredSlotUnassigned?: string  // Step 3.4: preferred slots that couldn't be assigned
-  }>({})
+  // Step-wise allocation workflow domain state moved into useScheduleController().
   // Dropdown menu state for dev/testing options
   const [showDevMenu, setShowDevMenu] = useState(false)
-  // Track which steps have been initialized
-  const [initializedSteps, setInitializedSteps] = useState<Set<string>>(new Set())
+  // Track which steps have been initialized (domain; moved into useScheduleController()).
   
   // Step 3.1: Floating PCA Configuration Dialog state
   const [floatingPCAConfigOpen, setFloatingPCAConfigOpen] = useState(false)
@@ -526,7 +529,6 @@ function SchedulePageContent() {
         setStaffOverrides(cleanedOverrides)
 
         await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides)
-        setInitializedSteps(prev => new Set(prev).add('therapist-pca'))
       } catch (e) {
         console.error('Error running Step 2 after inactive->buffer promotion:', e)
       } finally {
@@ -1198,265 +1200,63 @@ function SchedulePageContent() {
   }, [navToScheduleTiming])
 
 
-  // Load schedule when date changes (cold start should NOT require preloading base tables).
+  // Load + hydrate schedule when date changes (domain logic is in controller).
   useEffect(() => {
     let cancelled = false
 
-    // Use local date components to avoid timezone issues
     const year = selectedDate.getFullYear()
     const month = String(selectedDate.getMonth() + 1).padStart(2, '0')
     const day = String(selectedDate.getDate()).padStart(2, '0')
     const dateStr = `${year}-${month}-${day}`
-
     if (scheduleLoadedForDate === dateStr) return
 
-    setIsHydratingSchedule(true)
-    setHasSavedAllocations(false)
-
-    const timer = createTimingCollector()
+    const controller = new AbortController()
 
     ;(async () => {
-      let result: any = await loadScheduleForDate(selectedDate)
-      timer.stage('loadScheduleForDate')
-      if (cancelled) return
-      let resultAny = result as any
-
-      // Fallback for legacy schedules without baseline_snapshot: load base tables once, then retry.
-      const snapshotStaff0: any[] = (resultAny?.baselineSnapshot?.staff || []) as any[]
-      const needsBaseDataFallback =
-        !resultAny?.meta?.baselineSnapshotUsed &&
-        snapshotStaff0.length === 0 &&
-        staff.length === 0 &&
-        (Array.isArray(resultAny?.therapistAllocs) || Array.isArray(resultAny?.pcaAllocs))
-
-      if (needsBaseDataFallback) {
-        await loadAllData()
-        timer.stage('loadAllDataFallback')
-        result = await loadScheduleForDate(selectedDate)
-        timer.stage('retryLoadScheduleForDate')
-        if (cancelled) return
-        resultAny = result as any
-      }
-
-      if (!resultAny) {
-        setScheduleLoadedForDate(dateStr)
-        setLastLoadTiming(timer.finalize({ dateStr, result: 'null' }))
-        return
-      }
-
-      const loadedWorkflowState: WorkflowState | null = (resultAny?.workflowState ?? null) as any
-      if (loadedWorkflowState && typeof loadedWorkflowState === 'object') {
-        if (loadedWorkflowState.currentStep) {
-          setCurrentStep(loadedWorkflowState.currentStep)
-        }
-        if (Array.isArray(loadedWorkflowState.completedSteps)) {
-          const baseStatus: Record<string, 'pending' | 'completed' | 'modified'> = {
-            'leave-fte': 'pending',
-            'therapist-pca': 'pending',
-            'floating-pca': 'pending',
-            'bed-relieving': 'pending',
-            review: 'pending',
-          }
-          loadedWorkflowState.completedSteps.forEach((stepId: string) => {
-            if (baseStatus[stepId]) baseStatus[stepId] = 'completed'
-          })
-          setStepStatus(baseStatus)
-        }
-      }
-      timer.stage('applyWorkflowState')
-
-      // Prefer stored calculations if available to avoid recalculation on load.
-      if (resultAny?.calculations) {
-        setCalculations(resultAny.calculations)
-        setHasLoadedStoredCalculations(true)
-      } else {
-        setHasLoadedStoredCalculations(false)
-      }
-      timer.stage('applyStoredCalculations')
-
-      const snapshotStaff: any[] = (resultAny?.baselineSnapshot?.staff || []) as any[]
-      const staffFromSnapshot: Staff[] =
-        snapshotStaff.length > 0
-          ? snapshotStaff
-              .map((raw: any) => ({ ...(raw as any), status: (raw as any).status ?? 'active' } as Staff))
-              .filter((s: any) => s.status !== 'inactive')
-          : staff
-
-      const hasLeaveData = resultAny.overrides && Object.keys(resultAny.overrides).length > 0
-      const hasTherapistData = resultAny.therapistAllocs && resultAny.therapistAllocs.length > 0
-      const hasPCAData = resultAny.pcaAllocs && resultAny.pcaAllocs.length > 0
-      const hasBedData = resultAny.bedAllocs && resultAny.bedAllocs.length > 0
-
-      if (hasPCAData) {
-        // Saved schedule: use saved allocations directly (no algorithm regen).
-        applySavedAllocations(resultAny.therapistAllocs, resultAny.pcaAllocs, resultAny.overrides, staffFromSnapshot)
-        timer.stage('applySavedAllocations')
-
-        setInitializedSteps(
-          new Set<string>([
-            'therapist-pca',
-            'floating-pca',
-            ...(hasBedData ? ['bed-relieving'] : []),
-          ])
-        )
-
-        if (!resultAny.calculations) {
-          // Defer recalculation to a microtask so state updates flush first (no setTimeout).
-          queueMicrotask(() => {
-            recalculateScheduleCalculations()
-          })
-        }
-
-        const workflowState: WorkflowState | null = resultAny.workflowState ?? persistedWorkflowState
-        let newStepStatus: Record<string, 'pending' | 'completed' | 'modified'> = {
-          'leave-fte': hasLeaveData ? 'completed' : 'pending',
-          'therapist-pca': hasTherapistData ? 'completed' : 'pending',
-          'floating-pca': hasPCAData ? 'completed' : 'pending',
-          'bed-relieving': hasBedData ? 'completed' : 'pending',
-          review: 'pending',
-        }
-
-        if (workflowState && Array.isArray(workflowState.completedSteps)) {
-          workflowState.completedSteps.forEach(stepId => {
-            if (newStepStatus[stepId]) newStepStatus[stepId] = 'completed'
-          })
-          if (workflowState.currentStep) {
-            setCurrentStep(workflowState.currentStep)
-          }
-        } else if (hasLeaveData && hasTherapistData && hasPCAData) {
-          // Legacy fallback: infer completion from data presence.
-          setCurrentStep('review')
-          newStepStatus = { ...newStepStatus, review: 'completed' }
-        }
-
-        setStepStatus(newStepStatus)
-      } else if (resultAny && resultAny.overrides) {
-        // No saved allocations: step-wise baseline view (Step 1), no auto-run algos.
-        const overrides = (resultAny as any).overrides || {}
-
-        const baselineTherapistByTeam: Record<Team, (TherapistAllocation & { staff: Staff })[]> = {
-          FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
-        }
-        staffFromSnapshot.forEach(s => {
-          if (!s.team) return
-          if (!['SPT', 'APPT', 'RPT'].includes(s.rank)) return
-          const o = overrides[s.id]
-          const fte = typeof o?.fteRemaining === 'number' ? o.fteRemaining : 1.0
-          if (fte <= 0) return
-          baselineTherapistByTeam[s.team as Team].push({
-            id: `baseline-therapist:${dateStr}:${s.id}:${s.team}`,
-            schedule_id: '',
-            staff_id: s.id,
-            team: s.team as Team,
-            fte_therapist: fte,
-            fte_remaining: Math.max(0, 1.0 - fte),
-            slot_whole: null,
-            slot1: null,
-            slot2: null,
-            slot3: null,
-            slot4: null,
-            leave_type: (o?.leaveType ?? null) as any,
-            special_program_ids: null,
-            is_substitute_team_head: false,
-            spt_slot_display: null,
-            is_manual_override: false,
-            manual_override_note: null,
-            staff: s,
-          } as any)
-        })
-        setTherapistAllocations(baselineTherapistByTeam)
-
-        const baselinePCAByTeam: Record<Team, (PCAAllocation & { staff: Staff })[]> = {
-          FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
-        }
-        staffFromSnapshot.forEach(s => {
-          if (!s.team) return
-          if (s.rank !== 'PCA') return
-          if (s.floating) return
-          const o = overrides[s.id]
-          const baseFTE = s.status === 'buffer' && s.buffer_fte != null ? (s.buffer_fte as any) : 1.0
-          const fte = typeof o?.fteRemaining === 'number' ? o.fteRemaining : baseFTE
-          if (fte <= 0) return
-          baselinePCAByTeam[s.team as Team].push({
-            id: `baseline-pca:${dateStr}:${s.id}:${s.team}`,
-            schedule_id: '',
-            staff_id: s.id,
-            team: s.team as Team,
-            fte_pca: fte,
-            fte_remaining: fte,
-            slot_assigned: 0,
-            slot_whole: null,
-            slot1: null,
-            slot2: null,
-            slot3: null,
-            slot4: null,
-            leave_type: (o?.leaveType ?? null) as any,
-            special_program_ids: null,
-            invalid_slot: null,
-            leave_comeback_time: null,
-            leave_mode: null,
-            staff: s,
-          } as any)
-        })
-        TEAMS.forEach(team => {
-          baselinePCAByTeam[team].sort((a, b) => (a.staff?.name ?? '').localeCompare(b.staff?.name ?? ''))
-        })
-        setPcaAllocations(baselinePCAByTeam)
-        setPendingPCAFTEPerTeam({ FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 })
-        setBedAllocations([])
-        setInitializedSteps(new Set())
-
-        const ws: WorkflowState =
-          loadedWorkflowState && typeof loadedWorkflowState === 'object'
-            ? loadedWorkflowState
-            : { currentStep: 'leave-fte', completedSteps: [] }
-        setCurrentStep(ws.currentStep ?? 'leave-fte')
-        const nextStatus: Record<string, 'pending' | 'completed' | 'modified'> = {
-          'leave-fte': 'pending',
-          'therapist-pca': 'pending',
-          'floating-pca': 'pending',
-          'bed-relieving': 'pending',
-          review: 'pending',
-        }
-        if (Array.isArray(ws.completedSteps)) {
-          ws.completedSteps.forEach(stepId => {
-            if (nextStatus[stepId]) nextStatus[stepId] = 'completed'
-          })
-        }
-        setStepStatus(nextStatus)
-        timer.stage('baselineView')
-      } else {
-        // No overrides and no saved allocations: keep everything empty.
-        setTherapistAllocations({ FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: [] })
-        setPcaAllocations({ FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: [] })
-        setBedAllocations([])
-        setPendingPCAFTEPerTeam({ FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 })
-        setInitializedSteps(new Set())
-      }
-
-      // Mark loaded only after load-driven state updates were applied.
-      setScheduleLoadedForDate(dateStr)
-      setLastLoadTiming(
-        timer.finalize({
-          dateStr,
-          rpcUsed: !!resultAny?.meta?.rpcUsed,
-          batchedQueriesUsed: !!resultAny?.meta?.batchedQueriesUsed,
-          baselineSnapshotUsed: !!resultAny?.meta?.baselineSnapshotUsed,
-          calculationsSource: resultAny?.meta?.calculationsSource,
-          counts: resultAny?.meta?.counts,
-          snapshotBytes: resultAny?.meta?.snapshotBytes,
-        })
-      )
+      const report = await loadAndHydrateDate({
+        date: selectedDate,
+        signal: controller.signal,
+        loadAllDataFallback: loadAllData,
+        recalculateScheduleCalculations,
+      })
+      if (cancelled || controller.signal.aborted) return
+      if (report) setLastLoadTiming(report)
     })().catch((e) => {
       console.error('Error loading schedule:', e)
-      setLastLoadTiming(timer.finalize({ dateStr, error: (e as any)?.message || String(e) }))
+      if (cancelled) return
+      setLastLoadTiming(
+        createTimingCollector().finalize({
+          dateStr,
+          error: (e as any)?.message || String(e),
+        })
+      )
     })
 
     return () => {
       cancelled = true
+      controller.abort()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDate, scheduleLoadedForDate]) // Do not depend on base-table preload for cold starts
+  }, [selectedDate, scheduleLoadedForDate])
+
+  // Once the grid is ready (and skeleton is gone), render below-the-fold heavy components when the browser is idle.
+  useEffect(() => {
+    if (gridLoading) return
+    if (!deferBelowFold) return
+    const w = window as any
+    let cancelled = false
+    const run = () => {
+      if (cancelled) return
+      setDeferBelowFold(false)
+    }
+    const handle =
+      typeof w.requestIdleCallback === 'function' ? w.requestIdleCallback(run, { timeout: 750 }) : window.setTimeout(run, 150)
+    return () => {
+      cancelled = true
+      if (typeof w.cancelIdleCallback === 'function') w.cancelIdleCallback(handle)
+      else window.clearTimeout(handle)
+    }
+  }, [deferBelowFold, gridLoading])
 
   // End hydration AFTER the load-driven state updates flush to the screen.
   // This ensures downstream hooks (e.g., useAllocationSync TRIGGER2) can reliably see isHydratingSchedule=true
@@ -1693,88 +1493,7 @@ function SchedulePageContent() {
     }
   }, [])
 
-  const applyBaselineSnapshot = (snapshot: BaselineSnapshot) => {
-    setBaselineSnapshot(snapshot)
-
-    // Derive staff pools from snapshot staff list
-    if (snapshot.staff && Array.isArray(snapshot.staff)) {
-      const activeStaff: Staff[] = []
-      const inactiveStaffList: Staff[] = []
-      const bufferStaffList: Staff[] = []
-
-      snapshot.staff.forEach((raw: any) => {
-        const status = (raw.status as any) ?? 'active'
-        const staffMember: Staff = {
-          ...raw,
-          status,
-        }
-        if (status === 'buffer') {
-          bufferStaffList.push(staffMember)
-        } else if (status === 'inactive') {
-          inactiveStaffList.push(staffMember)
-        } else {
-          activeStaff.push(staffMember)
-        }
-      })
-
-      // Main staff array used for allocations: active + buffer (matches loadStaff behavior)
-      setStaff([...activeStaff, ...bufferStaffList])
-      setInactiveStaff(inactiveStaffList)
-      setBufferStaff(bufferStaffList)
-    }
-
-    if (snapshot.specialPrograms) {
-      setSpecialPrograms(snapshot.specialPrograms as any)
-    }
-    if (snapshot.sptAllocations) {
-      setSptAllocations(snapshot.sptAllocations as any)
-    }
-    if (snapshot.wards) {
-      setWards(
-        snapshot.wards.map((ward: any) => ({
-          name: ward.name,
-          total_beds: ward.total_beds,
-          team_assignments: ward.team_assignments || {},
-          team_assignment_portions: ward.team_assignment_portions || {},
-        }))
-      )
-    }
-    if (snapshot.pcaPreferences) {
-      setPcaPreferences(snapshot.pcaPreferences as any)
-    }
-  }
-
-  const buildBaselineSnapshotFromCurrentState = (): BaselineSnapshot => {
-    // Include all staff pools (active + buffer + inactive) and dedupe by id
-    const all = [...staff, ...inactiveStaff, ...bufferStaff]
-    const byId = new Map<string, any>()
-    all.forEach(s => {
-      if (!s?.id) return
-      const status = (s as any).status ?? (bufferStaff.some(b => b.id === s.id) ? 'buffer' : 'active')
-      // Snapshot should be a minimal projection to reduce JSONB size.
-      // (DB rows may contain extra metadata fields we don't need in the schedule snapshot.)
-      byId.set(s.id, {
-        ...(byId.get(s.id) || {}),
-        id: s.id,
-        name: s.name,
-        rank: s.rank,
-        team: s.team ?? null,
-        floating: !!s.floating,
-        floor_pca: s.floor_pca ?? null,
-        special_program: s.special_program ?? null,
-        status,
-        buffer_fte: (s as any).buffer_fte ?? (s as any).bufferFte ?? undefined,
-      })
-    })
-
-    return {
-      staff: Array.from(byId.values()) as any,
-      specialPrograms: minifySpecialProgramsForSnapshot(specialPrograms) as any,
-      sptAllocations: sptAllocations as any,
-      wards: wards as any,
-      pcaPreferences: pcaPreferences as any,
-    }
-  }
+  // applyBaselineSnapshot/buildBaselineSnapshotFromCurrentState moved into useScheduleController()
 
   const loadAllData = async () => {
     setLoading(true)
@@ -1920,653 +1639,7 @@ function SchedulePageContent() {
     }
   }
 
-  // Load schedule for date and restore saved overrides / metadata
-  const loadScheduleForDate = async (date: Date): Promise<{
-    scheduleId: string
-    overrides: Record<string, {
-      leaveType: LeaveType | null
-      fteRemaining: number
-      fteSubtraction?: number
-      availableSlots?: number[]
-      invalidSlot?: number
-      leaveComebackTime?: string
-      isLeave?: boolean
-    }>
-    pcaAllocs: any[]
-    therapistAllocs: any[]
-    bedAllocs: any[]
-    baselineSnapshot?: BaselineSnapshot | null
-    workflowState?: WorkflowState | null
-    calculations?: Record<Team, ScheduleCalculations | null> | null
-    meta?: {
-      rpcUsed: boolean
-      batchedQueriesUsed: boolean
-      baselineSnapshotUsed: boolean
-      calculationsSource: 'schedule_calculations' | 'snapshot.calculatedValues' | 'none'
-      counts: {
-        therapistAllocs: number
-        pcaAllocs: number
-        bedAllocs: number
-        calculationsRows: number
-      }
-      snapshotBytes?: number | null
-    }
-  } | null> => {
-    // Use local date components to avoid timezone issues
-    const year = date.getFullYear()
-    const month = String(date.getMonth() + 1).padStart(2, '0')
-    const day = String(date.getDate()).padStart(2, '0')
-    const dateStr = `${year}-${month}-${day}`
-    
-    // Check cache first (for fast navigation)
-    const cached = getCachedSchedule(dateStr)
-    if (cached) {
-      console.log(`[ScheduleCache] Using cached data for ${dateStr}`)
-      setCurrentScheduleId(cached.scheduleId)
-      if (cached.baselineSnapshot) {
-        applyBaselineSnapshot(cached.baselineSnapshot)
-      }
-      if (cached.workflowState) {
-        setPersistedWorkflowState(cached.workflowState)
-      }
-      if (cached.calculations) {
-        setCalculations(cached.calculations)
-        setHasLoadedStoredCalculations(true) // Mark that we've loaded stored calculations
-      }
-      if (cached.tieBreakDecisions) {
-        setTieBreakDecisions(cached.tieBreakDecisions as any)
-      } else {
-        setTieBreakDecisions({})
-      }
-      setStaffOverrides(cached.overrides || {})
-      setSavedOverrides(cached.overrides || {})
-      setBedCountsOverridesByTeam((cached as any).bedCountsOverridesByTeam || {})
-      setSavedBedCountsOverridesByTeam((cached as any).bedCountsOverridesByTeam || {})
-      setBedRelievingNotesByToTeam((cached as any).bedRelievingNotesByToTeam || {})
-      setSavedBedRelievingNotesByToTeam((cached as any).bedRelievingNotesByToTeam || {})
-      setAllocationNotesDoc((cached as any).allocationNotesDoc ?? null)
-      setSavedAllocationNotesDoc((cached as any).allocationNotesDoc ?? null)
-      setBedAllocations((cached.bedAllocs || []) as any)
-      return {
-        scheduleId: cached.scheduleId,
-        overrides: cached.overrides,
-        pcaAllocs: cached.pcaAllocs,
-        therapistAllocs: cached.therapistAllocs,
-        bedAllocs: cached.bedAllocs || [],
-        baselineSnapshot: cached.baselineSnapshot,
-        workflowState: cached.workflowState,
-        calculations: cached.calculations,
-        meta: {
-          rpcUsed: false,
-          batchedQueriesUsed: false,
-          baselineSnapshotUsed: !!cached.baselineSnapshot,
-          calculationsSource: cached.calculations ? 'schedule_calculations' : 'none',
-          counts: {
-            therapistAllocs: (cached.therapistAllocs || []).length,
-            pcaAllocs: (cached.pcaAllocs || []).length,
-            bedAllocs: (cached.bedAllocs || []).length,
-            calculationsRows: cached.calculations
-              ? Object.keys(cached.calculations).filter(k => (cached.calculations as any)[k]).length
-              : 0,
-          },
-          snapshotBytes: null,
-        },
-      }
-    }
-    let rpcUsed = false
-    let batchedQueriesUsed = false
-    let rpcBundle: any | null = null
-
-    if (cachedLoadScheduleRpcAvailable !== false) {
-      const rpcAttempt = await supabase.rpc('load_schedule_v1', { p_date: dateStr })
-      if (!rpcAttempt.error) {
-        cachedLoadScheduleRpcAvailable = true
-        rpcBundle = rpcAttempt.data as any
-        if ((rpcBundle as any)?.schedule?.id) {
-          rpcUsed = true
-        }
-      } else {
-        const code = (rpcAttempt.error as any)?.code
-        const msg = (rpcAttempt.error as any)?.message || ''
-        const isMissingFn =
-          code === 'PGRST202' ||
-          (msg.includes('load_schedule_v1') &&
-            (msg.includes('schema cache') || msg.includes('Could not find') || msg.includes('not found')))
-        if (isMissingFn) {
-          cachedLoadScheduleRpcAvailable = false
-        }
-      }
-    }
-
-    // Get or create schedule for this date
-    // First try with extended columns (including JSONB metadata), fall back to minimal selection if columns don't exist
-    let scheduleData: any = rpcUsed ? (rpcBundle as any).schedule : null
-    let queryError: any = null
-    let createdSeededStaffOverrides: Record<string, any> | null = null
-
-    if (!scheduleData) {
-      const initialResult = (await supabase
-        .from('daily_schedules')
-        .select('id, is_tentative, tie_break_decisions, baseline_snapshot, staff_overrides, workflow_state')
-        .eq('date', dateStr)
-        .maybeSingle()) as any
-
-      scheduleData = initialResult.data as any
-      queryError = initialResult.error
-
-      // If query failed due to missing columns (older schema), retry with minimal selection
-      if (queryError && queryError.message?.includes('column')) {
-        const fallbackResult = await supabase
-          .from('daily_schedules')
-          .select('id, is_tentative')
-          .eq('date', dateStr)
-          .maybeSingle()
-        scheduleData = fallbackResult.data as { id: string; is_tentative: boolean } | null
-        queryError = (fallbackResult as any).error
-      }
-    }
-    
-    let scheduleId: string
-    let effectiveWorkflowState: WorkflowState | null = null
-    if (!scheduleData) {
-      // Create new schedule if it doesn't exist
-      // Immediately snapshot current dashboard state for this new schedule to prevent cross-date contamination.
-      // If DB schema doesn't have the new columns yet (legacy), fall back to minimal insert.
-      const baselineSnapshotToSave = buildBaselineSnapshotFromCurrentState()
-      const baselineEnvelopeToSave = buildBaselineSnapshotEnvelope({
-        data: baselineSnapshotToSave,
-        source: 'save',
-      })
-      const initialWorkflowState: WorkflowState = { currentStep: 'leave-fte', completedSteps: [] }
-      effectiveWorkflowState = initialWorkflowState
-
-      // Seed schedule-level allocation notes from previous working day (if available).
-      let seededStaffOverrides: Record<string, any> = {}
-      try {
-        const prevDate = getPreviousWorkingDay(date)
-        const py = prevDate.getFullYear()
-        const pm = String(prevDate.getMonth() + 1).padStart(2, '0')
-        const pd = String(prevDate.getDate()).padStart(2, '0')
-        const prevDateStr = `${py}-${pm}-${pd}`
-
-        const prevRes = await supabase
-          .from('daily_schedules')
-          .select('staff_overrides')
-          .eq('date', prevDateStr)
-          .maybeSingle()
-
-        // If legacy schema doesn't have staff_overrides, ignore.
-        if (!(prevRes as any)?.error) {
-          const prevOverrides = (prevRes as any)?.data?.staff_overrides as any
-          const prevNotes = prevOverrides?.__allocationNotes
-          if (prevNotes && typeof prevNotes === 'object') {
-            seededStaffOverrides = { __allocationNotes: prevNotes }
-          }
-        }
-      } catch {
-        // ignore (seed is best-effort)
-      }
-
-      let newSchedule: { id: string } | null = null
-      let error: any = null
-
-      const attempt = await supabase
-        .from('daily_schedules')
-        .insert({
-          date: dateStr,
-          is_tentative: true,
-          baseline_snapshot: baselineEnvelopeToSave as any,
-          staff_overrides: seededStaffOverrides as any,
-          workflow_state: initialWorkflowState as any,
-        })
-        .select('id')
-        .single()
-
-      newSchedule = attempt.data
-      error = attempt.error
-
-      if (error && error.message?.includes('column')) {
-        const fallback = await supabase
-          .from('daily_schedules')
-          .insert({ date: dateStr, is_tentative: true })
-          .select('id')
-          .single()
-        newSchedule = fallback.data
-        error = fallback.error
-      }
-
-      if (error) {
-        console.error('Error creating schedule:', error)
-        return null
-      }
-
-      scheduleId = newSchedule?.id || ''
-      createdSeededStaffOverrides = seededStaffOverrides
-
-      // Apply snapshot locally so UI uses it immediately
-      applyBaselineSnapshot(baselineSnapshotToSave)
-      setPersistedWorkflowState(initialWorkflowState)
-      const seededDoc = (seededStaffOverrides as any)?.__allocationNotes?.doc
-      setAllocationNotesDoc(seededDoc ?? null)
-      setSavedAllocationNotesDoc(seededDoc ?? null)
-    } else {
-      scheduleId = scheduleData.id
-      // Ensure schedule is tentative (required by RLS policy)
-      if (!rpcUsed && !scheduleData.is_tentative) {
-        const { error: updateError } = await supabase
-          .from('daily_schedules')
-          .update({ is_tentative: true })
-          .eq('id', scheduleId)
-        if (updateError) {
-          console.error('Error updating schedule to tentative:', updateError)
-          return null
-        }
-      }
-    }
-    
-    if (!scheduleId) {
-      return null
-    }
-    
-    setCurrentScheduleId(scheduleId)
-    
-    // Load tie-breaker decisions if they exist
-    if ((scheduleData as any)?.tie_break_decisions) {
-      setTieBreakDecisions((scheduleData as any).tie_break_decisions as Record<string, Team>)
-    } else {
-      setTieBreakDecisions({})
-    }
-    const tieBreakDecisionsForCache = ((scheduleData as any)?.tie_break_decisions || {}) as any
-
-    // Load and apply baseline snapshot if present (supports both legacy raw snapshot and v1 envelope)
-    const rawBaselineSnapshotStored = (scheduleData as any)?.baseline_snapshot as BaselineSnapshotStored | undefined
-    const hasBaselineSnapshot =
-      rawBaselineSnapshotStored &&
-      typeof rawBaselineSnapshotStored === 'object' &&
-      Object.keys(rawBaselineSnapshotStored as any).length > 0
-    if (hasBaselineSnapshot) {
-      const { data } = unwrapBaselineSnapshotStored(rawBaselineSnapshotStored)
-      applyBaselineSnapshot(data)
-    }
-
-    // Load workflow state if present (for newly created schedules we already set effectiveWorkflowState above)
-    const rawWorkflowState = (scheduleData as any)?.workflow_state as WorkflowState | undefined
-    if (!effectiveWorkflowState) {
-      if (rawWorkflowState && typeof rawWorkflowState === 'object') {
-        effectiveWorkflowState = rawWorkflowState
-      } else {
-        effectiveWorkflowState = { currentStep: 'leave-fte', completedSteps: [] }
-      }
-    }
-    setPersistedWorkflowState(effectiveWorkflowState)
-    
-    // OPTIMIZATION: Prefer one RPC round-trip if available; otherwise batch queries in parallel.
-    let therapistAllocs: any[] = []
-    let pcaAllocs: any[] = []
-    let bedAllocs: any[] = []
-    let scheduleCalcsRows: any[] = []
-
-    if (rpcUsed) {
-      therapistAllocs = ((rpcBundle as any)?.therapist_allocations as any[]) || []
-      pcaAllocs = ((rpcBundle as any)?.pca_allocations as any[]) || []
-      bedAllocs = ((rpcBundle as any)?.bed_allocations as any[]) || []
-      scheduleCalcsRows = ((rpcBundle as any)?.calculations as any[]) || []
-    } else {
-      batchedQueriesUsed = true
-      const [therapistResult, pcaResult, bedResult, calcsResult] = await Promise.all([
-        supabase.from('schedule_therapist_allocations').select('*').eq('schedule_id', scheduleId),
-        supabase.from('schedule_pca_allocations').select('*').eq('schedule_id', scheduleId),
-        supabase.from('schedule_bed_allocations').select('*').eq('schedule_id', scheduleId),
-        supabase.from('schedule_calculations').select('*').eq('schedule_id', scheduleId),
-      ])
-
-      therapistAllocs = (therapistResult as any).data || []
-      pcaAllocs = (pcaResult as any).data || []
-      bedAllocs = (bedResult as any).data || []
-      scheduleCalcsRows = ((calcsResult as any).data || []) as any[]
-    }
-
-    setBedAllocations((bedAllocs || []) as any)
-
-    // If this is a legacy/blank schedule with no snapshot yet, create snapshot once.
-    // Do NOT overwrite if the schedule already has a snapshot (e.g., created via copy API).
-    const existingSnapshot = (scheduleData as any)?.baseline_snapshot as BaselineSnapshotStored | undefined
-    const hasSnapshot =
-      existingSnapshot && typeof existingSnapshot === 'object' && Object.keys(existingSnapshot as any).length > 0
-    const hasAnyAllocations = (therapistAllocs?.length || 0) > 0 || (pcaAllocs?.length || 0) > 0
-    const persistedOverridesCandidate = (scheduleData as any)?.staff_overrides
-    const hasPersistedOverrides =
-      persistedOverridesCandidate &&
-      typeof persistedOverridesCandidate === 'object' &&
-      Object.keys(persistedOverridesCandidate as any).length > 0
-
-    if (!hasSnapshot && !hasAnyAllocations && !hasPersistedOverrides) {
-      const baselineSnapshotToSave = buildBaselineSnapshotFromCurrentState()
-      const baselineEnvelopeToSave = buildBaselineSnapshotEnvelope({
-        data: baselineSnapshotToSave,
-        source: 'save',
-      })
-      const initialWorkflowState: WorkflowState = { currentStep: 'leave-fte', completedSteps: [] }
-      const { error: snapshotError } = await supabase
-        .from('daily_schedules')
-        .update({
-          baseline_snapshot: baselineEnvelopeToSave as any,
-          workflow_state: (scheduleData as any)?.workflow_state || (initialWorkflowState as any),
-        })
-        .eq('id', scheduleId)
-      if (!snapshotError) {
-        applyBaselineSnapshot(baselineSnapshotToSave)
-        setPersistedWorkflowState((scheduleData as any)?.workflow_state || initialWorkflowState)
-      }
-    }
-    
-    
-    // Build overrides from saved allocations or use persisted staff_overrides if present
-    // Use centralized fromDbLeaveType from lib/db/types.ts for type conversion
-    const persistedOverrides = ((scheduleData as any)?.staff_overrides ??
-      createdSeededStaffOverrides) as Record<string, any> | undefined
-    const overrides: Record<string, {
-      leaveType: LeaveType | null
-      fteRemaining: number
-      fteSubtraction?: number
-      availableSlots?: number[]
-      invalidSlot?: number
-      leaveComebackTime?: string
-      isLeave?: boolean
-    }> = {}
-    let bedCountsByTeamForCache: any = {}
-    let bedRelievingByToTeamForCache: any = {}
-    let allocationNotesDocForCache: any = null
-
-    if (persistedOverrides && Object.keys(persistedOverrides).length > 0) {
-      // Extract schedule-level bed count overrides (stored under __bedCounts) and keep them in a dedicated state.
-      const persistedBedCountsByTeam = (persistedOverrides as any)?.__bedCounts?.byTeam
-      if (persistedBedCountsByTeam && typeof persistedBedCountsByTeam === 'object') {
-        bedCountsByTeamForCache = persistedBedCountsByTeam as any
-        setBedCountsOverridesByTeam(persistedBedCountsByTeam as any)
-        setSavedBedCountsOverridesByTeam(persistedBedCountsByTeam as any)
-      } else {
-        bedCountsByTeamForCache = {}
-        setBedCountsOverridesByTeam({})
-        setSavedBedCountsOverridesByTeam({})
-      }
-
-      // Extract schedule-level bed relieving notes (stored under __bedRelieving) and keep them in a dedicated state.
-      const persistedBedRelievingByToTeam = (persistedOverrides as any)?.__bedRelieving?.byToTeam
-      if (persistedBedRelievingByToTeam && typeof persistedBedRelievingByToTeam === 'object') {
-        bedRelievingByToTeamForCache = persistedBedRelievingByToTeam as any
-        setBedRelievingNotesByToTeam(persistedBedRelievingByToTeam as any)
-        setSavedBedRelievingNotesByToTeam(persistedBedRelievingByToTeam as any)
-      } else {
-        bedRelievingByToTeamForCache = {}
-        setBedRelievingNotesByToTeam({})
-        setSavedBedRelievingNotesByToTeam({})
-      }
-
-      // Extract schedule-level allocation notes (stored under __allocationNotes).
-      const persistedAllocationNotes = (persistedOverrides as any)?.__allocationNotes
-      const persistedAllocationNotesDoc = (persistedAllocationNotes as any)?.doc
-      if (persistedAllocationNotes && typeof persistedAllocationNotes === 'object') {
-        allocationNotesDocForCache = persistedAllocationNotesDoc ?? null
-        setAllocationNotesDoc(persistedAllocationNotesDoc ?? null)
-        setSavedAllocationNotesDoc(persistedAllocationNotesDoc ?? null)
-      } else {
-        allocationNotesDocForCache = null
-        setAllocationNotesDoc(null)
-        setSavedAllocationNotesDoc(null)
-      }
-
-      // Use staff_overrides JSON from database as single source of truth
-      const persistedStaffOverrides = { ...(persistedOverrides as any) }
-      delete (persistedStaffOverrides as any).__bedCounts
-      delete (persistedStaffOverrides as any).__bedRelieving
-      delete (persistedStaffOverrides as any).__allocationNotes
-      Object.assign(overrides, persistedStaffOverrides)
-
-      // Normalize legacy "on duty" leave types that may have been persisted as strings.
-      Object.values(overrides as any).forEach((o: any) => {
-        if (!o || typeof o !== 'object') return
-        if (isOnDutyLeaveType(o.leaveType)) {
-          o.leaveType = null
-        }
-      })
-    } else {
-      // No persisted staff_overrides: clear bed count overrides as well
-      bedCountsByTeamForCache = {}
-      setBedCountsOverridesByTeam({})
-      setSavedBedCountsOverridesByTeam({})
-      bedRelievingByToTeamForCache = {}
-      setBedRelievingNotesByToTeam({})
-      setSavedBedRelievingNotesByToTeam({})
-      allocationNotesDocForCache = null
-      setAllocationNotesDoc(null)
-      setSavedAllocationNotesDoc(null)
-
-      // Legacy path: derive overrides from saved allocations
-      therapistAllocs?.forEach(alloc => {
-        if (alloc.leave_type !== null || alloc.fte_therapist !== 1) {
-          const fte = parseFloat(alloc.fte_therapist.toString())
-          // Use centralized type conversion that handles manual_override_note
-          const leaveType = fromDbLeaveType(alloc.leave_type as any, fte, alloc.manual_override_note)
-          overrides[alloc.staff_id] = {
-            leaveType: leaveType,
-            fteRemaining: fte,
-          }
-        }
-      })
-
-      pcaAllocs?.forEach(alloc => {
-        if (alloc.leave_type !== null || alloc.fte_pca !== 1) {
-          if (!overrides[alloc.staff_id]) {
-            // For PCA: determine the correct FTE to use
-            // If PCA is on leave (leave_type !== null), use fte_pca
-            // If PCA is NOT on leave but is special program PCA, use 1.0 (base FTE)
-            // This fixes a bug where special program PCAs had fte_pca set to their assigned slots FTE (e.g., 0.25) instead of base FTE
-            const isOnLeave = alloc.leave_type !== null
-            const isSpecialProgramPCA = alloc.special_program_ids && alloc.special_program_ids.length > 0
-            const fte = isOnLeave
-              ? parseFloat(alloc.fte_pca.toString()) // On leave: use stored FTE
-              : (isSpecialProgramPCA ? 1.0 : parseFloat(alloc.fte_pca.toString())) // Special program: use base FTE 1.0
-            // Use centralized type conversion from lib/db/types.ts
-            const override: {
-              leaveType: LeaveType | null
-              fteRemaining: number
-              fteSubtraction?: number
-              availableSlots?: number[]
-              invalidSlot?: number
-              leaveComebackTime?: string
-              isLeave?: boolean
-            } = {
-              leaveType: fromDbLeaveType(alloc.leave_type as any, fte, null),
-              fteRemaining: fte,
-            }
-
-            // Load new fields if they exist
-            if (alloc.invalid_slot !== null && alloc.invalid_slot !== undefined) {
-              override.invalidSlot = alloc.invalid_slot
-            }
-            if (alloc.leave_comeback_time) {
-              override.leaveComebackTime = alloc.leave_comeback_time
-            }
-            if (alloc.leave_mode) {
-              override.isLeave = alloc.leave_mode === 'leave'
-            }
-            // Note: fte_subtraction is not stored in database - it's calculated from staffOverrides when needed
-            // If the column exists in future migrations, we can load it here
-            // For now, fteSubtraction is calculated from fte_pca and other fields when needed
-
-            // Reconstruct available slots from slot assignments (exclude invalid slot)
-            const invalidSlot = (alloc as any).invalid_slot
-            const availableSlots: number[] = []
-            if (alloc.slot1 && (invalidSlot !== 1 || alloc.slot1 === alloc.team)) availableSlots.push(1)
-            if (alloc.slot2 && (invalidSlot !== 2 || alloc.slot2 === alloc.team)) availableSlots.push(2)
-            if (alloc.slot3 && (invalidSlot !== 3 || alloc.slot3 === alloc.team)) availableSlots.push(3)
-            if (alloc.slot4 && (invalidSlot !== 4 || alloc.slot4 === alloc.team)) availableSlots.push(4)
-            // Actually, invalid slot is still assigned to team, so we need to include it but mark it separately
-            // The availableSlots should be all slots assigned to team, and invalidSlot is separate
-            const allSlots: number[] = []
-            if (alloc.slot1 === alloc.team) allSlots.push(1)
-            if (alloc.slot2 === alloc.team) allSlots.push(2)
-            if (alloc.slot3 === alloc.team) allSlots.push(3)
-            if (alloc.slot4 === alloc.team) allSlots.push(4)
-            // Available slots = all slots minus invalid slot
-            override.availableSlots = invalidSlot ? allSlots.filter(s => s !== invalidSlot) : allSlots
-
-            overrides[alloc.staff_id] = override
-          }
-        }
-      })
-    }
-    
-    setStaffOverrides(overrides)
-    setSavedOverrides(overrides) // Track what's saved
-
-    // Runtime validation/repair for baseline snapshot (staff coverage, legacy wrapping, etc.).
-    // This is runtime-only; persistence happens on Save (auto-repair-on-save todo).
-    if ((scheduleData as any)?.baseline_snapshot) {
-      try {
-        const referencedIds = extractReferencedStaffIds({
-          therapistAllocs: therapistAllocs as any,
-          pcaAllocs: pcaAllocs as any,
-          staffOverrides: overrides,
-        })
-
-        const result = await validateAndRepairBaselineSnapshot({
-          storedSnapshot: (scheduleData as any)?.baseline_snapshot,
-          referencedStaffIds: referencedIds,
-          fetchLiveStaffByIds: async (ids) => {
-            if (ids.length === 0) return []
-            const attempt = await supabase
-              .from('staff')
-              .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program')
-              .in('id', ids)
-            if (!attempt.error) return (attempt.data || []) as any[]
-            // Legacy fallback: older schemas may not have status/buffer_fte columns
-            if (attempt.error.message?.includes('column') || (attempt.error as any)?.code === '42703') {
-              const fallback = await supabase.from('staff').select('*').in('id', ids)
-              return (fallback.data || []) as any[]
-            }
-            return (attempt.data || []) as any[]
-          },
-          buildFallbackBaseline: buildBaselineSnapshotFromCurrentState,
-          sourceForNewEnvelope: 'save',
-        })
-
-        setSnapshotHealthReport(result.report)
-        // If repaired, apply immediately so UI/algos have required staff rows.
-        if (result.report.status !== 'ok') {
-          applyBaselineSnapshot(result.data)
-        }
-      } catch (e) {
-        console.warn('Snapshot validation failed (runtime-only):', e)
-        setSnapshotHealthReport({
-          status: 'fallback',
-          issues: ['validationException'],
-          referencedStaffCount: 0,
-          snapshotStaffCount: baselineSnapshot?.staff?.length || 0,
-          missingReferencedStaffCount: 0,
-        })
-      }
-    } else {
-      setSnapshotHealthReport(null)
-    }
-    
-    // OPTIMIZATION: Prefer persisted schedule_calculations table (already saved on Save).
-    // Fallback to snapshot.calculatedValues if schedule_calculations is empty.
-    let storedCalculations: Record<Team, ScheduleCalculations | null> | null = null
-    let calculationsSource: 'schedule_calculations' | 'snapshot.calculatedValues' | 'none' = 'none'
-
-    if (scheduleCalcsRows.length > 0) {
-      const byTeam: Record<Team, ScheduleCalculations | null> = {
-        FO: null, SMM: null, SFM: null, CPPC: null, MC: null, GMC: null, NSM: null, DRO: null,
-      }
-      scheduleCalcsRows.forEach((row: any) => {
-        const t = row?.team as Team | undefined
-        if (!t) return
-        byTeam[t] = row as ScheduleCalculations
-      })
-      storedCalculations = byTeam
-      calculationsSource = 'schedule_calculations'
-    } else if (hasBaselineSnapshot) {
-      const snapshotData = unwrapBaselineSnapshotStored(rawBaselineSnapshotStored as BaselineSnapshotStored).data
-      if (snapshotData.calculatedValues && snapshotData.calculatedValues.calculations) {
-        // Use stored calculations if available and valid for current step
-        const calculatedForStep = snapshotData.calculatedValues.calculatedForStep
-        const currentStepForValidation = effectiveWorkflowState?.currentStep || 'leave-fte'
-        // Only use if calculated for same or earlier step (earlier steps' calculations are still valid)
-        const stepOrder: Record<string, number> = {
-          'leave-fte': 1,
-          'therapist-pca': 2,
-          'floating-pca': 3,
-          'bed-relieving': 4,
-          'review': 5,
-        }
-        const calculatedStepOrder = stepOrder[calculatedForStep] || 0
-        const currentStepOrder = stepOrder[currentStepForValidation] || 0
-        if (calculatedStepOrder <= currentStepOrder) {
-          storedCalculations = snapshotData.calculatedValues.calculations
-          calculationsSource = 'snapshot.calculatedValues'
-          console.log(`[ScheduleLoad] Using pre-calculated values from snapshot (calculated for step: ${calculatedForStep})`)
-        } else {
-        }
-      }
-    }
-    
-    const baselineSnapshotData = hasBaselineSnapshot
-      ? unwrapBaselineSnapshotStored(rawBaselineSnapshotStored as BaselineSnapshotStored).data
-      : null
-
-    let snapshotBytes: number | null = null
-    if (hasBaselineSnapshot) {
-      try {
-        snapshotBytes = JSON.stringify(rawBaselineSnapshotStored as any).length
-      } catch {
-        snapshotBytes = null
-      }
-    }
-    
-    // Cache the loaded data for fast navigation
-    cacheSchedule(dateStr, {
-      scheduleId,
-      overrides,
-      bedCountsOverridesByTeam: bedCountsByTeamForCache,
-      bedRelievingNotesByToTeam: bedRelievingByToTeamForCache,
-      allocationNotesDoc: allocationNotesDocForCache,
-      tieBreakDecisions: tieBreakDecisionsForCache,
-      therapistAllocs: therapistAllocs || [],
-      pcaAllocs: pcaAllocs || [],
-      bedAllocs: bedAllocs || [],
-      baselineSnapshot: baselineSnapshotData,
-      workflowState: effectiveWorkflowState,
-      calculations: storedCalculations,
-      cachedAt: Date.now(),
-    })
-    
-    // Return allocations and metadata so we can use saved allocations directly instead of regenerating
-    return {
-      scheduleId,
-      overrides,
-      pcaAllocs: pcaAllocs || [],
-      therapistAllocs: therapistAllocs || [],
-      bedAllocs: bedAllocs || [],
-      baselineSnapshot: baselineSnapshotData,
-      workflowState: effectiveWorkflowState,
-      calculations: storedCalculations,
-      meta: {
-        rpcUsed,
-        batchedQueriesUsed,
-        baselineSnapshotUsed: !!baselineSnapshotData,
-        calculationsSource,
-        counts: {
-          therapistAllocs: (therapistAllocs || []).length,
-          pcaAllocs: (pcaAllocs || []).length,
-          bedAllocs: (bedAllocs || []).length,
-          calculationsRows: scheduleCalcsRows.length,
-        },
-        snapshotBytes,
-      },
-    } as any
-  }
+  // loadScheduleForDate moved into useScheduleController() as scheduleActions.loadScheduleForDate()
   
   // Reset the flag when date changes (new schedule load)
   useEffect(() => {
@@ -3233,70 +2306,20 @@ function SchedulePageContent() {
     isHydrating: isHydratingSchedule,
   })
 
-  // Use saved allocations directly from database without regenerating.
-  // IMPORTANT: This path should be cheap (no recalculation, no bed algorithm).
-  const applySavedAllocations = (
-    therapistAllocs: any[],
-    pcaAllocs: any[],
-    _overrides: Record<string, any>,
-    staffForLookup: Staff[] = staff
-  ) => {
-    setLoading(true)
-
-    const staffById = buildStaffByIdMap(staffForLookup || [])
-
-    const therapistByTeam = groupTherapistAllocationsByTeam({
-      teams: TEAMS,
-      allocations: therapistAllocs || [],
-      staffById,
-      sort: sortTherapistApptFirstThenName,
-    })
-
-    const pcaByTeam = groupPcaAllocationsByTeamWithSlotTeams({
-      teams: TEAMS,
-      allocations: pcaAllocs || [],
-      staffById,
-      sort: sortPcaNonFloatingFirstThenName,
-    })
-
-    // Single setState calls (critical for cold-start performance).
-    setTherapistAllocations(therapistByTeam)
-    setPcaAllocations(pcaByTeam)
-    setPendingPCAFTEPerTeam({ FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 })
-
-    setHasSavedAllocations(true)
-    setLoading(false)
-  }
+  // applySavedAllocations moved into useScheduleController() as scheduleActions.applySavedAllocationsFromDb()
 
   const handleSaveStaffEdit = async (staffId: string, leaveType: LeaveType | null, fteRemaining: number, fteSubtraction?: number, availableSlots?: number[], invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>, amPmSelection?: 'AM' | 'PM', specialProgramAvailable?: boolean) => {
-    // Store the override for this staff member
-    const newOverrides = {
-      ...staffOverrides,
-      [staffId]: { leaveType, fteRemaining, fteSubtraction, availableSlots, invalidSlots, amPmSelection, specialProgramAvailable }
-    }
-    setStaffOverrides(newOverrides)
-
-    // Clear saved allocations flag and step 2 result since inputs changed
-    setHasSavedAllocations(false)
-    setStep2Result(null)
-    
-    // Clear initialized steps - user must re-run algorithms after editing
-    setInitializedSteps(new Set())
-    
-    // Mark Step 1 as modified (not completed) - user needs to advance to regenerate
-    setStepStatus(prev => ({
-      ...prev,
-      'leave-fte': 'modified',
-      'therapist-pca': 'pending', // Reset subsequent steps
-      'floating-pca': 'pending',
-      'bed-relieving': 'pending',
-      'review': 'pending',
-    }))
-    
-    // Keep user on Step 1 until they explicitly advance
-    if (currentStep !== 'leave-fte') {
-      setCurrentStep('leave-fte')
-    }
+    // Domain-safe: apply override + reset workflow flags in controller (single source of truth).
+    const newOverrides = scheduleActions.applyStaffEditDomain({
+      staffId,
+      leaveType,
+      fteRemaining,
+      fteSubtraction,
+      availableSlots,
+      invalidSlots,
+      amPmSelection,
+      specialProgramAvailable,
+    })
     
     // Trigger internal updates: recalculate schedule calculations and update allocations
     // This updates therapist-FTE/team, avg PCA/team, True-FTE remaining, slot_assigned, 
@@ -3789,11 +2812,6 @@ function SchedulePageContent() {
       }
 
       // Note: weekday, drmProgram, and drmPcaFteAddon are already defined earlier in this function (around line 1060)
-
-      // Helper function to format ward name with fraction if applicable
-      const formatWardName = (ward: { name: string; total_beds: number; team_assignments: Record<Team, number>; team_assignment_portions?: Record<Team, string> }, team: Team): string => {
-        return formatWardLabel(ward as any, team)
-      }
       
       // CRITICAL: Use totalPCAOnDuty (from staff DB) for STABLE requirement calculation
       // This ensures avg PCA/team doesn't fluctuate as floating PCAs get assigned/unassigned
@@ -3816,7 +2834,7 @@ function SchedulePageContent() {
 
       TEAMS.forEach(team => {
         const teamWards = wards.filter(w => w.team_assignments[team] && w.team_assignments[team] > 0)
-        const designatedWards = teamWards.map(w => formatWardName(w, team))
+        const designatedWards = teamWards.map(w => formatWardLabel(w as any, team))
         const bedOverride = bedCountsOverridesByTeam?.[team] as any
         const calculatedBaseBeds = teamWards.reduce((sum, w) => {
           const overrideVal = bedOverride?.wardBedCounts?.[w.name]
@@ -4123,581 +3141,43 @@ function SchedulePageContent() {
    * Returns the PCA allocations by team for use in substitution detection
    * @param cleanedOverrides Optional cleaned overrides (with availableSlots cleared for floating PCAs)
    */
-  const generateStep2_TherapistAndNonFloatingPCA = async (cleanedOverrides?: typeof staffOverrides): Promise<Record<Team, (PCAAllocation & { staff: Staff })[]>> => {
-    if (staff.length === 0) return createEmptyTeamRecord<Array<PCAAllocation & { staff: Staff }>>([])
+  /**
+   * Step 2: Generate Therapist allocations + Non-floating PCA allocations + Special Program PCA
+   * (implementation moved into useScheduleController: scheduleActions.runStep2TherapistAndNonFloatingPCA)
+   */
+  const generateStep2_TherapistAndNonFloatingPCA = async (
+    cleanedOverrides?: typeof staffOverrides
+  ): Promise<Record<Team, (PCAAllocation & { staff: Staff })[]>> => {
+    return await scheduleActions.runStep2TherapistAndNonFloatingPCA({
+      cleanedOverrides: cleanedOverrides as any,
+      toast: showActionToast,
+      onNonFloatingSubstitutionWizard: async ({
+        teams,
+        substitutionsByTeam,
+        isWizardMode,
+        initialSelections,
+      }) => {
+        if (teams.length === 0) return {}
 
-    setLoading(true)
-    try {
-      const overridesBase = cleanedOverrides ?? staffOverrides
-      
-
-      // Buffer non-floating PCA substitution (whole-day)
-      // If a team has a non-floating PCA with FTE=0 (unavailable) AND there is a buffer PCA configured as non-floating for that team,
-      // treat the buffer PCA as the whole-day substitute and prevent Step 2.1 from allocating an additional floating substitute.
-      //
-      // Implementation approach:
-      // - Mark the missing non-floating PCA as "team: null" in pcaData so it doesn't generate a substitution need.
-      // - Add staffOverrides.substitutionFor on the buffer PCA so the schedule UI can underline + green-highlight it as a substitute.
-      const replacedNonFloatingIds = new Set<string>()
-      const bufferSubstitutionUpdates: Record<
-        string,
-        {
-          substitutionFor: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
-          availableSlots?: number[]
-        }
-      > = {}
-
-      try {
-        const bufferNonFloatingByTeam = new Map<Team, Staff[]>()
-        staff
-          // Only consider FULL-DAY non-floating buffer PCAs (buffer_fte = 1.0)
-          .filter(s => {
-            if (s.rank !== 'PCA') return false
-            if (s.status !== 'buffer') return false
-            if (s.floating) return false
-            if (!s.team) return false
-            const bf = (s as any)?.buffer_fte
-            if (typeof bf !== 'number') return false
-            return bf >= 0.999
-          })
-          .forEach(s => {
-            const t = s.team as Team
-            const list = bufferNonFloatingByTeam.get(t) ?? []
-            list.push(s)
-            bufferNonFloatingByTeam.set(t, list)
-          })
-
-        // Only apply when the team's regular non-floating PCA is unavailable (fteRemaining === 0)
-        for (const team of TEAMS) {
-          const bufferSubs = bufferNonFloatingByTeam.get(team) ?? []
-          if (bufferSubs.length === 0) continue
-
-          const missingRegular = staff.find(s => {
-            if (s.rank !== 'PCA') return false
-            if (s.status === 'buffer') return false
-            if (s.floating) return false
-            if (s.team !== team) return false
-            return overridesBase[s.id]?.fteRemaining === 0
-          })
-          if (!missingRegular) continue
-
-          const bufferSub = bufferSubs[0]
-          replacedNonFloatingIds.add(missingRegular.id)
-
-          bufferSubstitutionUpdates[bufferSub.id] = {
-            substitutionFor: {
-              nonFloatingPCAId: missingRegular.id,
-              nonFloatingPCAName: missingRegular.name,
-              team,
-              slots: [1, 2, 3, 4],
-            },
-            // Whole-day substitute intent
-            availableSlots: [1, 2, 3, 4],
-          }
-        }
-      } catch {}
-
-      const overrides = {
-        ...overridesBase,
-        ...Object.fromEntries(
-          Object.entries(bufferSubstitutionUpdates).map(([id, patch]) => [
-            id,
-            {
-              ...(overridesBase[id] ?? { leaveType: null, fteRemaining: 1.0 }),
-              ...patch,
-            },
-          ])
-        ),
-      } as typeof staffOverrides
-
-      // Transform staff data for algorithms
-      const weekday = getWeekday(selectedDate)
-      const sptAddonByStaffId = new Map<string, number>()
-      for (const a of sptAllocations) {
-        if (a.weekdays?.includes(weekday)) {
-          const raw = (a as any).fte_addon
-          const fte = typeof raw === 'number' ? raw : raw != null ? parseFloat(String(raw)) : NaN
-          if (Number.isFinite(fte)) sptAddonByStaffId.set(a.staff_id, fte)
-        }
-      }
-
-      const staffData: StaffData[] = staff.map(s => {
-        const override = overrides[s.id]
-        // For buffer staff, use buffer_fte as base FTE
-        const isBufferStaff = s.status === 'buffer'
-        const baseFTE =
-          s.rank === 'SPT'
-            ? (sptAddonByStaffId.get(s.id) ?? 1.0)
-            : (isBufferStaff && s.buffer_fte !== undefined ? s.buffer_fte : 1.0)
-        const effectiveFTE = override ? override.fteRemaining : baseFTE
-        const isOnDuty = isOnDutyLeaveType(override?.leaveType as any)
-        const isAvailable =
-          s.rank === 'SPT'
-            ? (override
-                ? (override.fteRemaining > 0 || (override.fteRemaining === 0 && isOnDuty))
-                : effectiveFTE >= 0) // SPT can be on-duty with configured FTE=0
-            : (override ? override.fteRemaining > 0 : effectiveFTE > 0)
-        return {
-          id: s.id,
-          name: s.name,
-          rank: s.rank,
-          team: override?.team ?? s.team, // Use team from override if present
-          special_program: s.special_program,
-          fte_therapist: effectiveFTE,
-          leave_type: override ? override.leaveType : null,
-          is_available: isAvailable,
-          availableSlots: override?.availableSlots,
-        }
-      })
-
-      // Apply special program overrides:
-      // - Therapists: add substituted therapists to program.staff_ids + fte_subtraction for this weekday
-      // - PCAs: force the user-selected PCA to the front of pca_preference_order so Step 2 respects the override
-      const modifiedSpecialPrograms = specialPrograms.map(program => {
-        const programOverrides: Array<{ staffId: string; therapistId?: string; therapistFTESubtraction?: number }> = []
-        const pcaOverrides: Array<{ pcaId: string }> = []
-        
-        // Find all staff with specialProgramOverrides for this program
-        Object.entries(overrides).forEach(([staffId, override]) => {
-          if (override.specialProgramOverrides) {
-            const spOverride = override.specialProgramOverrides.find(spo => spo.programId === program.id)
-            if (spOverride && spOverride.therapistId) {
-              programOverrides.push({
-                staffId: spOverride.therapistId,
-                therapistId: spOverride.therapistId,
-                therapistFTESubtraction: spOverride.therapistFTESubtraction,
-              })
-            }
-            if (spOverride && spOverride.pcaId && program.name !== 'DRM') {
-              pcaOverrides.push({ pcaId: spOverride.pcaId })
-            }
-          }
-        })
-        
-        // Create modified program (only when we have something to modify)
-        if (programOverrides.length === 0 && pcaOverrides.length === 0) {
-          return program
-        }
-
-        const modifiedProgram = { ...program }
-        
-        // Add substituted therapists to staff_ids if not already present
-        programOverrides.forEach(override => {
-          if (!modifiedProgram.staff_ids.includes(override.therapistId!)) {
-            modifiedProgram.staff_ids = [...modifiedProgram.staff_ids, override.therapistId!]
-          }
-          
-          // Add FTE subtraction for substituted therapist
-          if (!modifiedProgram.fte_subtraction[override.therapistId!]) {
-            modifiedProgram.fte_subtraction[override.therapistId!] = { mon: 0, tue: 0, wed: 0, thu: 0, fri: 0 }
-          }
-          if (override.therapistFTESubtraction !== undefined) {
-            modifiedProgram.fte_subtraction[override.therapistId!][weekday] = override.therapistFTESubtraction
-          }
-        })
-
-        // Force the selected PCA (from Step 2.0) to the front of preference order.
-        // This makes allocatePCA pick it first (CRP/Robotic and other programs).
-        if (pcaOverrides.length > 0) {
-          const chosenPcaId = pcaOverrides[0]?.pcaId
-          if (chosenPcaId) {
-            const existing = (modifiedProgram as any).pca_preference_order as string[] | undefined
-            const next = [
-              chosenPcaId,
-              ...((Array.isArray(existing) ? existing : []).filter(id => id !== chosenPcaId)),
-            ]
-            ;(modifiedProgram as any).pca_preference_order = next
-          }
-        }
-        
-        return modifiedProgram
-      })
-
-      // Generate therapist allocations
-      // Include SPT allocation in step 2 when "Initialize Algo" is clicked
-      const therapistContext: AllocationContext = {
-        date: selectedDate,
-        previousSchedule: null,
-        staff: staffData,
-        specialPrograms: modifiedSpecialPrograms, // Use modified programs with substitutions
-        // Apply SPT leave/FTE overrides by overriding fte_addon with the edited remaining FTE (Step 1).
-        sptAllocations: sptAllocations.map(a => {
-          const o = overrides[a.staff_id]
-          if (!o) return a
-          const staffMember = staff.find(s => s.id === a.staff_id)
-          if (staffMember?.rank !== 'SPT') return a
-          return { ...a, fte_addon: o.fteRemaining }
-        }),
-        manualOverrides: {},
-        includeSPTAllocation: true, // Include SPT allocation in step 2
-      }
-
-      const therapistResult = allocateTherapists(therapistContext)
-
-      // Group therapist allocations by team
-      const therapistByTeam: Record<Team, (TherapistAllocation & { staff: Staff })[]> = {
-        FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
-      }
-
-      therapistResult.allocations.forEach(alloc => {
-        const staffMember = staff.find(s => s.id === alloc.staff_id)
-        if (staffMember) {
-          const override = overrides[alloc.staff_id]
-          if (override) {
-            alloc.fte_therapist = override.fteRemaining
-            alloc.leave_type = override.leaveType
-            if (override.team) {
-              alloc.team = override.team
-            }
-          }
-          therapistByTeam[alloc.team].push({ ...alloc, staff: staffMember })
-        }
-      })
-      
-      // Sort therapist allocations: APPT first, then others
-      TEAMS.forEach(team => {
-        therapistByTeam[team].sort((a, b) => {
-          const aIsAPPT = a.staff?.rank === 'APPT'
-          const bIsAPPT = b.staff?.rank === 'APPT'
-          if (aIsAPPT && !bIsAPPT) return -1
-          if (!aIsAPPT && bIsAPPT) return 1
-          return 0
-        })
-      })
-
-      setTherapistAllocations(therapistByTeam)
-
-      // Prepare PCA data
-      // For PCA: fte_pca = Base_FTE_remaining = 1.0 - fteSubtraction (for display and team requirement calculation)
-      // For buffer PCA: use buffer_fte as base
-      const pcaData: PCAData[] = staff
-        .filter(s => s.rank === 'PCA')
-        .map(s => {
-          const override = overrides[s.id]
-          // For buffer staff, use buffer_fte as base
-          const isBufferStaff = s.status === 'buffer'
-          const baseFTE = isBufferStaff && s.buffer_fte !== undefined ? s.buffer_fte : 1.0
-          // Calculate base_FTE_remaining = baseFTE - fteSubtraction (excluding special program subtraction)
-          const baseFTERemaining = override && override.fteSubtraction !== undefined
-            ? Math.max(0, baseFTE - override.fteSubtraction)
-            : (override ? override.fteRemaining : baseFTE) // Fallback to fteRemaining if fteSubtraction not available
-
-          // If this is a missing regular non-floating PCA that has a buffer non-floating substitute,
-          // remove its team assignment for THIS algorithm run to prevent generating a Step 2.1 substitution need.
-          const effectiveTeam = replacedNonFloatingIds.has(s.id) ? null : s.team
-
-          // NOTE: Do NOT clamp buffer PCA availableSlots for Step 2.
-          // Buffer floating PCA should be treated as "any-slot flexible" up to its fte_pca capacity,
-          // otherwise Step 2.1 may exclude it when missing slots are different (e.g. missing [3,4]).
-          const effectiveAvailableSlots = override?.availableSlots
-
-          return {
-            id: s.id,
-            name: s.name,
-            floating: s.floating || false,
-            special_program: s.special_program,
-            fte_pca: baseFTERemaining, // Base_FTE_remaining = baseFTE - fteSubtraction (for display and team requirements)
-            leave_type: override ? override.leaveType : null,
-            is_available: override ? (override.fteRemaining > 0) : true, // Use fteRemaining (includes special program) for availability check
-            team: effectiveTeam,
-            availableSlots: effectiveAvailableSlots, // May be [1,2,3,4]; UI will display capacity separately for buffer PCA.
-            invalidSlot: override?.invalidSlot,
-            leaveComebackTime: override?.leaveComebackTime,
-            isLeave: override?.isLeave,
-            // Needed for floor PCA sorting/grouping in substitution dialog
-            floor_pca: s.floor_pca || null,
-          }
-        })
-
-      // Calculate average PCA per team
-      // CRITICAL: Use the same calculation as step 1 (recalculateScheduleCalculations) for consistency
-      // Use fteRemaining from staffOverrides (same as step 1), not fte_pca from pcaData
-      // This ensures avg PCA/team doesn't fluctuate between step 1 and step 2
-      const totalPCA = staff
-        .filter(s => s.rank === 'PCA')
-        .reduce((sum, s) => {
-          const overrideFTE = overrides[s.id]?.fteRemaining
-          // Use override FTE if set, otherwise default to 1.0 (full day) unless on leave
-          const isOnLeave = overrides[s.id]?.leaveType && overrides[s.id]?.fteRemaining === 0
-          const currentFTE = overrideFTE !== undefined ? overrideFTE : (isOnLeave ? 0 : 1)
-          return sum + currentFTE
-        }, 0)
-      const ptPerTeamFromResult: Record<Team, number> = {
-        FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
-      }
-      let totalPTOnDuty = 0
-
-      therapistResult.allocations.forEach(alloc => {
-        const staffMember = staff.find(s => s.id === alloc.staff_id)
-        if (staffMember) {
-          const isTherapist = ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)
-          const override = overrides[alloc.staff_id]
-          const fte = override ? override.fteRemaining : (alloc.fte_therapist || 0)
-          if (isTherapist && fte > 0) {
-            ptPerTeamFromResult[alloc.team] += fte
-            totalPTOnDuty += fte
-          }
-        }
-      })
-
-      const rawAveragePCAPerTeam: Record<Team, number> = {} as Record<Team, number>
-      TEAMS.forEach(team => {
-        if (totalPTOnDuty > 0) {
-          rawAveragePCAPerTeam[team] = (ptPerTeamFromResult[team] * totalPCA) / totalPTOnDuty
-        } else {
-          rawAveragePCAPerTeam[team] = totalPCA / 8
-        }
-      })
-
-      // DRM Program add-on
-      const drmProgram = specialPrograms.find(p => p.name === 'DRM')
-      if (drmProgram && drmProgram.weekdays.includes(weekday)) {
-        rawAveragePCAPerTeam['DRO'] += 0.4
-      }
-
-      // Run PCA allocation with phase = 'non-floating-with-special' 
-      // This allocates non-floating PCAs + special program PCAs (no tie-breakers, no floating PCA)
-      // Get existing allocations (from saved data) so the substitution list can:
-      // - treat already-assigned special-program PCAs as unavailable (keep them excluded)
-      // - and also allow Step 2.1 to pre-detect already-assigned floating PCAs (e.g. saved buffer substitution)
-      const { existingAllocations: existingAllocsRaw } = recalculateFromCurrentState()
-
-      // Callback for non-floating PCA substitution - called DURING algorithm execution
-      const handleNonFloatingSubstitution = async (
-        substitutions: Array<{
-          nonFloatingPCAId: string
-          nonFloatingPCAName: string
-          team: Team
-          fte: number
-          missingSlots: number[]
-          availableFloatingPCAs: Array<{
-            id: string
-            name: string
-            availableSlots: number[]
-            isPreferred: boolean
-            isFloorPCA: boolean
-          }>
-        }>
-      ): Promise<Record<string, { floatingPCAId: string; slots: number[] }>> => {
-        // Pre-detect any existing, persisted substitution selections from staffOverrides.
-        // If present, we should show them as the current selection (and avoid allocating a second PCA).
-        const preSelections: Record<string, { floatingPCAId: string; slots: number[] }> = {}
-        try {
-          for (const sub of substitutions) {
-            const key = `${sub.team}-${sub.nonFloatingPCAId}`
-            // If already detected for this key, keep it.
-            if (preSelections[key]) continue
-
-            // Find a floating PCA override that already targets this non-floating PCA + team
-            const match = Object.entries(overrides).find(([, o]) => {
-              const sf = (o as any)?.substitutionFor
-              return sf?.team === sub.team && sf?.nonFloatingPCAId === sub.nonFloatingPCAId
-            })
-            if (!match) continue
-            const [floatingPCAId, o] = match
-            const sf = (o as any).substitutionFor as { slots: number[] } | undefined
-            if (!sf || !Array.isArray(sf.slots) || sf.slots.length === 0) continue
-
-            // Ensure this chosen PCA is still a valid option for THIS substitution need.
-            const allowedIds = new Set(sub.availableFloatingPCAs.map(p => p.id))
-            if (!allowedIds.has(floatingPCAId)) continue
-
-            preSelections[key] = { floatingPCAId, slots: sf.slots }
-          }
-        } catch {}
-
-        // If no staffOverride-based selection exists, attempt to infer an "already-selected" substitute
-        // from saved/current allocations (e.g. a buffer PCA already allocated to cover this team's missing slots).
-        // This prevents Step 2.1 from allocating a second, duplicate substitute when rerunning Step 2.
-        try {
-          for (const sub of substitutions) {
-            const key = `${sub.team}-${sub.nonFloatingPCAId}`
-            if (preSelections[key]) continue
-
-            const allowedIds = new Set(sub.availableFloatingPCAs.map(p => p.id))
-            if (allowedIds.size === 0) continue
-
-            // Consider only floating allocations WITHOUT special_program_ids (special-program allocations are not substitution).
-            const candidateAllocs = existingAllocsRaw
-              .filter(a => {
-                const staffMember = staff.find(s => s.id === a.staff_id)
-                if (!staffMember?.floating) return false
-                if (a.special_program_ids && a.special_program_ids.length > 0) return false
-                return allowedIds.has(a.staff_id)
-              })
-              .map(a => {
-                const overlapSlots: number[] = []
-                if (sub.missingSlots.includes(1) && a.slot1 === sub.team) overlapSlots.push(1)
-                if (sub.missingSlots.includes(2) && a.slot2 === sub.team) overlapSlots.push(2)
-                if (sub.missingSlots.includes(3) && a.slot3 === sub.team) overlapSlots.push(3)
-                if (sub.missingSlots.includes(4) && a.slot4 === sub.team) overlapSlots.push(4)
-                return { alloc: a, overlapSlots }
-              })
-              .filter(x => x.overlapSlots.length > 0)
-              .sort((a, b) => b.overlapSlots.length - a.overlapSlots.length)
-
-            const best = candidateAllocs[0]
-            if (!best) continue
-
-            preSelections[key] = { floatingPCAId: best.alloc.staff_id, slots: best.overlapSlots }
-          }
-        } catch {}
-
-        // Group substitutions by team - use factory to create unique array instances per team
-        const substitutionsByTeam = createEmptyTeamRecordFactory<Array<typeof substitutions[0]>>(() => [])
-        substitutions.forEach(sub => {
-          substitutionsByTeam[sub.team].push(sub)
-        })
-
-        // Only include teams that actually have substitutions (FTE ≠ 1)
-        const teamsWithSubstitutions = TEAMS.filter(
-          team => substitutionsByTeam[team].length > 0
-        )
-
-        if (teamsWithSubstitutions.length === 0) {
-          return {} // No substitutions needed
-        }
-
-        // Show wizard dialog only if multiple teams need substitution, otherwise simple dialog
-        const isWizardMode = teamsWithSubstitutions.length > 1
-
-        // Show dialog and wait for user selections
-        return new Promise((resolve) => {
+        return await new Promise((resolve) => {
           setSubstitutionWizardData({
-            teams: teamsWithSubstitutions,
-            substitutionsByTeam: substitutionsByTeam as Record<Team, typeof substitutions>,
-            isWizardMode
-            ,initialSelections: Object.keys(preSelections).length > 0 ? preSelections : undefined
+            teams,
+            substitutionsByTeam: substitutionsByTeam as any,
+            isWizardMode,
+            initialSelections,
           })
           setSubstitutionWizardOpen(true)
 
-          // Store resolver to be called when user confirms
           const resolver = (selections: Record<string, { floatingPCAId: string; slots: number[] }>) => {
-            const keys = Object.keys(selections)
-            // If user skips/cancels (empty selections) but we already had a persisted selection, keep it.
-            const effectiveSelections =
-              keys.length === 0 && Object.keys(preSelections).length > 0
-                ? preSelections
-                : selections
             setSubstitutionWizardOpen(false)
             setSubstitutionWizardData(null)
-            resolve(effectiveSelections)
+            resolve(selections)
           }
 
-          // Store resolver in ref so it can be accessed from handler
           substitutionWizardResolverRef.current = resolver
         })
-      }
-
-      // Get existing allocations (from saved data) so the substitution list can:
-      // - treat already-assigned special-program PCAs as unavailable (keep them excluded)
-      // - but NOT block all candidates just because they were previously assigned as floating PCAs in the saved schedule
-      //   (we are re-running Step 2, so clear non-special-program floating allocations)
-      const existingAllocsForSubstitution = existingAllocsRaw.filter(alloc => {
-        const staffMember = staff.find(s => s.id === alloc.staff_id)
-        if (!staffMember) return false
-        // Always keep non-floating allocations (they're not candidates anyway)
-        if (!staffMember.floating) return true
-        // Keep only floating allocations that are special-program assignments
-        return !!(alloc.special_program_ids && alloc.special_program_ids.length > 0)
-      })
-      
-      const pcaContext: PCAAllocationContext = {
-        date: selectedDate,
-        totalPCAAvailable: totalPCA,
-        pcaPool: pcaData,
-        averagePCAPerTeam: rawAveragePCAPerTeam,
-        specialPrograms: modifiedSpecialPrograms,
-        pcaPreferences,
-        // gymSchedules removed - now comes from pcaPreferences
-        phase: 'non-floating-with-special', // Non-floating + special program PCAs
-        onNonFloatingSubstitution: handleNonFloatingSubstitution, // Callback for substitution dialog
-        existingAllocations: existingAllocsForSubstitution, // Pass existing allocations to check for special program assignments
-      }
-
-      const pcaResult = await allocatePCA(pcaContext)
-
-      // Extract and store errors (for Step 2 - non-floating PCA + special program)
-      if (pcaResult.errors) {
-        setPcaAllocationErrors(prev => ({
-          ...prev,
-          missingSlotSubstitution: pcaResult.errors?.missingSlotSubstitution,
-          specialProgramAllocation: pcaResult.errors?.specialProgramAllocation,
-        }))
-      }
-
-      // Group non-floating PCA allocations by team
-      const pcaByTeam: Record<Team, (PCAAllocation & { staff: Staff })[]> = {
-        FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
-      }
-
-      pcaResult.allocations.forEach(alloc => {
-        const staffMember = staff.find(s => s.id === alloc.staff_id)
-        if (!staffMember) return
-        const override = overrides[alloc.staff_id]
-        if (override) {
-          alloc.leave_type = override.leaveType
-        }
-        const allocationWithStaff = { ...alloc, staff: staffMember }
-        pcaByTeam[alloc.team].push(allocationWithStaff)
-      })
-      
-      // Sort PCA allocations: non-floating first, then floating
-      TEAMS.forEach(team => {
-        pcaByTeam[team].sort((a, b) => {
-          const aIsNonFloating = !(a.staff?.floating ?? true)
-          const bIsNonFloating = !(b.staff?.floating ?? true)
-          if (aIsNonFloating && !bIsNonFloating) return -1
-          if (!aIsNonFloating && bIsNonFloating) return 1
-          return 0
-        })
-      })
-
-      setPcaAllocations(pcaByTeam)
-      setPendingPCAFTEPerTeam(pcaResult.pendingPCAFTEPerTeam)
-
-      // Persist buffer-substitution display intent into staffOverrides state (day-level override).
-      // This ensures the buffer non-floating substitute is UNDERLINED and its slots are GREEN on the schedule page.
-      if (Object.keys(bufferSubstitutionUpdates).length > 0) {
-        setStaffOverrides(prev => {
-          const next = { ...prev }
-          for (const [bufferId, patch] of Object.entries(bufferSubstitutionUpdates)) {
-            const staffMember = staff.find(s => s.id === bufferId)
-            const baseFTE =
-              staffMember?.status === 'buffer' && staffMember.buffer_fte !== undefined ? staffMember.buffer_fte : 1.0
-            next[bufferId] = {
-              ...(next[bufferId] ?? { leaveType: null, fteRemaining: baseFTE }),
-              ...patch,
-            } as any
-          }
-          return next
-        })
-      }
-
-      // Store intermediate state for Step 3
-      setStep2Result({
-        pcaData,
-        teamPCAAssigned: pcaResult.teamPCAAssigned || { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 },
-        nonFloatingAllocations: pcaResult.allocations,
-        rawAveragePCAPerTeam,
-      })
-
-      // NOTE: recalculateScheduleCalculations will be called automatically via useEffect
-      // when therapistAllocations or pcaAllocations change (see useEffect above)
-
-      // Update step status (don't auto-advance)
-      setStepStatus(prev => ({ ...prev, 'therapist-pca': 'completed' }))
-      showActionToast('Step 2 allocation completed.', 'success', 'Therapist & non-floating PCA allocations updated.')
-
-      // Return the allocations for use in substitution detection
-      return pcaByTeam
-    } catch (error) {
-      console.error('Error in Step 2:', error)
-      // Return empty allocations on error
-      return createEmptyTeamRecord<Array<PCAAllocation & { staff: Staff }>>([])
-    } finally {
-      setLoading(false)
-    }
+      },
+    })
   }
 
   /**
@@ -4708,116 +3188,30 @@ function SchedulePageContent() {
    * @param userAdjustedPendingFTE - Optional: user-adjusted pending FTE values from Step 3.1 dialog
    * @param userTeamOrder - Optional: user-specified team allocation order from Step 3.1 dialog
    */
+  /**
+   * Step 3: Generate Floating PCA allocations
+   * (implementation moved into useScheduleController: scheduleActions.runStep3FloatingPCA)
+   */
   const generateStep3_FloatingPCA = async (
     userAdjustedPendingFTE?: Record<Team, number>,
     userTeamOrder?: Team[]
   ) => {
-    if (!step2Result) {
-      console.error('Step 2 must be completed before Step 3')
-      return
-    }
-
-    setLoading(true)
-    try {
-      // Recalculate from current state to pick up any user edits after Step 2
-      // Now includes both non-floating AND floating allocations with slots assigned (substitutions)
-      const { teamPCAAssigned, existingAllocations } = recalculateFromCurrentState()
-      const pcaData = buildPCADataFromCurrentState()
-      
-            
-      // Calculate total PCA available from current state
-      const totalPCAAvailable = pcaData
-        .filter(p => p.is_available)
-        .reduce((sum, p) => sum + p.fte_pca, 0)
-
-      // Tie-breaking callback - only used if Step 3.1 dialog was skipped or didn't resolve all ties
-      const handleTieBreak = async (teams: Team[], pendingFTE: number): Promise<Team> => {
-        // If we have a user-specified order, use it to resolve ties
-        if (userTeamOrder) {
-          // Find the first team in the order that's in the tied teams
-          const orderedTeam = userTeamOrder.find(t => teams.includes(t))
-          if (orderedTeam) {
-            return orderedTeam
-          }
-        }
-
-        const sortedTeams = [...teams].sort().join(',')
-        const tieBreakKey = `${sortedTeams}:${pendingFTE.toFixed(4)}`
-
-        if (tieBreakDecisions[tieBreakKey]) {
-          return tieBreakDecisions[tieBreakKey]
-        }
-
-        return new Promise((resolve) => {
+    await scheduleActions.runStep3FloatingPCA({
+      userAdjustedPendingFTE,
+      userTeamOrder,
+      onTieBreak: async ({ teams, pendingFTE }) => {
+        return await new Promise<Team>((resolve) => {
           setTieBreakTeams(teams)
           setTieBreakPendingFTE(pendingFTE)
           const resolver = (selectedTeam: Team) => {
-            setTieBreakDecisions((prevDecisions) => ({
-              ...prevDecisions,
-              [tieBreakKey]: selectedTeam,
-            }))
             resolve(selectedTeam)
           }
           setTieBreakResolver(() => resolver)
           tieBreakResolverRef.current = resolver
           setTieBreakDialogOpen(true)
         })
-      }
-
-      // Run PCA allocation with phase = 'floating' (no special program - already done in Step 2)
-      const pcaContext: PCAAllocationContext = {
-        date: selectedDate,
-        totalPCAAvailable,
-        pcaPool: pcaData,
-        averagePCAPerTeam: step2Result.rawAveragePCAPerTeam, // Use persisted target from Step 2
-        specialPrograms,
-        pcaPreferences,
-        // gymSchedules removed - now comes from pcaPreferences
-        onTieBreak: handleTieBreak,
-        phase: 'floating', // Only allocate floating PCAs (special program already done in Step 2)
-        existingAllocations: existingAllocations, // Now includes floating PCAs with slots assigned
-        existingTeamPCAAssigned: teamPCAAssigned, // Recalculated from current state
-        // Step 3.1 overrides: user-adjusted pending FTE and team order
-        userAdjustedPendingFTE,
-        userTeamOrder,
-      }
-
-      const pcaResult = await allocatePCA(pcaContext)
-      
-      
-      // Note: Special program errors are now handled in Step 2, not here
-      // Step 3 only handles floating PCA allocation errors (if any)
-
-      // Group all PCA allocations by team (including floating, and including per-slot teams for display)
-      const staffById = buildStaffByIdMap(staff || [])
-      const overrides = staffOverrides
-      ;(pcaResult.allocations || []).forEach((alloc: any) => {
-        const override = overrides[alloc.staff_id]
-        if (override) {
-          alloc.leave_type = override.leaveType
-        }
-      })
-      const pcaByTeam = groupPcaAllocationsByTeamWithSlotTeams({
-        teams: TEAMS,
-        allocations: pcaResult.allocations || [],
-        staffById,
-        sort: sortPcaNonFloatingFirstOnly,
-      })
-
-      setPcaAllocations(pcaByTeam)
-      setPendingPCAFTEPerTeam(pcaResult.pendingPCAFTEPerTeam)
-      // NOTE: Do NOT update calculations.average_pca_per_team here
-      // The target from Step 1 (using staffOverrides) should persist through Steps 2-4
-
-      // Update step status and mark as initialized (don't auto-advance)
-      setStepStatus(prev => ({ ...prev, 'floating-pca': 'completed' }))
-      setInitializedSteps(prev => new Set(prev).add('floating-pca'))
-
-    } catch (error) {
-      console.error('Error in Step 3:', error)
-    } finally {
-      setLoading(false)
-    }
+      },
+    })
   }
 
   /**
@@ -4825,41 +3219,7 @@ function SchedulePageContent() {
    * This is a derived calculation based on therapist allocations
    */
   const calculateStep4_BedRelieving = () => {
-    // Use EFFECTIVE total beds (after SHS/Student deductions) for relieving calculations.
-    const ptPerTeamByTeam: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
-
-    TEAMS.forEach(team => {
-      const ptPerTeam = therapistAllocations[team].reduce((sum, alloc) => {
-        const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-        const hasFTE = (alloc.fte_therapist || 0) > 0
-        return sum + (isTherapist && hasFTE ? (alloc.fte_therapist || 0) : 0)
-      }, 0)
-      ptPerTeamByTeam[team] = ptPerTeam
-    })
-
-    const { bedsDesignatedByTeam, totalBedsEffectiveAllTeams } = computeBedsDesignatedByTeam({
-      teams: TEAMS,
-      wards: wards as any,
-      bedCountsOverridesByTeam: bedCountsOverridesByTeam as any,
-    })
-    const { bedsForRelieving } = computeBedsForRelieving({
-      teams: TEAMS,
-      bedsDesignatedByTeam,
-      totalBedsEffectiveAllTeams,
-      totalPTByTeam: ptPerTeamByTeam,
-    })
-
-    const bedContext: BedAllocationContext = {
-      bedsForRelieving,
-      wards: wards.map(w => ({ name: w.name, team_assignments: w.team_assignments })),
-    }
-
-    const bedResult = allocateBeds(bedContext)
-    setBedAllocations(bedResult.allocations)
-
-    // Update step status (don't auto-advance)
-    setStepStatus(prev => ({ ...prev, 'bed-relieving': 'completed' }))
-    showActionToast('Step 4 calculation completed.', 'success', 'Bed relieving values updated.')
+    runStep4BedRelieving({ toast: showActionToast })
   }
 
   /**
@@ -4867,25 +3227,7 @@ function SchedulePageContent() {
    */
   const handleNextStep = async () => {
     // Only navigate, don't run algorithms
-    switch (currentStep) {
-      case 'leave-fte':
-        setCurrentStep('therapist-pca')
-        break
-      case 'therapist-pca':
-        // No validation needed - buffer therapists in the pool don't need to be assigned
-        // Only buffer therapists that have been dragged to teams are in allocations
-        // Buffer therapists that haven't been assigned remain in the pool and don't need validation
-        setCurrentStep('floating-pca')
-        break
-      case 'floating-pca':
-        setCurrentStep('bed-relieving')
-        break
-      case 'bed-relieving':
-        setCurrentStep('review')
-        break
-      default:
-        break
-    }
+    goToNextStep()
   }
 
   /**
@@ -5017,7 +3359,6 @@ function SchedulePageContent() {
               
               // Run Step 2 algorithm with cleaned overrides - it will pause for substitution dialog if needed
               generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides).then(() => {
-                setInitializedSteps(prev => new Set(prev).add('therapist-pca'))
                 resolve()
               })
             }
@@ -5041,7 +3382,6 @@ function SchedulePageContent() {
         
         // Run Step 2 algorithm with cleaned overrides - it will pause for substitution dialog if needed
         await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides)
-        setInitializedSteps(prev => new Set(prev).add('therapist-pca'))
         break
       case 'floating-pca':
         // Step 3.1: Recalculate pending FTE with proper rounding timing
@@ -5064,7 +3404,6 @@ function SchedulePageContent() {
         break
       case 'bed-relieving':
         calculateStep4_BedRelieving()
-        setInitializedSteps(prev => new Set(prev).add('bed-relieving'))
         break
       default:
         break
@@ -5094,72 +3433,7 @@ function SchedulePageContent() {
   }) as Record<Team, (PCAAllocation & { staff: Staff })[]>
 
   const applyBaselineViewAllocations = (overrides: Record<string, any>) => {
-    const dateStr = formatDateForInput(selectedDate)
-
-    const baselineTherapistByTeam = createEmptyTherapistAllocationsByTeam()
-    staff.forEach(s => {
-      if (!s.team) return
-      if (!['SPT', 'APPT', 'RPT'].includes(s.rank)) return
-      const o = overrides?.[s.id]
-      const fte = typeof o?.fteRemaining === 'number' ? o.fteRemaining : 1.0
-      if (fte <= 0) return
-      baselineTherapistByTeam[s.team as Team].push({
-        id: `baseline-therapist:${dateStr}:${s.id}:${s.team}`,
-        schedule_id: '',
-        staff_id: s.id,
-        team: s.team as Team,
-        fte_therapist: fte,
-        fte_remaining: Math.max(0, 1.0 - fte),
-        slot_whole: null,
-        slot1: null,
-        slot2: null,
-        slot3: null,
-        slot4: null,
-        leave_type: (o?.leaveType ?? null) as any,
-        special_program_ids: null,
-        is_substitute_team_head: false,
-        spt_slot_display: null,
-        is_manual_override: false,
-        manual_override_note: null,
-        staff: s,
-      } as any)
-    })
-    setTherapistAllocations(baselineTherapistByTeam)
-
-    const baselinePCAByTeam = createEmptyPCAAllocationsByTeam()
-    staff.forEach(s => {
-      if (!s.team) return
-      if (s.rank !== 'PCA') return
-      if (s.floating) return
-      const o = overrides?.[s.id]
-      const baseFTE = s.status === 'buffer' && s.buffer_fte != null ? (s.buffer_fte as any) : 1.0
-      const fte = typeof o?.fteRemaining === 'number' ? o.fteRemaining : baseFTE
-      if (fte <= 0) return
-      baselinePCAByTeam[s.team as Team].push({
-        id: `baseline-pca:${dateStr}:${s.id}:${s.team}`,
-        schedule_id: '',
-        staff_id: s.id,
-        team: s.team as Team,
-        fte_pca: fte,
-        fte_remaining: fte,
-        slot_assigned: 0,
-        slot_whole: null,
-        slot1: null,
-        slot2: null,
-        slot3: null,
-        slot4: null,
-        leave_type: (o?.leaveType ?? null) as any,
-        special_program_ids: null,
-        invalid_slot: null,
-        leave_comeback_time: null,
-        leave_mode: null,
-        staff: s,
-      } as any)
-    })
-    TEAMS.forEach(team => {
-      baselinePCAByTeam[team].sort((a, b) => (a.staff?.name ?? '').localeCompare(b.staff?.name ?? ''))
-    })
-    setPcaAllocations(baselinePCAByTeam)
+    scheduleActions.applyBaselineViewAllocations(overrides as any)
   }
 
   const STEP_ORDER: ScheduleStepId[] = ['leave-fte', 'therapist-pca', 'floating-pca', 'bed-relieving', 'review']
@@ -5244,26 +3518,7 @@ function SchedulePageContent() {
   ])
 
   const removeStep2KeysFromOverrides = (overrides: Record<string, any>) => {
-    const cleaned: Record<string, any> = {}
-    Object.entries(overrides ?? {}).forEach(([staffId, raw]) => {
-      if (!raw || typeof raw !== 'object') return
-      const o = { ...(raw as any) }
-
-      // Step 2.0 + 2.1 inputs
-      delete o.specialProgramOverrides
-      delete o.substitutionFor
-
-      // Step 2 emergency team transfer overrides for therapists (APPT/RPT/SPT)
-      const staffMember = staff.find(s => s.id === staffId)
-      if (staffMember && ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)) {
-        delete o.team
-      }
-
-      if (Object.keys(o).length > 0) {
-        cleaned[staffId] = o
-      }
-    })
-    return cleaned
+    return scheduleActions.removeStep2KeysFromOverrides(overrides as any) as any
   }
 
   const clearStep3StateOnly = () => {
@@ -5273,121 +3528,36 @@ function SchedulePageContent() {
     setTeamAllocationOrder(null)
     setAllocationTracker(null)
     setPendingPCAFTEPerTeam({ FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 })
-    setPcaAllocationErrors(prev => ({ ...prev, preferredSlotUnassigned: undefined }))
+    setPcaAllocationErrors((prev: PCAAllocationErrors) => ({ ...prev, preferredSlotUnassigned: undefined }))
   }
 
   const clearStep4StateOnly = () => {
-    setBedAllocations([])
-    setBedRelievingNotesByToTeam({})
+    scheduleActions.clearDomainFromStep('bed-relieving')
   }
 
   const clearStep3AllocationsPreserveStep2 = () => {
-    const averagePcaByTeam = TEAMS.reduce((acc, team) => {
-      acc[team] = calculations[team]?.average_pca_per_team || 0
-      return acc
-    }, {} as Record<Team, number>)
-
-    const res = computeStep3ResetForReentry({
-      pcaAllocations,
-      staff,
-      bufferStaff,
-      staffOverrides,
-      averagePcaByTeam,
-      allocationIdPrefix: formatDateForInput(selectedDate),
-      scheduleId: currentScheduleId || '',
-    })
-
-    setPcaAllocations(res.cleanedPcaAllocations)
-    setStaffOverrides(res.cleanedStaffOverrides)
-    setPendingPCAFTEPerTeam(res.pendingPCAFTEPerTeam)
+    scheduleActions.resetStep3ForReentry()
   }
 
   const clearStepOnly = async (stepId: ScheduleStepId) => {
-    switch (stepId) {
-      case 'leave-fte': {
-        setStaffOverrides({})
-        setPcaAllocationErrors({})
-        setStep2Result(null)
-        clearStep3StateOnly()
-        clearStep4StateOnly()
-        applyBaselineViewAllocations({})
-        setStepStatus(prev => ({
-          ...prev,
-          'leave-fte': 'pending',
-          'therapist-pca': 'pending',
-          'floating-pca': 'pending',
-          'bed-relieving': 'pending',
-          review: 'pending',
-        }))
-        return
-      }
-      case 'therapist-pca': {
-        const cleanedOverrides = removeStep2KeysFromOverrides(staffOverrides)
-        setStaffOverrides(cleanedOverrides)
-        setPcaAllocationErrors({})
-        setStep2Result(null)
-        clearStep3StateOnly()
-        clearStep4StateOnly()
-        applyBaselineViewAllocations(cleanedOverrides)
-        setInitializedSteps(prev => {
-          const next = new Set(prev)
-          next.delete('therapist-pca')
-          return next
-        })
-        setStepStatus(prev => ({
-          ...prev,
-          'therapist-pca': 'pending',
-          'floating-pca': 'pending',
-          'bed-relieving': 'pending',
-          review: 'pending',
-        }))
-        return
-      }
-      case 'floating-pca': {
-        clearStep3StateOnly()
-        clearStep3AllocationsPreserveStep2()
-        setInitializedSteps(prev => {
-          const next = new Set(prev)
-          next.delete('floating-pca')
-          return next
-        })
-        setStepStatus(prev => ({
-          ...prev,
-          'floating-pca': 'pending',
-          'bed-relieving': 'pending',
-          review: 'pending',
-        }))
-        return
-      }
-      case 'bed-relieving': {
-        clearStep4StateOnly()
-        setInitializedSteps(prev => {
-          const next = new Set(prev)
-          next.delete('bed-relieving')
-          return next
-        })
-        setStepStatus(prev => ({
-          ...prev,
-          'bed-relieving': 'pending',
-          review: 'pending',
-        }))
-        return
-      }
-      default:
-        return
-    }
+    // UI-only: close any step dialogs to avoid dangling resolvers.
+    setShowSpecialProgramOverrideDialog(false)
+    setSpecialProgramOverrideResolver(null)
+    specialProgramOverrideResolverRef.current = null
+    setSubstitutionWizardOpen(false)
+    setSubstitutionWizardData(null)
+    substitutionWizardResolverRef.current = null
+    setFloatingPCAConfigOpen(false)
+
+    // Clear page-local Step 3 UI state
+    setAdjustedPendingFTE(null)
+    setTeamAllocationOrder(null)
+    setAllocationTracker(null)
+
+    scheduleActions.clearDomainFromStep(stepId)
   }
 
   const clearFromStep = async (stepId: ScheduleStepId) => {
-    // Clear the selected step and all later steps.
-    const stepsToClear = (() => {
-      if (stepId === 'leave-fte') return ['leave-fte', 'therapist-pca', 'floating-pca', 'bed-relieving'] as ScheduleStepId[]
-      if (stepId === 'therapist-pca') return ['therapist-pca', 'floating-pca', 'bed-relieving'] as ScheduleStepId[]
-      if (stepId === 'floating-pca') return ['floating-pca', 'bed-relieving'] as ScheduleStepId[]
-      if (stepId === 'bed-relieving') return ['bed-relieving'] as ScheduleStepId[]
-      return [] as ScheduleStepId[]
-    })()
-
     // Close any step dialogs to avoid dangling resolvers.
     setShowSpecialProgramOverrideDialog(false)
     setSpecialProgramOverrideResolver(null)
@@ -5397,47 +3567,12 @@ function SchedulePageContent() {
     substitutionWizardResolverRef.current = null
     setFloatingPCAConfigOpen(false)
 
-    if (stepsToClear.includes('leave-fte')) {
-      setStaffOverrides({})
-      setPcaAllocationErrors({})
-      setStep2Result(null)
-      clearStep3StateOnly()
-      clearStep4StateOnly()
-      applyBaselineViewAllocations({})
-    } else if (stepsToClear.includes('therapist-pca')) {
-      const cleanedOverrides = removeStep2KeysFromOverrides(staffOverrides)
-      setStaffOverrides(cleanedOverrides)
-      setPcaAllocationErrors({})
-      setStep2Result(null)
-      clearStep3StateOnly()
-      clearStep4StateOnly()
-      applyBaselineViewAllocations(cleanedOverrides)
-    } else if (stepsToClear.includes('floating-pca')) {
-      clearStep3StateOnly()
-      clearStep3AllocationsPreserveStep2()
-      if (stepsToClear.includes('bed-relieving')) {
-        clearStep4StateOnly()
-      }
-    } else if (stepsToClear.includes('bed-relieving')) {
-      clearStep4StateOnly()
-    }
+    // Clear page-local Step 3 UI state
+    setAdjustedPendingFTE(null)
+    setTeamAllocationOrder(null)
+    setAllocationTracker(null)
 
-    setInitializedSteps(prev => {
-      const next = new Set(prev)
-      if (stepsToClear.includes('therapist-pca')) next.delete('therapist-pca')
-      if (stepsToClear.includes('floating-pca')) next.delete('floating-pca')
-      if (stepsToClear.includes('bed-relieving')) next.delete('bed-relieving')
-      return next
-    })
-
-    setStepStatus(prev => {
-      const next = { ...prev }
-      stepsToClear.forEach(s => {
-        next[s] = 'pending'
-      })
-      next.review = 'pending'
-      return next
-    })
+    scheduleActions.clearDomainFromStep(stepId)
   }
 
   const handleClearStep = (stepIdRaw: string) => {
@@ -5603,15 +3738,14 @@ function SchedulePageContent() {
     
     // Handle any errors from the algorithm
     if (result.errors?.preferredSlotUnassigned && result.errors.preferredSlotUnassigned.length > 0) {
-      setPcaAllocationErrors(prev => ({
+      setPcaAllocationErrors((prev: PCAAllocationErrors) => ({
         ...prev,
         preferredSlotUnassigned: result.errors!.preferredSlotUnassigned!.join('; ')
       }))
     }
     
-    // Mark Step 3 as initialized and completed
-    setInitializedSteps(prev => new Set(prev).add('floating-pca'))
-    setStepStatus(prev => ({ ...prev, 'floating-pca': 'completed' }))
+    // Mark Step 3 as initialized and completed (domain-owned)
+    scheduleActions.markStepCompleted('floating-pca')
     showActionToast('Step 3 allocation completed.', 'success', 'Floating PCA assignments updated.')
   }
   
@@ -5706,734 +3840,36 @@ function SchedulePageContent() {
    * Handle going to the previous step
    */
   const handlePreviousStep = () => {
-    switch (currentStep) {
-      case 'therapist-pca':
-        setCurrentStep('leave-fte')
-        break
-      case 'floating-pca':
-        setCurrentStep('therapist-pca')
-        break
-      case 'bed-relieving':
-        setCurrentStep('floating-pca')
-        break
-      case 'review':
-        setCurrentStep('bed-relieving')
-        break
-      default:
-        break
-    }
+    goToPreviousStep()
   }
 
   /**
    * Reset to baseline - clear all staff overrides and start fresh
    */
   const resetToBaseline = () => {
-    setStaffOverrides({})
-    setSavedOverrides({})
-    setBedCountsOverridesByTeam({})
-    setSavedBedCountsOverridesByTeam({})
-    setBedRelievingNotesByToTeam({})
-    setSavedBedRelievingNotesByToTeam({})
-    setAllocationNotesDoc(null)
-    setSavedAllocationNotesDoc(null)
-    setStep2Result(null)
-    setTherapistAllocations({ FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: [] })
-    setPcaAllocations({ FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: [] })
-    setBedAllocations([])
-    setPendingPCAFTEPerTeam({ FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 })
-    setStepStatus({
-      'leave-fte': 'pending',
-      'therapist-pca': 'pending',
-      'floating-pca': 'pending',
-      'bed-relieving': 'pending',
-      'review': 'pending',
-    })
-    setCurrentStep('leave-fte')
-    setTieBreakDecisions({})
+    scheduleActions.resetToBaseline()
   }
+
 
   // Save all changes to database (batch save)
   const saveScheduleToDatabase = async () => {
-    const timer = createTimingCollector()
-    let usedRpc = false
-    let snapshotWritten = false
-    let snapshotBytes: number | null = null
-    let specialProgramsBytes: number | null = null
-    let saveError: unknown = null
     startTopLoading(0.06)
     bumpTopLoadingTo(0.12)
 
-    // Get the latest staff overrides - use current state
-    let overridesToSave = { ...staffOverrides }
-    let scheduleId = currentScheduleId
-    
-    if (!scheduleId) {
-      const result = await loadScheduleForDate(selectedDate)
-      if (!result || !result.scheduleId) {
-        showActionToast('Could not create schedule. Please try again.', 'error')
-        timer.stage('ensureScheduleRow')
-        setLastSaveTiming(timer.finalize({ ok: false }))
-        finishTopLoading()
-        return
-      }
-      scheduleId = result.scheduleId
-      // Merge loaded overrides with current overrides (current takes precedence)
-      overridesToSave = { ...result.overrides, ...staffOverrides }
-    }
-    timer.stage('ensureScheduleRow')
-    bumpTopLoadingTo(0.2)
-
-    // Build persisted staff_overrides payload (includes schedule-level bed count overrides).
-    const staffOverridesPayloadForDb: Record<string, any> = {
-      ...overridesToSave,
-      __bedCounts: { byTeam: bedCountsOverridesByTeam },
-      __bedRelieving: { byToTeam: bedRelievingNotesByToTeam },
-      __allocationNotes: { doc: allocationNotesDoc ?? null, updatedAt: new Date().toISOString() },
-    }
-
-    setSaving(true)
+    let timing = null
     try {
-      // Collect all allocations that need to be saved
-      // IMPORTANT: Save ALL allocations (both with and without overrides) to ensure complete persistence
-      const allocationsToSave: Array<{
-        staffId: string
-        isTherapist: boolean
-        team: Team
-        fteRemaining: number
-        leaveType: LeaveType | null
-        alloc: TherapistAllocation | PCAAllocation | null
-        invalidSlot?: number
-        leaveComebackTime?: string
-        isLeave?: boolean
-        fteSubtraction?: number // NEW: For PCA base_FTE_remaining calculation
-      }> = []
-
-      // First, collect allocations from current state (therapist and PCA allocations)
-      // - PCA allocations must remain unique per staff_id (DB enforces UNIQUE(schedule_id, staff_id))
-      // - Therapist allocations can now have multiple rows per staff_id across teams
-      const processedPcaStaffIds = new Set<string>()
-      const therapistStaffIdsInAllocations = new Set<string>()
-      const processedTherapistKeys = new Set<string>() // `${staffId}::${team}`
-
-      // Save all therapist allocations (only actual therapists, not PCAs)
-      TEAMS.forEach(team => {
-        therapistAllocations[team]?.forEach(alloc => {
-          const staffMember = staff.find(s => s.id === alloc.staff_id)
-          if (!staffMember) return
-
-          // Only save as therapist if staff is actually a therapist rank
-          const isActualTherapist = ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)
-          if (!isActualTherapist) return // Skip PCAs that might be in therapist allocations
-
-          therapistStaffIdsInAllocations.add(alloc.staff_id)
-
-          const override = overridesToSave[alloc.staff_id] as any
-          const splitMap = override?.therapistTeamFTEByTeam as Partial<Record<Team, number>> | undefined
-          const hasSplitMap = !!splitMap && Object.keys(splitMap).length > 0
-
-          // If a therapist is using split allocation overrides, we do NOT use override.team (single-team transfer)
-          // because team is part of the row identity now (UNIQUE(schedule_id, staff_id, team)).
-          const effectiveTeam: Team = hasSplitMap ? alloc.team : (override?.team ?? alloc.team)
-
-          const dedupeKey = `${alloc.staff_id}::${effectiveTeam}`
-          if (processedTherapistKeys.has(dedupeKey)) return
-          processedTherapistKeys.add(dedupeKey)
-
-          const effectiveFteRemaining =
-            hasSplitMap && typeof splitMap?.[effectiveTeam] === 'number'
-              ? (splitMap[effectiveTeam] as number)
-              : override
-                ? override.fteRemaining
-                : alloc.fte_therapist
-
-          allocationsToSave.push({
-            staffId: alloc.staff_id,
-            isTherapist: true,
-            team: effectiveTeam,
-            fteRemaining: effectiveFteRemaining,
-            leaveType: override ? override.leaveType : alloc.leave_type,
-            alloc: alloc,
-          })
-        })
+      timing = await scheduleActions.saveScheduleToDatabase({
+        userRole,
+        toast: showActionToast,
+        onProgress: bumpTopLoadingTo,
+        startSoftAdvance,
+        stopSoftAdvance,
       })
-
-      // Save all PCA allocations
-      TEAMS.forEach(team => {
-        pcaAllocations[team]?.forEach(alloc => {
-          if (processedPcaStaffIds.has(alloc.staff_id)) return
-          processedPcaStaffIds.add(alloc.staff_id)
-          
-          const staffMember = staff.find(s => s.id === alloc.staff_id)
-          if (!staffMember) return
-          
-          const override = overridesToSave[alloc.staff_id]
-          allocationsToSave.push({
-            staffId: alloc.staff_id,
-            isTherapist: false,
-            team: alloc.team,
-            fteRemaining: override ? override.fteRemaining : alloc.fte_pca,
-            leaveType: override ? override.leaveType : alloc.leave_type,
-            alloc: alloc,
-            invalidSlot: override?.invalidSlot,
-            leaveComebackTime: override?.leaveComebackTime,
-            isLeave: override?.isLeave,
-            fteSubtraction: override?.fteSubtraction // Pass fteSubtraction to save function
-          })
-        })
-      })
-
-      // Also save any overrides that don't have allocations yet (e.g., staff on full leave)
-      Object.entries(overridesToSave).forEach(([staffId, override]) => {
-        // Already processed above (PCA allocations are unique per staff, therapists are tracked by staff_id presence)
-        if (processedPcaStaffIds.has(staffId) || therapistStaffIdsInAllocations.has(staffId)) return
-        
-        const staffMember = staff.find(s => s.id === staffId)
-        if (!staffMember) return
-        
-        const isTherapist = ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)
-        const isPCA = staffMember.rank === 'PCA'
-        
-        if (!isTherapist && !isPCA) return
-        
-        // Find team from staff data or from current allocation
-        let team: Team = staffMember.team || 'FO'
-        
-        // Try to find current allocation to get full allocation data
-        let currentAlloc: TherapistAllocation | PCAAllocation | null = null
-        if (isTherapist) {
-          for (const t of TEAMS) {
-            const alloc = therapistAllocations[t]?.find(a => a.staff_id === staffId)
-            if (alloc) {
-              currentAlloc = alloc
-              team = alloc.team
-              break
-            }
-          }
-        } else if (isPCA) {
-          for (const t of TEAMS) {
-            const alloc = pcaAllocations[t]?.find(a => a.staff_id === staffId)
-            if (alloc) {
-              currentAlloc = alloc
-              team = alloc.team
-              break
-            }
-          }
-        }
-        
-        allocationsToSave.push({
-          staffId,
-          isTherapist,
-          team,
-          fteRemaining: override.fteRemaining,
-          leaveType: override.leaveType,
-          alloc: currentAlloc,
-          invalidSlot: override.invalidSlot,
-          leaveComebackTime: override.leaveComebackTime,
-          isLeave: override.isLeave,
-          fteSubtraction: override.fteSubtraction // Pass fteSubtraction to save function
-        })
-      })
-      timer.stage('collectAllocations')
-      bumpTopLoadingTo(0.32)
-
-      // Build special programs reference for UUID conversion
-      const specialProgramsRef: SpecialProgramRef[] = specialPrograms.map(sp => ({ id: sp.id, name: sp.name }))
-
-      // Prepare bulk rows for upsert/insert
-      const therapistRows: any[] = []
-      const pcaRows: any[] = []
-
-      for (const item of allocationsToSave) {
-        if (item.isTherapist) {
-          const alloc = item.alloc as TherapistAllocation | null
-          const rawTherapist = {
-            schedule_id: scheduleId,
-            staff_id: item.staffId,
-            team: item.team,
-            fte_therapist: item.fteRemaining,
-            fte_remaining: Math.max(0, 1 - item.fteRemaining),
-            slot_whole: (alloc as any)?.slot_whole ?? null,
-            slot1: alloc?.slot1 ?? item.team,
-            slot2: alloc?.slot2 ?? item.team,
-            slot3: alloc?.slot3 ?? item.team,
-            slot4: alloc?.slot4 ?? item.team,
-            leave_type: item.leaveType,
-            special_program_ids: alloc?.special_program_ids ?? null,
-            is_substitute_team_head: alloc?.is_substitute_team_head ?? false,
-            spt_slot_display: alloc?.spt_slot_display ?? null,
-            is_manual_override: alloc?.is_manual_override ?? false,
-            manual_override_note: alloc?.manual_override_note ?? null,
-          }
-
-          therapistRows.push(
-            prepareTherapistAllocationForDb({
-              allocation: rawTherapist,
-              specialPrograms: specialProgramsRef,
-            })
-          )
-        } else {
-          const alloc = item.alloc as PCAAllocation | null
-
-          // Base FTE comes from override (Step 1 single source of truth) if present,
-          // otherwise fall back to existing allocation value.
-          const override = overridesToSave[item.staffId]
-          const baseFTEPCA = override?.fteRemaining ?? alloc?.fte_pca ?? item.fteRemaining
-          const slotAssigned = (alloc as any)?.slot_assigned ?? (alloc as any)?.fte_assigned ?? 0
-          const fteRemaining = Math.max(0, baseFTEPCA - slotAssigned)
-
-          const rawPCA = {
-            schedule_id: scheduleId,
-            staff_id: item.staffId,
-            team: item.team,
-            fte_pca: baseFTEPCA,
-            fte_remaining: fteRemaining,
-            slot_assigned: slotAssigned,
-            slot_whole: (alloc as any)?.slot_whole ?? null,
-            slot1: (alloc as any)?.slot1 ?? item.team,
-            slot2: (alloc as any)?.slot2 ?? item.team,
-            slot3: (alloc as any)?.slot3 ?? item.team,
-            slot4: (alloc as any)?.slot4 ?? item.team,
-            leave_type: item.leaveType,
-            special_program_ids: (alloc as any)?.special_program_ids ?? null,
-            invalid_slot: item.invalidSlot ?? (alloc as any)?.invalid_slot ?? null,
-            leave_comeback_time: item.leaveComebackTime ?? (alloc as any)?.leave_comeback_time ?? null,
-            leave_mode:
-              item.isLeave !== undefined
-                ? item.isLeave
-                  ? 'leave'
-                  : 'come_back'
-                : ((alloc as any)?.leave_mode ?? null),
-          }
-
-          pcaRows.push(
-            preparePCAAllocationForDb({
-              allocation: rawPCA,
-              specialPrograms: specialProgramsRef,
-            })
-          )
-        }
-      }
-      timer.stage('buildDbRows')
-      bumpTopLoadingTo(0.42)
-
-      let missingStaffIdsForSave: string[] = []
-
-      // Preflight: verify all allocation staff_ids exist in DB (helps debug FK failures)
-      try {
-        const submittedIds = Array.from(new Set<string>([
-          ...therapistRows.map(r => (r as any)?.staff_id).filter(Boolean),
-          ...pcaRows.map(r => (r as any)?.staff_id).filter(Boolean),
-        ]))
-        const badFormatIds = submittedIds.filter(id => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
-        const { data: existingStaff, error: staffCheckError } = await supabase
-          .from('staff')
-          .select('id')
-          .in('id', submittedIds)
-        const existingSet = new Set((existingStaff || []).map((r: any) => r?.id).filter(Boolean))
-        const missingIds = submittedIds.filter(id => !existingSet.has(id))
-        missingStaffIdsForSave = missingIds
-        void badFormatIds
-        void staffCheckError
-      } catch {}
-
-      // If any referenced staff IDs are missing from the staff table, saving allocations will fail
-      // due to FK constraints. In this case we (1) warn, (2) strip those rows from the save payload,
-      // and (3) remove them from in-memory state so the UI aligns with what can be persisted.
-      if (missingStaffIdsForSave.length > 0) {
-        showActionToast(
-          `Cannot save allocations for ${missingStaffIdsForSave.length} staff record(s) that no longer exist. ` +
-            `They will be removed from this schedule (e.g. ${missingStaffIdsForSave[0]}).`,
-          'warning'
-        )
-
-        // Strip from save payload
-        for (let i = therapistRows.length - 1; i >= 0; i--) {
-          const sid = (therapistRows[i] as any)?.staff_id
-          if (sid && missingStaffIdsForSave.includes(sid)) therapistRows.splice(i, 1)
-        }
-        for (let i = pcaRows.length - 1; i >= 0; i--) {
-          const sid = (pcaRows[i] as any)?.staff_id
-          if (sid && missingStaffIdsForSave.includes(sid)) pcaRows.splice(i, 1)
-        }
-
-        // Strip from overrides payload (avoid accumulating unreachable keys)
-        try {
-          missingStaffIdsForSave.forEach(staffId => {
-            delete (staffOverridesPayloadForDb as any)[staffId]
-            delete (overridesToSave as any)[staffId]
-          })
-        } catch {
-          // ignore
-        }
-
-        // Sync UI state to match what can be persisted
-        try {
-          setStaff(prev => prev.filter(s => !missingStaffIdsForSave.includes((s as any)?.id)))
-          setInactiveStaff(prev => prev.filter(s => !missingStaffIdsForSave.includes((s as any)?.id)))
-          setBufferStaff(prev => prev.filter(s => !missingStaffIdsForSave.includes((s as any)?.id)))
-          setTherapistAllocations(prev => {
-            const next: any = { ...prev }
-            TEAMS.forEach(team => {
-              next[team] = (next[team] || []).filter((a: any) => !missingStaffIdsForSave.includes(a?.staff_id))
-            })
-            return next
-          })
-          setPcaAllocations(prev => {
-            const next: any = { ...prev }
-            TEAMS.forEach(team => {
-              next[team] = (next[team] || []).filter((a: any) => !missingStaffIdsForSave.includes(a?.staff_id))
-            })
-            return next
-          })
-        } catch {
-          // ignore
-        }
-      }
-
-      // Schedule calculations: upsert per (schedule_id, team) if available
-      const calcRows = TEAMS.map(team => calculations[team])
-        .filter((c): c is ScheduleCalculations => !!c)
-        .map(c => ({
-          schedule_id: scheduleId,
-          team: c.team,
-          designated_wards: c.designated_wards ?? [],
-          total_beds_designated: c.total_beds_designated,
-          total_beds: c.total_beds,
-          total_pt_on_duty: normalizeFTE(c.total_pt_on_duty),
-          beds_per_pt: normalizeFTE(c.beds_per_pt),
-          pt_per_team: normalizeFTE(c.pt_per_team),
-          beds_for_relieving: normalizeFTE(c.beds_for_relieving),
-          pca_on_duty: normalizeFTE(c.pca_on_duty),
-          total_pt_per_pca: normalizeFTE(c.total_pt_per_pca),
-          total_pt_per_team: normalizeFTE(c.total_pt_per_team),
-          average_pca_per_team: normalizeFTE(c.average_pca_per_team),
-        }))
-
-      // Bed allocations: replace as a whole (fast + avoids requiring extra unique constraints)
-      const bedRows = bedAllocations.map(b => ({
-        schedule_id: scheduleId,
-        from_team: b.from_team,
-        to_team: b.to_team,
-        ward: b.ward,
-        num_beds: b.num_beds,
-        slot: b.slot ?? null,
-      }))
-
-      // Persist schedule-level metadata (tie-break decisions, staff_overrides, workflow_state)
-      const completedStepsForWorkflow = ALLOCATION_STEPS
-        .filter(step => stepStatus[step.id] === 'completed')
-        .map(step => step.id) as WorkflowState['completedSteps']
-
-      const workflowStateToSave: WorkflowState = {
-        currentStep: currentStep as WorkflowState['currentStep'],
-        completedSteps: completedStepsForWorkflow,
-      }
-
-      // Optional fast path: server-side RPC transaction (falls back to client-side batch writes)
-      if (cachedSaveScheduleRpcAvailable !== false) {
-        bumpTopLoadingTo(0.55)
-        startSoftAdvance(0.86)
-        const rpcRes = await supabase.rpc('save_schedule_v1', {
-          p_schedule_id: scheduleId,
-          therapist_allocations: therapistRows,
-          pca_allocations: pcaRows,
-          bed_allocations: bedRows,
-          calculations: calcRows,
-          tie_break_decisions: tieBreakDecisions,
-          staff_overrides: staffOverridesPayloadForDb,
-          workflow_state: workflowStateToSave,
-        })
-
-        if (!rpcRes.error) {
-          cachedSaveScheduleRpcAvailable = true
-          usedRpc = true
-        } else {
-          // Cache "not available" only for "function missing" style errors.
-          const msg = rpcRes.error.message || ''
-          if (
-            msg.includes('save_schedule_v1') ||
-            msg.includes('Could not find the function') ||
-            (rpcRes.error as any)?.code === 'PGRST202'
-          ) {
-            cachedSaveScheduleRpcAvailable = false
-          }
-          console.warn('save_schedule_v1 RPC failed, falling back to client-side save:', rpcRes.error)
-        }
-      }
-
-      if (!usedRpc) {
-        bumpTopLoadingTo(0.55)
-        startSoftAdvance(0.82)
-        // Client-side bulk writes (dramatically fewer round-trips than per-row update/insert)
-        const upsertPromises: PromiseLike<any>[] = []
-        if (pcaRows.length > 0) {
-          upsertPromises.push(
-            supabase
-              .from('schedule_pca_allocations')
-              .upsert(pcaRows, { onConflict: 'schedule_id,staff_id' })
-          )
-        }
-        if (calcRows.length > 0) {
-          upsertPromises.push(
-            supabase.from('schedule_calculations').upsert(calcRows, { onConflict: 'schedule_id,team' })
-          )
-        }
-
-        // Therapist allocations are now allowed to have multiple rows per staff across teams.
-        // To correctly handle moves/deletes, we replace therapist allocations as a whole (DELETE + INSERT).
-        const therapistDeletePromise = supabase
-          .from('schedule_therapist_allocations')
-          .delete()
-          .eq('schedule_id', scheduleId)
-        const bedDeletePromise = supabase.from('schedule_bed_allocations').delete().eq('schedule_id', scheduleId)
-
-        const [therapistDeleteRes, bedDeleteRes, ...upsertResults] = await Promise.all([
-          therapistDeletePromise,
-          bedDeletePromise,
-          ...upsertPromises,
-        ])
-
-        const firstWriteError =
-          (therapistDeleteRes as any)?.error ||
-          (bedDeleteRes as any)?.error ||
-          upsertResults.find(r => (r as any)?.error)?.error
-        if (firstWriteError) {
-          console.error('Error saving schedule:', firstWriteError)
-          showActionToast(`Error saving schedule: ${firstWriteError.message || 'Unknown error'}`, 'error')
-          saveError = firstWriteError
-          timer.stage('writeAllocations.error')
-          return
-        }
-
-        if (therapistRows.length > 0) {
-          const therapistInsertRes = await supabase.from('schedule_therapist_allocations').insert(therapistRows)
-          if (therapistInsertRes.error) {
-            console.error('Error saving therapist allocations:', therapistInsertRes.error)
-            showActionToast(
-              `Error saving therapist allocations: ${therapistInsertRes.error.message || 'Unknown error'}`,
-              'error'
-            )
-            saveError = therapistInsertRes.error
-            timer.stage('writeAllocations.error')
-            return
-          }
-        }
-
-        if (bedRows.length > 0) {
-          const bedInsertRes = await supabase.from('schedule_bed_allocations').insert(bedRows)
-          if (bedInsertRes.error) {
-            console.error('Error saving bed allocations:', bedInsertRes.error)
-            showActionToast(
-              `Error saving bed allocations: ${bedInsertRes.error.message || 'Unknown error'}`,
-              'error'
-            )
-            saveError = bedInsertRes.error
-            timer.stage('writeAllocations.error')
-            return
-          }
-        }
-      }
-      stopSoftAdvance()
-      timer.stage('writeAllocations')
-      bumpTopLoadingTo(0.86)
-      
-      // Update saved state
-      setSavedOverrides({ ...overridesToSave })
-      setStaffOverrides({ ...overridesToSave }) // Also update staffOverrides with the merged data
-      setSavedBedCountsOverridesByTeam({ ...(bedCountsOverridesByTeam as any) })
-      setSavedBedRelievingNotesByToTeam({ ...(bedRelievingNotesByToTeam as any) })
-      setSavedAllocationNotesDoc(allocationNotesDoc)
-      
-      // OPTIMIZATION: Clear cache for this date after save to force fresh load next time
-      const year = selectedDate.getFullYear()
-      const month = String(selectedDate.getMonth() + 1).padStart(2, '0')
-      const day = String(selectedDate.getDate()).padStart(2, '0')
-      const dateStr = `${year}-${month}-${day}`
-      clearCachedSchedule(dateStr)
-
-      // Conditional snapshot refresh:
-      // - Avoid rewriting baseline_snapshot on every save (large JSONB write).
-      // - Refresh only when snapshot health is not ok, referenced staff are missing, legacy/raw detected,
-      //   or when RPT/APPT team transfer overrides need to be reflected in snapshot staff.team.
-      try {
-        const referencedIds = extractReferencedStaffIds({
-          therapistAllocs: allocationsToSave.filter(a => a.isTherapist).map(a => ({ staff_id: a.staffId })),
-          pcaAllocs: allocationsToSave.filter(a => !a.isTherapist).map(a => ({ staff_id: a.staffId })),
-          staffOverrides: overridesToSave,
-        })
-
-        const baselineStaffById = new Map<string, any>()
-        ;(baselineSnapshot?.staff || []).forEach((s: any) => s?.id && baselineStaffById.set(s.id, s))
-
-        const missingReferencedIds: string[] = []
-        referencedIds.forEach(id => {
-          if (!baselineStaffById.has(id)) missingReferencedIds.push(id)
-        })
-
-        const hasLegacyWrappedIssue = !!snapshotHealthReport?.issues?.includes('wrappedLegacySnapshot')
-        const needsRepairRefresh =
-          !baselineSnapshot ||
-          !snapshotHealthReport ||
-          snapshotHealthReport.status !== 'ok' ||
-          missingReferencedIds.length > 0 ||
-          hasLegacyWrappedIssue
-
-        // Team transfer overrides for fixed-team therapists (APPT/RPT) should be reflected in snapshot staff.team
-        // to keep per-date isolation consistent for subsequent loads/copies.
-        let hasTeamOverrideChange = false
-        if (baselineSnapshot?.staff && baselineSnapshot.staff.length > 0) {
-          for (const [staffId, o] of Object.entries(overridesToSave)) {
-            const nextTeam = (o as any)?.team as Team | undefined
-            if (!nextTeam) continue
-            const snapRow = baselineStaffById.get(staffId)
-            if (!snapRow) continue
-            const rank = snapRow?.rank
-            if (rank !== 'APPT' && rank !== 'RPT') continue
-            const snapTeam = snapRow?.team ?? null
-            if (snapTeam !== nextTeam) {
-              hasTeamOverrideChange = true
-              break
-            }
-          }
-        }
-
-        if (needsRepairRefresh || hasTeamOverrideChange) {
-          let nextSnapshot: BaselineSnapshot
-          let nextReport: SnapshotHealthReport | null = snapshotHealthReport
-
-          if (needsRepairRefresh) {
-            const { data: existingScheduleRow } = await supabase
-              .from('daily_schedules')
-              .select('baseline_snapshot')
-              .eq('id', scheduleId)
-              .maybeSingle()
-
-            const existingBaselineStored = (existingScheduleRow as any)?.baseline_snapshot as
-              | BaselineSnapshotStored
-              | undefined
-
-            const result = await validateAndRepairBaselineSnapshot({
-              storedSnapshot: existingBaselineStored,
-              referencedStaffIds: referencedIds,
-              fetchLiveStaffByIds: async (ids) => {
-                if (ids.length === 0) return []
-                const attempt = await supabase
-                  .from('staff')
-                  .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program')
-                  .in('id', ids)
-                if (!attempt.error) return (attempt.data || []) as any[]
-                // Legacy fallback: older schemas may not have status/buffer_fte columns
-                if (attempt.error.message?.includes('column') || (attempt.error as any)?.code === '42703') {
-                  const fallback = await supabase.from('staff').select('*').in('id', ids)
-                  return (fallback.data || []) as any[]
-                }
-                return (attempt.data || []) as any[]
-              },
-              buildFallbackBaseline: buildBaselineSnapshotFromCurrentState,
-              sourceForNewEnvelope: 'save',
-            })
-
-            nextSnapshot = result.data
-            nextReport = result.report
-          } else {
-            nextSnapshot = baselineSnapshot
-          }
-
-          // Apply APPT/RPT team overrides onto snapshot staff rows when needed
-          if (hasTeamOverrideChange && nextSnapshot?.staff) {
-            const patchedStaff = nextSnapshot.staff.map((s: any) => {
-              const o = overridesToSave[s.id]
-              const nextTeam = (o as any)?.team as Team | undefined
-              if (!nextTeam) return s
-              if (s.rank !== 'APPT' && s.rank !== 'RPT') return s
-              if ((s.team ?? null) === nextTeam) return s
-              return { ...s, team: nextTeam }
-            })
-            nextSnapshot = { ...(nextSnapshot as any), staff: patchedStaff }
-          }
-
-          // Persist updated snapshot back. Always store v1 envelope.
-          // OPTIMIZATION: Include pre-calculated values to avoid recalculation on load
-          const minifiedSnapshot: BaselineSnapshot = {
-            ...(nextSnapshot as any),
-            specialPrograms: minifySpecialProgramsForSnapshot((nextSnapshot as any).specialPrograms || []) as any,
-            calculatedValues: {
-              calculations: calculations,
-              calculatedAt: new Date().toISOString(),
-              calculatedForStep: currentStep as ScheduleStepId,
-            },
-          }
-          if (userRole === 'developer') {
-            try {
-              specialProgramsBytes = JSON.stringify((minifiedSnapshot as any).specialPrograms || []).length
-              snapshotBytes = JSON.stringify(buildBaselineSnapshotEnvelope({ data: minifiedSnapshot, source: 'save' }) as any).length
-            } catch {
-              // ignore
-            }
-          }
-          const envelopeToSave = buildBaselineSnapshotEnvelope({ data: minifiedSnapshot, source: 'save' })
-          await supabase.from('daily_schedules').update({ baseline_snapshot: envelopeToSave as any }).eq('id', scheduleId)
-          snapshotWritten = true
-
-          setBaselineSnapshot(minifiedSnapshot)
-          if (nextReport) setSnapshotHealthReport(nextReport)
-        }
-      } catch (e) {
-        console.warn('Failed to refresh baseline snapshot during save (skipped):', e)
-      }
-      timer.stage('snapshotRefresh')
-      bumpTopLoadingTo(0.92)
-
-      if (!usedRpc) {
-        const { error: scheduleMetaError } = await supabase
-          .from('daily_schedules')
-          .update({
-            tie_break_decisions: tieBreakDecisions,
-            staff_overrides: staffOverridesPayloadForDb,
-            workflow_state: workflowStateToSave,
-          })
-          .eq('id', scheduleId)
-
-        if (scheduleMetaError) {
-          console.error('Error saving schedule metadata:', scheduleMetaError)
-        } else {
-          setPersistedWorkflowState(workflowStateToSave)
-        }
-      } else {
-        // RPC already persisted metadata transactionally.
-        setPersistedWorkflowState(workflowStateToSave)
-      }
-      timer.stage('metadata')
-      bumpTopLoadingTo(0.96)
-      
-      // Unmet PCA needs tracking removed - feature no longer used
-      
-      showActionToast('Saved successfully.', 'success')
-    } catch (error) {
-      console.error('Error saving schedule:', error)
-      saveError = error
+    } catch (e) {
+      console.error('Error saving schedule:', e)
       showActionToast('Failed to save. Please try again.', 'error')
     } finally {
-      setSaving(false)
-      // Persist timing report (developer-only tooltip, but collection is cheap)
-      if (userRole === 'developer' && specialProgramsBytes == null) {
-        try {
-          const prog = baselineSnapshot?.specialPrograms ?? specialPrograms
-          specialProgramsBytes = JSON.stringify(minifySpecialProgramsForSnapshot(prog as any)).length
-        } catch {
-          // ignore
-        }
-      }
-      setLastSaveTiming(
-        timer.finalize({
-          ok: !saveError,
-          rpcUsed: usedRpc,
-          snapshotWritten,
-          snapshotHasMinifiedPrograms: true,
-          snapshotBytes,
-          specialProgramsBytes,
-        })
-      )
+      if (timing) setLastSaveTiming(timing)
       finishTopLoading()
     }
   }
@@ -6450,7 +3886,7 @@ function SchedulePageContent() {
     mode: 'full' | 'hybrid'
     includeBufferStaff: boolean
   }): Promise<{ copiedUpToStep?: string }> => {
-    const timer = createTimingCollector()
+    let timing: any = null
     let serverTiming: any = null
     let copyError: unknown = null
 
@@ -6460,42 +3896,23 @@ function SchedulePageContent() {
     startSoftAdvance(0.72)
 
     try {
-      const res = await fetch('/api/schedules/copy', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          fromDate: formatDateForInput(fromDate),
-          toDate: formatDateForInput(toDate),
-          mode,
-          includeBufferStaff,
-        }),
+      const result = await scheduleActions.copySchedule({
+        fromDate,
+        toDate,
+        mode,
+        includeBufferStaff,
+        onProgress: bumpTopLoadingTo,
+        startSoftAdvance,
+        stopSoftAdvance,
       })
-      timer.stage('fetch')
-      bumpTopLoadingTo(0.72)
 
-      let data: any = null
-      try {
-        data = await res.json()
-      } catch {
-        data = null
-      }
-      serverTiming = data?.timings ?? null
-      timer.stage('parseResponse')
-      stopSoftAdvance()
-      bumpTopLoadingTo(0.8)
-
-      if (!res.ok) {
-        const message = data?.error ? String(data.error) : 'Failed to copy schedule.'
-        throw new Error(message)
-      }
+      timing = result.timing
+      serverTiming = (result.timing as any)?.meta?.server ?? null
 
       // Close wizard after success (non-modal feedback will be shown via toast).
       setCopyWizardOpen(false)
       setCopyWizardConfig(null)
       setCopyMenuOpen(false)
-      timer.stage('closeWizard')
       bumpTopLoadingTo(0.86)
 
       // Highlight the newly-loaded date label briefly.
@@ -6503,7 +3920,6 @@ function SchedulePageContent() {
 
       // Navigate to copied schedule date and reload schedule metadata
       beginDateTransition(toDate, { resetLoadedForDate: true, useLocalTopBar: false })
-      timer.stage('navigate')
       bumpTopLoadingTo(0.92)
 
       // Non-blocking refresh: optimistically mark the target date as having data,
@@ -6514,28 +3930,31 @@ function SchedulePageContent() {
         return next
       })
       loadDatesWithData({ force: true })
-      timer.stage('refreshDates')
       bumpTopLoadingTo(0.98)
 
-      showActionToast(`Copied schedule to ${formatDateDDMMYYYY(toDate)}.`, 'success')
+      showActionToast('Copied schedule to ' + formatDateDDMMYYYY(toDate) + '.', 'success')
 
       return {
-        copiedUpToStep: (data as any).copiedUpToStep as string | undefined,
+        copiedUpToStep: result.copiedUpToStep,
       }
-    } catch (e) {
+    } catch (e: any) {
       copyError = e
+      timing = e?.timing ?? timing
+      serverTiming = e?.serverTiming ?? serverTiming
       throw e
     } finally {
       setCopying(false)
       setLastCopyTiming(
-        timer.finalize({
-          ok: !copyError,
-          server: serverTiming,
-        })
+        (timing as any) ||
+          createTimingCollector().finalize({
+            ok: !copyError,
+            server: serverTiming,
+          })
       )
       finishTopLoading()
     }
   }
+
 
   // Check if there are unsaved changes (staff overrides or bed edits)
   const hasUnsavedChanges =
@@ -6544,18 +3963,13 @@ function SchedulePageContent() {
     JSON.stringify(bedRelievingNotesByToTeam) !== JSON.stringify(savedBedRelievingNotesByToTeam)
 
   const beginDateTransition = (nextDate: Date, options?: { resetLoadedForDate?: boolean; useLocalTopBar?: boolean }) => {
-    // Prevent editing stale grid content while the next date's data is still loading.
-    setGridLoading(true)
     const useLocalTopBar = options?.useLocalTopBar ?? true
     gridLoadingUsesLocalBarRef.current = useLocalTopBar
     if (useLocalTopBar) {
       startTopLoading(0.08)
       startSoftAdvance(0.75)
     }
-    setSelectedDate(nextDate)
-    if (options?.resetLoadedForDate) {
-      setScheduleLoadedForDate(null)
-    }
+    controllerBeginDateTransition(nextDate, { resetLoadedForDate: options?.resetLoadedForDate })
   }
 
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -9853,11 +7267,9 @@ function SchedulePageContent() {
             />
           </div>
         )}
-        {showBackButton && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
+        <ScheduleHeaderBar
+          showBackButton={showBackButton}
+          onBack={() => {
               const returnPath = sessionStorage.getItem('scheduleReturnPath')
               if (returnPath) {
                 sessionStorage.removeItem('scheduleReturnPath')
@@ -9868,439 +7280,25 @@ function SchedulePageContent() {
                 router.push('/history')
               }
             }}
-            className="mb-4"
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to History
-          </Button>
-        )}
-        <div className="flex justify-between items-center mb-4">
-          <div className="flex items-center space-x-4">
-            {userRole === 'developer' ? (
-              <Tooltip
-                side="bottom"
-                className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
-                content={
-                  <div className="w-[360px] bg-slate-800 border border-slate-700 rounded-md shadow-lg">
-                    <div className="border-b border-slate-700 px-3 py-2 text-xs text-slate-500">
-                      Load diagnostics
-                    </div>
-                    <div className="px-3 py-2 text-xs text-slate-200 space-y-2">
-                      {lastLoadTiming ? (
-                        <>
-                          <div>
-                            <span className="text-slate-400">total:</span>{' '}
-                            {Math.round(lastLoadTiming.totalMs)}ms
-                          </div>
-                          {(() => {
-                            const meta = (lastLoadTiming.meta as any) || {}
-                            const snapshotKb =
-                              typeof meta.snapshotBytes === 'number'
-                                ? Math.round(meta.snapshotBytes / 1024)
-                                : null
-                            const nav = (meta.nav as
-                              | {
-                                  targetHref: string
-                                  startMs: number
-                                  loadingShownMs: number | null
-                                  mountedMs: number | null
-                                  gridReadyMs: number
-                                }
-                              | undefined) ?? (navToScheduleTiming ?? undefined)
-                            const fmtDelta = (from: number, to: number) => `${Math.max(0, Math.round(to - from))}ms`
-                            return (
-                              <div className="text-[11px] text-slate-400 space-y-0.5">
-                                <div>
-                                  rpc:{meta.rpcUsed ? 'yes' : 'no'}
-                                  {meta.batchedQueriesUsed ? ', batched:yes' : ', batched:no'}
-                                  {meta.baselineSnapshotUsed ? ', snapshot:yes' : ', snapshot:no'}
-                                </div>
-                                <div>
-                                  calcs:{meta.calculationsSource || 'unknown'}
-                                  {snapshotKb != null ? `, snapshot:${snapshotKb}KB` : ''}
-                                </div>
-                                {nav && typeof nav.startMs === 'number' ? (
-                                  <div className="pt-1 space-y-0.5">
-                                    <div className="text-slate-500">nav → schedule</div>
-                                    <div>
-                                      <span className="text-slate-400">start→loading.tsx:</span>{' '}
-                                      {nav.loadingShownMs != null ? fmtDelta(nav.startMs, nav.loadingShownMs) : 'n/a'}
-                                    </div>
-                                    <div>
-                                      <span className="text-slate-400">start→mount:</span>{' '}
-                                      {nav.mountedMs != null ? fmtDelta(nav.startMs, nav.mountedMs) : 'n/a'}
-                                    </div>
-                                    <div>
-                                      <span className="text-slate-400">start→gridReady:</span>{' '}
-                                      {fmtDelta(nav.startMs, nav.gridReadyMs)}
-                                    </div>
-                                  </div>
-                                ) : null}
-                                {meta.counts ? (
-                                  <div>
-                                    rows: th={meta.counts.therapistAllocs ?? 0}, pca={meta.counts.pcaAllocs ?? 0},
-                                    bed={meta.counts.bedAllocs ?? 0}, calcsRows={meta.counts.calculationsRows ?? 0}
-                                  </div>
-                                ) : null}
-                              </div>
-                            )
-                          })()}
-                          {lastLoadTiming.stages.length > 0 ? (
-                            <div className="pt-1 text-[11px] text-slate-300 space-y-0.5">
-                              {lastLoadTiming.stages.map(s => (
-                                <div key={`load-${s.name}`}>
-                                  <span className="text-slate-400">{s.name}:</span>{' '}
-                                  {Math.round(s.ms)}ms
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-                        </>
-                      ) : (
-                        <>
-                          <div className="text-slate-500">No load timing captured yet.</div>
-                          {(() => {
-                            const nav = navToScheduleTiming ?? undefined
-                            if (!nav || typeof nav.startMs !== 'number') return null
-                            const fmtDelta = (from: number, to: number) => `${Math.max(0, Math.round(to - from))}ms`
-                            return (
-                              <div className="pt-1 text-[11px] text-slate-400 space-y-0.5">
-                                <div className="text-slate-500">nav → schedule</div>
-                                <div>
-                                  <span className="text-slate-400">start→loading.tsx:</span>{' '}
-                                  {nav.loadingShownMs != null ? fmtDelta(nav.startMs, nav.loadingShownMs) : 'n/a'}
-                                </div>
-                                <div>
-                                  <span className="text-slate-400">start→mount:</span>{' '}
-                                  {nav.mountedMs != null ? fmtDelta(nav.startMs, nav.mountedMs) : 'n/a'}
-                                </div>
-                                <div>
-                                  <span className="text-slate-400">start→gridReady:</span>{' '}
-                                  {fmtDelta(nav.startMs, nav.gridReadyMs)}
-                                </div>
-                              </div>
-                            )
-                          })()}
-                        </>
-                      )}
-                    </div>
-                  </div>
-                }
-              >
-                <h1 className="text-2xl font-bold">Schedule Allocation</h1>
-              </Tooltip>
-            ) : (
-              <h1 className="text-2xl font-bold">Schedule Allocation</h1>
-            )}
-            <div className="flex items-center space-x-2 relative">
-                {(() => {
-                  const prevWorkingDay = getPreviousWorkingDay(selectedDate)
-                  const nextWorkingDay = getNextWorkingDay(selectedDate)
-                  const prevLabel = `${formatDateDDMMYYYY(prevWorkingDay)} (${WEEKDAY_NAMES[WEEKDAYS.indexOf(getWeekday(prevWorkingDay))]})`
-                  const nextLabel = `${formatDateDDMMYYYY(nextWorkingDay)} (${WEEKDAY_NAMES[WEEKDAYS.indexOf(getWeekday(nextWorkingDay))]})`
-
-                  return (
-                    <div className="inline-flex items-center border border-border rounded-md overflow-hidden bg-background shadow-xs">
-                      <Tooltip side="bottom" content={`Previous working day: ${prevLabel}`}>
-                        <button
-                          type="button"
-                          aria-label="Previous working day"
-                          onClick={() => {
+          userRole={userRole}
+          lastLoadTiming={lastLoadTiming}
+          navToScheduleTiming={navToScheduleTiming}
+          perfTick={perfTick}
+          perfStats={perfStatsRef.current}
+          selectedDate={selectedDate}
+          weekdayName={weekdayName}
+          isDateHighlighted={isDateHighlighted}
+          calendarButtonRef={calendarButtonRef}
+          onToggleCalendar={() => setCalendarOpen(!calendarOpen)}
+          onSelectDate={(date) => {
                             setCalendarOpen(false)
-                            beginDateTransition(prevWorkingDay)
-                          }}
-                          className="px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-110 active:scale-95 border-r border-border"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                        </button>
-                      </Tooltip>
-
-                      <button
-                        type="button"
-                        aria-label="Go to today"
-                        onClick={() => {
-                          setCalendarOpen(false)
-                          const today = new Date()
-                          const target = isWorkingDay(today) ? today : getNextWorkingDay(today)
-                          beginDateTransition(target)
-                        }}
-                        className="px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-105 active:scale-95 border-r border-border"
-                      >
-                        Today
-                      </button>
-
-                      <Tooltip side="bottom" content={`Next working day: ${nextLabel}`}>
-                        <button
-                          type="button"
-                          aria-label="Next working day"
-                          onClick={() => {
-                            setCalendarOpen(false)
-                            beginDateTransition(nextWorkingDay)
-                          }}
-                          className="px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-110 active:scale-95"
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </button>
-                      </Tooltip>
-                    </div>
-                  )
-                })()}
-                <span
-                  className={`text-lg font-semibold rounded px-2 py-1 transition-shadow transition-colors ${
-                    isDateHighlighted
-                      ? 'bg-amber-50 ring-2 ring-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.55)]'
-                      : ''
-                  }`}
-                >
-                  {formatDateDDMMYYYY(selectedDate)} ({weekdayName})
-                </span>
-                <button
-                  ref={calendarButtonRef}
-                  onClick={() => setCalendarOpen(!calendarOpen)}
-                  className="cursor-pointer flex items-center"
-                  type="button"
-                  aria-label="Open date picker"
-                >
-                  <Tooltip side="bottom" content="Open calendar">
-                    <span className="inline-flex">
-                      <Calendar className="h-5 w-5 text-muted-foreground hover:text-foreground transition-colors" />
-                    </span>
-                  </Tooltip>
-                </button>
-            </div>
-          </div>
-          {showSnapshotUiReminder ? (
-            <div className="mx-3 min-w-0">
-              <div className="inline-flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-950 leading-snug max-w-[420px] whitespace-normal">
-                <AlertCircle className="mt-0.5 h-4 w-4 text-amber-700 flex-shrink-0" />
-                <span className="break-words">
-                  You’re viewing the saved snapshot for this date. Later dashboard changes may not appear here.
-                </span>
-                <button
-                  ref={snapshotDiffButtonRef}
-                  type="button"
-                  onClick={() => setSnapshotDiffOpen((v) => !v)}
-                  className="ml-1 inline-flex items-center rounded-md border border-amber-300 bg-amber-100 px-2 py-1 text-[11px] font-medium text-amber-950 hover:bg-amber-200 transition-colors"
-                >
-                  Show differences
-                </button>
-              </div>
-            </div>
-          ) : null}
-          {showSnapshotUiReminder && snapshotDiffOpen ? (
-            <div
-              ref={snapshotDiffPanelRef}
-              className="fixed z-[10500] w-[min(520px,calc(100vw-24px))] rounded-lg border border-border bg-background shadow-lg"
-              style={snapshotDiffPos ? { left: snapshotDiffPos.left, top: snapshotDiffPos.top } : undefined}
-            >
-              <div className="flex items-start justify-between gap-3 border-b border-border px-3 py-2">
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold">Snapshot differences</div>
-                  <div className="text-xs text-muted-foreground">
-                    Snapshot for {formatDateDDMMYYYY(selectedDate)} vs current dashboard configuration
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  aria-label="Close"
-                  onClick={() => setSnapshotDiffOpen(false)}
-                  className="p-1 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-
-              <div className="max-h-[70vh] overflow-y-auto p-3 text-sm">
-                {snapshotDiffLoading ? (
-                  <div className="text-sm text-muted-foreground">Loading current dashboard config…</div>
-                ) : snapshotDiffError ? (
-                  <div className="text-sm text-destructive">
-                    Failed to load differences: {snapshotDiffError}
-                  </div>
-                ) : snapshotDiffResult ? (
-                  (() => {
-                    const MAX = 20
-                    const formatChanges = (changes: Array<{ field: string; from: string; to: string }>) =>
-                      changes.map((c) => `${c.field}: ${c.from} → ${c.to}`)
-
-                    const renderList = (items: string[]) => {
-                      const shown = items.slice(0, MAX)
-                      const rest = Math.max(0, items.length - shown.length)
-                      return (
-                        <div className="space-y-1">
-                          {shown.map((s, i) => (
-                            <div key={`${s}-${i}`} className="text-xs text-muted-foreground">
-                              - {s}
-                            </div>
-                          ))}
-                          {rest > 0 ? (
-                            <div className="text-xs text-muted-foreground">…and {rest} more</div>
-                          ) : null}
-                        </div>
-                      )
-                    }
-
-                    const staffAdded = snapshotDiffResult.staff.added.map((s) => s.name)
-                    const staffRemoved = snapshotDiffResult.staff.removed.map((s) => s.name)
-                    const staffChanged = snapshotDiffResult.staff.changed.map((s) => `${s.name} (${formatChanges(s.changes).join('; ')})`)
-
-                    const wardsAdded = snapshotDiffResult.wards.added.map((w) => w.name)
-                    const wardsRemoved = snapshotDiffResult.wards.removed.map((w) => w.name)
-                    const wardsChanged = snapshotDiffResult.wards.changed.map((w) => `${w.name} (${formatChanges(w.changes).join('; ')})`)
-
-                    const prefsChanged = snapshotDiffResult.pcaPreferences.changed.map(
-                      (p) => `${p.team} (${formatChanges(p.changes).join('; ')})`
-                    )
-
-                    const spAdded = snapshotDiffResult.specialPrograms.added.map((p) => p.name)
-                    const spRemoved = snapshotDiffResult.specialPrograms.removed.map((p) => p.name)
-                    const spChanged = snapshotDiffResult.specialPrograms.changed.map((p) => `${p.name} (${formatChanges(p.changes).join('; ')})`)
-
-                    const sptAdded = snapshotDiffResult.sptAllocations.added.map((a) => a.staff_id)
-                    const sptRemoved = snapshotDiffResult.sptAllocations.removed.map((a) => a.staff_id)
-                    const sptChanged = snapshotDiffResult.sptAllocations.changed.map(
-                      (a) => `${a.staff_id} (${formatChanges(a.changes).join('; ')})`
-                    )
-
-                    return (
-                      <div className="space-y-3">
-                        <details className="rounded-md border border-border bg-muted/20 p-2">
-                          <summary className="cursor-pointer select-none text-sm font-medium">
-                            Staff{' '}
-                            <span className="text-xs text-muted-foreground">
-                              (added {staffAdded.length}, removed {staffRemoved.length}, changed {snapshotDiffResult.staff.changed.length})
-                            </span>
-                          </summary>
-                          <div className="mt-2 space-y-2">
-                            {staffAdded.length > 0 ? (
-                              <div>
-                                <div className="text-xs font-semibold">Added</div>
-                                {renderList(staffAdded)}
-                              </div>
-                            ) : null}
-                            {staffRemoved.length > 0 ? (
-                              <div>
-                                <div className="text-xs font-semibold">Removed</div>
-                                {renderList(staffRemoved)}
-                              </div>
-                            ) : null}
-                            {staffChanged.length > 0 ? (
-                              <div>
-                                <div className="text-xs font-semibold">Changed</div>
-                                {renderList(staffChanged)}
-                              </div>
-                            ) : null}
-                          </div>
-                        </details>
-
-                        <details className="rounded-md border border-border bg-muted/20 p-2">
-                          <summary className="cursor-pointer select-none text-sm font-medium">
-                            Wards{' '}
-                            <span className="text-xs text-muted-foreground">
-                              (added {wardsAdded.length}, removed {wardsRemoved.length}, changed {snapshotDiffResult.wards.changed.length})
-                            </span>
-                          </summary>
-                          <div className="mt-2 space-y-2">
-                            {wardsAdded.length > 0 ? (
-                              <div>
-                                <div className="text-xs font-semibold">Added</div>
-                                {renderList(wardsAdded)}
-                              </div>
-                            ) : null}
-                            {wardsRemoved.length > 0 ? (
-                              <div>
-                                <div className="text-xs font-semibold">Removed</div>
-                                {renderList(wardsRemoved)}
-                              </div>
-                            ) : null}
-                            {wardsChanged.length > 0 ? (
-                              <div>
-                                <div className="text-xs font-semibold">Changed</div>
-                                {renderList(wardsChanged)}
-                              </div>
-                            ) : null}
-                          </div>
-                        </details>
-
-                        <details className="rounded-md border border-border bg-muted/20 p-2">
-                          <summary className="cursor-pointer select-none text-sm font-medium">
-                            PCA preferences{' '}
-                            <span className="text-xs text-muted-foreground">(changed {prefsChanged.length})</span>
-                          </summary>
-                          <div className="mt-2">
-                            {prefsChanged.length > 0 ? renderList(prefsChanged) : (
-                              <div className="text-xs text-muted-foreground">No changes detected.</div>
-                            )}
-                          </div>
-                        </details>
-
-                        <details className="rounded-md border border-border bg-muted/20 p-2">
-                          <summary className="cursor-pointer select-none text-sm font-medium">
-                            Special programs{' '}
-                            <span className="text-xs text-muted-foreground">
-                              (added {spAdded.length}, removed {spRemoved.length}, changed {snapshotDiffResult.specialPrograms.changed.length})
-                            </span>
-                          </summary>
-                          <div className="mt-2 space-y-2">
-                            {spAdded.length > 0 ? (
-                              <div>
-                                <div className="text-xs font-semibold">Added</div>
-                                {renderList(spAdded)}
-                              </div>
-                            ) : null}
-                            {spRemoved.length > 0 ? (
-                              <div>
-                                <div className="text-xs font-semibold">Removed</div>
-                                {renderList(spRemoved)}
-                              </div>
-                            ) : null}
-                            {spChanged.length > 0 ? (
-                              <div>
-                                <div className="text-xs font-semibold">Changed</div>
-                                {renderList(spChanged)}
-                              </div>
-                            ) : null}
-                          </div>
-                        </details>
-
-                        <details className="rounded-md border border-border bg-muted/20 p-2">
-                          <summary className="cursor-pointer select-none text-sm font-medium">
-                            SPT allocations{' '}
-                            <span className="text-xs text-muted-foreground">
-                              (added {sptAdded.length}, removed {sptRemoved.length}, changed {snapshotDiffResult.sptAllocations.changed.length})
-                            </span>
-                          </summary>
-                          <div className="mt-2 space-y-2">
-                            {sptAdded.length > 0 ? (
-                              <div>
-                                <div className="text-xs font-semibold">Added</div>
-                                {renderList(sptAdded)}
-                              </div>
-                            ) : null}
-                            {sptRemoved.length > 0 ? (
-                              <div>
-                                <div className="text-xs font-semibold">Removed</div>
-                                {renderList(sptRemoved)}
-                              </div>
-                            ) : null}
-                            {sptChanged.length > 0 ? (
-                              <div>
-                                <div className="text-xs font-semibold">Changed</div>
-                                {renderList(sptChanged)}
-                              </div>
-                            ) : null}
-                          </div>
-                        </details>
-                      </div>
-                    )
-                  })()
-                ) : (
-                  <div className="text-sm text-muted-foreground">No differences computed yet.</div>
-                )}
-              </div>
-            </div>
-          ) : null}
-          <div className="flex items-center space-x-2">
+            beginDateTransition(date)
+          }}
+          showSnapshotUiReminder={showSnapshotUiReminder}
+          snapshotDiffButtonRef={snapshotDiffButtonRef}
+          onToggleSnapshotDiff={() => setSnapshotDiffOpen((v) => !v)}
+          rightActions={
+            <>
               {/* Copy dropdown button */}
               <div className="relative">
                 {userRole === 'developer' ? (
@@ -10614,8 +7612,19 @@ function SchedulePageContent() {
                   </div>
                 )}
               </div>
-          </div>
-        </div>
+            </>
+          }
+        />
+        <SnapshotDiffPopover
+          open={showSnapshotUiReminder && snapshotDiffOpen}
+          panelRef={snapshotDiffPanelRef}
+          position={snapshotDiffPos}
+          selectedDate={selectedDate}
+          loading={snapshotDiffLoading}
+          error={snapshotDiffError}
+          result={snapshotDiffResult}
+          onClose={() => setSnapshotDiffOpen(false)}
+        />
 
         {/* Step Indicator with Navigation */}
         <div className="mb-4">
@@ -10623,7 +7632,7 @@ function SchedulePageContent() {
             steps={ALLOCATION_STEPS}
             currentStep={currentStep}
             stepStatus={stepStatus}
-            onStepClick={(stepId) => setCurrentStep(stepId)}
+            onStepClick={(stepId) => goToStep(stepId as any)}
             canNavigateToStep={(stepId) => {
               // Can always go to earlier steps
               const targetIndex = ALLOCATION_STEPS.findIndex(s => s.id === stepId)
@@ -10673,7 +7682,7 @@ function SchedulePageContent() {
           />
         </div>
 
-        <div className="relative flex gap-4 min-w-0">
+        <ScheduleMainLayout>
           <div
             className="shrink-0 flex flex-col gap-4 self-start min-h-0"
             style={typeof rightContentHeight === 'number' && rightContentHeight > 0 ? { height: rightContentHeight } : undefined}
@@ -10929,6 +7938,7 @@ function SchedulePageContent() {
 
             <div className="w-40 flex-1 min-h-0 flex flex-col min-w-0">
               <div className="flex-1 min-h-0">
+                <MaybeProfiler id="StaffPool">
                 <StaffPool
                   therapists={therapists}
                   pcas={pcas}
@@ -10975,6 +7985,7 @@ function SchedulePageContent() {
                   }
                   }}
                 />
+                </MaybeProfiler>
               </div>
             </div>
           </div>
@@ -11022,6 +8033,7 @@ function SchedulePageContent() {
             </div>
 
             {/* Team grid content (page-level horizontal scroll) */}
+            <MaybeProfiler id="TeamGrid">
             <div className="bg-background">
               <div className="min-w-[960px]">
                 {/* Height anchor for Staff Pool column: stop at bottom of PCA Dedicated table (exclude notes board). */}
@@ -11226,6 +8238,8 @@ function SchedulePageContent() {
                 </div>
 
                 {/* PCA Dedicated Schedule (separate table, below entire team grid) */}
+                  {!deferBelowFold ? (
+                    <MaybeProfiler id="PCADedicatedTable">
                 <PCADedicatedScheduleTable
                   allPCAStaff={[
                     ...staff.filter(s => s.rank === 'PCA'),
@@ -11238,44 +8252,40 @@ function SchedulePageContent() {
                   stepStatus={stepStatus}
                   initializedSteps={initializedSteps}
                 />
+                    </MaybeProfiler>
+                  ) : (
+                    <div className="mt-3 rounded-lg border border-border bg-card p-3">
+                      <div className="h-4 w-48 rounded-md bg-muted animate-pulse" />
+                      <div className="mt-2 h-16 rounded-md bg-muted/70 animate-pulse" />
+                    </div>
+                  )}
                 </div>
 
+                  {!deferBelowFold ? (
+                    <MaybeProfiler id="AllocationNotesBoard">
                 <AllocationNotesBoard doc={allocationNotesDoc} onSave={saveAllocationNotes} />
+                    </MaybeProfiler>
+                  ) : (
+                    <div className="mt-3 rounded-lg border border-border bg-card p-3">
+                      <div className="h-4 w-40 rounded-md bg-muted animate-pulse" />
+                      <div className="mt-2 h-20 rounded-md bg-muted/70 animate-pulse" />
               </div>
+                  )}
             </div>
           </div>
+            </MaybeProfiler>
         </div>
+        </ScheduleMainLayout>
 
-        {editingBedTeam && (() => {
+        <ScheduleDialogsLayer
+          bedCountsDialog={editingBedTeam && (() => {
           const team = editingBedTeam
-
-          const formatWardLabel = (
-            ward: { name: string; total_beds: number; team_assignments: Record<Team, number>; team_assignment_portions?: Record<Team, string> },
-            t: Team
-          ): string => {
-            const storedPortion = ward.team_assignment_portions?.[t]
-            if (storedPortion) return `${storedPortion} ${ward.name}`
-            const teamBeds = ward.team_assignments[t] || 0
-            const totalBeds = ward.total_beds
-            if (teamBeds === totalBeds) return ward.name
-            const fraction = totalBeds > 0 ? teamBeds / totalBeds : 0
-            const validFractions = [
-              { num: 1, den: 2, value: 0.5 },
-              { num: 1, den: 3, value: 1 / 3 },
-              { num: 2, den: 3, value: 2 / 3 },
-              { num: 3, den: 4, value: 0.75 },
-            ]
-            for (const f of validFractions) {
-              if (Math.abs(fraction - f.value) < 0.01) return `${f.num}/${f.den} ${ward.name}`
-            }
-            return ward.name
-          }
 
           const wardRows: BedCountsWardRow[] = wards
             .filter(w => (w.team_assignments[team] || 0) > 0)
             .map(w => ({
               wardName: w.name,
-              wardLabel: formatWardLabel(w, team),
+                wardLabel: formatWardLabel(w as any, team),
               wardTotalBeds: w.total_beds,
               baselineTeamBeds: w.team_assignments[team] || 0,
             }))
@@ -11328,8 +8338,7 @@ function SchedulePageContent() {
             />
           )
         })()}
-
-        {editingStaffId && (() => {
+          staffEditDialog={editingStaffId && (() => {
           const staffMember = staff.find(s => s.id === editingStaffId)
           if (!staffMember) return null
 
@@ -11374,17 +8383,11 @@ function SchedulePageContent() {
                 
                 // For PCA: Calculate base_FTE_remaining = 1.0 - fteSubtraction for display
                 const allocation = allPcaAllocations[0]
-                // Note: fte_subtraction is not stored in database - calculate from fte_pca
-                // fte_pca represents base_FTE_remaining = 1.0 - fteSubtraction
-                // Handle both slot_assigned (new) and fte_assigned (old) during migration transition
-                // allocation can be null in some paths; guard it to avoid runtime crash
                 const slotAssigned = (allocation as any)?.slot_assigned ?? (allocation as any)?.fte_assigned ?? 0
                 currentFTERemaining = allocation.fte_pca ?? ((allocation.fte_remaining ?? 0) + slotAssigned)
-                // Calculate fteSubtraction from fte_pca
                 currentFTESubtraction = 1.0 - currentFTERemaining
                 
                 // Load invalid slot fields from allocation if not in override
-                // For backward compatibility, convert single invalid_slot to array format
                 if ((allocation as any).invalid_slot !== undefined && (allocation as any).invalid_slot !== null) {
                   const invalidSlot = (allocation as any).invalid_slot
                   const getSlotStartTime = (slot: number): string => {
@@ -11418,10 +8421,6 @@ function SchedulePageContent() {
             }
           }
 
-          // SPT leave edit enhancement:
-          // - Base SPT FTE comes from spt_allocations.fte_addon (dashboard)
-          // - "FTE Cost due to Leave" is user-input (stored in staffOverrides[staffId].fteSubtraction)
-          // - "FTE Remaining on Duty" = baseFTE - leaveCost (stored in staffOverrides[staffId].fteRemaining)
           if (staffMember.rank === 'SPT') {
             const cfg = sptAllocations.find(a => a.staff_id === editingStaffId && a.weekdays?.includes(currentWeekday))
             const cfgFTEraw = (cfg as any)?.fte_addon
@@ -11431,7 +8430,6 @@ function SchedulePageContent() {
                 : cfgFTEraw != null
                   ? parseFloat(String(cfgFTEraw))
                   : NaN
-            // If this SPT is not configured for this weekday, treat base FTE as 0 (not on duty today).
             sptConfiguredFTE = Number.isFinite(cfgFTE) ? Math.max(0, Math.min(cfgFTE, 1.0)) : 0
 
             const o = staffOverrides[editingStaffId]
@@ -11447,7 +8445,6 @@ function SchedulePageContent() {
               ? 0
               : (typeof o?.fteSubtraction === 'number' ? o.fteSubtraction : 0)
 
-            // Base FTE: prefer (remaining + leaveCost) if user has ever saved a leave cost; otherwise use dashboard.
             const derivedBase =
               typeof o?.fteSubtraction === 'number'
                 ? (o.fteRemaining ?? (sptConfiguredFTE ?? currentFTERemaining)) + leaveCost
@@ -11480,7 +8477,7 @@ function SchedulePageContent() {
             />
           )
         })()}
-
+          tieBreakDialog={
         <TieBreakDialog
           open={tieBreakDialogOpen}
           teams={tieBreakTeams}
@@ -11495,8 +8492,9 @@ function SchedulePageContent() {
             setTieBreakDialogOpen(false)
           }}
         />
-
-        {copyWizardConfig && (
+          }
+          copyWizardDialog={
+            copyWizardConfig ? (
           <ScheduleCopyWizard
             open={copyWizardOpen}
             onOpenChange={(open) => {
@@ -11515,9 +8513,9 @@ function SchedulePageContent() {
             holidays={holidays}
             onConfirmCopy={handleConfirmCopy}
           />
-        )}
-
-        {/* Step 3.1-3.2: Floating PCA Configuration Dialog (Wizard) */}
+            ) : null
+          }
+          floatingPcaDialog={
         <FloatingPCAConfigDialog
           open={floatingPCAConfigOpen}
           initialPendingFTE={pendingPCAFTEPerTeam}
@@ -11530,8 +8528,8 @@ function SchedulePageContent() {
           onSave={handleFloatingPCAConfigSave}
           onCancel={handleFloatingPCAConfigCancel}
         />
-
-        {/* Step 2.0: Special Program Override Dialog */}
+          }
+          specialProgramOverrideDialog={
         <SpecialProgramOverrideDialog
           open={showSpecialProgramOverrideDialog}
           onOpenChange={(open) => {
@@ -11539,7 +8537,6 @@ function SchedulePageContent() {
             if (!open) {
               const resolver = specialProgramOverrideResolverRef.current
               if (resolver) {
-                // User closed dialog without confirming - skip (use empty overrides)
                 resolver({})
                 setSpecialProgramOverrideResolver(null)
                 specialProgramOverrideResolverRef.current = null
@@ -11547,8 +8544,6 @@ function SchedulePageContent() {
             }
           }}
           specialPrograms={specialPrograms}
-          // `staff` already includes buffer staff (loaded via loadStaff()).
-          // Dedupe to avoid buffer staff appearing twice in dropdowns.
           allStaff={Array.from(new Map([...staff, ...inactiveStaff].map(s => [s.id, s])).values())}
           sptBaseFteByStaffId={sptBaseFteByStaffId}
           staffOverrides={staffOverrides}
@@ -11565,7 +8560,6 @@ function SchedulePageContent() {
           onSkip={() => {
             const resolver = specialProgramOverrideResolverRef.current
             if (resolver) {
-              // Skip - use empty overrides
               resolver({})
               setSpecialProgramOverrideResolver(null)
               specialProgramOverrideResolverRef.current = null
@@ -11573,7 +8567,6 @@ function SchedulePageContent() {
             setShowSpecialProgramOverrideDialog(false)
           }}
           onStaffRefresh={() => {
-            // Refresh staff list after buffer creation (so the new buffer staff appears immediately)
             return (async () => {
               try {
                 await loadStaff()
@@ -11584,8 +8577,9 @@ function SchedulePageContent() {
             })()
           }}
         />
-
-        {substitutionWizardData && (
+          }
+          nonFloatingSubstitutionDialog={
+            substitutionWizardData ? (
           <NonFloatingSubstitutionDialog
             open={substitutionWizardOpen}
             teams={substitutionWizardData.teams}
@@ -11596,14 +8590,15 @@ function SchedulePageContent() {
             pcaPreferences={pcaPreferences}
             specialPrograms={specialPrograms}
             weekday={getWeekday(selectedDate)}
-            currentAllocations={[]} // Not needed - algorithm handles allocations
+                currentAllocations={[]}
             staffOverrides={staffOverrides}
             onConfirm={handleSubstitutionWizardConfirm}
             onCancel={handleSubstitutionWizardCancel}
             onSkip={handleSubstitutionWizardSkip}
           />
-        )}
-
+            ) : null
+          }
+          calendarPopover={
         <ScheduleCalendarPopover
           open={calendarOpen}
           selectedDate={selectedDate}
@@ -11616,6 +8611,8 @@ function SchedulePageContent() {
           }}
           anchorRef={calendarButtonRef}
           popoverRef={calendarPopoverRef}
+            />
+          }
         />
       </div>
     </DndContext>
