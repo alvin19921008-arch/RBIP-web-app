@@ -145,7 +145,11 @@ export function PCADedicatedScheduleTable({
   const columns = useMemo(() => {
     // De-dupe by id, keep latest name fields from incoming list
     const byId = new Map<string, Staff>()
-    allPCAStaff.forEach((s) => byId.set(s.id, s))
+    // Defensive: snapshot/DB repair can occasionally surface partial/null rows.
+    allPCAStaff.forEach((s) => {
+      if (!s || typeof (s as any).id !== 'string') return
+      byId.set((s as any).id, s)
+    })
     const deduped = Array.from(byId.values())
     return sortPCAColumns(deduped)
   }, [allPCAStaff, refreshKey])
@@ -156,7 +160,8 @@ export function PCADedicatedScheduleTable({
     const seen = new Set<string>()
     const unique: Array<PCAAllocation & { staff: Staff }> = []
     for (const a of flat) {
-      const k = `${a.id}:${a.staff_id}:${a.team}`
+      if (!a || typeof (a as any).staff_id !== 'string') continue
+      const k = `${(a as any).id ?? 'no-id'}:${(a as any).staff_id}:${(a as any).team ?? 'no-team'}`
       if (seen.has(k)) continue
       seen.add(k)
       unique.push(a)

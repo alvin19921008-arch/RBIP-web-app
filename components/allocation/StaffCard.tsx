@@ -16,6 +16,7 @@ interface StaffCardProps {
   fteRemaining?: number | string  // Can be number or string (e.g., "0.5 AM")
   sptDisplay?: string
   slotDisplay?: ReactNode // Optional: slot display with leave/come back times
+  headerRight?: ReactNode // Optional: right-aligned label in header row (e.g. special program name)
   onEdit?: (event?: React.MouseEvent) => void
   onOpenContextMenu?: (event: React.MouseEvent) => void
   onConvertToInactive?: (event?: React.MouseEvent) => void // For buffer staff: convert back to inactive
@@ -72,7 +73,7 @@ function wrapTimeRangesInNode(node: ReactNode): ReactNode {
   return node
 }
 
-export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDisplay, onEdit, onOpenContextMenu, onConvertToInactive, draggable = true, nameColor, borderColor, fillColorClassName, dragTeam, baseFTE, trueFTE, isFloatingPCA, showFTE, currentStep, initializedSteps, useDragOverlay = false }: StaffCardProps) {
+export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDisplay, headerRight, onEdit, onOpenContextMenu, onConvertToInactive, draggable = true, nameColor, borderColor, fillColorClassName, dragTeam, baseFTE, trueFTE, isFloatingPCA, showFTE, currentStep, initializedSteps, useDragOverlay = false }: StaffCardProps) {
   // Use composite ID to ensure each team's instance has a unique draggable id
   // This prevents drag styling from applying to the same staff card in other teams
   // Use '::' as separator (unlikely to appear in UUIDs)
@@ -179,6 +180,11 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
           <div className="relative z-10 flex flex-col">
             <div className="flex items-center justify-between gap-1">
           <span className={cn("text-sm font-medium flex-1", nameColor === 'underline' ? 'underline' : nameColor || "")}>{displayName}</span>
+              {headerRight ? (
+                <span className="text-xs font-medium flex-shrink-0 whitespace-nowrap">
+                  {headerRight}
+                </span>
+              ) : null}
               {fteDisplay && (
                 <span className="text-sm font-medium text-muted-foreground flex-shrink-0">{fteDisplay}</span>
               )}
@@ -237,6 +243,11 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
         <div className="flex flex-col">
           <div className="flex items-center justify-between gap-1">
             <span className={cn("text-sm font-medium flex-1", nameColor === 'underline' ? 'underline' : nameColor || "")}>{displayName}</span>
+            {headerRight ? (
+              <span className="text-xs font-medium flex-shrink-0 whitespace-nowrap">
+                {headerRight}
+              </span>
+            ) : null}
             {fteDisplay && (
               <span className="text-sm font-medium text-muted-foreground flex-shrink-0">{fteDisplay}</span>
             )}

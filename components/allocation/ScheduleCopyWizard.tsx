@@ -349,7 +349,7 @@ export function ScheduleCopyWizard({
     return (
       <>
         <DialogDescription className="mb-3">
-          Detected buffer staff in the current configuration. Choose whether to keep them as buffer
+          Detected buffer staff for the source date ({effectiveFromDateStr}). Choose whether to keep them as buffer
           staff in the copied schedule.
         </DialogDescription>
         {bufferStaffLoading ? (

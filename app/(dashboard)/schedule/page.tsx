@@ -52,7 +52,7 @@ import { SnapshotDiffPopover } from '@/components/schedule/SnapshotDiffPopover'
 import { ScheduleHeaderBar } from '@/components/schedule/ScheduleHeaderBar'
 import { ScheduleDialogsLayer } from '@/components/schedule/ScheduleDialogsLayer'
 import { ScheduleMainLayout } from '@/components/schedule/ScheduleMainLayout'
-import { Save, MoreVertical, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX } from 'lucide-react'
+import { Save, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -433,8 +433,6 @@ function SchedulePageContent() {
   } | null>(null)
   const [copyWizardOpen, setCopyWizardOpen] = useState(false)
   // Step-wise allocation workflow domain state moved into useScheduleController().
-  // Dropdown menu state for dev/testing options
-  const [showDevMenu, setShowDevMenu] = useState(false)
   // Track which steps have been initialized (domain; moved into useScheduleController()).
   
   // Step 3.1: Floating PCA Configuration Dialog state
@@ -557,12 +555,15 @@ function SchedulePageContent() {
         availableSlots: number[]
         isPreferred: boolean
         isFloorPCA: boolean
+        blockedSlotsInfo?: Array<{ slot: number; reasons: string[] }>
       }>
     }>>
     isWizardMode: boolean // true if multiple teams, false if single team
-    initialSelections?: Record<string, { floatingPCAId: string; slots: number[] }>
+    initialSelections?: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>
   } | null>(null)
-  const substitutionWizardResolverRef = useRef<((selections: Record<string, { floatingPCAId: string; slots: number[] }>) => void) | null>(null)
+  const substitutionWizardResolverRef = useRef<
+    ((selections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>) => void) | null
+  >(null)
   const [adjustedPendingFTE, setAdjustedPendingFTE] = useState<Record<Team, number> | null>(null)
   const [teamAllocationOrder, setTeamAllocationOrder] = useState<Team[] | null>(null)
   const [allocationTracker, setAllocationTracker] = useState<AllocationTracker | null>(null)
@@ -2923,9 +2924,7 @@ function SchedulePageContent() {
     }
   }
 
-  const generateAllocations = async () => {
-    await generateAllocationsWithOverrides(staffOverrides)
-  }
+  // NOTE: legacy "Regenerate All" dev action removed. Step-wise workflow uses explicit step actions instead.
 
   // ============================================================================
   // HELPER FUNCTIONS FOR STEP-WISE ALLOCATION
@@ -3168,7 +3167,7 @@ function SchedulePageContent() {
           })
           setSubstitutionWizardOpen(true)
 
-          const resolver = (selections: Record<string, { floatingPCAId: string; slots: number[] }>) => {
+          const resolver = (selections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>) => {
             setSubstitutionWizardOpen(false)
             setSubstitutionWizardData(null)
             resolve(selections)
@@ -3761,7 +3760,7 @@ function SchedulePageContent() {
    * Resolves the promise in the algorithm callback with user's selections
    */
   const handleSubstitutionWizardConfirm = (
-    selections: Record<string, { floatingPCAId: string; slots: number[] }>
+    selections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>
   ) => {
     // Resolve the promise in the algorithm callback
     if (substitutionWizardResolverRef.current) {
@@ -3772,8 +3771,28 @@ function SchedulePageContent() {
     // Also update staffOverrides for persistence
     const newOverrides = { ...staffOverrides }
 
+    // Clear any existing substitutionFor that targets any of the keys in this submission
+    // so stale substitute mappings don't linger after edits.
+    const targets = new Set(
+      Object.keys(selections || {}).map((key) => {
+        const dashIdx = key.indexOf('-')
+        const team = (dashIdx >= 0 ? key.slice(0, dashIdx) : key) as Team
+        const nonFloatingPCAId = dashIdx >= 0 ? key.slice(dashIdx + 1) : ''
+        return `${team}::${nonFloatingPCAId}`
+      })
+    )
+    Object.entries(newOverrides).forEach(([staffId, o]) => {
+      const sf = (o as any)?.substitutionFor
+      if (!sf) return
+      const tag = `${sf.team}::${sf.nonFloatingPCAId}`
+      if (targets.has(tag)) {
+        const { substitutionFor, ...rest } = o as any
+        newOverrides[staffId] = rest
+      }
+    })
+
     // Apply all selections to staffOverrides
-    Object.entries(selections).forEach(([key, selection]) => {
+    Object.entries(selections).forEach(([key, selectionArr]) => {
       // Key format is `${team}-${nonFloatingPCAId}` but nonFloatingPCAId is a UUID containing '-'.
       // So we must split ONLY on the first '-' to avoid truncating the UUID.
       const dashIdx = key.indexOf('-')
@@ -3783,23 +3802,25 @@ function SchedulePageContent() {
       const nonFloatingPCA = staff.find(s => s.id === nonFloatingPCAId)
       if (!nonFloatingPCA) return
 
-      // Update floating PCA's staffOverrides with substitutionFor
-      const floatingPCA = staff.find(s => s.id === selection.floatingPCAId)
-      if (floatingPCA) {
-        const existingOverride = newOverrides[selection.floatingPCAId] || {
-          leaveType: null,
-          fteRemaining: 1.0,
-        }
-        newOverrides[selection.floatingPCAId] = {
-          ...existingOverride,
-          substitutionFor: {
-            nonFloatingPCAId,
-            nonFloatingPCAName: nonFloatingPCA.name,
-            team,
-            slots: selection.slots
+      ;(selectionArr || []).forEach((selection) => {
+        // Update floating PCA's staffOverrides with substitutionFor
+        const floatingPCA = staff.find(s => s.id === selection.floatingPCAId)
+        if (floatingPCA) {
+          const existingOverride = newOverrides[selection.floatingPCAId] || {
+            leaveType: null,
+            fteRemaining: 1.0,
+          }
+          newOverrides[selection.floatingPCAId] = {
+            ...existingOverride,
+            substitutionFor: {
+              nonFloatingPCAId,
+              nonFloatingPCAName: nonFloatingPCA.name,
+              team,
+              slots: selection.slots
+            }
           }
         }
-      }
+      })
 
     })
 
@@ -4085,7 +4106,90 @@ function SchedulePageContent() {
   const selectedDateStr = formatDateForInput(selectedDate)
   const currentHasData = datesWithData.has(selectedDateStr)
   const isToday = selectedDateStr === formatDateForInput(new Date())
-  const showSnapshotUiReminder = !isToday && !!baselineSnapshot
+  const showSnapshotUiReminder = !!baselineSnapshot
+
+  // Drift notification (post-load; admin/developer only)
+  const lastDriftToastKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (userRole !== 'developer' && userRole !== 'admin') return
+    if (!currentScheduleId) return
+    if (!baselineSnapshot) return
+    if (loading || gridLoading) return
+
+    const toastKey = `${selectedDateStr}|${currentScheduleId}`
+    if (lastDriftToastKeyRef.current === toastKey) return
+
+    let cancelled = false
+    // Don’t block initial paint.
+    window.setTimeout(() => {
+      if (cancelled) return
+      ;(async () => {
+        const headRes = await supabase.rpc('get_config_global_head_v1')
+        if (headRes.error || !headRes.data) return
+        const head = headRes.data as any
+
+        const rawThreshold = head?.drift_notification_threshold
+        const unit =
+          rawThreshold?.unit === 'weeks' || rawThreshold?.unit === 'months' ? rawThreshold.unit : 'days'
+        const rawValue =
+          typeof rawThreshold?.value === 'number' ? rawThreshold.value : Number(rawThreshold?.value ?? 30)
+        const value = Number.isFinite(rawValue) && rawValue >= 0 ? rawValue : 30
+
+        // Treat very large thresholds as “off”.
+        if (unit === 'days' && value >= 3650) return
+
+        const days =
+          unit === 'weeks' ? value * 7 : unit === 'months' ? value * 30 : value
+        const thresholdMs = Math.max(0, days) * 24 * 60 * 60 * 1000
+
+        const { data: schedRow, error: schedErr } = await supabase
+          .from('daily_schedules')
+          .select('baseline_snapshot')
+          .eq('id', currentScheduleId)
+          .maybeSingle()
+        if (schedErr) return
+
+        const stored = (schedRow as any)?.baseline_snapshot
+        const { envelope } = unwrapBaselineSnapshotStored(stored as any)
+
+        const createdAtMs = Date.parse(String((envelope as any)?.createdAt ?? ''))
+        const ageMs = Number.isFinite(createdAtMs) ? Date.now() - createdAtMs : 0
+        if (thresholdMs > 0 && ageMs < thresholdMs) return
+
+        const snapHead = (envelope as any)?.globalHeadAtCreation as any | null | undefined
+        const snapCat = snapHead?.category_versions
+        const liveCat = head?.category_versions
+        let hasDrift = false
+        if (snapCat && typeof snapCat === 'object' && liveCat && typeof liveCat === 'object') {
+          for (const [k, v] of Object.entries(liveCat)) {
+            const sv = (snapCat as any)[k]
+            if (typeof v === 'number' && typeof sv === 'number' && v !== sv) {
+              hasDrift = true
+              break
+            }
+          }
+        } else if (snapHead?.global_version != null && head?.global_version != null) {
+          hasDrift = Number(snapHead.global_version) !== Number(head.global_version)
+        } else {
+          // If we can’t compare reliably (older snapshots), don’t spam.
+          hasDrift = false
+        }
+
+        if (!hasDrift) return
+
+        lastDriftToastKeyRef.current = toastKey
+        showActionToast(
+          'Published configuration differs from this schedule snapshot.',
+          'warning',
+          'Dashboard → Sync / Publish'
+        )
+      })().catch(() => {})
+    }, 0)
+
+    return () => {
+      cancelled = true
+    }
+  }, [userRole, currentScheduleId, selectedDateStr, loading, gridLoading, baselineSnapshot, supabase, showActionToast])
 
   // Snapshot differences (non-modal, on-demand)
   const snapshotDiffButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -7571,47 +7675,6 @@ function SchedulePageContent() {
                   {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
                 </Button>
               )}
-              {/* Dev/Testing Dropdown Menu */}
-              <div className="relative">
-                <Button 
-                  variant="outline" 
-                  size="icon"
-                  onClick={() => setShowDevMenu(!showDevMenu)}
-                  title="More Options"
-                >
-                  <MoreVertical className="h-4 w-4" />
-                </Button>
-                {showDevMenu && (
-                  <div className="absolute right-0 top-full mt-1 w-56 bg-slate-800 border border-slate-700 rounded-md shadow-lg z-50">
-                    <div className="p-1">
-                      <button
-                        className="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-slate-700 rounded"
-                        onClick={() => {
-                          setShowDevMenu(false)
-                          generateAllocations()
-                        }}
-                        disabled={loading}
-                      >
-                        <RefreshCw className="h-4 w-4 mr-2" />
-                        Regenerate All (with current edits)
-                      </button>
-                      <button
-                        className="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-slate-700 rounded text-red-400"
-                        onClick={() => {
-                          setShowDevMenu(false)
-                          resetToBaseline()
-                        }}
-                      >
-                        <RotateCcw className="h-4 w-4 mr-2" />
-                        Reset to Baseline (clear all edits)
-                      </button>
-                    </div>
-                    <div className="border-t border-slate-700 px-3 py-2 text-xs text-slate-500">
-                      Dev/Testing Options
-                    </div>
-                  </div>
-                )}
-              </div>
             </>
           }
         />
@@ -7632,6 +7695,8 @@ function SchedulePageContent() {
             steps={ALLOCATION_STEPS}
             currentStep={currentStep}
             stepStatus={stepStatus}
+            userRole={userRole}
+            onResetToBaseline={userRole === 'developer' ? resetToBaseline : undefined}
             onStepClick={(stepId) => goToStep(stepId as any)}
             canNavigateToStep={(stepId) => {
               // Can always go to earlier steps
@@ -7944,6 +8009,15 @@ function SchedulePageContent() {
                   pcas={pcas}
                   inactiveStaff={inactiveStaff}
                   bufferStaff={bufferStaff}
+                  onConvertInactiveToBuffer={({ staff, bufferFTE }) => {
+                    scheduleActions.setScheduleStaffStatusOverride({
+                      staffId: staff.id,
+                      status: 'buffer',
+                      bufferFTE,
+                      nameAtTime: staff.name,
+                      rankAtTime: staff.rank,
+                    })
+                  }}
                   onOpenStaffContextMenu={openStaffPoolContextMenu}
                   staffOverrides={staffOverrides}
                   specialPrograms={specialPrograms}
@@ -7951,11 +8025,13 @@ function SchedulePageContent() {
                   currentStep={currentStep}
                   initializedSteps={initializedSteps}
                   weekday={selectedDate ? getWeekday(selectedDate) : undefined}
-                  onBufferStaffCreated={loadStaff}
                   disableDragging={staffPoolContextMenu.show}
                   snapshotNotice={
-                    showSnapshotUiReminder ? 'Staff pool is shown from the saved snapshot for this date.' : undefined
+                    showSnapshotUiReminder
+                      ? `Staff pool is shown from the saved snapshot for ${formatDateDDMMYYYY(selectedDate)}.`
+                      : undefined
                   }
+                  snapshotDateLabel={showSnapshotUiReminder ? formatDateDDMMYYYY(selectedDate) : undefined}
                   onSlotTransfer={(staffId: string, targetTeam: string, slots: number[]) => {
                   // Find source team from allocations
                   let sourceTeam: Team | null = null

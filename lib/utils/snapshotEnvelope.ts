@@ -3,13 +3,15 @@ import type {
   BaselineSnapshotEnvelope,
   BaselineSnapshotSource,
   BaselineSnapshotStored,
+  GlobalHeadAtCreation,
 } from '@/types/schedule'
 
 export function isBaselineSnapshotEnvelope(value: unknown): value is BaselineSnapshotEnvelope {
+  const schemaVersion = (value as any)?.schemaVersion
   return (
     !!value &&
     typeof value === 'object' &&
-    (value as any).schemaVersion === 1 &&
+    (schemaVersion === 1 || schemaVersion === 2) &&
     typeof (value as any).createdAt === 'string' &&
     typeof (value as any).source === 'string' &&
     !!(value as any).data &&
@@ -21,11 +23,13 @@ export function buildBaselineSnapshotEnvelope(params: {
   data: BaselineSnapshot
   source: BaselineSnapshotSource
   createdAt?: string
+  globalHeadAtCreation?: GlobalHeadAtCreation | null
 }): BaselineSnapshotEnvelope {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     createdAt: params.createdAt ?? new Date().toISOString(),
     source: params.source,
+    globalHeadAtCreation: params.globalHeadAtCreation ?? null,
     data: params.data,
   }
 }
@@ -50,7 +54,7 @@ export function unwrapBaselineSnapshotStored(
     pcaPreferences: [],
   } as BaselineSnapshot)
   return {
-    envelope: buildBaselineSnapshotEnvelope({ data, source: 'migration' }),
+    envelope: buildBaselineSnapshotEnvelope({ data, source: 'migration', globalHeadAtCreation: null }),
     data,
     wasWrapped: true,
   }

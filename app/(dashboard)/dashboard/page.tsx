@@ -8,6 +8,7 @@ import { StaffProfilePanel } from '@/components/dashboard/StaffProfilePanel'
 import { WardConfigPanel } from '@/components/dashboard/WardConfigPanel'
 import { TeamConfigurationPanel } from '@/components/dashboard/TeamConfigurationPanel'
 import { AccountManagementPanel } from '@/components/dashboard/AccountManagementPanel'
+import { ConfigSyncPanel } from '@/components/dashboard/ConfigSyncPanel'
 import { DashboardSidebar, type CategoryId } from '@/components/dashboard/DashboardSidebar'
 
 type PanelType =
@@ -18,6 +19,7 @@ type PanelType =
   | 'ward-config'
   | 'team-configuration'
   | 'account-management'
+  | 'sync-publish'
   | null
 type PanelKey = Exclude<PanelType, null>
 
@@ -29,6 +31,7 @@ const categoryLabels: Record<PanelKey, string> = {
   'ward-config': 'Ward Config and Bed Stat',
   'team-configuration': 'Team Configuration',
   'account-management': 'Account Management',
+  'sync-publish': 'Sync / Publish',
 }
 
 const categoryDescriptions: Record<PanelKey, string> = {
@@ -39,6 +42,7 @@ const categoryDescriptions: Record<PanelKey, string> = {
   'ward-config': 'Manage ward names and bed stat',
   'team-configuration': 'Manage team staffing and ward responsibilities',
   'account-management': 'Manage user accounts and access rights',
+  'sync-publish': 'Compare and synchronize schedule snapshots with published dashboard configuration',
 }
 
 export default function DashboardPage() {
@@ -164,6 +168,7 @@ export default function DashboardPage() {
             {activePanel === 'ward-config' && <WardConfigPanel />}
             {activePanel === 'team-configuration' && <TeamConfigurationPanel />}
             {activePanel === 'account-management' && <AccountManagementPanel />}
+            {activePanel === 'sync-publish' && <ConfigSyncPanel />}
           </div>
         )}
         {!activePanel && (

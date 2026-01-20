@@ -1,13 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Staff, StaffStatus } from '@/types/staff'
+import { useMemo, useState, useEffect } from 'react'
+import { Staff } from '@/types/staff'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { createClientComponentClient } from '@/lib/supabase/client'
-import { BufferStaffCreateDialog } from './BufferStaffCreateDialog'
-import { BufferSlotSelectionDialog } from './BufferSlotSelectionDialog'
 import { BufferStaffConvertDialog } from './BufferStaffConvertDialog'
 import { StaffCard } from './StaffCard'
 import { SpecialProgram } from '@/types/allocation'
@@ -15,11 +12,13 @@ import { ChevronUp, ChevronDown, ChevronRight } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { DragValidationTooltip } from './DragValidationTooltip'
 import { useToast } from '@/components/ui/toast-provider'
+import { SearchWithSuggestions, type SearchSuggestionItem } from '@/components/ui/SearchWithSuggestions'
 
 interface BufferStaffPoolProps {
   inactiveStaff: Staff[]
   bufferStaff?: Staff[]
-  onBufferStaffCreated?: () => void
+  snapshotDateLabel?: string
+  onConvertInactiveToBuffer?: (args: { staff: Staff; bufferFTE: number; availableSlots?: number[] }) => void
   specialPrograms?: SpecialProgram[]
   currentStep?: string
   pcaAllocations?: Record<string, any[]>
@@ -33,7 +32,8 @@ interface BufferStaffPoolProps {
 export function BufferStaffPool({
   inactiveStaff,
   bufferStaff = [],
-  onBufferStaffCreated,
+  snapshotDateLabel,
+  onConvertInactiveToBuffer,
   specialPrograms = [],
   currentStep,
   pcaAllocations = {},
@@ -42,18 +42,17 @@ export function BufferStaffPool({
   onOpenStaffContextMenu,
   disableDragging = false,
 }: BufferStaffPoolProps) {
-  const [sourceMode, setSourceMode] = useState<'select' | 'create' | null>(null)
+  const [sourceMode, setSourceMode] = useState<'select' | 'create' | 'search' | null>(null)
   const [selectedStaffIds, setSelectedStaffIds] = useState<Set<string>>(new Set())
-  const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [showInactiveMenu, setShowInactiveMenu] = useState(false)
-  const [showSlotDialog, setShowSlotDialog] = useState(false)
+  const [showInactiveSplitMenu, setShowInactiveSplitMenu] = useState(false)
+  const [inactiveSearch, setInactiveSearch] = useState('')
   const [showConvertDialog, setShowConvertDialog] = useState(false)
   const [pcaStaffToConvert, setPcaStaffToConvert] = useState<Staff[]>([])
   const [currentPcaIndex, setCurrentPcaIndex] = useState(0)
   const [staffToConvert, setStaffToConvert] = useState<Staff | null>(null)
   const [isBufferStaffExpanded, setIsBufferStaffExpanded] = useState(true)
   const [isPoolCollapsed, setIsPoolCollapsed] = useState(false)
-  const supabase = createClientComponentClient()
   const toast = useToast()
 
   // Load special programs if not provided
@@ -61,15 +60,10 @@ export function BufferStaffPool({
   
   useEffect(() => {
     if (loadedSpecialPrograms.length === 0) {
-      const loadSpecialPrograms = async () => {
-        const { data } = await supabase.from('special_programs').select('*').order('name')
-        if (data) {
-          setLoadedSpecialPrograms(data as SpecialProgram[])
-        }
-      }
-      loadSpecialPrograms()
+      // Snapshot-local: special programs should come from the date snapshot.
+      setLoadedSpecialPrograms(specialPrograms)
     }
-  }, [supabase, loadedSpecialPrograms.length])
+  }, [loadedSpecialPrograms.length, specialPrograms])
 
   // Sort staff by rank: SPT -> APPT -> RPT -> PCA
   const sortStaffByRank = (staffList: Staff[]): Staff[] => {
@@ -83,11 +77,13 @@ export function BufferStaffPool({
     })
   }
 
+  const effectiveInactiveStaff = inactiveStaff
+
   const inactiveStaffByRank = {
-    SPT: sortStaffByRank(inactiveStaff.filter(s => s.rank === 'SPT')),
-    APPT: sortStaffByRank(inactiveStaff.filter(s => s.rank === 'APPT')),
-    RPT: sortStaffByRank(inactiveStaff.filter(s => s.rank === 'RPT')),
-    PCA: sortStaffByRank(inactiveStaff.filter(s => s.rank === 'PCA')),
+    SPT: sortStaffByRank(effectiveInactiveStaff.filter(s => s.rank === 'SPT')),
+    APPT: sortStaffByRank(effectiveInactiveStaff.filter(s => s.rank === 'APPT')),
+    RPT: sortStaffByRank(effectiveInactiveStaff.filter(s => s.rank === 'RPT')),
+    PCA: sortStaffByRank(effectiveInactiveStaff.filter(s => s.rank === 'PCA')),
   }
 
   // Group buffer staff by rank
@@ -196,7 +192,7 @@ export function BufferStaffPool({
   const handleConvertToBuffer = async () => {
     if (selectedStaffIds.size === 0) return
 
-    const selectedStaff = inactiveStaff.filter(s => selectedStaffIds.has(s.id))
+    const selectedStaff = effectiveInactiveStaff.filter(s => selectedStaffIds.has(s.id))
     
     // Show convert dialog for first staff member
     if (selectedStaff.length > 0) {
@@ -221,41 +217,7 @@ export function BufferStaffPool({
       setSelectedStaffIds(new Set())
       setShowInactiveMenu(false)
       setSourceMode(null)
-      onBufferStaffCreated?.()
     }
-  }
-
-  const handleSlotSelectionConfirm = async (slots: number[], bufferFTE: number) => {
-    const currentStaff = pcaStaffToConvert[currentPcaIndex]
-    if (!currentStaff) return
-
-    // Update staff with buffer status and buffer_fte
-    await supabase
-      .from('staff')
-      .update({ 
-        status: 'buffer' as StaffStatus,
-        buffer_fte: bufferFTE
-      })
-      .eq('id', currentStaff.id)
-
-    // Move to next PCA staff or finish
-    if (currentPcaIndex < pcaStaffToConvert.length - 1) {
-      setCurrentPcaIndex(currentPcaIndex + 1)
-    } else {
-      // All PCA staff converted
-      setShowSlotDialog(false)
-      setPcaStaffToConvert([])
-      setCurrentPcaIndex(0)
-      setSelectedStaffIds(new Set())
-      setShowInactiveMenu(false)
-      setSourceMode(null)
-      onBufferStaffCreated?.()
-    }
-  }
-
-  const handleCreateNew = () => {
-    setShowCreateDialog(true)
-    setSourceMode('create')
   }
 
   const handleSelectFromInactive = () => {
@@ -263,16 +225,27 @@ export function BufferStaffPool({
     setSourceMode('select')
   }
 
-  const handleCreateDialogClose = (_createdStaff?: Staff) => {
-    setShowCreateDialog(false)
-    setSourceMode(null)
-    onBufferStaffCreated?.()
+  const openSearchInactive = () => {
+    setShowInactiveSplitMenu(false)
+    setShowInactiveMenu(false)
+    setSelectedStaffIds(new Set())
+    setInactiveSearch('')
+    setSourceMode('search')
   }
 
   // Get all inactive staff for checkbox menu (max 5 visible, scrollable)
-  const allInactiveStaff = sortStaffByRank(inactiveStaff)
+  const allInactiveStaff = sortStaffByRank(effectiveInactiveStaff)
   const visibleStaff = allInactiveStaff.slice(0, 5)
   const remainingStaff = allInactiveStaff.slice(5)
+
+  const inactiveSearchItems = useMemo<SearchSuggestionItem[]>(() => {
+    return allInactiveStaff.map((s) => ({
+      id: s.id,
+      label: s.name,
+      subLabel: [s.rank].filter(Boolean).join(' • ') || undefined,
+      keywords: [s.name, s.rank].filter(Boolean),
+    }))
+  }, [allInactiveStaff])
 
   return (
     <>
@@ -299,25 +272,94 @@ export function BufferStaffPool({
           <CardContent className="space-y-2 p-2">
             {!sourceMode && (
               <div className="flex flex-col gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSelectFromInactive}
-                  className="text-xs h-7 w-full"
-                  disabled={inactiveStaff.length === 0}
-                >
-                  Select from Inactive
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleCreateNew}
-                  className="text-xs h-7 w-full"
-                >
-                  Create New
-                </Button>
+                <div className="flex items-center gap-1 w-full">
+                  <Tooltip
+                    wrapperClassName="inline-flex flex-1 min-w-0"
+                    side="top"
+                    className="whitespace-normal max-w-[280px]"
+                    content={
+                      <div className="space-y-1 whitespace-normal leading-snug">
+                        <div className="font-medium">Inactive staff list</div>
+                        <div>
+                          This uses the saved snapshot for{' '}
+                          <span className="font-medium">{snapshotDateLabel ?? 'this date'}</span>.
+                        </div>
+                        <div className="text-muted-foreground">
+                          If published (Global) staff config differs, use Dashboard → Sync / Publish.
+                        </div>
+                      </div>
+                    }
+                  >
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleSelectFromInactive}
+                      className="h-6 w-full rounded-r-none px-2 text-[11px] leading-none min-w-0"
+                      disabled={effectiveInactiveStaff.length === 0}
+                    >
+                      <span className="truncate">From Inactive Staff</span>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowInactiveSplitMenu((v) => !v)}
+                      className="h-6 w-7 px-0 rounded-l-none border-l-0"
+                      disabled={effectiveInactiveStaff.length === 0}
+                      aria-label="More inactive staff options"
+                    >
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </Button>
+                    {showInactiveSplitMenu ? (
+                      <div className="absolute left-0 top-full mt-1 w-full bg-background border border-border rounded-md shadow-lg z-50">
+                        <button
+                          type="button"
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-accent rounded-md"
+                          onClick={openSearchInactive}
+                        >
+                          Search inactive…
+                        </button>
+                      </div>
+                    ) : null}
+                  </Tooltip>
+                </div>
               </div>
             )}
+
+          {sourceMode === 'search' && (
+            <div className="space-y-2">
+              <div className="text-xs font-semibold">Search inactive staff to convert:</div>
+              <SearchWithSuggestions
+                value={inactiveSearch}
+                onValueChange={setInactiveSearch}
+                items={inactiveSearchItems}
+                placeholder="Type a name…"
+                onSelect={(it) => {
+                  const staff = effectiveInactiveStaff.find((s) => s.id === it.id)
+                  if (!staff) return
+                  setStaffToConvert(staff)
+                  setPcaStaffToConvert([staff])
+                  setCurrentPcaIndex(0)
+                  setShowConvertDialog(true)
+                  setSourceMode(null)
+                  setInactiveSearch('')
+                }}
+                inputClassName="h-7 text-xs"
+              />
+              <div className="flex gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSourceMode(null)
+                    setInactiveSearch('')
+                  }}
+                  className="text-xs h-7 flex-1 px-1 min-w-0"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
 
           {sourceMode === 'select' && showInactiveMenu && (
             <div className="space-y-2">
@@ -362,6 +404,7 @@ export function BufferStaffPool({
                     setShowInactiveMenu(false)
                     setSourceMode(null)
                     setSelectedStaffIds(new Set())
+                    setShowInactiveSplitMenu(false)
                   }}
                   className="text-xs h-7 flex-1 px-1 min-w-0"
                 >
@@ -371,11 +414,7 @@ export function BufferStaffPool({
             </div>
           )}
 
-          {sourceMode === 'create' && (
-            <div className="text-xs text-muted-foreground">
-              Creating new buffer staff...
-            </div>
-          )}
+          {sourceMode === 'create' ? null : null}
 
             {/* Display existing buffer staff, grouped by rank */}
             {Object.values(bufferStaffByRank).some(list => list.length > 0) && (
@@ -474,17 +513,6 @@ export function BufferStaffPool({
         )}
       </Card>
 
-      {showCreateDialog && (
-        <BufferStaffCreateDialog
-          open={showCreateDialog}
-          onOpenChange={(open) => {
-            if (!open) handleCreateDialogClose()
-          }}
-          onSave={(createdStaff) => handleCreateDialogClose(createdStaff)}
-          specialPrograms={loadedSpecialPrograms}
-        />
-      )}
-
       {showConvertDialog && staffToConvert && (
         <BufferStaffConvertDialog
           open={showConvertDialog}
@@ -500,26 +528,11 @@ export function BufferStaffPool({
             }
           }}
           staff={staffToConvert}
-          onSave={handleConvertDialogSave}
-          specialPrograms={loadedSpecialPrograms}
-        />
-      )}
-
-      {showSlotDialog && pcaStaffToConvert[currentPcaIndex] && (
-        <BufferSlotSelectionDialog
-          open={showSlotDialog}
-          onOpenChange={(open) => {
-            if (!open) {
-              setShowSlotDialog(false)
-              setPcaStaffToConvert([])
-              setCurrentPcaIndex(0)
-              setSelectedStaffIds(new Set())
-              setShowInactiveMenu(false)
-              setSourceMode(null)
-            }
+          onConfirm={({ bufferFTE, availableSlots }) => {
+            if (!staffToConvert) return
+            onConvertInactiveToBuffer?.({ staff: staffToConvert, bufferFTE, availableSlots })
+            handleConvertDialogSave()
           }}
-          staff={pcaStaffToConvert[currentPcaIndex]}
-          onConfirm={handleSlotSelectionConfirm}
         />
       )}
     </>

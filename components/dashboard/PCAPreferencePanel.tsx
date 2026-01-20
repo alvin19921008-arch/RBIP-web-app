@@ -10,6 +10,7 @@ import { getSlotLabel, getSlotTime } from '@/lib/utils/slotHelpers'
 import { FloorPCAMappingPanel } from '@/components/dashboard/FloorPCAMappingPanel'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
+import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
 
 export function PCAPreferencePanel() {
   const [preferences, setPreferences] = useState<PCAPreference[]>([])
@@ -83,6 +84,7 @@ export function PCAPreferencePanel() {
   return (
     <Card>
       <CardContent className="pt-6">
+        <DashboardConfigMetaBanner />
         {loading ? (
           <p>Loading...</p>
         ) : (

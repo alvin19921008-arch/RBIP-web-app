@@ -13,6 +13,7 @@ import { Trash2, Edit2, ChevronUp, ChevronDown } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
+import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
 
 interface StaffSpecialProgram {
   name: string
@@ -540,6 +541,7 @@ export function SpecialProgramPanel() {
     <>
       <Card>
         <CardContent className="pt-6">
+        <DashboardConfigMetaBanner />
         {loading ? (
           <p>Loading...</p>
         ) : (

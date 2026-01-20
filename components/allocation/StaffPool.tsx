@@ -13,12 +13,15 @@ import { ChevronRight, ChevronDown, ChevronLeft, ChevronUp, AlertCircle } from '
 import { cn } from '@/lib/utils'
 import { useAutoHideFlag } from '@/lib/hooks/useAutoHideFlag'
 import { useIsolatedWheelScroll } from '@/lib/hooks/useIsolatedWheelScroll'
+import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 
 interface StaffPoolProps {
   therapists: Staff[]
   pcas: Staff[]
   inactiveStaff?: Staff[]
   bufferStaff?: Staff[]
+  snapshotDateLabel?: string
+  onConvertInactiveToBuffer?: (args: { staff: Staff; bufferFTE: number; availableSlots?: number[] }) => void
   onOpenStaffContextMenu?: (staffId: string, event?: React.MouseEvent) => void
   staffOverrides?: Record<string, { leaveType?: any; fteRemaining?: number; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean }>
   specialPrograms?: any[]
@@ -37,6 +40,8 @@ export function StaffPool({
   pcas,
   inactiveStaff = [],
   bufferStaff = [],
+  snapshotDateLabel,
+  onConvertInactiveToBuffer,
   onOpenStaffContextMenu,
   staffOverrides = {},
   specialPrograms = [],
@@ -165,6 +170,24 @@ export function StaffPool({
   const getBaseFTERemaining = (staffId: string, staff?: Staff): number => {
     const override = staffOverrides[staffId]
 
+    // Prefer explicit override.fteRemaining when present.
+    // This is the Step 1 "leave & FTE" source of truth for base on-duty capacity.
+    if (typeof override?.fteRemaining === 'number') {
+      const cap =
+        staff?.status === 'buffer' && typeof staff.buffer_fte === 'number' ? staff.buffer_fte : 1.0
+      return Math.max(0, Math.min(cap, override.fteRemaining))
+    }
+
+    // Fallback: if availableSlots is present (common for PCA), infer capacity from slots.
+    if (Array.isArray(override?.availableSlots)) {
+      const validCount = override.availableSlots.filter((n) => n === 1 || n === 2 || n === 3 || n === 4).length
+      if (validCount > 0) {
+        const cap =
+          staff?.status === 'buffer' && typeof staff.buffer_fte === 'number' ? staff.buffer_fte : 1.0
+        return Math.max(0, Math.min(cap, validCount * 0.25))
+      }
+    }
+
     // For floating PCA, the outer border should reflect the "base on-duty FTE" (capacity),
     // which is driven by the explicit Step 1/Step 3 override.fteRemaining when present.
     // This avoids incorrectly deriving baseFTE from fteSubtraction (which can leave a misleading 0.25 remainder).
@@ -195,8 +218,17 @@ export function StaffPool({
   }
 
   // Helper function to check if a staff member is on leave (FTE ≠ 1)
-  const isOnLeave = (staffId: string): boolean => {
-    const baseFTE = getBaseFTERemaining(staffId)
+  const isOnLeave = (staff: Staff): boolean => {
+    const baseFTE = getBaseFTERemaining(staff.id, staff)
+    const override = staffOverrides[staff.id]
+    const explicitLeaveSignal =
+      (!!override && !isOnDutyLeaveType(((override as any).leaveType ?? null) as any)) ||
+      (typeof override?.fteSubtraction === 'number' && override.fteSubtraction > 0) ||
+      (override as any)?.isLeave === true
+
+    // SPT: duty FTE may be < 1.0 per SPT dashboard configuration; only treat as leave if explicit signal exists.
+    if (staff.rank === 'SPT') return explicitLeaveSignal
+
     return baseFTE !== 1.0
   }
 
@@ -246,7 +278,7 @@ export function StaffPool({
   // Filter staff by FTE if filter is active
   const filterStaffByFTE = (staffList: Staff[]): Staff[] => {
     if (!showFTEFilter) return staffList
-    return staffList.filter(s => isOnLeave(s.id))
+    return staffList.filter(s => isOnLeave(s))
   }
 
   // Handle filter toggle - expand relevant ranks when filter is activated
@@ -259,10 +291,10 @@ export function StaffPool({
       const ranksToExpand: Record<string, boolean> = { ...expandedRanks }
       
       // Check each rank for staff on leave
-      const hasSPTOnLeave = therapists.some(t => t.rank === 'SPT' && isOnLeave(t.id))
-      const hasAPPTOnLeave = therapists.some(t => t.rank === 'APPT' && isOnLeave(t.id))
-      const hasRPTOnLeave = therapists.some(t => t.rank === 'RPT' && isOnLeave(t.id))
-      const hasPCAOnLeave = pcas.some(p => isOnLeave(p.id))
+      const hasSPTOnLeave = therapists.some(t => t.rank === 'SPT' && isOnLeave(t))
+      const hasAPPTOnLeave = therapists.some(t => t.rank === 'APPT' && isOnLeave(t))
+      const hasRPTOnLeave = therapists.some(t => t.rank === 'RPT' && isOnLeave(t))
+      const hasPCAOnLeave = pcas.some(p => isOnLeave(p))
       
       if (hasSPTOnLeave) ranksToExpand.SPT = true
       if (hasAPPTOnLeave) ranksToExpand.APPT = true
@@ -695,10 +727,8 @@ export function StaffPool({
           <BufferStaffPool
             inactiveStaff={inactiveStaffOnly}
             bufferStaff={visibleBufferStaff}
-            onBufferStaffCreated={onBufferStaffCreated || (() => {
-              // Fallback: reload page if no callback provided
-              window.location.reload()
-            })}
+            snapshotDateLabel={snapshotDateLabel}
+            onConvertInactiveToBuffer={onConvertInactiveToBuffer}
             specialPrograms={specialPrograms}
             currentStep={currentStep}
             pcaAllocations={pcaAllocations}

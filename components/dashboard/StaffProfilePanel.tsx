@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,8 @@ import { StaffEditDialog } from './StaffEditDialog'
 import { BufferStaffConvertDialog } from '@/components/allocation/BufferStaffConvertDialog'
 import { cn } from '@/lib/utils'
 import { useToast } from '@/components/ui/toast-provider'
+import { SearchWithSuggestions, type SearchSuggestionItem } from '@/components/ui/SearchWithSuggestions'
+import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
 
 const RANK_ORDER: StaffRank[] = ['SPT', 'APPT', 'RPT', 'PCA', 'workman']
 
@@ -38,6 +40,7 @@ export function StaffProfilePanel() {
     status: null as 'active' | 'inactive' | 'buffer' | null,
   })
   const [sortConfig, setSortConfig] = useState<StaffSortConfig>({ column: null, value: null })
+  const [search, setSearch] = useState('')
   const [editingNameId, setEditingNameId] = useState<string | null>(null)
   const [editingNameValue, setEditingNameValue] = useState<string>('')
   const [savingNameId, setSavingNameId] = useState<string | null>(null)
@@ -97,6 +100,8 @@ export function StaffProfilePanel() {
 
   // Filter staff
   const filteredStaff = staff.filter((s) => {
+    const q = search.trim().toLowerCase()
+    if (q && !s.name.toLowerCase().includes(q)) return false
     if (filters.rank && !filters.rank.includes(s.rank)) return false
     if (filters.status !== null) {
       const staffStatus = s.status ?? 'active'
@@ -116,6 +121,17 @@ export function StaffProfilePanel() {
     if (filters.floorPCA && s.rank !== 'PCA') return false
     return true
   })
+
+  const staffSearchItems = useMemo<SearchSuggestionItem[]>(() => {
+    return staff
+      .map((s) => ({
+        id: s.id,
+        label: s.name,
+        subLabel: [s.rank, s.team ?? '', s.status ?? 'active'].filter(Boolean).join(' • '),
+        keywords: [s.name, s.rank, s.team ?? '', s.status ?? 'active', ...(s.special_program ?? [])].filter(Boolean),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+  }, [staff])
 
   // Apply sorting
   const filteredAndSortedStaff = [...filteredStaff].sort((a, b) => {
@@ -697,7 +713,9 @@ export function StaffProfilePanel() {
                   <option value="inactive">Inactive</option>
                   <option value="buffer">Buffer</option>
                 </select>
-                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-white pointer-events-none z-[1]" style={{ transform: 'translateY(-50%)' }} />
+                <div className="absolute inset-y-0 right-1.5 flex items-center pointer-events-none z-[1]">
+                  <ChevronDown className="h-3.5 w-3.5 text-white" />
+                </div>
               </div>
             )
           })()}
@@ -744,6 +762,7 @@ export function StaffProfilePanel() {
     <>
       <Card>
         <CardContent className="pt-6">
+          <DashboardConfigMetaBanner />
           <div className="mb-4 pb-4 border-b">
             <div className="flex flex-wrap gap-4 text-sm" style={{ color: 'black' }}>
               <span>
@@ -891,6 +910,16 @@ export function StaffProfilePanel() {
                     </>
                   )}
                 </div>
+                <div className="flex items-center gap-2">
+                  <SearchWithSuggestions
+                    value={search}
+                    onValueChange={setSearch}
+                    items={staffSearchItems}
+                    placeholder="Search staff name…"
+                    className="w-[260px]"
+                    onSelect={(it) => setSearch(it.label)}
+                  />
+                </div>
               </div>
 
               {/* Staff Table */}
@@ -1008,8 +1037,10 @@ export function StaffProfilePanel() {
             }
           }}
           staff={pcaStaffForBuffer}
-          onSave={handleBufferConvertSave}
-          specialPrograms={specialPrograms}
+          onConfirm={async ({ bufferFTE }) => {
+            await updateStaffStatus(pcaStaffForBuffer.id, 'buffer', pcaStaffForBuffer, bufferFTE)
+            handleBufferConvertSave()
+          }}
         />
       )}
 

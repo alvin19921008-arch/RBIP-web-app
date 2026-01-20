@@ -1,5 +1,6 @@
 import type { BaselineSnapshot } from '@/types/schedule'
 import type { Team, StaffRank } from '@/types/staff'
+import { TEAMS } from '@/lib/utils/types'
 
 type StaffLite = {
   id: string
@@ -52,6 +53,9 @@ export type SnapshotDiffResult = {
     added: StaffLite[]
     removed: StaffLite[]
     changed: Array<{ id: string; name: string; changes: FieldChange[] }>
+  }
+  teamSettings: {
+    changed: Array<{ team: Team; changes: FieldChange[] }>
   }
   wards: {
     added: WardLite[]
@@ -182,6 +186,7 @@ export function diffBaselineSnapshot(params: {
   snapshot: BaselineSnapshot
   live: {
     staff: any[]
+    teamSettings?: any[]
     wards: any[]
     pcaPreferences: any[]
     specialPrograms: any[]
@@ -253,6 +258,33 @@ export function diffBaselineSnapshot(params: {
   staffAdded.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
   staffRemoved.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
   staffChanged.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+
+  // Team settings (snapshot.teamDisplayNames vs live team_settings.display_name)
+  const snapTeamDisplayNames = ((params.snapshot as any)?.teamDisplayNames || {}) as Record<string, unknown>
+  const liveTeamSettings = (params.live.teamSettings || []) as any[]
+  const liveTeamNameByTeam = new Map<string, string>()
+  liveTeamSettings.forEach((r) => {
+    const t = r?.team
+    const n = r?.display_name
+    if (typeof t === 'string' && typeof n === 'string') {
+      liveTeamNameByTeam.set(t, n)
+    }
+  })
+
+  const teamKeys = new Set<string>([
+    ...Object.keys(snapTeamDisplayNames || {}),
+    ...Array.from(liveTeamNameByTeam.keys()),
+  ])
+  const teamSettingsChanged: Array<{ team: Team; changes: FieldChange[] }> = []
+  teamKeys.forEach((team) => {
+    if (!(TEAMS as readonly string[]).includes(team)) return
+    const snapNameRaw = (snapTeamDisplayNames as any)?.[team]
+    const snapName = typeof snapNameRaw === 'string' && snapNameRaw.trim() ? snapNameRaw : team
+    const liveName = liveTeamNameByTeam.get(team) ?? team
+    const changes = shallowDiff([{ key: 'display_name', label: 'display_name', a: snapName, b: liveName }])
+    if (changes.length > 0) teamSettingsChanged.push({ team: team as Team, changes })
+  })
+  teamSettingsChanged.sort((a, b) => a.team.localeCompare(b.team))
 
   // Wards (key by name)
   const snapWards: WardLite[] = (params.snapshot.wards || []).map((w: any) => ({
@@ -446,6 +478,7 @@ export function diffBaselineSnapshot(params: {
 
   return {
     staff: { added: staffAdded, removed: staffRemoved, changed: staffChanged },
+    teamSettings: { changed: teamSettingsChanged },
     wards: { added: wardsAdded, removed: wardsRemoved, changed: wardsChanged },
     pcaPreferences: { changed: pcaPrefsChanged },
     specialPrograms: { added: programsAdded, removed: programsRemoved, changed: programsChanged },

@@ -218,6 +218,45 @@ export interface BaselineSnapshot {
 
 export type BaselineSnapshotSource = 'save' | 'copy' | 'migration'
 
+// ============================================================================
+// Schedule-local roster overrides (stored inside daily_schedules.staff_overrides)
+// ============================================================================
+
+/**
+ * Schedule-local staff status override entry.
+ *
+ * Stored under `daily_schedules.staff_overrides.__staffStatusOverrides[staffId]`.
+ *
+ * Purpose:
+ * - Support per-date (snapshot-local) status changes like converting inactive → buffer
+ * - Avoid mutating the global `staff.status` roster for ad-hoc schedule needs
+ *
+ * Notes:
+ * - `nameAtTime` / `rankAtTime` are captured at conversion time so the UI can render a
+ *   meaningful placeholder even if the staff row is missing from the snapshot roster.
+ */
+export type StaffStatusOverrideEntry = {
+  status: import('./staff').StaffStatus
+  buffer_fte?: number | null
+  nameAtTime?: string | null
+  rankAtTime?: import('./staff').StaffRank | null
+  updatedAt?: string | null // ISO timestamp
+}
+
+export type StaffStatusOverridesById = Record<string, StaffStatusOverrideEntry>
+
+/**
+ * Lightweight “published config head” metadata captured when a snapshot is created.
+ * Stored inside the snapshot envelope so drift detection can be done later without guesswork.
+ */
+export type GlobalHeadAtCreation = {
+  global_version: number
+  global_updated_at: string
+  category_versions: Record<string, number>
+  category_updated_at: Record<string, string>
+  drift_notification_threshold?: { value: number; unit: 'days' | 'weeks' | 'months' } | null
+}
+
 /**
  * Versioned envelope for baseline snapshots stored in daily_schedules.baseline_snapshot.
  * We keep BaselineSnapshot as the *data payload* shape for easy consumption by UI/algorithms.
@@ -229,7 +268,19 @@ export interface BaselineSnapshotEnvelopeV1 {
   data: BaselineSnapshot
 }
 
-export type BaselineSnapshotEnvelope = BaselineSnapshotEnvelopeV1
+export interface BaselineSnapshotEnvelopeV2 {
+  schemaVersion: 2
+  createdAt: string // ISO timestamp
+  source: BaselineSnapshotSource
+  /**
+   * Global config versions at the time this snapshot was created.
+   * Optional for backward compatibility (older snapshots won’t have it).
+   */
+  globalHeadAtCreation?: GlobalHeadAtCreation | null
+  data: BaselineSnapshot
+}
+
+export type BaselineSnapshotEnvelope = BaselineSnapshotEnvelopeV2 | BaselineSnapshotEnvelopeV1
 
 /**
  * Backward-compatible type for what may come back from DB:

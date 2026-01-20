@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { Check, Circle, ChevronRight, ChevronLeft, AlertCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -24,6 +25,9 @@ interface StepIndicatorProps {
   className?: string
   onInitialize?: () => void
   onClearStep?: (stepId: string) => void
+  // Developer-only: show "Reset to baseline" under the Clear button.
+  userRole?: 'developer' | 'admin' | 'user'
+  onResetToBaseline?: () => void
   showClear?: boolean
   isInitialized?: boolean
   isLoading?: boolean
@@ -44,6 +48,8 @@ export function StepIndicator({
   className,
   onInitialize,
   onClearStep,
+  userRole,
+  onResetToBaseline,
   showClear = true,
   isInitialized = false,
   isLoading = false,
@@ -53,6 +59,8 @@ export function StepIndicator({
   const currentStepIndex = steps.findIndex(s => s.id === currentStep)
   const canClear = ['leave-fte', 'therapist-pca', 'floating-pca', 'bed-relieving'].includes(currentStep)
   const canInitialize = !!onInitialize && ['therapist-pca', 'floating-pca', 'bed-relieving'].includes(currentStep)
+  const canResetBaseline = userRole === 'developer' && typeof onResetToBaseline === 'function' && canClear
+  const [showClearMenu, setShowClearMenu] = useState(false)
 
   return (
     <div className={cn("bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 shadow-xs", className)}>
@@ -201,14 +209,52 @@ export function StepIndicator({
         {(canClear || canInitialize) && (
           <div className="flex justify-center gap-2">
             {canClear && showClear && onClearStep ? (
-              <Button
-                onClick={() => onClearStep(currentStep)}
-                disabled={isLoading}
-                variant="outline"
-                className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40"
-              >
-                Clear
-              </Button>
+              canResetBaseline ? (
+                <div className="relative inline-flex">
+                  <Button
+                    type="button"
+                    onClick={() => onClearStep(currentStep)}
+                    disabled={isLoading}
+                    variant="outline"
+                    className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40 rounded-r-none"
+                  >
+                    Clear
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => setShowClearMenu((v) => !v)}
+                    disabled={isLoading}
+                    variant="outline"
+                    className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40 rounded-l-none border-l-0 px-2"
+                    aria-label="More clear actions"
+                  >
+                    <ChevronRight className={cn("w-4 h-4 transition-transform", showClearMenu ? "rotate-90" : "")} />
+                  </Button>
+                  {showClearMenu ? (
+                    <div className="absolute left-0 top-full mt-1 w-56 rounded-md border border-slate-200 bg-white shadow-lg z-50 dark:border-slate-700 dark:bg-slate-900">
+                      <button
+                        className="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
+                        onClick={() => {
+                          setShowClearMenu(false)
+                          onResetToBaseline?.()
+                        }}
+                        type="button"
+                      >
+                        <span className="text-red-600 dark:text-red-300">Reset to baseline</span>
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <Button
+                  onClick={() => onClearStep(currentStep)}
+                  disabled={isLoading}
+                  variant="outline"
+                  className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40"
+                >
+                  Clear
+                </Button>
+              )
             ) : null}
             {canInitialize ? (
               <Button

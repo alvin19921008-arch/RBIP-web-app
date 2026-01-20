@@ -11,6 +11,7 @@ import { Trash2 } from 'lucide-react'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
+import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
 
 export function SPTAllocationPanel() {
   const [allocations, setAllocations] = useState<SPTAllocation[]>([])
@@ -85,6 +86,7 @@ export function SPTAllocationPanel() {
   return (
     <Card>
       <CardContent className="pt-6">
+        <DashboardConfigMetaBanner />
         {loading ? (
           <p>Loading...</p>
         ) : (

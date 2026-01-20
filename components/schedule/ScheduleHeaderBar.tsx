@@ -72,7 +72,7 @@ export function ScheduleHeaderBar(props: {
             perfStats={props.perfStats}
           />
 
-          <div className="flex items-center space-x-2 relative">
+          <div className="flex items-center gap-2 relative">
             <div className="inline-flex items-center border border-border rounded-md overflow-hidden bg-background shadow-xs">
               <Tooltip side="bottom" content={`Previous working day: ${prevLabel}`}>
                 <button
@@ -110,27 +110,29 @@ export function ScheduleHeaderBar(props: {
               </Tooltip>
             </div>
 
-            <span
-              className={`text-lg font-semibold rounded px-2 py-1 transition-shadow transition-colors ${
-                props.isDateHighlighted ? 'bg-amber-50 ring-2 ring-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.55)]' : ''
-              }`}
-            >
-              {formatDateDDMMYYYY(props.selectedDate)} ({props.weekdayName})
-            </span>
+            <div className="inline-flex items-center gap-1">
+              <span
+                className={`text-lg font-semibold rounded px-2 py-1 transition-shadow transition-colors ${
+                  props.isDateHighlighted ? 'bg-amber-50 ring-2 ring-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.55)]' : ''
+                }`}
+              >
+                {formatDateDDMMYYYY(props.selectedDate)} ({props.weekdayName})
+              </span>
 
-            <button
-              ref={props.calendarButtonRef}
-              onClick={props.onToggleCalendar}
-              className="cursor-pointer flex items-center"
-              type="button"
-              aria-label="Open date picker"
-            >
-              <Tooltip side="bottom" content="Open calendar">
-                <span className="inline-flex">
-                  <Calendar className="h-5 w-5 text-muted-foreground hover:text-foreground transition-colors" />
-                </span>
-              </Tooltip>
-            </button>
+              <button
+                ref={props.calendarButtonRef}
+                onClick={props.onToggleCalendar}
+                className="cursor-pointer inline-flex items-center -ml-1"
+                type="button"
+                aria-label="Open date picker"
+              >
+                <Tooltip side="bottom" content="Open calendar">
+                  <span className="inline-flex">
+                    <Calendar className="h-5 w-5 text-muted-foreground hover:text-foreground transition-colors" />
+                  </span>
+                </Tooltip>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -153,7 +155,7 @@ export function ScheduleHeaderBar(props: {
           </div>
         ) : null}
 
-        <div className="flex items-center space-x-2">{props.rightActions}</div>
+        <div className="flex items-center justify-end gap-2">{props.rightActions}</div>
       </div>
     </>
   )

@@ -51,30 +51,6 @@ export async function GET(request: NextRequest) {
 
     const scheduleId = schedule.id
 
-    const [{ data: therapist }, { data: pca }] = await Promise.all([
-      supabase
-        .from('schedule_therapist_allocations')
-        .select('staff_id')
-        .eq('schedule_id', scheduleId),
-      supabase
-        .from('schedule_pca_allocations')
-        .select('staff_id')
-        .eq('schedule_id', scheduleId),
-    ])
-
-    const referencedIds = new Set<string>()
-    ;(therapist || []).forEach((a: any) => a?.staff_id && referencedIds.add(a.staff_id))
-    ;(pca || []).forEach((a: any) => a?.staff_id && referencedIds.add(a.staff_id))
-
-    const staffOverrides = (schedule as any).staff_overrides
-    if (isNonEmptyObject(staffOverrides)) {
-      Object.keys(staffOverrides).forEach(id => {
-        // staff_overrides may include schedule-level metadata keys (e.g. "__bedCounts").
-        if (id.startsWith('__')) return
-        referencedIds.add(id)
-      })
-    }
-
     const baselineStored = ((schedule as any).baseline_snapshot ?? null) as BaselineSnapshotStored | null
     const snapshotStaff: any[] = baselineStored
       ? unwrapBaselineSnapshotStored(baselineStored).data.staff
@@ -85,38 +61,47 @@ export async function GET(request: NextRequest) {
       if (s?.id) snapshotStaffById.set(s.id, s)
     })
 
-    // Include all snapshot staff ids so we can detect buffer staff that are present in the schedule snapshot
-    // even if they are not referenced by allocations/overrides (important for copy wizard "exclude buffer staff").
-    snapshotStaffById.forEach((_v, id) => {
-      referencedIds.add(id)
-    })
+    const staffOverrides = (schedule as any).staff_overrides
+    const statusOverrides = (staffOverrides as any)?.__staffStatusOverrides
 
-    const missingIds: string[] = []
-    referencedIds.forEach(id => {
-      if (!snapshotStaffById.has(id)) missingIds.push(id)
-    })
+    const bufferStaff: Staff[] = []
 
-    const liveStaffById = new Map<string, any>()
-    if (missingIds.length > 0) {
-      const attempt = await supabase
-        .from('staff')
-        .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program')
-        .in('id', missingIds)
-      const liveStaff =
-        attempt.error && (attempt.error.message?.includes('column') || (attempt.error as any)?.code === '42703')
-          ? (await supabase.from('staff').select('*').in('id', missingIds)).data
-          : attempt.data
-      ;(liveStaff || []).forEach((s: any) => {
-        if (s?.id) liveStaffById.set(s.id, s)
+    // Schedule-local buffer overrides (primary)
+    if (statusOverrides && typeof statusOverrides === 'object' && !Array.isArray(statusOverrides)) {
+      Object.entries(statusOverrides as any).forEach(([staffId, entry]) => {
+        if (!staffId) return
+        if ((entry as any)?.status !== 'buffer') return
+        const snap = snapshotStaffById.get(staffId)
+        if (snap) {
+          bufferStaff.push({
+            ...(snap as any),
+            status: 'buffer',
+            buffer_fte: typeof (entry as any)?.buffer_fte === 'number' ? (entry as any).buffer_fte : (snap as any).buffer_fte,
+          } as Staff)
+          return
+        }
+
+        // Minimal placeholder if staff row is missing from snapshot roster
+        bufferStaff.push({
+          id: staffId,
+          name: ((entry as any)?.nameAtTime as string) || '(Missing staff in snapshot)',
+          rank: ((entry as any)?.rankAtTime as any) || 'PCA',
+          special_program: null,
+          team: null,
+          floating: false,
+          floor_pca: null,
+          status: 'buffer',
+          buffer_fte: typeof (entry as any)?.buffer_fte === 'number' ? (entry as any).buffer_fte : undefined,
+        } as Staff)
       })
     }
 
-    const bufferStaff: Staff[] = []
-    referencedIds.forEach(id => {
-      const s = snapshotStaffById.get(id) ?? liveStaffById.get(id)
-      if (s && s.status === 'buffer') {
-        bufferStaff.push(s as Staff)
-      }
+    // Legacy: snapshot rows that still have status='buffer'
+    snapshotStaff.forEach((s: any) => {
+      if (!s?.id) return
+      if (s.status !== 'buffer') return
+      if (bufferStaff.some((x) => x.id === s.id)) return
+      bufferStaff.push(s as Staff)
     })
 
     // Sort: therapists first, then PCAs, then by name

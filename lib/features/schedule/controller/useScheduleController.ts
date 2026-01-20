@@ -12,6 +12,8 @@ import type {
   ScheduleCalculations,
   ScheduleStepId,
   SnapshotHealthReport,
+  StaffStatusOverridesById,
+  StaffStatusOverrideEntry,
   TherapistAllocation,
   WorkflowState,
 } from '@/types/schedule'
@@ -31,6 +33,7 @@ import { computeStep3ResetForReentry } from '@/lib/features/schedule/stepReset'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
 import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
+import { fetchGlobalHeadAtCreation } from '@/lib/features/config/globalHead'
 import { cacheSchedule, clearCachedSchedule, getCachedSchedule, getCacheSize } from '@/lib/utils/scheduleCache'
 import { createTimingCollector, type TimingReport } from '@/lib/utils/timing'
 import {
@@ -363,16 +366,84 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
   } = domainState
 
 
-  const applyBaselineSnapshot = (snapshot: BaselineSnapshot) => {
+  function getStaffStatusOverridesFromScheduleOverrides(overrides: any): StaffStatusOverridesById {
+    const raw = overrides?.__staffStatusOverrides
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+    return raw as StaffStatusOverridesById
+  }
+
+  function buildPlaceholderStaffFromStatusOverride(params: {
+    staffId: string
+    override: StaffStatusOverrideEntry
+  }): Staff {
+    const name = (params.override?.nameAtTime || '').trim()
+    return {
+      id: params.staffId,
+      name: name || '(Missing staff in snapshot)',
+      rank: (params.override?.rankAtTime as any) || 'PCA',
+      special_program: null,
+      team: null,
+      floating: false,
+      floor_pca: null,
+      status: params.override.status,
+      buffer_fte: typeof params.override.buffer_fte === 'number' ? params.override.buffer_fte : undefined,
+    }
+  }
+
+  function applyScheduleLocalStatusOverridesToSnapshotStaff(params: {
+    snapshotStaff: Staff[]
+    statusOverrides: StaffStatusOverridesById
+  }): Staff[] {
+    const { snapshotStaff, statusOverrides } = params
+    if (!snapshotStaff || snapshotStaff.length === 0) {
+      // Snapshot missing roster entirely: return placeholders for any schedule-local overrides.
+      return Object.entries(statusOverrides).map(([staffId, o]) =>
+        buildPlaceholderStaffFromStatusOverride({ staffId, override: o })
+      )
+    }
+
+    const byId = new Map<string, Staff>()
+    snapshotStaff.forEach((s) => {
+      if (!s?.id) return
+      byId.set(s.id, s)
+    })
+
+    // Patch existing snapshot rows
+    Object.entries(statusOverrides).forEach(([staffId, o]) => {
+      const existing = byId.get(staffId)
+      if (!existing) return
+      byId.set(staffId, {
+        ...existing,
+        status: o.status,
+        buffer_fte: typeof o.buffer_fte === 'number' ? o.buffer_fte : existing.buffer_fte,
+      })
+    })
+
+    // Add placeholders for overrides that refer to missing staff ids
+    Object.entries(statusOverrides).forEach(([staffId, o]) => {
+      if (byId.has(staffId)) return
+      byId.set(staffId, buildPlaceholderStaffFromStatusOverride({ staffId, override: o }))
+    })
+
+    return Array.from(byId.values())
+  }
+
+  const applyBaselineSnapshot = (snapshot: BaselineSnapshot, overridesForDerive?: any) => {
     setBaselineSnapshot(snapshot)
 
     // Derive staff pools from snapshot staff list
     if (snapshot.staff && Array.isArray(snapshot.staff)) {
+      const statusOverrides = getStaffStatusOverridesFromScheduleOverrides(overridesForDerive)
+      const effectiveStaffRows = applyScheduleLocalStatusOverridesToSnapshotStaff({
+        snapshotStaff: snapshot.staff as any,
+        statusOverrides,
+      })
+
       const activeStaff: Staff[] = []
       const inactiveStaffList: Staff[] = []
       const bufferStaffList: Staff[] = []
 
-      snapshot.staff.forEach((raw: any) => {
+      effectiveStaffRows.forEach((raw: any) => {
         const status = (raw.status as any) ?? 'active'
         const staffMember: Staff = {
           ...raw,
@@ -464,7 +535,7 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
       if (!opts?.prefetchOnly) {
         setCurrentScheduleId(cached.scheduleId)
         if (cached.baselineSnapshot) {
-          applyBaselineSnapshot(cached.baselineSnapshot)
+          applyBaselineSnapshot(cached.baselineSnapshot, cached.overrides)
         }
         if (cached.workflowState) {
           setPersistedWorkflowState(cached.workflowState)
@@ -579,9 +650,11 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
     let effectiveWorkflowState: WorkflowState | null = null
     if (!scheduleData) {
       const baselineSnapshotToSave = buildBaselineSnapshotFromCurrentState()
+      const globalHeadAtCreation = await fetchGlobalHeadAtCreation(supabase)
       const baselineEnvelopeToSave = buildBaselineSnapshotEnvelope({
         data: baselineSnapshotToSave,
         source: 'save',
+        globalHeadAtCreation,
       })
       const initialWorkflowState: WorkflowState = { currentStep: 'leave-fte', completedSteps: [] }
       effectiveWorkflowState = initialWorkflowState
@@ -724,7 +797,7 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
         })
         innerTimer.stage('validate:baseline_snapshot')
         setSnapshotHealthReport(validated.report)
-        applyBaselineSnapshot(validated.data)
+        applyBaselineSnapshot(validated.data, overrides)
       } catch {
         setSnapshotHealthReport(null)
       }
@@ -1251,6 +1324,60 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
       setCurrentStep('leave-fte')
     }
 
+    return nextOverrides
+  }
+
+  const setScheduleStaffStatusOverride = (args: {
+    staffId: string
+    status: 'active' | 'inactive' | 'buffer'
+    bufferFTE?: number | null
+    nameAtTime?: string | null
+    rankAtTime?: Staff['rank'] | null
+  }) => {
+    const prevAny = (staffOverrides as any) || {}
+    const prevMap = getStaffStatusOverridesFromScheduleOverrides(prevAny)
+    const nextMap: StaffStatusOverridesById = {
+      ...prevMap,
+      [args.staffId]: {
+        status: args.status,
+        buffer_fte: typeof args.bufferFTE === 'number' ? args.bufferFTE : null,
+        nameAtTime: args.nameAtTime ?? null,
+        rankAtTime: (args.rankAtTime ?? null) as any,
+        updatedAt: new Date().toISOString(),
+      },
+    }
+
+    const nextOverrides = {
+      ...prevAny,
+      __staffStatusOverrides: nextMap,
+    } as any
+
+    setStaffOverrides(nextOverrides)
+    setHasSavedAllocations(false)
+
+    // Re-derive pools from snapshot roster + overrides immediately (no global reload).
+    if (baselineSnapshot) {
+      applyBaselineSnapshot(baselineSnapshot as any, nextOverrides)
+    }
+
+    return nextOverrides
+  }
+
+  const clearScheduleStaffStatusOverride = (staffId: string) => {
+    const prevAny = (staffOverrides as any) || {}
+    const prevMap = getStaffStatusOverridesFromScheduleOverrides(prevAny)
+    if (!prevMap[staffId]) return prevAny
+    const nextMap = { ...prevMap }
+    delete (nextMap as any)[staffId]
+    const nextOverrides = {
+      ...prevAny,
+      __staffStatusOverrides: nextMap,
+    } as any
+    setStaffOverrides(nextOverrides)
+    setHasSavedAllocations(false)
+    if (baselineSnapshot) {
+      applyBaselineSnapshot(baselineSnapshot as any, nextOverrides)
+    }
     return nextOverrides
   }
 
@@ -2012,14 +2139,18 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
             },
           }
 
+          const globalHeadAtCreation = await fetchGlobalHeadAtCreation(params.supabase)
+
           if (args.userRole === 'developer') {
             try {
               specialProgramsBytes = JSON.stringify((minifiedSnapshot as any).specialPrograms || []).length
-              snapshotBytes = JSON.stringify(buildBaselineSnapshotEnvelope({ data: minifiedSnapshot, source: 'save' }) as any).length
+              snapshotBytes = JSON.stringify(
+                buildBaselineSnapshotEnvelope({ data: minifiedSnapshot, source: 'save', globalHeadAtCreation }) as any
+              ).length
             } catch {}
           }
 
-          const envelopeToSave = buildBaselineSnapshotEnvelope({ data: minifiedSnapshot, source: 'save' })
+          const envelopeToSave = buildBaselineSnapshotEnvelope({ data: minifiedSnapshot, source: 'save', globalHeadAtCreation })
           await params.supabase.from('daily_schedules').update({ baseline_snapshot: envelopeToSave as any }).eq('id', scheduleId)
           snapshotWritten = true
 
@@ -2181,8 +2312,8 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
       teams: Team[]
       substitutionsByTeam: Record<Team, any[]>
       isWizardMode: boolean
-      initialSelections?: Record<string, { floatingPCAId: string; slots: number[] }>
-    }) => Promise<Record<string, { floatingPCAId: string; slots: number[] }>>
+      initialSelections?: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>
+    }) => Promise<Record<string, Array<{ floatingPCAId: string; slots: number[] }>>>
   }): Promise<Record<Team, (PCAAllocation & { staff: Staff })[]>> => {
     if (staff.length === 0) return createEmptyTeamRecord<Array<PCAAllocation & { staff: Staff }>>([])
 
@@ -2492,22 +2623,23 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
 
       const onNonFloatingSubstitution = async (subs: any[]) => {
         // Pre-detect persisted substitution selections from staffOverrides.
-        const preSelections: Record<string, { floatingPCAId: string; slots: number[] }> = {}
+        const preSelections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>> = {}
         try {
           for (const sub of subs || []) {
             const key = `${sub.team}-${sub.nonFloatingPCAId}`
-            if (preSelections[key]) continue
-            const match = Object.entries(overrides).find(([, o]) => {
+            const matches = Object.entries(overrides).filter(([, o]) => {
               const sf = (o as any)?.substitutionFor
               return sf?.team === sub.team && sf?.nonFloatingPCAId === sub.nonFloatingPCAId
             })
-            if (!match) continue
-            const [floatingPCAId, o] = match
-            const sf = (o as any)?.substitutionFor as { slots: number[] } | undefined
-            if (!sf || !Array.isArray(sf.slots) || sf.slots.length === 0) continue
+            if (matches.length === 0) continue
             const allowedIds = new Set((sub.availableFloatingPCAs || []).map((p: any) => p.id))
-            if (!allowedIds.has(floatingPCAId)) continue
-            preSelections[key] = { floatingPCAId, slots: sf.slots }
+            for (const [floatingPCAId, o] of matches) {
+              if (!allowedIds.has(floatingPCAId)) continue
+              const sf = (o as any)?.substitutionFor as { slots: number[] } | undefined
+              if (!sf || !Array.isArray(sf.slots) || sf.slots.length === 0) continue
+              preSelections[key] = preSelections[key] ?? []
+              preSelections[key].push({ floatingPCAId, slots: sf.slots })
+            }
           }
         } catch {}
 
@@ -2515,7 +2647,7 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
         try {
           for (const sub of subs || []) {
             const key = `${sub.team}-${sub.nonFloatingPCAId}`
-            if (preSelections[key]) continue
+            if (Array.isArray(preSelections[key]) && preSelections[key]!.length > 0) continue
 
             const allowedIds = new Set((sub.availableFloatingPCAs || []).map((p: any) => p.id))
             if (allowedIds.size === 0) continue
@@ -2540,7 +2672,7 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
 
             const best = candidateAllocs[0]
             if (!best) continue
-            preSelections[key] = { floatingPCAId: best.alloc.staff_id, slots: best.overlapSlots }
+            preSelections[key] = [{ floatingPCAId: best.alloc.staff_id, slots: best.overlapSlots }]
           }
         } catch {}
 
@@ -2945,6 +3077,8 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
     goToNextStep,
     goToPreviousStep,
     applyStaffEditDomain,
+    setScheduleStaffStatusOverride,
+    clearScheduleStaffStatusOverride,
     updateBedRelievingNotes,
     applyBaselineViewAllocations,
     removeStep2KeysFromOverrides,

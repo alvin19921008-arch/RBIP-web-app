@@ -1115,6 +1115,15 @@ The schedule page uses a three-layer state management pattern:
 9. **Bed Relieving Notes**: Stored in `staffOverrides.__bedRelieving` (within-day only, NOT copied across dates via copy schedule)
 10. **Snapshot Envelope**: Always use `buildBaselineSnapshotEnvelope()` before saving; always validate with `validateAndRepairBaselineSnapshot()` on load
 
+---
+
+## Phase 28: Snapshot-local buffer staff (read+write) and copy exclusion
+
+- **Snapshot-local buffer conversion**: Schedule “From Inactive Staff” reads inactive staff strictly from the schedule snapshot roster; converting inactive → buffer is stored schedule-locally in `daily_schedules.staff_overrides.__staffStatusOverrides` (with `nameAtTime` / `rankAtTime`) and persists on Save.
+- **No global fallback**: Removed hybrid snapshot/global fallback that caused inconsistent UI and intermittent “nil inactive staff” due to client fetch lifecycle/caching.
+- **Copy wizard**: “Exclude buffer staff” drops allocations involving schedule-local buffer staff ids and strips buffer overrides on the target schedule.
+- **RPC support**: Added `supabase/migrations/update_copy_schedule_rpc_buffer_staff_ids.sql` to update `copy_schedule_v1` to exclude allocations via passed `buffer_staff_ids` rather than global `staff.status`.
+- **Cache gotcha**: After Sync/Publish “Pull Global → snapshot”, the Schedule page may still show older snapshot data until cache expires or you hard-refresh.
 
 ---
 

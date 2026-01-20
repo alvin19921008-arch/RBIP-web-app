@@ -14,6 +14,7 @@ import { X } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
+import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
 
 interface TeamSettings {
   team: Team
@@ -437,6 +438,7 @@ export function TeamConfigurationPanel() {
     return (
       <Card>
         <CardContent className="pt-6">
+          <DashboardConfigMetaBanner />
           <p>Loading...</p>
         </CardContent>
       </Card>
@@ -447,6 +449,7 @@ export function TeamConfigurationPanel() {
     <>
       <Card>
         <CardContent className="pt-6">
+          <DashboardConfigMetaBanner />
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {TEAMS.map((team) => {
               const settings = teamSettings[team]

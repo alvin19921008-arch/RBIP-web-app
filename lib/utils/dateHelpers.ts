@@ -1,4 +1,4 @@
-import { format, isWeekend, addDays, startOfWeek, isSameDay } from 'date-fns'
+import { format, isWeekend, addDays, startOfWeek, isSameDay, parseISO } from 'date-fns'
 import { isHongKongHoliday } from './hongKongHolidays'
 
 export function isWorkingDay(date: Date): boolean {
@@ -39,12 +39,24 @@ export function getLast5WorkingDays(date: Date = new Date()): Date[] {
 }
 
 export function formatDate(date: Date | string): string {
-  const dateObj = typeof date === 'string' ? new Date(date) : date
+  // IMPORTANT: `new Date('YYYY-MM-DD')` is interpreted as UTC, which can shift the day
+  // depending on server timezone. Treat date-only strings as local dates.
+  const dateObj =
+    typeof date === 'string'
+      ? /^\d{4}-\d{2}-\d{2}$/.test(date)
+        ? parseISO(date)
+        : new Date(date)
+      : date
   return format(dateObj, 'yyyy-MM-dd')
 }
 
 export function formatDateDisplay(date: Date | string): string {
-  const dateObj = typeof date === 'string' ? new Date(date) : date
+  const dateObj =
+    typeof date === 'string'
+      ? /^\d{4}-\d{2}-\d{2}$/.test(date)
+        ? parseISO(date)
+        : new Date(date)
+      : date
   return format(dateObj, 'MMM dd, yyyy')
 }
 

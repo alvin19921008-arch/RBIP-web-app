@@ -366,29 +366,33 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     // - buffer non-floating PCAs that are explicitly marked as whole-day substitutes
     if (override?.substitutionFor && override.substitutionFor.team === team) {
       const substitutedSlots = override.substitutionFor.slots
-      const isWholeDay = substitutedSlots.length === 4 && 
-                         substitutedSlots.includes(1) && 
-                         substitutedSlots.includes(2) && 
-                         substitutedSlots.includes(3) && 
-                         substitutedSlots.includes(4)
-      
+      // Treat 3+ slots as "whole-day-ish" for UI polish (underline + green border),
+      // to support edge cases where a special program occupies 1 slot and the PCA substitutes the other 3.
+      const isWholeDay =
+        substitutedSlots.length >= 3 ||
+        (substitutedSlots.length === 4 &&
+          substitutedSlots.includes(1) &&
+          substitutedSlots.includes(2) &&
+          substitutedSlots.includes(3) &&
+          substitutedSlots.includes(4))
+
       return {
         isSubstituting: true,
         isWholeDaySubstitution: isWholeDay,
-        substitutedSlots: substitutedSlots
+        substitutedSlots,
       }
     }
 
-    // IMPORTANT: If this floating PCA is assigned to a special program (Step 2),
-    // do NOT infer substitution styling from missing non-floating slots.
-    // Otherwise, special-program slots (e.g. CRP slot 2) can be incorrectly colored green.
-    if (floatingAlloc.staff.floating) {
-      const hasSpecialProgramAssignment =
-        Array.isArray(floatingAlloc.special_program_ids) && floatingAlloc.special_program_ids.length > 0
-      if (hasSpecialProgramAssignment) {
-        return { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
-      }
+    // If this floating PCA is assigned to a special program (Step 2),
+    // don't auto-derive "non-floating substitution" styling from missing slots.
+    // (But if user explicitly picked substitutionFor above, we DO allow green styling.)
+    const hasSpecialProgramAssignment =
+      Array.isArray((floatingAlloc as any).special_program_ids) && (floatingAlloc as any).special_program_ids.length > 0
+    if (hasSpecialProgramAssignment) {
+      return { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
     }
+
+    // (special-program guard moved above)
 
     // SECOND: Derive substitution slots from the *non-floating* PCA's overrides (survives refresh/load).
     // - If a non-floating PCA has fteRemaining=0, they need whole-day substitution (slots 1-4).
@@ -686,7 +690,11 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
   // Helper function to render slot display with blue/bold styling for leave/come back times
   // and green styling for substituted slots (only in Step 2+)
   // Now handles separation of substituting slots from regular slots
-  const renderSlotDisplay = (displayText: string | null, allocation: PCAAllocation & { staff: Staff }): React.ReactNode => {
+  const renderSlotDisplay = (
+    displayText: string | null,
+    allocation: PCAAllocation & { staff: Staff },
+    displayedSlots?: number[]
+  ): React.ReactNode => {
     if (!displayText) return null
 
     const invalidSlot = (allocation as any).invalid_slot
@@ -701,12 +709,15 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     const isSubstituting = substitutionInfo.isSubstituting
     const substitutedSlots = substitutionInfo.substitutedSlots
     
-    // Get all slots assigned to this team for the floating PCA
+    // Get all slots assigned to this team for the PCA.
+    // If caller provides displayedSlots (e.g. split allocation regular slots),
+    // keep display mutually-exclusive by only considering those slots.
     const allSlotsForTeam: number[] = []
-    if (allocation.slot1 === team) allSlotsForTeam.push(1)
-    if (allocation.slot2 === team) allSlotsForTeam.push(2)
-    if (allocation.slot3 === team) allSlotsForTeam.push(3)
-    if (allocation.slot4 === team) allSlotsForTeam.push(4)
+    const allow = Array.isArray(displayedSlots) && displayedSlots.length > 0 ? displayedSlots : null
+    if (allocation.slot1 === team && (!allow || allow.includes(1))) allSlotsForTeam.push(1)
+    if (allocation.slot2 === team && (!allow || allow.includes(2))) allSlotsForTeam.push(2)
+    if (allocation.slot3 === team && (!allow || allow.includes(3))) allSlotsForTeam.push(3)
+    if (allocation.slot4 === team && (!allow || allow.includes(4))) allSlotsForTeam.push(4)
     
     // Separate substituting slots from regular slots
     const regularSlots = allSlotsForTeam.filter(slot => !substitutedSlots.includes(slot))
@@ -1056,7 +1067,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
             const slotDisplay = slotsToDisplay 
               ? getSlotDisplayForTeamFiltered(allocation, slotsToDisplay)
               : getSlotDisplayForTeam(allocation)
-            const slotDisplayNode = renderSlotDisplay(slotDisplay, allocation)
+            const slotDisplayNode = renderSlotDisplay(slotDisplay, allocation, slotsToDisplay)
             
             // Check substitution info (only apply styling in Step 2+)
             const computedSub = substitutionInfoByAllocId.get(allocation.id)
@@ -1129,7 +1140,9 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
             const slotDisplay = slotsToDisplay
               ? getSlotDisplayForTeamFiltered(allocation, slotsToDisplay)
               : getSlotDisplayForTeam(allocation)
-            const slotDisplayNode = renderSlotDisplay(slotDisplay, allocation)
+            // IMPORTANT: Special program card should show ONLY special-program slot time(s),
+            // and should NOT inherit non-floating substitution (green) styling.
+            const slotDisplayNode = slotDisplay ? <span>{slotDisplay}</span> : null
             
             // For split allocations, always show red (special program slots)
             // For non-split allocations, determine based on slots
@@ -1144,6 +1157,16 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                   const isSpecialProgramSlot = areSlotsPartOfSpecialProgram(allocation, team, slotsForThisTeam)
                   return isSpecialProgramSlot ? 'text-red-600' : 'text-black'
                 })()
+
+            const specialProgramLabel = (() => {
+              const ids = (allocation as any).special_program_ids as string[] | null | undefined
+              if (!Array.isArray(ids) || ids.length === 0) return null
+              const names = ids
+                .map((id) => specialProgramsById.get(id)?.name)
+                .filter((n): n is string => typeof n === 'string' && n.length > 0)
+              if (names.length === 0) return null
+              return names.join('/')
+            })()
             
             // Set border color to deep green for non-floating PCA
             const borderColor = !allocation.staff.floating ? 'border-green-700' : undefined
@@ -1158,6 +1181,11 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                 allocation={allocation as any}
                 fteRemaining={undefined}
                 slotDisplay={slotDisplayNode}
+                headerRight={
+                  specialProgramLabel ? (
+                    <span className="text-red-600 whitespace-nowrap">{specialProgramLabel}</span>
+                  ) : null
+                }
                 onEdit={(e) => onEditStaff?.(allocation.staff_id, e)}
                 onOpenContextMenu={(e) => onEditStaff?.(allocation.staff_id, e)}
                 fillColorClassName={(staffOverrides as any)?.[allocation.staff_id]?.cardColorByTeam?.[team]}

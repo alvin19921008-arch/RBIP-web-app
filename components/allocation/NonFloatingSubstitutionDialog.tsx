@@ -30,6 +30,7 @@ interface NonFloatingSubstitutionDialogProps {
       availableSlots: number[]
       isPreferred: boolean
       isFloorPCA: boolean
+      blockedSlotsInfo?: Array<{ slot: number; reasons: string[] }>
     }>
   }>>
   isWizardMode: boolean // true if multiple teams (wizard), false if single team (simple dialog)
@@ -39,8 +40,8 @@ interface NonFloatingSubstitutionDialogProps {
   weekday: string
   currentAllocations: PCAAllocation[]
   staffOverrides: Record<string, { availableSlots?: number[] }>
-  initialSelections?: Record<string, { floatingPCAId: string; slots: number[] }>
-  onConfirm: (selections: Record<string, { floatingPCAId: string; slots: number[] }>) => void
+  initialSelections?: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>
+  onConfirm: (selections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>) => void
   onCancel: () => void
   onSkip: () => void
 }
@@ -52,6 +53,7 @@ interface AvailableFloatingPCA {
   isPreferred: boolean
   isFloorPCA: boolean
   specialPrograms: string[]
+  blockedSlotsInfo?: Array<{ slot: number; reasons: string[] }>
 }
 
 export function NonFloatingSubstitutionDialog({
@@ -71,7 +73,7 @@ export function NonFloatingSubstitutionDialog({
   onSkip,
 }: NonFloatingSubstitutionDialogProps) {
   const [currentTeamIndex, setCurrentTeamIndex] = useState(0)
-  const [selections, setSelections] = useState<Record<string, { floatingPCAId: string; slots: number[] }>>(
+  const [selections, setSelections] = useState<Record<string, Array<{ floatingPCAId: string; slots: number[] }>>>(
     () => initialSelections ?? {}
   )
 
@@ -97,7 +99,8 @@ export function NonFloatingSubstitutionDialog({
         availableSlots: pca.availableSlots,
         isPreferred: pca.isPreferred,
         isFloorPCA: pca.isFloorPCA,
-        specialPrograms: [] // Not needed for display, already filtered
+        specialPrograms: [], // Not needed for display, already filtered
+        blockedSlotsInfo: (pca as any).blockedSlotsInfo,
       }))
     })
     return result
@@ -113,13 +116,38 @@ export function NonFloatingSubstitutionDialog({
     if (selected) {
       setSelections(prev => ({
         ...prev,
-        [key]: { floatingPCAId, slots }
+        // Primary selection replaces any existing selections for this non-floating PCA.
+        [key]: [{ floatingPCAId, slots }]
       }))
     } else {
-      const newSelections = { ...selections }
-      delete newSelections[key]
-      setSelections(newSelections)
+      setSelections((prev) => {
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
     }
+  }
+
+  const addCoverSelection = (nonFloatingPCAId: string, floatingPCAId: string, slots: number[]) => {
+    const key = `${currentTeam}-${nonFloatingPCAId}`
+    setSelections((prev) => {
+      const existing = prev[key] ?? []
+      // Prevent duplicates of same PCA
+      if (existing.some((s) => s.floatingPCAId === floatingPCAId)) return prev
+      return { ...prev, [key]: [...existing, { floatingPCAId, slots }] }
+    })
+  }
+
+  const removeCoverSelection = (nonFloatingPCAId: string, floatingPCAId: string) => {
+    const key = `${currentTeam}-${nonFloatingPCAId}`
+    setSelections((prev) => {
+      const existing = prev[key] ?? []
+      const nextArr = existing.filter((s) => s.floatingPCAId !== floatingPCAId)
+      const next = { ...prev }
+      if (nextArr.length === 0) delete next[key]
+      else next[key] = nextArr
+      return next
+    })
   }
 
   const handlePrevious = () => {
@@ -140,6 +168,21 @@ export function NonFloatingSubstitutionDialog({
 
   const isFirstTeam = currentTeamIndex === 0
   const isLastTeam = currentTeamIndex === teams.length - 1
+
+  const isSubstitutionComplete = (team: Team, nonFloatingPCAId: string, missingSlots: number[]): boolean => {
+    const key = `${team}-${nonFloatingPCAId}`
+    const sels = selections[key] ?? []
+    const covered = new Set(sels.flatMap((s) => s.slots))
+    return missingSlots.every((slot) => covered.has(slot))
+  }
+
+  const isCurrentTeamComplete = currentSubstitutions.every((sub) =>
+    isSubstitutionComplete(currentTeam, sub.nonFloatingPCAId, sub.missingSlots)
+  )
+
+  const isAllTeamsComplete = TEAMS.filter((t) => (substitutionsByTeam[t] ?? []).length > 0).every((team) =>
+    (substitutionsByTeam[team] ?? []).every((sub) => isSubstitutionComplete(team, sub.nonFloatingPCAId, sub.missingSlots))
+  )
 
   // Group available PCAs by category for display
   const groupPCAsByCategory = (pcas: AvailableFloatingPCA[]) => {
@@ -208,6 +251,7 @@ export function NonFloatingSubstitutionDialog({
             {isLastTeam ? (
               <Button
                 onClick={handleConfirm}
+                disabled={!isAllTeamsComplete}
                 className="flex items-center gap-2"
               >
                 Confirm All
@@ -216,6 +260,7 @@ export function NonFloatingSubstitutionDialog({
               <Button
                 variant="outline"
                 onClick={handleNext}
+                disabled={!isCurrentTeamComplete}
                 className="flex items-center gap-2"
               >
                 Next
@@ -236,8 +281,19 @@ export function NonFloatingSubstitutionDialog({
               const availablePCAs = availablePCAsByNonFloating[sub.nonFloatingPCAId] || []
               const { preferred, floor, nonFloor } = groupPCAsByCategory(availablePCAs)
               const selectionKey = `${currentTeam}-${sub.nonFloatingPCAId}`
-              const currentSelection = selections[selectionKey]
+              const currentSelections = selections[selectionKey] ?? []
+              const primarySelection = currentSelections[0] ?? null
+              const selectedIds = new Set(currentSelections.map((s) => s.floatingPCAId))
+              const coveredSlots = new Set(currentSelections.flatMap((s) => s.slots))
+              const remainingSlots = sub.missingSlots.filter((slot) => !coveredSlots.has(slot))
               const teamFloor = getTeamFloor(currentTeam, pcaPreferences)
+
+              const extraCandidates = availablePCAs.filter((pca) => {
+                if (selectedIds.has(pca.id)) return false
+                const coverable = remainingSlots.filter((slot) => pca.availableSlots.includes(slot))
+                return coverable.length > 0
+              })
+              const extraGroups = groupPCAsByCategory(extraCandidates)
 
               return (
                 <div key={sub.nonFloatingPCAId} className="border rounded-lg p-4 space-y-4">
@@ -254,20 +310,59 @@ export function NonFloatingSubstitutionDialog({
                     </div>
                   ) : (
                     <div className="space-y-4">
+                      {currentSelections.length > 0 ? (
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium">Selected covers</div>
+                          <div className="space-y-1">
+                            {currentSelections.map((sel, idx) => {
+                              const staffName =
+                                availablePCAs.find((p) => p.id === sel.floatingPCAId)?.name ??
+                                allStaff.find((s) => s.id === sel.floatingPCAId)?.name ??
+                                sel.floatingPCAId
+                              return (
+                                <div key={`${sel.floatingPCAId}-${idx}`} className="flex items-center justify-between gap-2 text-sm">
+                                  <div className="flex-1">
+                                    <span className="font-medium">{staffName}</span>
+                                    <span className="text-muted-foreground"> — covering slots: {sel.slots.join(', ')}</span>
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => removeCoverSelection(sub.nonFloatingPCAId, sel.floatingPCAId)}
+                                  >
+                                    Remove
+                                  </Button>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
+
                       {/* Preferred PCAs */}
                       {preferred.length > 0 && (
                         <div>
                           <div className="text-sm font-medium mb-2">Preferred PCAs</div>
                           <div className="space-y-2">
                             {preferred.map(pca => {
-                              const isSelected = currentSelection?.floatingPCAId === pca.id
+                              const isSelected = primarySelection?.floatingPCAId === pca.id
+                              const coverableSlots = sub.missingSlots.filter((slot) => pca.availableSlots.includes(slot))
+                              const reservedLabel = Array.isArray(pca.blockedSlotsInfo) && pca.blockedSlotsInfo.length > 0
+                                ? pca.blockedSlotsInfo
+                                    .map((b) => {
+                                      const names = Array.isArray(b.reasons) && b.reasons.length > 0 ? b.reasons.join(', ') : 'Special program'
+                                      return `Slot ${b.slot}: ${names}`
+                                    })
+                                    .join(', ')
+                                : null
                               return (
                                 <div key={pca.id} className="flex items-center space-x-2">
                                   <Checkbox
                                     id={`${sub.nonFloatingPCAId}-${pca.id}`}
                                     checked={isSelected}
                                     onCheckedChange={(checked) =>
-                                      handleSelectionChange(sub.nonFloatingPCAId, pca.id, sub.missingSlots, checked as boolean)
+                                      handleSelectionChange(sub.nonFloatingPCAId, pca.id, coverableSlots, checked as boolean)
                                     }
                                   />
                                   <label
@@ -275,6 +370,7 @@ export function NonFloatingSubstitutionDialog({
                                     className="text-sm cursor-pointer flex-1"
                                   >
                                     {pca.name} ({getDisplaySlotsCount(pca.id, pca.availableSlots)} slots available)
+                                    {reservedLabel ? <span className="ml-2 text-xs text-muted-foreground">{reservedLabel}</span> : null}
                                   </label>
                                 </div>
                               )
@@ -291,14 +387,23 @@ export function NonFloatingSubstitutionDialog({
                           </div>
                           <div className="space-y-2">
                             {floor.map(pca => {
-                              const isSelected = currentSelection?.floatingPCAId === pca.id
+                              const isSelected = primarySelection?.floatingPCAId === pca.id
+                              const coverableSlots = sub.missingSlots.filter((slot) => pca.availableSlots.includes(slot))
+                              const reservedLabel = Array.isArray(pca.blockedSlotsInfo) && pca.blockedSlotsInfo.length > 0
+                                ? pca.blockedSlotsInfo
+                                    .map((b) => {
+                                      const names = Array.isArray(b.reasons) && b.reasons.length > 0 ? b.reasons.join(', ') : 'Special program'
+                                      return `Slot ${b.slot}: ${names}`
+                                    })
+                                    .join(', ')
+                                : null
                               return (
                                 <div key={pca.id} className="flex items-center space-x-2">
                                   <Checkbox
                                     id={`${sub.nonFloatingPCAId}-${pca.id}`}
                                     checked={isSelected}
                                     onCheckedChange={(checked) =>
-                                      handleSelectionChange(sub.nonFloatingPCAId, pca.id, sub.missingSlots, checked as boolean)
+                                      handleSelectionChange(sub.nonFloatingPCAId, pca.id, coverableSlots, checked as boolean)
                                     }
                                   />
                                   <label
@@ -306,6 +411,7 @@ export function NonFloatingSubstitutionDialog({
                                     className="text-sm cursor-pointer flex-1"
                                   >
                                     {pca.name} ({getDisplaySlotsCount(pca.id, pca.availableSlots)} slots available)
+                                    {reservedLabel ? <span className="ml-2 text-xs text-muted-foreground">{reservedLabel}</span> : null}
                                   </label>
                                 </div>
                               )
@@ -320,14 +426,23 @@ export function NonFloatingSubstitutionDialog({
                           <div className="text-sm font-medium mb-2">Non-Floor PCAs</div>
                           <div className="space-y-2">
                             {nonFloor.map(pca => {
-                              const isSelected = currentSelection?.floatingPCAId === pca.id
+                              const isSelected = primarySelection?.floatingPCAId === pca.id
+                              const coverableSlots = sub.missingSlots.filter((slot) => pca.availableSlots.includes(slot))
+                              const reservedLabel = Array.isArray(pca.blockedSlotsInfo) && pca.blockedSlotsInfo.length > 0
+                                ? pca.blockedSlotsInfo
+                                    .map((b) => {
+                                      const names = Array.isArray(b.reasons) && b.reasons.length > 0 ? b.reasons.join(', ') : 'Special program'
+                                      return `Slot ${b.slot}: ${names}`
+                                    })
+                                    .join(', ')
+                                : null
                               return (
                                 <div key={pca.id} className="flex items-center space-x-2">
                                   <Checkbox
                                     id={`${sub.nonFloatingPCAId}-${pca.id}`}
                                     checked={isSelected}
                                     onCheckedChange={(checked) =>
-                                      handleSelectionChange(sub.nonFloatingPCAId, pca.id, sub.missingSlots, checked as boolean)
+                                      handleSelectionChange(sub.nonFloatingPCAId, pca.id, coverableSlots, checked as boolean)
                                     }
                                   />
                                   <label
@@ -335,6 +450,7 @@ export function NonFloatingSubstitutionDialog({
                                     className="text-sm cursor-pointer flex-1"
                                   >
                                     {pca.name} ({getDisplaySlotsCount(pca.id, pca.availableSlots)} slots available)
+                                    {reservedLabel ? <span className="ml-2 text-xs text-muted-foreground">{reservedLabel}</span> : null}
                                   </label>
                                 </div>
                               )
@@ -342,6 +458,149 @@ export function NonFloatingSubstitutionDialog({
                           </div>
                         </div>
                       )}
+
+                      {remainingSlots.length > 0 ? (
+                        <div className="border-t pt-4 space-y-2">
+                          <div className="text-sm font-medium">
+                            Cover remaining slots: {remainingSlots.join(', ')}
+                          </div>
+                          {extraCandidates.length === 0 ? (
+                            <div className="text-sm text-muted-foreground">
+                              No additional floating PCAs can cover the remaining slot(s).
+                            </div>
+                          ) : (
+                            <div className="space-y-4">
+                              {extraGroups.preferred.length > 0 ? (
+                                <div>
+                                  <div className="text-sm font-medium mb-2">Preferred PCAs</div>
+                                  <div className="space-y-2">
+                                    {extraGroups.preferred.map((pca) => {
+                                      const coverable = remainingSlots.filter((slot) => pca.availableSlots.includes(slot))
+                                      const reservedLabel =
+                                        Array.isArray(pca.blockedSlotsInfo) && pca.blockedSlotsInfo.length > 0
+                                          ? pca.blockedSlotsInfo
+                                              .map((b) => {
+                                                const names =
+                                                  Array.isArray(b.reasons) && b.reasons.length > 0 ? b.reasons.join(', ') : 'Special program'
+                                                return `Slot ${b.slot}: ${names}`
+                                              })
+                                              .join(', ')
+                                          : null
+                                      return (
+                                        <div key={`extra-${pca.id}`} className="flex items-center space-x-2">
+                                          <Checkbox
+                                            id={`extra-${sub.nonFloatingPCAId}-${pca.id}`}
+                                            checked={false}
+                                            onCheckedChange={(checked) => {
+                                              if (checked) addCoverSelection(sub.nonFloatingPCAId, pca.id, coverable)
+                                            }}
+                                          />
+                                          <label
+                                            htmlFor={`extra-${sub.nonFloatingPCAId}-${pca.id}`}
+                                            className="text-sm cursor-pointer flex-1"
+                                          >
+                                            {pca.name} ({getDisplaySlotsCount(pca.id, pca.availableSlots)} slots available)
+                                            {reservedLabel ? <span className="ml-2 text-xs text-muted-foreground">{reservedLabel}</span> : null}
+                                            <span className="ml-2 text-xs text-muted-foreground">
+                                              Will cover: {coverable.join(', ')}
+                                            </span>
+                                          </label>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              {extraGroups.floor.length > 0 ? (
+                                <div>
+                                  <div className="text-sm font-medium mb-2">
+                                    Floor PCAs ({teamFloor === 'upper' ? 'Upper' : teamFloor === 'lower' ? 'Lower' : 'N/A'})
+                                  </div>
+                                  <div className="space-y-2">
+                                    {extraGroups.floor.map((pca) => {
+                                      const coverable = remainingSlots.filter((slot) => pca.availableSlots.includes(slot))
+                                      const reservedLabel =
+                                        Array.isArray(pca.blockedSlotsInfo) && pca.blockedSlotsInfo.length > 0
+                                          ? pca.blockedSlotsInfo
+                                              .map((b) => {
+                                                const names =
+                                                  Array.isArray(b.reasons) && b.reasons.length > 0 ? b.reasons.join(', ') : 'Special program'
+                                                return `Slot ${b.slot}: ${names}`
+                                              })
+                                              .join(', ')
+                                          : null
+                                      return (
+                                        <div key={`extra-${pca.id}`} className="flex items-center space-x-2">
+                                          <Checkbox
+                                            id={`extra-${sub.nonFloatingPCAId}-${pca.id}`}
+                                            checked={false}
+                                            onCheckedChange={(checked) => {
+                                              if (checked) addCoverSelection(sub.nonFloatingPCAId, pca.id, coverable)
+                                            }}
+                                          />
+                                          <label
+                                            htmlFor={`extra-${sub.nonFloatingPCAId}-${pca.id}`}
+                                            className="text-sm cursor-pointer flex-1"
+                                          >
+                                            {pca.name} ({getDisplaySlotsCount(pca.id, pca.availableSlots)} slots available)
+                                            {reservedLabel ? <span className="ml-2 text-xs text-muted-foreground">{reservedLabel}</span> : null}
+                                            <span className="ml-2 text-xs text-muted-foreground">
+                                              Will cover: {coverable.join(', ')}
+                                            </span>
+                                          </label>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              {extraGroups.nonFloor.length > 0 ? (
+                                <div>
+                                  <div className="text-sm font-medium mb-2">Non-Floor PCAs</div>
+                                  <div className="space-y-2">
+                                    {extraGroups.nonFloor.map((pca) => {
+                                      const coverable = remainingSlots.filter((slot) => pca.availableSlots.includes(slot))
+                                      const reservedLabel =
+                                        Array.isArray(pca.blockedSlotsInfo) && pca.blockedSlotsInfo.length > 0
+                                          ? pca.blockedSlotsInfo
+                                              .map((b) => {
+                                                const names =
+                                                  Array.isArray(b.reasons) && b.reasons.length > 0 ? b.reasons.join(', ') : 'Special program'
+                                                return `Slot ${b.slot}: ${names}`
+                                              })
+                                              .join(', ')
+                                          : null
+                                      return (
+                                        <div key={`extra-${pca.id}`} className="flex items-center space-x-2">
+                                          <Checkbox
+                                            id={`extra-${sub.nonFloatingPCAId}-${pca.id}`}
+                                            checked={false}
+                                            onCheckedChange={(checked) => {
+                                              if (checked) addCoverSelection(sub.nonFloatingPCAId, pca.id, coverable)
+                                            }}
+                                          />
+                                          <label
+                                            htmlFor={`extra-${sub.nonFloatingPCAId}-${pca.id}`}
+                                            className="text-sm cursor-pointer flex-1"
+                                          >
+                                            {pca.name} ({getDisplaySlotsCount(pca.id, pca.availableSlots)} slots available)
+                                            {reservedLabel ? <span className="ml-2 text-xs text-muted-foreground">{reservedLabel}</span> : null}
+                                            <span className="ml-2 text-xs text-muted-foreground">
+                                              Will cover: {coverable.join(', ')}
+                                            </span>
+                                          </label>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
                     </div>
                   )}
                 </div>
@@ -381,7 +640,7 @@ export function NonFloatingSubstitutionDialog({
                 </Button>
               )
             ) : (
-              <Button onClick={handleConfirm}>
+              <Button onClick={handleConfirm} disabled={!isCurrentTeamComplete}>
                 Confirm
               </Button>
             )}

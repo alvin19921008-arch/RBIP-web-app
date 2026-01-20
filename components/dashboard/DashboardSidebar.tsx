@@ -1,6 +1,6 @@
 'use client'
 
-import { LayoutList, Settings, Menu, ChevronLeft, UserCircle, Building2, Users2, UserRoundCog } from 'lucide-react'
+import { LayoutList, Settings, Menu, ChevronLeft, UserCircle, Building2, Users2, UserRoundCog, ArrowLeftRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -16,6 +16,7 @@ export type CategoryId =
   | 'ward-config'
   | 'team-configuration'
   | 'account-management'
+  | 'sync-publish'
   | null
 
 interface Category {
@@ -66,6 +67,11 @@ const categories: Category[] = [
     id: 'account-management',
     label: 'Account Management',
     icon: UserRoundCog,
+  },
+  {
+    id: 'sync-publish',
+    label: 'Sync / Publish',
+    icon: ArrowLeftRight,
   },
 ]
 

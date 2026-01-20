@@ -10,6 +10,7 @@ import { WardEditDialog } from './WardEditDialog'
 import { Edit2, Trash2, Plus } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast-provider'
+import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
 
 const INITIAL_WARDS = [
   'R7B', 'R7C', 'R8A', 'R8B', 'R8C',
@@ -219,6 +220,7 @@ export function WardConfigPanel() {
     <>
       <Card>
         <CardContent className="pt-6">
+          <DashboardConfigMetaBanner />
           {loading ? (
             <p>Loading...</p>
           ) : (

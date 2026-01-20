@@ -11,6 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast-provider'
 import { Plus, Trash2, Pencil, RefreshCw, KeyRound, ChevronDown } from 'lucide-react'
+import { SearchWithSuggestions, type SearchSuggestionItem } from '@/components/ui/SearchWithSuggestions'
 
 type AccountRole = 'user' | 'admin' | 'developer'
 
@@ -160,6 +161,21 @@ export function AccountManagementPanel() {
       return fields.some((f) => String(f).toLowerCase().includes(q))
     })
   }, [accounts, search, canSeeInternalAuthEmail])
+
+  const accountSearchItems = useMemo<SearchSuggestionItem[]>(() => {
+    return accounts.map((a) => ({
+      id: a.id,
+      label: a.username,
+      subLabel: [a.email, a.role].filter(Boolean).join(' • ') || undefined,
+      keywords: [
+        a.username,
+        a.email ?? '',
+        a.role,
+        a.created_at ?? '',
+        canSeeInternalAuthEmail ? (a.authEmail ?? '') : '',
+      ].filter(Boolean),
+    }))
+  }, [accounts, canSeeInternalAuthEmail])
 
   const allVisibleSelected = filteredAccounts.length > 0 && filteredAccounts.every((a) => selectedIds.has(a.id))
 
@@ -321,11 +337,13 @@ export function AccountManagementPanel() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Input
+            <SearchWithSuggestions
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onValueChange={setSearch}
+              items={accountSearchItems}
               placeholder="Search username/email/role…"
               className="w-[260px]"
+              onSelect={(it) => setSearch(it.label)}
             />
           </div>
         </div>

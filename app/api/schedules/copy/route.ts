@@ -7,6 +7,7 @@ import { Team } from '@/types/staff'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
 import { createTimingCollector } from '@/lib/utils/timing'
+import { fetchGlobalHeadAtCreation } from '@/lib/features/config/globalHead'
 
 type CopyMode = 'full' | 'hybrid'
 
@@ -98,35 +99,16 @@ function stripNonCopyableScheduleOverrides(overrides: any): any {
   return next
 }
 
-async function resolveBufferStaffIdsFromLatestState(
-  supabase: any,
-  sourceBaseline: BaselineSnapshot,
-  referencedIds: Set<string>
-): Promise<Set<string>> {
-  const snapshotStaff: any[] = (sourceBaseline as any).staff || []
-  const snapshotById = new Map<string, any>()
-  snapshotStaff.forEach(s => s?.id && snapshotById.set(s.id, s))
-
-  const missingIds: string[] = []
-  referencedIds.forEach(id => {
-    if (!snapshotById.has(id)) missingIds.push(id)
+function getBufferStaffIdsFromScheduleLocalOverrides(overrides: any): Set<string> {
+  const ids = new Set<string>()
+  const map = overrides?.__staffStatusOverrides
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return ids
+  Object.entries(map as any).forEach(([staffId, entry]) => {
+    if (!staffId) return
+    const status = (entry as any)?.status
+    if (status === 'buffer') ids.add(staffId)
   })
-
-  const liveById = new Map<string, any>()
-  if (missingIds.length > 0) {
-    const { data: liveStaff } = await supabase.from('staff').select('id,status').in('id', missingIds)
-    ;(liveStaff || []).forEach((s: any) => s?.id && liveById.set(s.id, s))
-  }
-
-  const bufferIds = new Set<string>()
-  referencedIds.forEach(id => {
-    const s = snapshotById.get(id) ?? liveById.get(id)
-    if (s && s.status === 'buffer') {
-      bufferIds.add(id)
-    }
-  })
-
-  return bufferIds
+  return ids
 }
 
 function inferCopiedUpToStep(
@@ -145,6 +127,7 @@ export async function POST(request: NextRequest) {
     const timer = createTimingCollector({ now: () => Date.now() })
     await requireAuth()
     const supabase = await createServerComponentClient()
+    const globalHeadAtCreation = await fetchGlobalHeadAtCreation(supabase)
     const body: CopyScheduleRequest = await request.json()
 
     const { fromDate, toDate, mode, includeBufferStaff } = body
@@ -215,10 +198,12 @@ export async function POST(request: NextRequest) {
     let sourceBaselineData: BaselineSnapshot
     if (!hasExistingBaseline) {
       sourceBaselineData = await buildBaselineSnapshot(supabase)
-      // Persist baseline snapshot back to source schedule for future consistency (as v1 envelope)
+      // Persist baseline snapshot back to source schedule for future consistency
       await supabase
         .from('daily_schedules')
-        .update({ baseline_snapshot: buildBaselineSnapshotEnvelope({ data: sourceBaselineData, source: 'copy' }) as any })
+        .update({
+          baseline_snapshot: buildBaselineSnapshotEnvelope({ data: sourceBaselineData, source: 'copy', globalHeadAtCreation }) as any,
+        })
         .eq('id', fromScheduleId)
     } else {
       const { data, wasWrapped } = unwrapBaselineSnapshotStored(sourceStored as BaselineSnapshotStored)
@@ -231,7 +216,7 @@ export async function POST(request: NextRequest) {
         } as any
         await supabase
           .from('daily_schedules')
-          .update({ baseline_snapshot: buildBaselineSnapshotEnvelope({ data: upgraded, source: 'copy' }) as any })
+          .update({ baseline_snapshot: buildBaselineSnapshotEnvelope({ data: upgraded, source: 'copy', globalHeadAtCreation }) as any })
           .eq('id', fromScheduleId)
         sourceBaselineData = upgraded
       }
@@ -258,42 +243,39 @@ export async function POST(request: NextRequest) {
 
     const copiedUpToStep = inferCopiedUpToStep(therapistAllocations, pcaAllocations, bedAllocations)
 
-    // Determine buffer staff based on the latest saved state for this schedule:
-    // - staff referenced by allocations and staff_overrides
-    // - use baseline_snapshot when it contains the staff row, otherwise fall back to live staff.status
-    const referencedIds = new Set<string>()
-    ;(therapistAllocations || []).forEach((a: any) => a?.staff_id && referencedIds.add(a.staff_id))
-    ;(pcaAllocations || []).forEach((a: any) => a?.staff_id && referencedIds.add(a.staff_id))
-    if (isNonEmptyObject(sourceOverrides)) {
-      Object.keys(sourceOverrides).forEach(id => {
-        // staff_overrides may include schedule-level metadata keys (e.g. "__bedCounts").
-        if (id.startsWith('__')) return
-        referencedIds.add(id)
-      })
-    }
-
-    // Include all snapshot staff ids so "exclude buffer staff" applies to buffer staff present in the
-    // source schedule snapshot even if they are not referenced by allocations/overrides.
-    // This matches user expectation that buffer staff should be removed from the copied schedule.
-    const snapshotStaffForRefs: any[] = (sourceBaselineData as any).staff || []
-    snapshotStaffForRefs.forEach((s: any) => {
-      if (s?.id) referencedIds.add(s.id)
+    // Buffer staff ids (snapshot-local):
+    // - primary: staff_overrides.__staffStatusOverrides where status='buffer'
+    // - legacy: snapshot staff rows that still have status='buffer'
+    const scheduleLocalBufferIds = getBufferStaffIdsFromScheduleLocalOverrides(sourceOverrides)
+    const snapshotStaff: any[] = (sourceBaselineData as any).staff || []
+    const legacySnapshotBufferIds = new Set<string>()
+    snapshotStaff.forEach((s: any) => {
+      if (s?.id && s.status === 'buffer') legacySnapshotBufferIds.add(s.id)
     })
-
-    // Buffer staff sets (based on latest source schedule state)
-    const bufferStaffIds = await resolveBufferStaffIdsFromLatestState(
-      supabase,
-      sourceBaselineData,
-      referencedIds
-    )
+    const bufferStaffIds = new Set<string>([...Array.from(scheduleLocalBufferIds), ...Array.from(legacySnapshotBufferIds)])
     timer.stage('resolveBufferStaff')
 
-    // Build target baseline (adjusting buffer staff if needed)
-    const snapshotStaff: any[] = (sourceBaselineData as any).staff || []
+    // When excluding buffer staff, also strip schedule-local buffer overrides from copied staff_overrides.
+    let targetOverrides = sourceOverrides
+    if (!includeBufferStaff && isNonEmptyObject(sourceOverrides)) {
+      const next = { ...(sourceOverrides as any) }
+      const map = (next as any).__staffStatusOverrides
+      if (map && typeof map === 'object' && !Array.isArray(map)) {
+        const cleaned: Record<string, any> = { ...(map as any) }
+        Object.entries(cleaned).forEach(([id, entry]) => {
+          if ((entry as any)?.status === 'buffer') delete cleaned[id]
+        })
+        ;(next as any).__staffStatusOverrides = cleaned
+      }
+      targetOverrides = next
+    }
+
+    // Build target baseline (legacy-only adjustment):
+    // If old snapshots contain status='buffer' rows, downgrade them to inactive when excluding.
     let targetBaselineData: BaselineSnapshot = sourceBaselineData
-    if (!includeBufferStaff && snapshotStaff.length > 0) {
+    if (!includeBufferStaff && snapshotStaff.length > 0 && legacySnapshotBufferIds.size > 0) {
       const updatedStaff = snapshotStaff.map((s: any) =>
-        bufferStaffIds.has(s.id) ? { ...s, status: 'inactive' } : s
+        legacySnapshotBufferIds.has(s.id) ? { ...s, status: 'inactive' } : s
       )
       targetBaselineData = { ...(sourceBaselineData as any), staff: updatedStaff }
     }
@@ -302,7 +284,7 @@ export async function POST(request: NextRequest) {
       ...(targetBaselineData as any),
       specialPrograms: minifySpecialProgramsForSnapshot((targetBaselineData as any).specialPrograms || []),
     } as any
-    const targetBaselineEnvelope = buildBaselineSnapshotEnvelope({ data: targetBaselineData, source: 'copy' })
+    const targetBaselineEnvelope = buildBaselineSnapshotEnvelope({ data: targetBaselineData, source: 'copy', globalHeadAtCreation })
     timer.stage('buildTargetBaseline')
 
     // Approx snapshot size diagnostics (useful for performance analysis)
@@ -334,9 +316,10 @@ export async function POST(request: NextRequest) {
       mode,
       include_buffer_staff: includeBufferStaff,
       baseline_snapshot: targetBaselineEnvelope as any,
-      staff_overrides: sourceOverrides,
+      staff_overrides: targetOverrides,
       workflow_state: targetWorkflowState,
       tie_break_decisions: (fromSchedule as any).tie_break_decisions || {},
+      buffer_staff_ids: Array.from(bufferStaffIds),
     })
 
     if (!rpcAttempt.error) {
@@ -486,7 +469,7 @@ export async function POST(request: NextRequest) {
       .update({
         is_tentative: true,
         baseline_snapshot: targetBaselineEnvelope as any,
-        staff_overrides: sourceOverrides,
+        staff_overrides: targetOverrides,
         workflow_state: targetWorkflowState,
         tie_break_decisions: (fromSchedule as any).tie_break_decisions || {},
       })

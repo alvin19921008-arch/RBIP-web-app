@@ -610,6 +610,23 @@ export function SpecialProgramOverrideDialog({
     // Buffer staff ARE allowed (per UI requirement) if they have compatible special_program + slots.
     if (staff.status === 'inactive') return false
     if (staff.active === false) return false
+
+    // Must be on duty AND have base FTE > 0 (Step 1 overrides are source of truth).
+    const override = staffOverrides[staff.id]
+    const leaveTypeOnDuty = isOnDutyLeaveType((override as any)?.leaveType ?? null)
+    if (!leaveTypeOnDuty) {
+      return false
+    }
+
+    const effectiveFTE =
+      typeof override?.fteRemaining === 'number'
+        ? override.fteRemaining
+        : staff.status === 'buffer' && typeof staff.buffer_fte === 'number'
+          ? staff.buffer_fte
+          : 1.0
+    if (effectiveFTE <= 0) {
+      return false
+    }
     
     // Check if PCA has required slots available
     const availableSlots = staffOverrides[staff.id]?.availableSlots || [1, 2, 3, 4]
