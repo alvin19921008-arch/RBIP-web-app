@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useToast } from '@/components/ui/toast-provider'
+import { useRouter } from 'next/navigation'
 import type { BaselineSnapshot, BaselineSnapshotStored, GlobalHeadAtCreation } from '@/types/schedule'
 import { unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { diffBaselineSnapshot } from '@/lib/features/schedule/snapshotDiff'
@@ -32,6 +33,14 @@ const CATEGORY_LABELS: Record<CategoryKey, string> = {
 }
 
 type ThresholdUnit = 'days' | 'weeks' | 'months'
+type ThresholdMode = 'off' | 'always' | 'custom'
+
+function getThresholdMode(value: number, unit: ThresholdUnit): ThresholdMode {
+  if (Number.isFinite(value) && value === 0) return 'always'
+  // We treat very large day thresholds as “off” (matches Schedule logic).
+  if (unit === 'days' && Number.isFinite(value) && value >= 3650) return 'off'
+  return 'custom'
+}
 
 function formatFriendlyDateTime(value: unknown): string {
   const raw = typeof value === 'string' ? value : ''
@@ -62,6 +71,7 @@ function getThresholdFromHead(head: any): { value: number; unit: ThresholdUnit }
 export function ConfigSyncPanel() {
   const supabase = createClientComponentClient()
   const toast = useToast()
+  const router = useRouter()
 
   const [loading, setLoading] = useState(false)
   const [availableDates, setAvailableDates] = useState<string[]>([])
@@ -84,8 +94,10 @@ export function ConfigSyncPanel() {
     pcaPreferences: true,
   })
 
-  const [thresholdValue, setThresholdValue] = useState<number>(30)
-  const [thresholdUnit, setThresholdUnit] = useState<ThresholdUnit>('days')
+  // Draft values for Custom mode (so Off/Always selections don't overwrite the user's custom draft).
+  const [customThresholdValue, setCustomThresholdValue] = useState<number>(30)
+  const [customThresholdUnit, setCustomThresholdUnit] = useState<ThresholdUnit>('days')
+  const [thresholdUiMode, setThresholdUiMode] = useState<ThresholdMode>('custom')
 
   const [backupNote, setBackupNote] = useState('')
   const [backups, setBackups] = useState<any[]>([])
@@ -95,8 +107,12 @@ export function ConfigSyncPanel() {
     if (res.error) throw res.error
     setGlobalHead(res.data)
     const { value, unit } = getThresholdFromHead(res.data)
-    setThresholdValue(value)
-    setThresholdUnit(unit)
+    const mode = getThresholdMode(value, unit)
+    setThresholdUiMode(mode)
+    if (mode === 'custom') {
+      setCustomThresholdValue(value)
+      setCustomThresholdUnit(unit)
+    }
   }
 
   const reloadBackups = async () => {
@@ -281,6 +297,13 @@ export function ConfigSyncPanel() {
       const res = await supabase.rpc('set_drift_notification_threshold_v1', { p_value: value, p_unit: unit })
       if (res.error) throw res.error
       setGlobalHead(res.data)
+      const { value: nextValue, unit: nextUnit } = getThresholdFromHead(res.data)
+      const mode = getThresholdMode(nextValue, nextUnit)
+      setThresholdUiMode(mode)
+      if (mode === 'custom') {
+        setCustomThresholdValue(nextValue)
+        setCustomThresholdUnit(nextUnit)
+      }
       toast.success('Drift notification threshold updated.')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -393,7 +416,16 @@ export function ConfigSyncPanel() {
             </div>
 
             <div className="space-y-2">
-              <div className="text-sm font-semibold">Source snapshot</div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-sm font-semibold">Source snapshot</div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => router.push('/history?mode=cleanup')}
+                >
+                  Clean up schedules
+                </Button>
+              </div>
               <div className="flex items-center gap-2">
                 <Label htmlFor="snapshotDate" className="text-sm">
                   Date
@@ -424,69 +456,119 @@ export function ConfigSyncPanel() {
             </div>
           </div>
 
-          <div className="rounded-md border border-border p-3 space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-sm font-semibold">Drift notification threshold</div>
-                <div className="text-xs text-muted-foreground">
-                  Controls when Schedule shows “snapshot differs from published configuration” toasts (admin/developer only).
-                </div>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <Tooltip
-                  side="bottom"
-                  className="whitespace-normal max-w-[260px]"
-                  content={
-                    <div className="space-y-1 whitespace-normal leading-snug">
-                      <div className="font-medium">Off</div>
-                      <div>Do not show drift notifications on the Schedule page.</div>
-                    </div>
-                  }
-                >
-                  <Button variant="outline" size="sm" onClick={() => handleSaveThreshold(3650, 'days')}>
-                    Off
-                  </Button>
-                </Tooltip>
-                <Tooltip
-                  side="bottom"
-                  className="whitespace-normal max-w-[260px]"
-                  content={
-                    <div className="space-y-1 whitespace-normal leading-snug">
-                      <div className="font-medium">Always</div>
-                      <div>Show drift notifications whenever a snapshot differs from published configuration.</div>
-                    </div>
-                  }
-                >
-                  <Button variant="outline" size="sm" onClick={() => handleSaveThreshold(0, 'days')}>
-                    Always
-                  </Button>
-                </Tooltip>
-              </div>
-            </div>
+          <div className="rounded-md border border-border p-3 space-y-3">
+            {(() => {
+              const { value, unit } = getThresholdFromHead(globalHead)
+              const activeMode = getThresholdMode(value, unit)
+              const isActive = (m: ThresholdMode) => activeMode === m
+              const isUiSelected = (m: ThresholdMode) => thresholdUiMode === m
+              const btnBase =
+                'px-3 py-1.5 text-sm rounded-md transition-colors select-none'
+              const btnInactive = 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+              const btnOffActive = 'bg-muted text-foreground'
+              const btnAlwaysActive = 'bg-amber-100 text-amber-950'
+              const btnCustomActive = 'bg-sky-100 text-sky-950'
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Label className="text-sm">Notify when older than</Label>
-              <Input
-                className="w-24"
-                type="number"
-                min={0}
-                max={3650}
-                value={Number.isFinite(thresholdValue) ? thresholdValue : 30}
-                onChange={(e) => setThresholdValue(Number(e.target.value))}
-              />
-              <select
-                value={thresholdUnit}
-                onChange={(e) => setThresholdUnit(e.target.value as ThresholdUnit)}
-                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-              >
-                <option value="days">days</option>
-                <option value="weeks">weeks</option>
-                <option value="months">months</option>
-              </select>
-              <Button size="sm" onClick={() => handleSaveThreshold(thresholdValue, thresholdUnit)}>
-                Save
-              </Button>
-            </div>
+              return (
+                <>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold">Schedule setup reminders</div>
+                      <div className="text-xs text-muted-foreground">
+                        When the published setup changes, older schedules may still use their saved setup. Choose when to show a reminder on the Schedule page.
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                      <div className="inline-flex items-center gap-1 rounded-md border bg-background p-1">
+                        <Tooltip
+                          side="bottom"
+                          className="whitespace-normal max-w-[280px]"
+                          content="Do not show reminders on the Schedule page."
+                        >
+                          <button
+                            type="button"
+                            className={[
+                              btnBase,
+                              isUiSelected('off') ? btnOffActive : btnInactive,
+                              isActive('off') ? '' : '',
+                            ].join(' ')}
+                            onClick={() => {
+                              setThresholdUiMode('off')
+                              void handleSaveThreshold(3650, 'days')
+                            }}
+                          >
+                            Off
+                          </button>
+                        </Tooltip>
+
+                        <Tooltip
+                          side="bottom"
+                          className="whitespace-normal max-w-[280px]"
+                          content="Always remind when the saved setup differs from the current published setup."
+                        >
+                          <button
+                            type="button"
+                            className={[btnBase, isUiSelected('always') ? btnAlwaysActive : btnInactive].join(' ')}
+                            onClick={() => {
+                              setThresholdUiMode('always')
+                              void handleSaveThreshold(0, 'days')
+                            }}
+                          >
+                            Always
+                          </button>
+                        </Tooltip>
+
+                        <Tooltip
+                          side="bottom"
+                          className="whitespace-normal max-w-[280px]"
+                          content="Only remind when the schedule is older than a chosen time window."
+                        >
+                          <button
+                            type="button"
+                            className={[btnBase, isUiSelected('custom') ? btnCustomActive : btnInactive].join(' ')}
+                            onClick={() => setThresholdUiMode('custom')}
+                          >
+                            Custom
+                          </button>
+                        </Tooltip>
+                      </div>
+
+                      <div className="text-[11px] text-muted-foreground">
+                        Current: {activeMode === 'off' ? 'Off' : activeMode === 'always' ? 'Always' : `Custom (${value} ${unit})`}
+                        {thresholdUiMode !== activeMode ? ' · Not saved' : ''}
+                      </div>
+                    </div>
+                  </div>
+
+                  {thresholdUiMode === 'custom' ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Label className="text-sm">Remind me when older than</Label>
+                      <Input
+                        className="w-24"
+                        type="number"
+                        min={0}
+                        max={3650}
+                        value={Number.isFinite(customThresholdValue) ? customThresholdValue : 30}
+                        onChange={(e) => setCustomThresholdValue(Number(e.target.value))}
+                      />
+                      <select
+                        value={customThresholdUnit}
+                        onChange={(e) => setCustomThresholdUnit(e.target.value as ThresholdUnit)}
+                        className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                      >
+                        <option value="days">days</option>
+                        <option value="weeks">weeks</option>
+                        <option value="months">months</option>
+                      </select>
+                      <Button size="sm" onClick={() => handleSaveThreshold(customThresholdValue, customThresholdUnit)}>
+                        Save
+                      </Button>
+                    </div>
+                  ) : null}
+                </>
+              )
+            })()}
           </div>
 
           <div className="rounded-md border border-border p-3 space-y-3">

@@ -8,16 +8,19 @@ interface DeleteConfirmDialogProps {
   onOpenChange: (open: boolean) => void
   count: number
   onConfirm: () => void
+  title?: string
+  description?: string
 }
 
-export function DeleteConfirmDialog({ open, onOpenChange, count, onConfirm }: DeleteConfirmDialogProps) {
+export function DeleteConfirmDialog({ open, onOpenChange, count, onConfirm, title, description }: DeleteConfirmDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Delete Schedules</DialogTitle>
+          <DialogTitle>{title || 'Delete schedules'}</DialogTitle>
           <DialogDescription>
-            Are you sure you want to delete {count} schedule{count > 1 ? 's' : ''}? This action is irreversible and will permanently remove all allocation data for the selected schedule{count > 1 ? 's' : ''}.
+            {description ||
+              `Are you sure you want to delete ${count} schedule${count > 1 ? 's' : ''}? This action is irreversible and will permanently remove all allocation data for the selected schedule${count > 1 ? 's' : ''}.`}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

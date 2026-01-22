@@ -659,26 +659,57 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
       const initialWorkflowState: WorkflowState = { currentStep: 'leave-fte', completedSteps: [] }
       effectiveWorkflowState = initialWorkflowState
 
-      // Seed schedule-level allocation notes from previous working day (if available).
+      // Seed schedule-level allocation notes for brand-new schedules:
+      // - Prefer the most recent earlier schedule that has allocation notes (latest snapshot),
+      //   because users expect the notes board to carry over when jumping to a new date.
+      // - As a secondary fallback, try the previous calendar day.
       let seededStaffOverrides: Record<string, any> = {}
       try {
-        const prevDate = new Date(date.getTime())
-        // naive "previous day" fallback; caller may retry with base tables anyway.
-        prevDate.setDate(prevDate.getDate() - 1)
-        const py = prevDate.getFullYear()
-        const pm = String(prevDate.getMonth() + 1).padStart(2, '0')
-        const pd = String(prevDate.getDate()).padStart(2, '0')
-        const prevDateStr = `${py}-${pm}-${pd}`
+        const takeAllocationNotes = (raw: any) => {
+          const candidate = raw?.__allocationNotes
+          if (!candidate || typeof candidate !== 'object') return null
+          // If doc is missing/null, treat as "no notes"
+          if ((candidate as any)?.doc == null) return null
+          return candidate
+        }
 
-        const prevRes = await supabase
+        // 1) Latest earlier schedule with notes (limit keeps it cheap)
+        const latestRes = await supabase
           .from('daily_schedules')
-          .select('staff_overrides')
-          .eq('date', prevDateStr)
-          .maybeSingle()
-        innerTimer.stage('select:prev_daily_schedules')
-        const prevOverrides = (prevRes.data as any)?.staff_overrides
-        if (prevOverrides && typeof prevOverrides === 'object') {
-          const allocationNotes = (prevOverrides as any)?.__allocationNotes
+          .select('date, staff_overrides')
+          .lt('date', dateStr)
+          .order('date', { ascending: false })
+          .limit(60)
+        innerTimer.stage('select:seed_notes_latest')
+
+        const latestRows = (latestRes.data || []) as any[]
+        for (const row of latestRows) {
+          const overrides = row?.staff_overrides
+          const allocationNotes = takeAllocationNotes(overrides)
+          if (allocationNotes) {
+            seededStaffOverrides.__allocationNotes = allocationNotes
+            break
+          }
+        }
+
+        // 2) If still missing, try previous calendar day (legacy behavior)
+        if (!seededStaffOverrides.__allocationNotes) {
+          const prevDate = new Date(date.getTime())
+          prevDate.setDate(prevDate.getDate() - 1)
+          const py = prevDate.getFullYear()
+          const pm = String(prevDate.getMonth() + 1).padStart(2, '0')
+          const pd = String(prevDate.getDate()).padStart(2, '0')
+          const prevDateStr = `${py}-${pm}-${pd}`
+
+          const prevRes = await supabase
+            .from('daily_schedules')
+            .select('staff_overrides')
+            .eq('date', prevDateStr)
+            .maybeSingle()
+          innerTimer.stage('select:seed_notes_prev_day')
+
+          const prevOverrides = (prevRes.data as any)?.staff_overrides
+          const allocationNotes = takeAllocationNotes(prevOverrides)
           if (allocationNotes) {
             seededStaffOverrides.__allocationNotes = allocationNotes
           }

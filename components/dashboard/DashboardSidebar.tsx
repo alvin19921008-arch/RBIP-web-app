@@ -20,7 +20,7 @@ export type CategoryId =
   | null
 
 interface Category {
-  id: CategoryId
+  id: Exclude<CategoryId, null>
   label: string
   icon: LucideIcon | React.ComponentType<{ className?: string }>
 }
@@ -30,9 +30,10 @@ interface DashboardSidebarProps {
   onCategoryChange: (category: CategoryId) => void
   isCollapsed: boolean
   onToggleCollapse: () => void
+  categories?: Category[]
 }
 
-const categories: Category[] = [
+export const DASHBOARD_CATEGORIES: Category[] = [
   {
     id: 'special-programs',
     label: 'Special Programs',
@@ -80,6 +81,7 @@ export function DashboardSidebar({
   onCategoryChange,
   isCollapsed,
   onToggleCollapse,
+  categories = DASHBOARD_CATEGORIES,
 }: DashboardSidebarProps) {
   const handleCategoryClick = (categoryId: CategoryId) => {
     // Toggle: if clicking the same category, deselect it

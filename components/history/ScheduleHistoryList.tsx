@@ -11,7 +11,7 @@ interface ScheduleHistoryListProps {
   schedule: ScheduleHistoryEntry
   isSelected: boolean
   onSelect: (scheduleId: string) => void
-  onDelete: (scheduleId: string) => void
+  onDelete?: (scheduleId: string) => void
   onNavigate: (date: string) => void
 }
 
@@ -45,12 +45,14 @@ export function ScheduleHistoryList({
 
   return (
     <div className="flex items-center gap-2 p-2 hover:bg-accent/50 rounded border-b">
-      <Checkbox
-        checked={isSelected}
-        onCheckedChange={() => onSelect(schedule.id)}
-        onClick={(e) => e.stopPropagation()}
-        className="h-4 w-4"
-      />
+      {onDelete ? (
+        <Checkbox
+          checked={isSelected}
+          onCheckedChange={() => onSelect(schedule.id)}
+          onClick={(e) => e.stopPropagation()}
+          className="h-4 w-4"
+        />
+      ) : null}
       <div
         className="flex-1 flex items-center gap-2 cursor-pointer"
         onClick={() => onNavigate(schedule.date)}
@@ -60,17 +62,19 @@ export function ScheduleHistoryList({
         </span>
         {getStatusBadge()}
       </div>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        onClick={(e) => {
-          e.stopPropagation()
-          onDelete(schedule.id)
-        }}
-      >
-        <Trash2 className="h-4 w-4" />
-      </Button>
+      {onDelete ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete(schedule.id)
+          }}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      ) : null}
     </div>
   )
 }

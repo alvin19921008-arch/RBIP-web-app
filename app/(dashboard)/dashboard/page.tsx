@@ -9,7 +9,9 @@ import { WardConfigPanel } from '@/components/dashboard/WardConfigPanel'
 import { TeamConfigurationPanel } from '@/components/dashboard/TeamConfigurationPanel'
 import { AccountManagementPanel } from '@/components/dashboard/AccountManagementPanel'
 import { ConfigSyncPanel } from '@/components/dashboard/ConfigSyncPanel'
-import { DashboardSidebar, type CategoryId } from '@/components/dashboard/DashboardSidebar'
+import { DashboardSidebar, DASHBOARD_CATEGORIES, type CategoryId } from '@/components/dashboard/DashboardSidebar'
+import { useAccessControl } from '@/lib/access/useAccessControl'
+import type { FeatureId } from '@/lib/access/types'
 
 type PanelType =
   | 'special-programs'
@@ -46,6 +48,7 @@ const categoryDescriptions: Record<PanelKey, string> = {
 }
 
 export default function DashboardPage() {
+  const access = useAccessControl()
   const [activePanel, setActivePanel] = useState<PanelType>(null)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [topLoadingVisible, setTopLoadingVisible] = useState(false)
@@ -130,6 +133,36 @@ export default function DashboardPage() {
     }, 200)
   }
 
+  const featureForCategory = (id: Exclude<CategoryId, null>): FeatureId => {
+    switch (id) {
+      case 'special-programs':
+        return 'dashboard.category.special-programs'
+      case 'spt-allocations':
+        return 'dashboard.category.spt-allocations'
+      case 'pca-preferences':
+        return 'dashboard.category.pca-preferences'
+      case 'staff-profile':
+        return 'dashboard.category.staff-profile'
+      case 'ward-config':
+        return 'dashboard.category.ward-config'
+      case 'team-configuration':
+        return 'dashboard.category.team-configuration'
+      case 'account-management':
+        return 'dashboard.category.account-management'
+      case 'sync-publish':
+        return 'dashboard.category.sync-publish'
+    }
+  }
+
+  const visibleCategories = DASHBOARD_CATEGORIES.filter((c) => access.can(featureForCategory(c.id)))
+
+  useEffect(() => {
+    if (!activePanel) return
+    const allowed = visibleCategories.some((c) => c.id === activePanel)
+    if (!allowed) setActivePanel(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePanel, access.role, access.settings])
+
   return (
     <div className="flex h-[calc(100vh-4rem)]">
       {/* Thin top loading bar */}
@@ -146,6 +179,7 @@ export default function DashboardPage() {
         onCategoryChange={handleCategoryChange}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+        categories={visibleCategories}
       />
       <div className="flex-1 overflow-auto p-6" style={{ scrollBehavior: 'smooth' as const }}>
         {/* Header section - dynamic based on selection */}
@@ -173,7 +207,9 @@ export default function DashboardPage() {
         )}
         {!activePanel && (
           <div className="text-center text-muted-foreground py-12">
-            Select a category from the sidebar to begin
+            {visibleCategories.length > 0
+              ? 'Select a category from the sidebar to begin'
+              : 'No dashboard sections are enabled for your role. Ask an admin/developer to enable access.'}
           </div>
         )}
       </div>

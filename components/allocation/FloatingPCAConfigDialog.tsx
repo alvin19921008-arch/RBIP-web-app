@@ -806,30 +806,29 @@ export function FloatingPCAConfigDialog({
         <span className="mt-1 block text-sm">
           Usually: keep the numbers as-is and only adjust order when ties feel unfair.
         </span>
-
-        <details className="mt-3 rounded-md border bg-muted/30 p-3">
-          <summary className="cursor-pointer select-none font-medium text-foreground">
-            How to read this (click to expand)
-          </summary>
-          <ul className="mt-2 list-disc pl-5 text-sm text-muted-foreground space-y-1">
-            <li>
-              Values shown are <span className="underline">after</span> fixed-team PCA assignment.
-            </li>
-            <li>
-              <span className="font-medium text-foreground">Assigned</span>: floating PCA slots already allocated from Step 3 onwards.
-            </li>
-            <li>
-              <span className="font-medium text-foreground">Pending</span>: remaining floating PCA slots the team should receive.
-            </li>
-            <li className="flex items-start gap-2">
-              <Lightbulb className="mt-0.5 h-4 w-4 text-amber-500 flex-shrink-0" />
-              <span>
-                Consider manual adjustment when a tie group has ≥ 3 teams or pending ≥ 0.75.
-              </span>
-            </li>
-          </ul>
-        </details>
       </DialogDescription>
+
+      {/* Must be outside DialogDescription (<p>) to avoid invalid HTML nesting */}
+      <details className="mt-3 rounded-md border bg-muted/30 p-3">
+        <summary className="cursor-pointer select-none font-medium text-foreground">
+          How to read this (click to expand)
+        </summary>
+        <ul className="mt-2 list-disc pl-5 text-sm text-muted-foreground space-y-1">
+          <li>
+            Values shown are <span className="underline">after</span> fixed-team PCA assignment.
+          </li>
+          <li>
+            <span className="font-medium text-foreground">Assigned</span>: floating PCA slots already allocated from Step 3 onwards.
+          </li>
+          <li>
+            <span className="font-medium text-foreground">Pending</span>: remaining floating PCA slots the team should receive.
+          </li>
+          <li className="flex items-start gap-2">
+            <Lightbulb className="mt-0.5 h-4 w-4 text-amber-500 flex-shrink-0" />
+            <span>Consider manual adjustment when a tie group has ≥ 3 teams or pending ≥ 0.75.</span>
+          </li>
+        </ul>
+      </details>
 
       {/* Tick-to-do list (must be outside DialogDescription since it renders a <p>) */}
       <div className="mt-3 space-y-1.5 text-sm text-muted-foreground">

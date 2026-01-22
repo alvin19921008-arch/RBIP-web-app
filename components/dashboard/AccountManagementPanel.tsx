@@ -12,6 +12,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { useToast } from '@/components/ui/toast-provider'
 import { Plus, Trash2, Pencil, RefreshCw, KeyRound, ChevronDown } from 'lucide-react'
 import { SearchWithSuggestions, type SearchSuggestionItem } from '@/components/ui/SearchWithSuggestions'
+import { AccessSettingsPanel } from '@/components/dashboard/AccessSettingsPanel'
+import { useAccessControl } from '@/lib/access/useAccessControl'
 
 type AccountRole = 'user' | 'admin' | 'developer'
 
@@ -26,10 +28,10 @@ type AccountRow = {
 
 type EditMode = { mode: 'create' } | { mode: 'edit'; account: AccountRow }
 
-function roleBadgeVariant(role: AccountRole): 'default' | 'secondary' | 'outline' | 'destructive' {
-  if (role === 'developer') return 'default'
-  if (role === 'admin') return 'secondary'
-  return 'outline'
+function roleBadgeVariant(role: AccountRole): 'roleDeveloper' | 'roleAdmin' | 'roleUser' {
+  if (role === 'developer') return 'roleDeveloper'
+  if (role === 'admin') return 'roleAdmin'
+  return 'roleUser'
 }
 
 function formatDate(iso: string | null): string {
@@ -42,6 +44,7 @@ function formatDate(iso: string | null): string {
 export function AccountManagementPanel() {
   const supabase = createClientComponentClient()
   const toast = useToast()
+  const access = useAccessControl()
 
   const [loading, setLoading] = useState(false)
   const [accounts, setAccounts] = useState<AccountRow[]>([])
@@ -49,6 +52,7 @@ export function AccountManagementPanel() {
 
   const [myRole, setMyRole] = useState<AccountRole>('user')
   const [myUserId, setMyUserId] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'accounts' | 'access-settings'>('accounts')
 
   const [search, setSearch] = useState('')
   const [dialog, setDialog] = useState<EditMode | null>(null)
@@ -72,15 +76,17 @@ export function AccountManagementPanel() {
     resetPassword: '',
   })
 
-  const canManage = myRole === 'admin' || myRole === 'developer'
-  const canSeeInternalAuthEmail = myRole === 'developer'
-  const canResetOthersPassword = myRole === 'developer'
+  // Note: visibility is controlled by access settings, but backend permissions are still enforced by API.
+  const canManageBackend = myRole === 'admin' || myRole === 'developer'
+  const canManageUi = canManageBackend && access.can('accounts.manage')
+  const canSeeInternalAuthEmail = canManageBackend && myRole === 'developer' && access.can('accounts.view-auth-email')
+  const canResetOthersPassword = canManageBackend && myRole === 'developer' && access.can('accounts.reset-others-password')
 
-  const loadMe = async () => {
+  const loadMe = async (): Promise<AccountRole> => {
     const { data } = await supabase.auth.getUser()
     const uid = data.user?.id ?? null
     setMyUserId(uid)
-    if (!uid) return
+    if (!uid) return 'user'
 
     const { data: profile } = await supabase
       .from('user_profiles')
@@ -96,6 +102,7 @@ export function AccountManagementPanel() {
           ? 'user'
           : 'user'
     setMyRole(role)
+    return role
   }
 
   const loadAccounts = async () => {
@@ -114,7 +121,16 @@ export function AccountManagementPanel() {
   }
 
   useEffect(() => {
-    void loadMe().then(() => loadAccounts())
+    void loadMe().then((role) => {
+      if (role === 'admin' || role === 'developer') {
+        void loadAccounts()
+      } else {
+        setAccounts([])
+        setSelectedIds(new Set())
+        setLoading(false)
+        setActiveTab('access-settings')
+      }
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -282,7 +298,7 @@ export function AccountManagementPanel() {
   }
 
   const deleteAccounts = async (ids: string[]) => {
-    if (!canManage) return
+    if (!canManageUi) return
     if (ids.length === 0) return
     try {
       const res = await fetch('/api/accounts/delete', {
@@ -300,172 +316,206 @@ export function AccountManagementPanel() {
   }
 
   return (
-    <Card>
-      <CardHeader className="space-y-2">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <CardTitle>Account Management</CardTitle>
-            <CardDescription>
-              Manage system accounts.
-            </CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={loadAccounts} disabled={loading}>
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Refresh
-            </Button>
-            <Button onClick={openCreate} disabled={!canManage || loading}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add new accounts
-            </Button>
-          </div>
-        </div>
+    <div className="space-y-3">
+      {/* Tabs should live outside the card container */}
+      <div className="inline-flex items-center gap-1 rounded-md border bg-background p-1 w-fit">
+        <button
+          type="button"
+          onClick={() => setActiveTab('accounts')}
+          className={[
+            'px-3 py-1.5 text-sm rounded-md transition-colors',
+            activeTab === 'accounts'
+              ? 'bg-amber-100 text-amber-950'
+              : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+          ].join(' ')}
+        >
+          Accounts
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('access-settings')}
+          className={[
+            'px-3 py-1.5 text-sm rounded-md transition-colors',
+            activeTab === 'access-settings'
+              ? 'bg-amber-100 text-amber-950'
+              : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+          ].join(' ')}
+        >
+          Access settings
+        </button>
+      </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Button
-              variant="destructive"
-              size="sm"
-              disabled={!canManage || selectedIds.size === 0 || loading}
-              onClick={() => deleteAccounts(Array.from(selectedIds))}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete selected
-            </Button>
-            <div className="text-xs text-muted-foreground">
-              Selected: {selectedIds.size}
+      <Card>
+        <CardHeader className="space-y-2">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <CardTitle>{activeTab === 'accounts' ? 'Account Management' : 'Access settings'}</CardTitle>
+              <CardDescription>
+                {activeTab === 'accounts' ? 'Manage system accounts.' : 'Configure UI visibility by role.'}
+              </CardDescription>
             </div>
+            {activeTab === 'accounts' ? (
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={loadAccounts} disabled={loading || !canManageBackend}>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Refresh
+                </Button>
+                <Button onClick={openCreate} disabled={!canManageUi || loading}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add new accounts
+                </Button>
+              </div>
+            ) : null}
           </div>
-          <div className="flex items-center gap-2">
-            <SearchWithSuggestions
-              value={search}
-              onValueChange={setSearch}
-              items={accountSearchItems}
-              placeholder="Search username/email/role…"
-              className="w-[260px]"
-              onSelect={(it) => setSearch(it.label)}
-            />
-          </div>
-        </div>
-      </CardHeader>
 
-      <CardContent>
-        <div className="overflow-x-auto border rounded-lg">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/40">
-              <tr className="text-left">
-                <th className="p-3 w-[48px]">
-                  <Checkbox
-                    checked={allVisibleSelected}
-                    disabled={!canManage || filteredAccounts.length === 0}
-                    onCheckedChange={(v) => toggleSelectAllVisible(!!v)}
-                  />
-                </th>
-                <th className="p-3">Username</th>
-                <th className="p-3">Email</th>
-                {canSeeInternalAuthEmail ? <th className="p-3">Auth email (internal)</th> : null}
-                <th className="p-3">Created</th>
-                <th className="p-3">Access</th>
-                <th className="p-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredAccounts.length === 0 ? (
-                <tr>
-                  <td colSpan={canSeeInternalAuthEmail ? 7 : 6} className="p-6 text-center text-muted-foreground">
-                    {loading ? 'Loading…' : 'No accounts found.'}
-                  </td>
-                </tr>
-              ) : (
-                filteredAccounts.map((a) => {
-                  const isSelf = !!myUserId && a.id === myUserId
-                  const canEdit = canManage
-                  const canDelete = canManage && !isSelf
-                  const roleOptions: AccountRole[] =
-                    myRole === 'developer' ? ['user', 'admin', 'developer'] : ['user', 'admin']
-                  return (
-                    <tr key={a.id} className="border-t">
-                      <td className="p-3">
-                        <Checkbox
-                          checked={selectedIds.has(a.id)}
-                          disabled={!canDelete}
-                          onCheckedChange={(v) => {
-                            setSelectedIds((prev) => {
-                              const next = new Set(prev)
-                              if (v) next.add(a.id)
-                              else next.delete(a.id)
-                              return next
-                            })
-                          }}
-                        />
-                      </td>
-                      <td className="p-3 font-medium">{a.username}</td>
-                      <td className="p-3 text-muted-foreground">{a.email ?? '--'}</td>
-                      {canSeeInternalAuthEmail ? (
-                        <td className="p-3 text-muted-foreground">{a.authEmail ?? '--'}</td>
-                      ) : null}
-                      <td className="p-3 text-muted-foreground">{formatDate(a.created_at)}</td>
-                      <td className="p-3">
-                        <div className="flex items-center gap-2">
-                          <Badge variant={roleBadgeVariant(a.role)} className="capitalize">
-                            {a.role}
-                          </Badge>
-                          <div className="relative" id={`role-menu-anchor:${a.id}`}>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              disabled={!canEdit}
-                              title="Change access"
-                              onClick={(e) => {
-                                const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect()
-                                const desiredLeft = rect.left
-                                const desiredTop = rect.bottom + 6
-                                const menuWidth = 160
-                                const clampedLeft = Math.max(
-                                  8,
-                                  Math.min(desiredLeft, window.innerWidth - menuWidth - 8)
-                                )
-                                setOpenRoleMenu((prev) =>
-                                  prev?.id === a.id ? null : { id: a.id, left: clampedLeft, top: desiredTop }
-                                )
-                              }}
-                              className="h-7 w-7"
-                            >
-                              <ChevronDown className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            disabled={!canEdit}
-                            onClick={() => openEdit(a)}
-                            title="Edit"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            disabled={!canDelete}
-                            onClick={() => deleteAccounts([a.id])}
-                            className="text-red-600 hover:text-red-700 dark:text-red-400"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+          {activeTab === 'accounts' ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={!canManageUi || selectedIds.size === 0 || loading}
+                  onClick={() => deleteAccounts(Array.from(selectedIds))}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete selected
+                </Button>
+                <div className="text-xs text-muted-foreground">Selected: {selectedIds.size}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <SearchWithSuggestions
+                  value={search}
+                  onValueChange={setSearch}
+                  items={accountSearchItems}
+                  placeholder="Search username/email/role…"
+                  className="w-[260px]"
+                  onSelect={(it) => setSearch(it.label)}
+                />
+              </div>
+            </div>
+          ) : null}
+        </CardHeader>
+
+        <CardContent>
+          {activeTab === 'access-settings' ? (
+            <AccessSettingsPanel />
+          ) : !canManageBackend ? (
+            <div className="text-sm text-muted-foreground py-8 text-center">
+              Account management requires admin/developer permissions.
+            </div>
+          ) : !canManageUi ? (
+            <div className="text-sm text-muted-foreground py-8 text-center">
+              Account management UI is disabled for your role in Access settings.
+            </div>
+          ) : (
+            <div className="overflow-x-auto border rounded-lg">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40">
+                  <tr className="text-left">
+                    <th className="p-3 w-[48px]">
+                      <Checkbox
+                        checked={allVisibleSelected}
+                        disabled={!canManageUi || filteredAccounts.length === 0}
+                        onCheckedChange={(v) => toggleSelectAllVisible(!!v)}
+                      />
+                    </th>
+                    <th className="p-3">Username</th>
+                    <th className="p-3">Email</th>
+                    {canSeeInternalAuthEmail ? <th className="p-3">Auth email (internal)</th> : null}
+                    <th className="p-3">Created</th>
+                    <th className="p-3">Access</th>
+                    <th className="p-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredAccounts.length === 0 ? (
+                    <tr>
+                      <td colSpan={canSeeInternalAuthEmail ? 7 : 6} className="p-6 text-center text-muted-foreground">
+                        {loading ? 'Loading…' : 'No accounts found.'}
                       </td>
                     </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                  ) : (
+                    filteredAccounts.map((a) => {
+                      const isSelf = !!myUserId && a.id === myUserId
+                      const canEdit = canManageUi
+                      const canDelete = canManageUi && !isSelf
+                      const roleOptions: AccountRole[] =
+                        myRole === 'developer' ? ['user', 'admin', 'developer'] : ['user', 'admin']
+                      return (
+                        <tr key={a.id} className="border-t">
+                          <td className="p-3">
+                            <Checkbox
+                              checked={selectedIds.has(a.id)}
+                              disabled={!canDelete}
+                              onCheckedChange={(v) => {
+                                setSelectedIds((prev) => {
+                                  const next = new Set(prev)
+                                  if (v) next.add(a.id)
+                                  else next.delete(a.id)
+                                  return next
+                                })
+                              }}
+                            />
+                          </td>
+                          <td className="p-3 font-medium">{a.username}</td>
+                          <td className="p-3 text-muted-foreground">{a.email ?? '--'}</td>
+                          {canSeeInternalAuthEmail ? (
+                            <td className="p-3 text-muted-foreground">{a.authEmail ?? '--'}</td>
+                          ) : null}
+                          <td className="p-3 text-muted-foreground">{formatDate(a.created_at)}</td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <Badge variant={roleBadgeVariant(a.role)} className="capitalize">
+                                {a.role}
+                              </Badge>
+                              <div className="relative" id={`role-menu-anchor:${a.id}`}>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  disabled={!canEdit}
+                                  title="Change access"
+                                  onClick={(e) => {
+                                    const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect()
+                                    const desiredLeft = rect.left
+                                    const desiredTop = rect.bottom + 6
+                                    const menuWidth = 160
+                                    const clampedLeft = Math.max(8, Math.min(desiredLeft, window.innerWidth - menuWidth - 8))
+                                    setOpenRoleMenu((prev) =>
+                                      prev?.id === a.id ? null : { id: a.id, left: clampedLeft, top: desiredTop }
+                                    )
+                                  }}
+                                  className="h-7 w-7"
+                                >
+                                  <ChevronDown className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center justify-end gap-2">
+                              <Button variant="ghost" size="icon" disabled={!canEdit} onClick={() => openEdit(a)} title="Edit">
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                disabled={!canDelete}
+                                onClick={() => deleteAccounts([a.id])}
+                                className="text-red-600 hover:text-red-700 dark:text-red-400"
+                                title="Delete"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
 
         <Dialog open={dialog != null} onOpenChange={(open) => (!open ? setDialog(null) : null)}>
           <DialogContent className="sm:max-w-[520px]">
@@ -481,7 +531,7 @@ export function AccountManagementPanel() {
                   value={form.username}
                   onChange={(e) => setForm((p) => ({ ...p, username: e.target.value }))}
                   placeholder="username"
-                  disabled={!canManage}
+                  disabled={!canManageUi}
                 />
               </div>
 
@@ -492,7 +542,7 @@ export function AccountManagementPanel() {
                   value={form.email}
                   onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
                   placeholder="email@example.com (can be blank)"
-                  disabled={!canManage}
+                  disabled={!canManageUi}
                 />
               </div>
 
@@ -505,7 +555,7 @@ export function AccountManagementPanel() {
                     value={form.password}
                     onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
                     placeholder="Password (case sensitive)"
-                    disabled={!canManage}
+                    disabled={!canManageUi}
                   />
                 </div>
               ) : null}
@@ -521,7 +571,7 @@ export function AccountManagementPanel() {
                       type="button"
                       variant="ghost"
                       size="icon"
-                      disabled={!canManage}
+                      disabled={!canManageUi}
                       title="Change access"
                       onClick={() => {
                         // cycle through options for quick UX (menu-like but compact)
@@ -565,7 +615,7 @@ export function AccountManagementPanel() {
               <Button variant="outline" onClick={() => setDialog(null)}>
                 Cancel
               </Button>
-              <Button onClick={submitDialog} disabled={!canManage}>
+              <Button onClick={submitDialog} disabled={!canManageUi}>
                 Save
               </Button>
             </DialogFooter>
@@ -616,8 +666,9 @@ export function AccountManagementPanel() {
             })()}
           </div>
         ) : null}
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 

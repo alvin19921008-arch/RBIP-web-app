@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
-**Last Updated**: 2026-01-18
-**Latest Phase**: Phase 27 - Controller Refactoring & State Consolidation
+**Last Updated**: 2026-01-22
+**Latest Phase**: Phase 29 - Access Settings, Rebased Copy, Drift Reminders, Cleanup
 **Note**: Legacy development phases (1-20) have been moved to `Journal_legacy.md` for reference.  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 16.1+ (App Router, Turbopack), React 19.2+, TypeScript, Supabase (PostgreSQL), Tailwind CSS 4.1+ (CSS-first config), ESLint 9+, Shadcn/ui
@@ -307,6 +307,75 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - **Code Organization**: Clear separation between domain (controller) and presentation (page)
 - **Reference**: See `WIP.md` Stage 1-2 for detailed refactoring roadmap and progress tracking
 
+## Phase 28: Snapshot-local buffer staff (read+write) and copy exclusion
+
+- **Snapshot-local buffer conversion**: Schedule “From Inactive Staff” reads inactive staff strictly from the schedule snapshot roster; converting inactive → buffer is stored schedule-locally in `daily_schedules.staff_overrides.__staffStatusOverrides` (with `nameAtTime` / `rankAtTime`) and persists on Save.
+- **No global fallback**: Removed hybrid snapshot/global fallback that caused inconsistent UI and intermittent “nil inactive staff” due to client fetch lifecycle/caching.
+- **Copy wizard**: “Exclude buffer staff” drops allocations involving schedule-local buffer staff ids and strips buffer overrides on the target schedule.
+- **RPC support**: Added `supabase/migrations/update_copy_schedule_rpc_buffer_staff_ids.sql` to update `copy_schedule_v1` to exclude allocations via passed `buffer_staff_ids` rather than global `staff.status`.
+- **Cache gotcha**: After Sync/Publish “Pull Global → snapshot”, the Schedule page may still show older snapshot data until cache expires or you hard-refresh.
+
+## Phase 29: Account access settings, rebased copy, drift reminders, and cleanup delete
+
+### Account management + UI access settings
+- ✅ **Access Settings (UI-only RBAC)**: Added `access_control_settings` (single-row) with role hierarchy enforcement (Developer can set Admin/User; Admin can set User; User cannot edit).
+- ✅ **Feature catalog + hook**: Introduced `lib/access/*` (typed `FeatureId`, defaults, normalization) + `useAccessControl()` for consistent client gating.
+- ✅ **Account Management UI**: Added “Accounts / Access settings” tabs and an `AccessSettingsPanel` with role tabs (Developer/Admin/User) and toggle switches.
+- ✅ **Role badges**: Added role-specific badge variants (Developer/Admin/User) and applied consistently across the app.
+- ✅ **Dashboard access**: `/(dashboard)/dashboard` now uses `requireAuth()` so all authenticated roles can access the dashboard (visibility controlled by access settings).
+
+### Copy: rebase target baseline to current published (Global)
+- ✅ **Copy API rebases baseline**: After copy, target `baseline_snapshot` is overwritten from current published Global (fresh baseline), preventing legacy baselines from rolling forward.
+- ✅ **DB RPC support**: Updated `pull_global_to_snapshot_v1` to accept `p_include_buffer_staff` and (when false) downgrade buffer staff in the snapshot baseline.
+
+### Drift notifications (Schedule reminders)
+- ✅ **“Always” is diff-based**: When drift threshold is “Always”, Schedule computes a real `diffBaselineSnapshot` against live Global slices after initial paint and shows a reminder if non-empty.
+- ✅ **UI revamp**: Sync/Publish “Schedule setup reminders” now uses an **Off / Always / Custom** segmented control with clearer, non-technical copy; drift toast wording improved and includes “Show differences”.
+
+### Cleanup / delete empty schedules (test snapshots)
+- ✅ **History Cleanup mode**: History can optionally show “Step 1 or earlier + no allocations” schedules (hidden by default) and allow batch selection.
+- ✅ **Server-side safe delete**: `POST /api/schedules/cleanup-delete` revalidates eligibility (Step ≤ 1 + no allocations) and deletes `daily_schedules` rows; restricted to Admin/Developer.
+
+## Phase 29: Account access settings, rebased copy, drift reminders, and cleanup delete
+
+### Account management + UI access settings
+- ✅ **Access Settings (UI-only RBAC)**: Added `access_control_settings` (single-row) with role hierarchy enforcement (Developer can set Admin/User; Admin can set User; User cannot edit).
+- ✅ **Feature catalog + hook**: Introduced `lib/access/*` (typed `FeatureId`, defaults, normalization) + `useAccessControl()` for consistent client gating.
+- ✅ **Account Management UI**: Added “Accounts / Access settings” tabs and an `AccessSettingsPanel` with role tabs (Developer/Admin/User) and toggle switches.
+- ✅ **Role badges**: Added role-specific badge variants (Developer/Admin/User) and applied consistently across the app.
+- ✅ **Dashboard access**: `/(dashboard)/dashboard` now uses `requireAuth()` so all authenticated roles can access the dashboard (visibility controlled by access settings).
+
+### Copy: rebase target baseline to current published (Global)
+- ✅ **Copy API rebases baseline**: After copy, target `baseline_snapshot` is overwritten from current published Global (fresh baseline), preventing legacy baselines from rolling forward.
+- ✅ **DB RPC support**: Updated `pull_global_to_snapshot_v1` to accept `p_include_buffer_staff` and (when false) downgrade buffer staff in the snapshot baseline.
+
+### Drift notifications (Schedule reminders)
+- ✅ **“Always” is diff-based**: When drift threshold is “Always”, Schedule computes a real `diffBaselineSnapshot` against live Global slices after initial paint and shows a reminder if non-empty.
+- ✅ **UI revamp**: Sync/Publish “Schedule setup reminders” now uses an **Off / Always / Custom** segmented control with clearer, non-technical copy; drift toast wording improved and includes “Show differences”.
+
+### Cleanup / delete empty schedules (test snapshots)
+- ✅ **History Cleanup mode**: History can optionally show “Step 1 or earlier + no allocations” schedules (hidden by default) and allow batch selection.
+- ✅ **Server-side safe delete**: `POST /api/schedules/cleanup-delete` revalidates eligibility (Step ≤ 1 + no allocations) and deletes `daily_schedules` rows; restricted to Admin/Developer.
+
+## Phase 29: Access Settings, Rebased Copy, Drift Reminders, Cleanup
+
+- **Account management + UI access settings**:
+  - Added an **Access settings** tab under Account Management to configure **UI visibility** for Developer/Admin/User with hierarchy enforcement (Developer can edit Admin+User; Admin can edit User; Users read-only).
+  - Implemented access control plumbing: `access_control_settings` table + `/api/access-settings` + `useAccessControl` + feature catalog (`lib/access/*`).
+  - Standardized role badge colors (`roleDeveloper` / `roleAdmin` / `roleUser`) and applied them across the app; role segmented control styling matches these colors.
+  - Allowed authenticated users to access `/dashboard` (server layout moved from `requireAdmin()` → `requireAuth()`), while still UI-gating panels via access settings.
+
+- **Copy: rebase target baseline from current Global**:
+  - Copy no longer propagates legacy baselines: after copy, the target schedule’s `baseline_snapshot` is **rebuilt from current published Global** (`pull_global_to_snapshot_v1`), preserving per-date isolation.
+  - Updated `pull_global_to_snapshot_v1` to support `includeBufferStaff` behavior.
+
+- **Drift notification (Schedule setup reminders)**:
+  - Sync/Publish UI revamped into a clear **Off / Always / Custom** control with human-readable copy.
+  - “Always” (threshold \(=0\)) now runs a **real diff** (`diffBaselineSnapshot`) against live Global slices after initial paint and shows a reminder if any differences exist (with **Show differences** action).
+
+- **Delete snapshot / cleanup tool**:
+  - Added **Cleanup mode** in History + server API delete (`/api/schedules/cleanup-delete`) for safe removal of schedules that have **no allocations** and are **Step 1 or earlier** (notes do not block deletion).
+  - Server re-validates eligibility and restricts deletion to **admin/developer**. Sync/Publish links to cleanup.
 ---
 
 ## Data Architecture
@@ -1114,16 +1183,6 @@ The schedule page uses a three-layer state management pattern:
 8. **Adjacent Slot Logic (Step 3.3)**: Only considers slots actually assigned by special programs, NOT Step 3.2 assignments
 9. **Bed Relieving Notes**: Stored in `staffOverrides.__bedRelieving` (within-day only, NOT copied across dates via copy schedule)
 10. **Snapshot Envelope**: Always use `buildBaselineSnapshotEnvelope()` before saving; always validate with `validateAndRepairBaselineSnapshot()` on load
-
----
-
-## Phase 28: Snapshot-local buffer staff (read+write) and copy exclusion
-
-- **Snapshot-local buffer conversion**: Schedule “From Inactive Staff” reads inactive staff strictly from the schedule snapshot roster; converting inactive → buffer is stored schedule-locally in `daily_schedules.staff_overrides.__staffStatusOverrides` (with `nameAtTime` / `rankAtTime`) and persists on Save.
-- **No global fallback**: Removed hybrid snapshot/global fallback that caused inconsistent UI and intermittent “nil inactive staff” due to client fetch lifecycle/caching.
-- **Copy wizard**: “Exclude buffer staff” drops allocations involving schedule-local buffer staff ids and strips buffer overrides on the target schedule.
-- **RPC support**: Added `supabase/migrations/update_copy_schedule_rpc_buffer_staff_ids.sql` to update `copy_schedule_v1` to exclude allocations via passed `buffer_staff_ids` rather than global `staff.status`.
-- **Cache gotcha**: After Sync/Publish “Pull Global → snapshot”, the Schedule page may still show older snapshot data until cache expires or you hard-refresh.
 
 ---
 

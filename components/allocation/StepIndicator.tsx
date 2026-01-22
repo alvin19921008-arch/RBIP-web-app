@@ -27,6 +27,7 @@ interface StepIndicatorProps {
   onClearStep?: (stepId: string) => void
   // Developer-only: show "Reset to baseline" under the Clear button.
   userRole?: 'developer' | 'admin' | 'user'
+  canResetToBaseline?: boolean
   onResetToBaseline?: () => void
   showClear?: boolean
   isInitialized?: boolean
@@ -49,6 +50,7 @@ export function StepIndicator({
   onInitialize,
   onClearStep,
   userRole,
+  canResetToBaseline,
   onResetToBaseline,
   showClear = true,
   isInitialized = false,
@@ -59,7 +61,10 @@ export function StepIndicator({
   const currentStepIndex = steps.findIndex(s => s.id === currentStep)
   const canClear = ['leave-fte', 'therapist-pca', 'floating-pca', 'bed-relieving'].includes(currentStep)
   const canInitialize = !!onInitialize && ['therapist-pca', 'floating-pca', 'bed-relieving'].includes(currentStep)
-  const canResetBaseline = userRole === 'developer' && typeof onResetToBaseline === 'function' && canClear
+  const canResetBaseline =
+    (typeof canResetToBaseline === 'boolean' ? canResetToBaseline : userRole === 'developer') &&
+    typeof onResetToBaseline === 'function' &&
+    canClear
   const [showClearMenu, setShowClearMenu] = useState(false)
 
   return (

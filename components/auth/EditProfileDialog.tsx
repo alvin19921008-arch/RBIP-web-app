@@ -11,10 +11,10 @@ import { useToast } from '@/components/ui/toast-provider'
 
 type AccountRole = 'user' | 'admin' | 'developer'
 
-function roleBadgeVariant(role: AccountRole): 'default' | 'secondary' | 'outline' | 'destructive' {
-  if (role === 'developer') return 'default'
-  if (role === 'admin') return 'secondary'
-  return 'outline'
+function roleBadgeVariant(role: AccountRole): 'roleDeveloper' | 'roleAdmin' | 'roleUser' {
+  if (role === 'developer') return 'roleDeveloper'
+  if (role === 'admin') return 'roleAdmin'
+  return 'roleUser'
 }
 
 export function EditProfileDialog({

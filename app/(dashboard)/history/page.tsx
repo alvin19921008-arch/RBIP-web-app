@@ -1,15 +1,16 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Trash2, Loader2 } from 'lucide-react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { MonthSection } from '@/components/history/MonthSection'
 import { DeleteConfirmDialog } from '@/components/history/DeleteConfirmDialog'
 import { useToast } from '@/components/ui/toast-provider'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
+import { useAccessControl } from '@/lib/access/useAccessControl'
 import {
   ScheduleHistoryEntry,
   groupSchedulesByMonth,
@@ -21,17 +22,25 @@ import {
 
 export default function HistoryPage() {
   const [schedules, setSchedules] = useState<ScheduleHistoryEntry[]>([])
+  const [cleanupCandidates, setCleanupCandidates] = useState<ScheduleHistoryEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedScheduleIds, setSelectedScheduleIds] = useState<Set<string>>(new Set())
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [cleanupSelectedIds, setCleanupSelectedIds] = useState<Set<string>>(new Set())
+  const [cleanupDeleteDialogOpen, setCleanupDeleteDialogOpen] = useState(false)
   const [topLoadingVisible, setTopLoadingVisible] = useState(false)
   const [topLoadingProgress, setTopLoadingProgress] = useState(0)
   const loadingBarIntervalRef = useRef<number | null>(null)
   const loadingBarHideTimeoutRef = useRef<number | null>(null)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClientComponentClient()
   const toast = useToast()
   const navLoading = useNavigationLoading()
+  const access = useAccessControl()
+  const canDeleteSchedules = access.can('history.delete-schedules') && (access.role === 'admin' || access.role === 'developer')
+  const initialCleanupMode = useMemo(() => (searchParams.get('mode') || '') === 'cleanup', [searchParams])
+  const [cleanupMode, setCleanupMode] = useState<boolean>(initialCleanupMode)
 
   const startTopLoading = (initialProgress: number = 0.05) => {
     if (loadingBarHideTimeoutRef.current) {
@@ -89,6 +98,12 @@ export default function HistoryPage() {
   useEffect(() => {
     loadSchedules()
   }, [])
+
+  const isStep1OrLess = (workflowState: any): boolean => {
+    const completed = Array.isArray(workflowState?.completedSteps) ? workflowState.completedSteps : []
+    // Any completion beyond step1 disqualifies
+    return !completed.some((s: any) => s === 'therapist-pca' || s === 'floating-pca' || s === 'bed-relieving' || s === 'review')
+  }
 
   const loadSchedules = async () => {
     setLoading(true)
@@ -154,15 +169,13 @@ export default function HistoryPage() {
       const hasPCA = new Set(pcaData.data?.map(a => a.schedule_id) || [])
       const hasBed = new Set(bedData.data?.map(a => a.schedule_id) || [])
 
-      // Filter schedules to only those with at least one type of allocation
-      const schedulesWithData = scheduleData.filter(s => 
-        hasTherapist.has(s.id) || hasPCA.has(s.id) || hasBed.has(s.id)
-      )
+      const schedulesWithAllocations = scheduleData.filter((s: any) => hasTherapist.has(s.id) || hasPCA.has(s.id) || hasBed.has(s.id))
+      const schedulesWithoutAllocations = scheduleData.filter((s: any) => !hasTherapist.has(s.id) && !hasPCA.has(s.id) && !hasBed.has(s.id))
 
       bumpTopLoadingTo(0.92)
 
       // Build schedule entries
-      const entries: ScheduleHistoryEntry[] = schedulesWithData.map(schedule => {
+      const entries: ScheduleHistoryEntry[] = schedulesWithAllocations.map((schedule: any) => {
         const date = new Date(schedule.date)
         const weekday = getWeekday(date)
         const weekdayName = getWeekdayName(weekday)
@@ -187,8 +200,32 @@ export default function HistoryPage() {
         }
       })
 
+      const cleanupEntries: ScheduleHistoryEntry[] = schedulesWithoutAllocations
+        .filter((s: any) => isStep1OrLess((s as any).workflow_state ?? null))
+        .map((schedule: any) => {
+          const date = new Date(schedule.date)
+          const weekday = getWeekday(date)
+          const weekdayName = getWeekdayName(weekday)
+          const workflowState = (schedule as any).workflow_state ?? null
+          const completionStatus =
+            getCompletionStatusFromWorkflowState(workflowState) ??
+            'step1'
+          return {
+            id: schedule.id,
+            date: schedule.date,
+            weekday,
+            weekdayName,
+            hasTherapistAllocations: false,
+            hasPCAAllocations: false,
+            hasBedAllocations: false,
+            workflowState,
+            completionStatus
+          }
+        })
+
       bumpTopLoadingTo(0.98)
       setSchedules(entries)
+      setCleanupCandidates(cleanupEntries)
       finishTopLoading()
     } catch (error) {
       console.error('Error loading schedule history:', error)
@@ -231,7 +268,7 @@ export default function HistoryPage() {
 
       // Check if any rows were actually deleted (RLS might silently block)
       if (!data || data.length === 0) {
-        toast.error('Failed to delete schedules.', 'Permission denied. Only admins can delete schedules.')
+        toast.error('Failed to delete schedules.', 'Permission denied. Only admins/developers can delete schedules.')
         return
       }
 
@@ -246,6 +283,47 @@ export default function HistoryPage() {
     }
   }
 
+  const toggleCleanupSelection = (scheduleId: string) => {
+    setCleanupSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(scheduleId)) next.delete(scheduleId)
+      else next.add(scheduleId)
+      return next
+    })
+  }
+
+  const handleCleanupDelete = async () => {
+    if (cleanupSelectedIds.size === 0) return
+    try {
+      const ids = Array.from(cleanupSelectedIds)
+      const res = await fetch('/api/schedules/cleanup-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || 'Delete failed')
+
+      const deletedIds: string[] = (json?.deletedIds || []) as any
+      const skippedIds: string[] = (json?.skippedIds || []) as any
+
+      if (deletedIds.length === 0) {
+        toast.warning('Nothing deleted', 'Selected schedules were not eligible for cleanup deletion.')
+      } else {
+        toast.success('Deleted', `Deleted ${deletedIds.length} test schedule${deletedIds.length > 1 ? 's' : ''}.`)
+      }
+      if (skippedIds.length > 0) {
+        toast.warning('Some schedules were skipped', 'They were no longer eligible (or had allocations).')
+      }
+
+      await loadSchedules()
+      setCleanupSelectedIds(new Set())
+      setCleanupDeleteDialogOpen(false)
+    } catch (e) {
+      toast.error('Cleanup delete failed', (e as any)?.message || undefined)
+    }
+  }
+
   const handleNavigate = (date: string) => {
     // Store return path in sessionStorage
     sessionStorage.setItem('scheduleReturnPath', '/history')
@@ -254,6 +332,7 @@ export default function HistoryPage() {
   }
 
   const monthGroups = groupSchedulesByMonth(schedules)
+  const cleanupMonthGroups = groupSchedulesByMonth(cleanupCandidates)
 
   return (
     <div className="w-full px-8 py-4">
@@ -268,15 +347,30 @@ export default function HistoryPage() {
       )}
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-bold">Schedule History</h1>
-        {selectedScheduleIds.size > 0 && (
+        <div className="flex items-center gap-2">
           <Button
-            variant="destructive"
-            onClick={() => setDeleteDialogOpen(true)}
+            variant={cleanupMode ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => {
+              setCleanupMode((v) => !v)
+              setCleanupSelectedIds(new Set())
+            }}
           >
-            <Trash2 className="h-4 w-4 mr-2" />
-            Delete Selected ({selectedScheduleIds.size})
+            {cleanupMode ? 'Cleanup mode: ON' : 'Cleanup mode'}
           </Button>
-        )}
+          {cleanupMode && canDeleteSchedules && cleanupSelectedIds.size > 0 ? (
+            <Button variant="destructive" size="sm" onClick={() => setCleanupDeleteDialogOpen(true)}>
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete test schedules ({cleanupSelectedIds.size})
+            </Button>
+          ) : null}
+          {!cleanupMode && canDeleteSchedules && selectedScheduleIds.size > 0 && (
+            <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete Selected ({selectedScheduleIds.size})
+            </Button>
+          )}
+        </div>
       </div>
 
       {loading ? (
@@ -294,19 +388,61 @@ export default function HistoryPage() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {monthGroups.map((monthGroup) => (
-            <MonthSection
-              key={`${monthGroup.year}-${monthGroup.month}`}
-              monthGroup={monthGroup}
-              selectedScheduleIds={selectedScheduleIds}
-              onSelectSchedule={toggleScheduleSelection}
-              onDeleteSchedule={(scheduleId) => {
-                setSelectedScheduleIds(new Set([scheduleId]))
-                setDeleteDialogOpen(true)
-              }}
-              onNavigate={handleNavigate}
-            />
-          ))}
+          {cleanupMode ? (
+            <>
+              <Card>
+                <CardContent className="p-4 text-sm text-muted-foreground">
+                  Cleanup mode lists schedules that have <span className="font-medium text-foreground">no allocations</span> and
+                  are at <span className="font-medium text-foreground">Step 1 or earlier</span>. Deletion is safety-checked on the server.
+                </CardContent>
+              </Card>
+              {cleanupCandidates.length === 0 ? (
+                <Card>
+                  <CardContent className="p-8 text-center">
+                    <p className="text-muted-foreground">No cleanup candidates found.</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="space-y-4">
+                  {cleanupMonthGroups.map((monthGroup) => (
+                    <MonthSection
+                      key={`cleanup-${monthGroup.year}-${monthGroup.month}`}
+                      monthGroup={monthGroup}
+                      selectedScheduleIds={cleanupSelectedIds}
+                      onSelectSchedule={toggleCleanupSelection}
+                      onDeleteSchedule={
+                        canDeleteSchedules
+                          ? (scheduleId) => {
+                              setCleanupSelectedIds(new Set([scheduleId]))
+                              setCleanupDeleteDialogOpen(true)
+                            }
+                          : undefined
+                      }
+                      onNavigate={handleNavigate}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            monthGroups.map((monthGroup) => (
+              <MonthSection
+                key={`${monthGroup.year}-${monthGroup.month}`}
+                monthGroup={monthGroup}
+                selectedScheduleIds={selectedScheduleIds}
+                onSelectSchedule={toggleScheduleSelection}
+                onDeleteSchedule={
+                  canDeleteSchedules
+                    ? (scheduleId) => {
+                        setSelectedScheduleIds(new Set([scheduleId]))
+                        setDeleteDialogOpen(true)
+                      }
+                    : undefined
+                }
+                onNavigate={handleNavigate}
+              />
+            ))
+          )}
         </div>
       )}
 
@@ -315,6 +451,15 @@ export default function HistoryPage() {
         onOpenChange={setDeleteDialogOpen}
         count={selectedScheduleIds.size}
         onConfirm={handleDelete}
+      />
+
+      <DeleteConfirmDialog
+        open={cleanupDeleteDialogOpen}
+        onOpenChange={setCleanupDeleteDialogOpen}
+        count={cleanupSelectedIds.size}
+        onConfirm={handleCleanupDelete}
+        title="Delete test schedules"
+        description={`Delete ${cleanupSelectedIds.size} future test schedule${cleanupSelectedIds.size === 1 ? '' : 's'}? This removes the entire schedule record for those dates.`}
       />
     </div>
   )

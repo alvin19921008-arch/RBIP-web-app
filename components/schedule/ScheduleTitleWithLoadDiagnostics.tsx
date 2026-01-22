@@ -21,14 +21,16 @@ type PerfStat = {
 }
 
 export function ScheduleTitleWithLoadDiagnostics(props: {
-  userRole: 'developer' | 'admin' | 'user'
+  userRole?: 'developer' | 'admin' | 'user'
+  showDiagnostics?: boolean
   title: string
   lastLoadTiming: TimingReport | null
   navToScheduleTiming: NavTiming | null
   perfTick: number
   perfStats: Record<string, PerfStat | undefined>
 }) {
-  if (props.userRole !== 'developer') {
+  const shouldShow = typeof props.showDiagnostics === 'boolean' ? props.showDiagnostics : props.userRole === 'developer'
+  if (!shouldShow) {
     return <h1 className="text-2xl font-bold">{props.title}</h1>
   }
 

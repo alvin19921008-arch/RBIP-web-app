@@ -14,6 +14,13 @@ const badgeVariants = cva(
         destructive:
           "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
         outline: "text-foreground",
+        // Role-specific variants (used across the app)
+        roleDeveloper:
+          "border-transparent bg-slate-900 text-white hover:bg-slate-900/90 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-100/90",
+        roleAdmin:
+          "border-transparent bg-sky-600 text-white hover:bg-sky-600/90 dark:bg-sky-500 dark:text-white dark:hover:bg-sky-500/90",
+        roleUser:
+          "border-transparent bg-emerald-600 text-white hover:bg-emerald-600/90 dark:bg-emerald-500 dark:text-white dark:hover:bg-emerald-500/90",
       },
     },
     defaultVariants: {

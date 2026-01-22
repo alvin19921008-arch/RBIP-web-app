@@ -9,7 +9,7 @@ interface MonthSectionProps {
   monthGroup: MonthGroup
   selectedScheduleIds: Set<string>
   onSelectSchedule: (scheduleId: string) => void
-  onDeleteSchedule: (scheduleId: string) => void
+  onDeleteSchedule?: (scheduleId: string) => void
   onNavigate: (date: string) => void
 }
 
@@ -20,10 +20,14 @@ export function MonthSection({
   onDeleteSchedule,
   onNavigate
 }: MonthSectionProps) {
-  const allSelected = monthGroup.schedules.length > 0 && 
-    monthGroup.schedules.every(s => selectedScheduleIds.has(s.id))
+  const canDelete = typeof onDeleteSchedule === 'function'
+  const allSelected =
+    canDelete &&
+    monthGroup.schedules.length > 0 &&
+    monthGroup.schedules.every((s) => selectedScheduleIds.has(s.id))
   
   const handleSelectAll = () => {
+    if (!canDelete) return
     if (allSelected) {
       // Deselect all in this month
       monthGroup.schedules.forEach(s => {
@@ -44,14 +48,11 @@ export function MonthSection({
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-semibold">{monthGroup.monthName}</CardTitle>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleSelectAll}
-            className="text-xs h-6 px-2"
-          >
-            {allSelected ? 'Deselect All' : 'Select All'}
-          </Button>
+          {canDelete ? (
+            <Button variant="outline" size="sm" onClick={handleSelectAll} className="text-xs h-6 px-2">
+              {allSelected ? 'Deselect All' : 'Select All'}
+            </Button>
+          ) : null}
         </div>
       </CardHeader>
       <CardContent className="p-0">

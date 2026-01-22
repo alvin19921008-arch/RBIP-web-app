@@ -56,6 +56,7 @@ import { Save, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, Pencil,
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { useAccessControl } from '@/lib/access/useAccessControl'
 import { getHongKongHolidays } from '@/lib/utils/hongKongHolidays'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
 import { getWeekday, formatDateDDMMYYYY, formatDateForInput, parseDateFromInput } from '@/lib/features/schedule/date'
@@ -135,7 +136,7 @@ import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
 import { createTimingCollector, type TimingReport } from '@/lib/utils/timing'
 import { getCachedSchedule, cacheSchedule, clearCachedSchedule, getCacheSize } from '@/lib/utils/scheduleCache'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
-import { ALLOCATION_STEPS, DEFAULT_DATE, EMPTY_BED_ALLOCATIONS, TEAMS, WEEKDAYS, WEEKDAY_NAMES } from '@/lib/features/schedule/constants'
+import { ALLOCATION_STEPS, EMPTY_BED_ALLOCATIONS, TEAMS, WEEKDAYS, WEEKDAY_NAMES } from '@/lib/features/schedule/constants'
 import { useScheduleController } from '@/lib/features/schedule/controller/useScheduleController'
 import type { PCAAllocationErrors } from '@/lib/features/schedule/controller/useScheduleController'
 
@@ -145,6 +146,7 @@ function SchedulePageContent() {
   const searchParams = useSearchParams()
   const supabase = createClientComponentClient()
   const navLoading = useNavigationLoading()
+  const access = useAccessControl()
   const rightContentRef = useRef<HTMLDivElement | null>(null)
   const therapistAllocationBlockRef = useRef<HTMLDivElement | null>(null)
   const pcaAllocationBlockRef = useRef<HTMLDivElement | null>(null)
@@ -152,7 +154,8 @@ function SchedulePageContent() {
   // while keeping Staff Pool itself internally scrollable.
   const rightContentHeight = useResizeObservedHeight({ targetRef: rightContentRef })
 
-  const schedule = useScheduleController({ defaultDate: DEFAULT_DATE, supabase })
+  const initialDefaultDate = useMemo(() => new Date(), [])
+  const schedule = useScheduleController({ defaultDate: initialDefaultDate, supabase })
   const { state: scheduleState, actions: scheduleActions } = schedule
   const {
     selectedDate,
@@ -244,6 +247,163 @@ function SchedulePageContent() {
   } = _unsafe
   const [activeDragStaffForOverlay, setActiveDragStaffForOverlay] = useState<Staff | null>(null)
   
+  const LAST_OPEN_SCHEDULE_DATE_KEY = 'rbip_last_open_schedule_date'
+  const [initialDateResolved, setInitialDateResolved] = useState(false)
+  const initialDateResolutionStartedRef = useRef(false)
+
+  const toDateKey = useCallback((d: Date) => {
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }, [])
+
+  const isScheduleCompletedToStep4 = useCallback((workflowState: WorkflowState | null | undefined) => {
+    const completed = (workflowState?.completedSteps || []) as any[]
+    if (!Array.isArray(completed)) return false
+    return completed.includes('bed-relieving') || completed.includes('review')
+  }, [])
+
+  // Initial navigation behavior:
+  // - If URL has ?date=..., respect it.
+  // - Else if user previously opened a schedule in this session, restore it.
+  // - Else open today, but if today has no saved data, fall back to the latest schedule completed to Step 4.
+  useEffect(() => {
+    if (initialDateResolutionStartedRef.current) return
+    initialDateResolutionStartedRef.current = true
+
+    let cancelled = false
+
+    const resolve = async () => {
+      try {
+        const dateParam = searchParams.get('date')
+        if (dateParam) {
+          try {
+            const parsed = parseDateFromInput(dateParam)
+            controllerBeginDateTransition(parsed, { resetLoadedForDate: true })
+          } catch (e) {
+            console.warn('Invalid ?date= param; falling back to auto date selection.', e)
+          } finally {
+            if (!cancelled) setInitialDateResolved(true)
+          }
+          return
+        }
+
+        const stored =
+          typeof window !== 'undefined' ? window.sessionStorage.getItem(LAST_OPEN_SCHEDULE_DATE_KEY) : null
+        if (stored) {
+          try {
+            const parsed = parseDateFromInput(stored)
+            controllerBeginDateTransition(parsed, { resetLoadedForDate: true })
+          } catch (e) {
+            console.warn('Invalid stored last-open schedule date; falling back to auto date selection.', e)
+          } finally {
+            if (!cancelled) setInitialDateResolved(true)
+          }
+          return
+        }
+
+        const today = new Date()
+        const todayKey = toDateKey(today)
+
+        // Check if today already has a saved schedule row (without auto-creating a blank schedule).
+        const todayRes = await supabase
+          .from('daily_schedules')
+          .select('id,date,workflow_state')
+          .eq('date', todayKey)
+          .maybeSingle()
+
+        const todayScheduleId = (todayRes.data as any)?.id as string | undefined
+        const todayWorkflow = (todayRes.data as any)?.workflow_state as WorkflowState | null | undefined
+
+        const scheduleHasAnyAllocations = async (scheduleId: string): Promise<boolean> => {
+          try {
+            const [tRes, pRes, bRes] = await Promise.all([
+              supabase.from('schedule_therapist_allocations').select('id').eq('schedule_id', scheduleId).limit(1),
+              supabase.from('schedule_pca_allocations').select('id').eq('schedule_id', scheduleId).limit(1),
+              supabase.from('schedule_bed_allocations').select('id').eq('schedule_id', scheduleId).limit(1),
+            ])
+            if (tRes.error || pRes.error || bRes.error) return true // be conservative: keep today on errors
+            return (
+              (tRes.data && (tRes.data as any[]).length > 0) ||
+              (pRes.data && (pRes.data as any[]).length > 0) ||
+              (bRes.data && (bRes.data as any[]).length > 0)
+            )
+          } catch {
+            return true
+          }
+        }
+
+        const findLastCompletedScheduleDateKey = async (): Promise<string | null> => {
+          const res = await supabase
+            .from('daily_schedules')
+            .select('date,workflow_state')
+            .order('date', { ascending: false })
+            .limit(90)
+          if (res.error) return null
+          const rows = (res.data || []) as any[]
+          for (const row of rows) {
+            const wk = row?.workflow_state as WorkflowState | null | undefined
+            if (isScheduleCompletedToStep4(wk) && typeof row?.date === 'string') return row.date
+          }
+          return null
+        }
+
+        let initialDate: Date = today
+
+        if (todayScheduleId) {
+          const hasSavedRows = await scheduleHasAnyAllocations(todayScheduleId)
+          const hasProgress = isScheduleCompletedToStep4(todayWorkflow) || ((todayWorkflow?.completedSteps || [])?.length ?? 0) > 0
+          if (!hasSavedRows && !hasProgress) {
+            const lastCompletedKey = await findLastCompletedScheduleDateKey()
+            if (lastCompletedKey) {
+              try {
+                initialDate = parseDateFromInput(lastCompletedKey)
+              } catch {
+                initialDate = today
+              }
+            }
+          }
+        } else {
+          // No schedule row for today yet: fall back to last completed schedule date (if any) rather than creating a blank today schedule.
+          const lastCompletedKey = await findLastCompletedScheduleDateKey()
+          if (lastCompletedKey) {
+            try {
+              initialDate = parseDateFromInput(lastCompletedKey)
+            } catch {
+              initialDate = today
+            }
+          }
+        }
+
+        if (cancelled) return
+        controllerBeginDateTransition(initialDate, { resetLoadedForDate: true })
+        setInitialDateResolved(true)
+      } catch (e) {
+        console.error('Failed to resolve initial schedule date:', e)
+        if (cancelled) return
+        setInitialDateResolved(true)
+      }
+    }
+
+    resolve()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Persist "last opened schedule date" so navigating away and back restores the same date.
+  useEffect(() => {
+    if (!initialDateResolved) return
+    try {
+      if (typeof window === 'undefined') return
+      window.sessionStorage.setItem(LAST_OPEN_SCHEDULE_DATE_KEY, toDateKey(selectedDate))
+    } catch {
+      // ignore
+    }
+  }, [initialDateResolved, selectedDate, toDateKey])
+
   useScheduleDateParam({ searchParams, selectedDate, setSelectedDate: controllerBeginDateTransition })
   const [showBackButton, setShowBackButton] = useState(false)
   const gridLoadingUsesLocalBarRef = useRef(false)
@@ -1132,7 +1292,6 @@ function SchedulePageContent() {
   useEffect(() => {
     if (!gridLoading) return
     if (loading) return
-    if (staff.length === 0) return
 
     // Use local date components to avoid timezone issues
     const year = selectedDate.getFullYear()
@@ -1203,6 +1362,7 @@ function SchedulePageContent() {
 
   // Load + hydrate schedule when date changes (domain logic is in controller).
   useEffect(() => {
+    if (!initialDateResolved) return
     let cancelled = false
 
     const year = selectedDate.getFullYear()
@@ -1238,7 +1398,7 @@ function SchedulePageContent() {
       controller.abort()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDate, scheduleLoadedForDate])
+  }, [initialDateResolved, selectedDate, scheduleLoadedForDate])
 
   // Once the grid is ready (and skeleton is gone), render below-the-fold heavy components when the browser is idle.
   useEffect(() => {
@@ -1265,7 +1425,6 @@ function SchedulePageContent() {
   useEffect(() => {
     if (!isHydratingSchedule) return
     if (loading) return
-    if (staff.length === 0) return
     const year = selectedDate.getFullYear()
     const month = String(selectedDate.getMonth() + 1).padStart(2, '0')
     const day = String(selectedDate.getDate()).padStart(2, '0')
@@ -4119,12 +4278,38 @@ function SchedulePageContent() {
     const toastKey = `${selectedDateStr}|${currentScheduleId}`
     if (lastDriftToastKeyRef.current === toastKey) return
 
+    const showDriftNotice = () => {
+      lastDriftToastKeyRef.current = toastKey
+      showActionToast(
+        'Published setup has changed',
+        'warning',
+        'This schedule is using the saved setup from that day. You can review what changed in “Show differences” or manage it in Dashboard → Sync / Publish.',
+        {
+          persistUntilDismissed: true,
+          dismissOnOutsideClick: true,
+          actions: (
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setSnapshotDiffOpen(true)}
+              >
+                Show differences
+              </Button>
+            </div>
+          ),
+        }
+      )
+    }
+
     let cancelled = false
     // Don’t block initial paint.
     window.setTimeout(() => {
       if (cancelled) return
       ;(async () => {
         const headRes = await supabase.rpc('get_config_global_head_v1')
+        if (cancelled) return
         if (headRes.error || !headRes.data) return
         const head = headRes.data as any
 
@@ -4147,6 +4332,7 @@ function SchedulePageContent() {
           .select('baseline_snapshot')
           .eq('id', currentScheduleId)
           .maybeSingle()
+        if (cancelled) return
         if (schedErr) return
 
         const stored = (schedRow as any)?.baseline_snapshot
@@ -4155,6 +4341,73 @@ function SchedulePageContent() {
         const createdAtMs = Date.parse(String((envelope as any)?.createdAt ?? ''))
         const ageMs = Number.isFinite(createdAtMs) ? Date.now() - createdAtMs : 0
         if (thresholdMs > 0 && ageMs < thresholdMs) return
+
+        // "Always" mode (threshold=0): use a real diff against current published configuration.
+        // Version metadata may remain unchanged (e.g., during testing or when global_version hasn't bumped),
+        // but users still expect to be warned when the saved snapshot differs from today's Global config.
+        if (thresholdMs === 0) {
+          const [staffRes, teamSettingsRes, wardsRes, prefsRes, programsRes, sptRes] = await Promise.all([
+            supabase
+              .from('staff')
+              .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program'),
+            supabase.from('team_settings').select('team,display_name'),
+            supabase.from('wards').select('id,name,total_beds,team_assignments,team_assignment_portions'),
+            supabase.from('pca_preferences').select('*'),
+            supabase.from('special_programs').select('*'),
+            supabase.from('spt_allocations').select('*'),
+          ])
+          if (cancelled) return
+
+          // Back-compat: some DBs do not have wards.team_assignment_portions
+          let effectiveWardsRes: typeof wardsRes = wardsRes
+          if ((wardsRes as any)?.error?.message?.includes('team_assignment_portions')) {
+            effectiveWardsRes = await supabase.from('wards').select('id,name,total_beds,team_assignments')
+            if (cancelled) return
+          }
+
+          const firstError =
+            (staffRes as any).error ||
+            (teamSettingsRes as any).error ||
+            (effectiveWardsRes as any).error ||
+            (prefsRes as any).error ||
+            (programsRes as any).error ||
+            (sptRes as any).error
+          if (firstError) return
+
+          const diff = diffBaselineSnapshot({
+            snapshot: baselineSnapshot as any,
+            live: {
+              staff: (staffRes as any).data || [],
+              teamSettings: (teamSettingsRes as any).data || [],
+              wards: (effectiveWardsRes as any).data || [],
+              pcaPreferences: (prefsRes as any).data || [],
+              specialPrograms: (programsRes as any).data || [],
+              sptAllocations: (sptRes as any).data || [],
+            },
+          })
+
+          const hasAnyDrift =
+            (diff.staff.added.length ?? 0) > 0 ||
+            (diff.staff.removed.length ?? 0) > 0 ||
+            (diff.staff.changed.length ?? 0) > 0 ||
+            (diff.teamSettings.changed.length ?? 0) > 0 ||
+            (diff.wards.added.length ?? 0) > 0 ||
+            (diff.wards.removed.length ?? 0) > 0 ||
+            (diff.wards.changed.length ?? 0) > 0 ||
+            (diff.pcaPreferences.changed.length ?? 0) > 0 ||
+            (diff.specialPrograms.added.length ?? 0) > 0 ||
+            (diff.specialPrograms.removed.length ?? 0) > 0 ||
+            (diff.specialPrograms.changed.length ?? 0) > 0 ||
+            (diff.sptAllocations.added.length ?? 0) > 0 ||
+            (diff.sptAllocations.removed.length ?? 0) > 0 ||
+            (diff.sptAllocations.changed.length ?? 0) > 0
+
+          if (!hasAnyDrift) return
+
+          if (cancelled) return
+          showDriftNotice()
+          return
+        }
 
         const snapHead = (envelope as any)?.globalHeadAtCreation as any | null | undefined
         const snapCat = snapHead?.category_versions
@@ -4177,12 +4430,8 @@ function SchedulePageContent() {
 
         if (!hasDrift) return
 
-        lastDriftToastKeyRef.current = toastKey
-        showActionToast(
-          'Published configuration differs from this schedule snapshot.',
-          'warning',
-          'Dashboard → Sync / Publish'
-        )
+        if (cancelled) return
+        showDriftNotice()
       })().catch(() => {})
     }, 0)
 
@@ -7385,6 +7634,7 @@ function SchedulePageContent() {
               }
             }}
           userRole={userRole}
+          showLoadDiagnostics={access.can('schedule.diagnostics.load')}
           lastLoadTiming={lastLoadTiming}
           navToScheduleTiming={navToScheduleTiming}
           perfTick={perfTick}
@@ -7405,109 +7655,100 @@ function SchedulePageContent() {
             <>
               {/* Copy dropdown button */}
               <div className="relative">
-                {userRole === 'developer' ? (
+                {access.can('schedule.diagnostics.copy') || access.can('schedule.diagnostics.snapshot-health') ? (
                   <Tooltip
                     side="bottom"
                     className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
                     content={
                       <div className="w-56 bg-slate-800 border border-slate-700 rounded-md shadow-lg">
                         <div className="border-b border-slate-700 px-3 py-2 text-xs text-slate-500">
-                          Admin diagnostics
+                          Diagnostics
                         </div>
 
-                        {snapshotHealthReport ? (
-                          <div className="px-3 pt-2 text-xs text-slate-200 space-y-1">
-                            <div>
-                              <span className="text-slate-400">snapshotHealth:</span>{' '}
-                              {snapshotHealthReport.status}
-                            </div>
-                            {snapshotHealthReport.issues?.length > 0 && (
+                        {access.can('schedule.diagnostics.snapshot-health') ? (
+                          snapshotHealthReport ? (
+                            <div className="px-3 pt-2 text-xs text-slate-200 space-y-1">
                               <div>
-                                <span className="text-slate-400">issues:</span>{' '}
-                                {snapshotHealthReport.issues.join(', ')}
+                                <span className="text-slate-400">snapshotHealth:</span> {snapshotHealthReport.status}
                               </div>
-                            )}
-                            <div>
-                              <span className="text-slate-400">staff:</span>{' '}
-                              {snapshotHealthReport.snapshotStaffCount} (missing referenced:{' '}
-                              {snapshotHealthReport.missingReferencedStaffCount})
-                            </div>
-                            {(snapshotHealthReport.schemaVersion || snapshotHealthReport.source) && (
-                              <div>
-                                <span className="text-slate-400">meta:</span>{' '}
-                                {snapshotHealthReport.schemaVersion
-                                  ? `v${snapshotHealthReport.schemaVersion}`
-                                  : 'v?'}
-                                {snapshotHealthReport.source ? `, ${snapshotHealthReport.source}` : ''}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="px-3 pt-2 text-xs text-slate-500">snapshotHealth: (none)</div>
-                        )}
-
-                        <div className="border-t border-slate-700 mt-2 px-3 py-2 text-[11px] text-slate-500">
-                          Copy timing
-                        </div>
-                        <div className="px-3 pb-3 text-xs text-slate-200 space-y-1">
-                          {lastCopyTiming ? (
-                            <>
-                              <div>
-                                <span className="text-slate-400">client total:</span>{' '}
-                                {Math.round(lastCopyTiming.totalMs)}ms
-                              </div>
-                              {lastCopyTiming.stages.length > 0 && (
-                                <div className="text-[11px] text-slate-300 space-y-0.5">
-                                  {lastCopyTiming.stages.map(s => (
-                                    <div key={`copy-client-${s.name}`}>
-                                      <span className="text-slate-400">{s.name}:</span>{' '}
-                                      {Math.round(s.ms)}ms
-                                    </div>
-                                  ))}
+                              {snapshotHealthReport.issues?.length > 0 && (
+                                <div>
+                                  <span className="text-slate-400">issues:</span> {snapshotHealthReport.issues.join(', ')}
                                 </div>
                               )}
-                              {(() => {
-                                const server = (lastCopyTiming.meta as any)?.server
-                                if (!server) return null
-                                return (
-                                  <div className="pt-1">
-                                    <div>
-                                      <span className="text-slate-400">server total:</span>{' '}
-                                      {Math.round(server.totalMs ?? 0)}ms{' '}
-                                      {typeof server?.meta?.rpcUsed === 'boolean'
-                                        ? `(rpc:${server.meta.rpcUsed ? 'yes' : 'no'})`
-                                        : null}
-                                      {typeof server?.meta?.baselineBytes === 'number' ? (
-                                        <span className="text-slate-400">
-                                          {' '}
-                                          baseline:{Math.round(server.meta.baselineBytes / 1024)}KB
-                                        </span>
-                                      ) : null}
-                                      {typeof server?.meta?.specialProgramsBytes === 'number' ? (
-                                        <span className="text-slate-400">
-                                          {' '}
-                                          sp:{Math.round(server.meta.specialProgramsBytes / 1024)}KB
-                                        </span>
-                                      ) : null}
-                                    </div>
-                                    {Array.isArray(server.stages) && server.stages.length > 0 && (
-                                      <div className="text-[11px] text-slate-300 space-y-0.5">
-                                        {server.stages.map((s: any) => (
-                                          <div key={`copy-server-${s.name}`}>
-                                            <span className="text-slate-400">{s.name}:</span>{' '}
-                                            {Math.round(s.ms ?? 0)}ms
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                )
-                              })()}
-                            </>
+                              <div>
+                                <span className="text-slate-400">staff:</span> {snapshotHealthReport.snapshotStaffCount} (missing
+                                referenced: {snapshotHealthReport.missingReferencedStaffCount})
+                              </div>
+                              {(snapshotHealthReport.schemaVersion || snapshotHealthReport.source) && (
+                                <div>
+                                  <span className="text-slate-400">meta:</span>{' '}
+                                  {snapshotHealthReport.schemaVersion ? `v${snapshotHealthReport.schemaVersion}` : 'v?'}
+                                  {snapshotHealthReport.source ? `, ${snapshotHealthReport.source}` : ''}
+                                </div>
+                              )}
+                            </div>
                           ) : (
-                            <div className="text-slate-500">No copy timing captured yet.</div>
-                          )}
-                        </div>
+                            <div className="px-3 pt-2 text-xs text-slate-500">snapshotHealth: (none)</div>
+                          )
+                        ) : null}
+
+                        {access.can('schedule.diagnostics.copy') ? (
+                          <>
+                            <div className="border-t border-slate-700 mt-2 px-3 py-2 text-[11px] text-slate-500">
+                              Copy timing
+                            </div>
+                            <div className="px-3 pb-3 text-xs text-slate-200 space-y-1">
+                              {lastCopyTiming ? (
+                                <>
+                                  <div>
+                                    <span className="text-slate-400">client total:</span> {Math.round(lastCopyTiming.totalMs)}ms
+                                  </div>
+                                  {lastCopyTiming.stages.length > 0 && (
+                                    <div className="text-[11px] text-slate-300 space-y-0.5">
+                                      {lastCopyTiming.stages.map((s) => (
+                                        <div key={`copy-client-${s.name}`}>
+                                          <span className="text-slate-400">{s.name}:</span> {Math.round(s.ms)}ms
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {(() => {
+                                    const server = (lastCopyTiming.meta as any)?.server
+                                    if (!server) return null
+                                    return (
+                                      <div className="pt-1">
+                                        <div>
+                                          <span className="text-slate-400">server total:</span> {Math.round(server.totalMs ?? 0)}ms{' '}
+                                          {typeof server?.meta?.rpcUsed === 'boolean'
+                                            ? `(rpc:${server.meta.rpcUsed ? 'yes' : 'no'})`
+                                            : null}
+                                          {typeof server?.meta?.baselineBytes === 'number' ? (
+                                            <span className="text-slate-400"> baseline:{Math.round(server.meta.baselineBytes / 1024)}KB</span>
+                                          ) : null}
+                                          {typeof server?.meta?.specialProgramsBytes === 'number' ? (
+                                            <span className="text-slate-400"> sp:{Math.round(server.meta.specialProgramsBytes / 1024)}KB</span>
+                                          ) : null}
+                                        </div>
+                                        {Array.isArray(server.stages) && server.stages.length > 0 && (
+                                          <div className="text-[11px] text-slate-300 space-y-0.5">
+                                            {server.stages.map((s: any) => (
+                                              <div key={`copy-server-${s.name}`}>
+                                                <span className="text-slate-400">{s.name}:</span> {Math.round(s.ms ?? 0)}ms
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )
+                                  })()}
+                                </>
+                              ) : (
+                                <div className="text-slate-500">No copy timing captured yet.</div>
+                              )}
+                            </div>
+                          </>
+                        ) : null}
                       </div>
                     }
                   >
@@ -7602,7 +7843,7 @@ function SchedulePageContent() {
                   </div>
                 )}
               </div>
-              {userRole === 'developer' ? (
+              {access.can('schedule.diagnostics.save') ? (
                 <Tooltip
                   side="bottom"
                   className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
@@ -7696,7 +7937,8 @@ function SchedulePageContent() {
             currentStep={currentStep}
             stepStatus={stepStatus}
             userRole={userRole}
-            onResetToBaseline={userRole === 'developer' ? resetToBaseline : undefined}
+            canResetToBaseline={access.can('schedule.tools.reset-to-baseline')}
+            onResetToBaseline={resetToBaseline}
             onStepClick={(stepId) => goToStep(stepId as any)}
             canNavigateToStep={(stepId) => {
               // Can always go to earlier steps

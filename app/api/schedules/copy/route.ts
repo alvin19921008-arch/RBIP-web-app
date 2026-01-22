@@ -8,6 +8,7 @@ import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/l
 import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
 import { createTimingCollector } from '@/lib/utils/timing'
 import { fetchGlobalHeadAtCreation } from '@/lib/features/config/globalHead'
+import { createSupabaseAdminClient } from '@/lib/supabase/admin'
 
 type CopyMode = 'full' | 'hybrid'
 
@@ -180,6 +181,84 @@ export async function POST(request: NextRequest) {
     const fromScheduleId = fromSchedule.id
     const toScheduleId = toSchedule.id
 
+    const tryCreateAdmin = () => {
+      try {
+        return createSupabaseAdminClient()
+      } catch {
+        return null
+      }
+    }
+
+    const applyBufferStaffDowngradeIfNeeded = (snapshot: BaselineSnapshot): BaselineSnapshot => {
+      if (includeBufferStaff) return snapshot
+      const staff = Array.isArray((snapshot as any)?.staff) ? ((snapshot as any).staff as any[]) : []
+      const nextStaff = staff.map((s: any) => {
+        if (!s || typeof s !== 'object') return s
+        if (s.status !== 'buffer') return s
+        // Downgrade buffer staff to inactive when excluding buffer staff in copy baseline.
+        return { ...s, status: 'inactive', buffer_fte: null }
+      })
+      return { ...(snapshot as any), staff: nextStaff } as any
+    }
+
+    const rebaseTargetBaselineToCurrentGlobal = async () => {
+      // Preferred: single DB-side RPC to rebuild snapshot slices in one transaction.
+      // This avoids propagating legacy baseline payloads when users copy schedules forward/backward.
+      const categories = [
+        'staffProfile',
+        'teamConfig',
+        'wardConfig',
+        'specialPrograms',
+        'sptAllocations',
+        'pcaPreferences',
+      ]
+
+      const admin = tryCreateAdmin()
+      if (admin) {
+        // Try new signature first (with include-buffer flag), then fall back to legacy signature.
+        const attemptWithFlag = await admin.rpc('pull_global_to_snapshot_v1', {
+          p_date: toDateStr,
+          p_categories: categories,
+          p_note: `Auto-rebase baseline after copy from ${fromDateStr}`,
+          p_include_buffer_staff: includeBufferStaff,
+        } as any)
+        if (!attemptWithFlag.error) return
+
+        const msg = (attemptWithFlag.error as any)?.message || ''
+        const code = (attemptWithFlag.error as any)?.code
+        const isMissingFn =
+          code === 'PGRST202' ||
+          (msg.includes('pull_global_to_snapshot_v1') &&
+            (msg.includes('schema cache') || msg.includes('Could not find') || msg.includes('not found')))
+        if (!isMissingFn) {
+          // Non-missing error (e.g. not_authorized before migration): fall through to JS fallback.
+        } else {
+          const attemptLegacy = await admin.rpc('pull_global_to_snapshot_v1', {
+            p_date: toDateStr,
+            p_categories: categories,
+            p_note: `Auto-rebase baseline after copy from ${fromDateStr}`,
+          } as any)
+          if (!attemptLegacy.error) return
+        }
+      }
+
+      // Fallback: rebuild baseline snapshot in JS and write to target schedule.
+      // Not transactional across tables, but better than leaving inherited legacy payloads.
+      const clientForReadWrite = admin ?? supabase
+      const fresh = await buildBaselineSnapshot(clientForReadWrite)
+      const adjusted = applyBufferStaffDowngradeIfNeeded(fresh)
+      const envelope = buildBaselineSnapshotEnvelope({
+        data: adjusted as any,
+        source: 'copy',
+        globalHeadAtCreation,
+      })
+      const { error } = await clientForReadWrite
+        .from('daily_schedules')
+        .update({ baseline_snapshot: envelope as any })
+        .eq('id', toScheduleId)
+      if (error) throw error
+    }
+
     // Ensure target schedule is tentative BEFORE cloning allocations.
     // RLS policies for allocation tables may depend on daily_schedules.is_tentative = true.
     const { error: tentativeError } = await supabase
@@ -323,6 +402,12 @@ export async function POST(request: NextRequest) {
     })
 
     if (!rpcAttempt.error) {
+      try {
+        await rebaseTargetBaselineToCurrentGlobal()
+        timer.stage('rebaseBaselineToGlobal')
+      } catch {
+        // Non-fatal: copy succeeded; baseline rebase failure should not block schedule work.
+      }
       return NextResponse.json({
         success: true,
         mode,
@@ -477,6 +562,13 @@ export async function POST(request: NextRequest) {
 
     if (updateError) {
       return NextResponse.json({ error: 'Failed to update schedule metadata' }, { status: 500 })
+    }
+
+    try {
+      await rebaseTargetBaselineToCurrentGlobal()
+      timer.stage('rebaseBaselineToGlobal')
+    } catch {
+      // Non-fatal: copy succeeded; baseline rebase failure should not block schedule work.
     }
 
     return NextResponse.json({
