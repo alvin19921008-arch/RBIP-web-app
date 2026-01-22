@@ -24,6 +24,7 @@ export function ScheduleTitleWithLoadDiagnostics(props: {
   userRole?: 'developer' | 'admin' | 'user'
   showDiagnostics?: boolean
   title: string
+  currentDateKey?: string
   lastLoadTiming: TimingReport | null
   navToScheduleTiming: NavTiming | null
   perfTick: number
@@ -49,6 +50,7 @@ export function ScheduleTitleWithLoadDiagnostics(props: {
                 </div>
                 <LoadMetaBlock
                   meta={(props.lastLoadTiming.meta as any) || {}}
+                  currentDateKey={props.currentDateKey}
                   navToScheduleTiming={props.navToScheduleTiming}
                   perfTick={props.perfTick}
                   perfStats={props.perfStats}
@@ -80,11 +82,16 @@ export function ScheduleTitleWithLoadDiagnostics(props: {
 
 function LoadMetaBlock(props: {
   meta: any
+  currentDateKey?: string
   navToScheduleTiming: NavTiming | null
   perfTick: number
   perfStats: Record<string, PerfStat | undefined>
 }) {
   const meta = props.meta || {}
+  const timingDateKey = typeof meta.dateStr === 'string' ? meta.dateStr : null
+  const currentDateKey = props.currentDateKey ?? null
+  const isStale = !!(timingDateKey && currentDateKey && timingDateKey !== currentDateKey)
+  const isPending = !!meta.pending
   const snapshotKb = typeof meta.snapshotBytes === 'number' ? Math.round(meta.snapshotBytes / 1024) : null
   const nav = (meta.nav as NavTiming | undefined) ?? (props.navToScheduleTiming ?? undefined)
   const fmtDelta = (from: number, to: number) => `${Math.max(0, Math.round(to - from))}ms`
@@ -97,8 +104,14 @@ function LoadMetaBlock(props: {
         {meta.baselineSnapshotUsed ? ', snapshot:yes' : ', snapshot:no'}
       </div>
       <div>
-        cache:{meta.cacheHit ? 'hit' : 'miss'}
+        cache(read):{isPending ? 'pending' : isStale ? 'stale' : meta.cacheHit ? 'hit' : 'miss'}
+        {isPending ? (meta.cacheHit ? ' (cached)' : ' (not cached)') : null}
+        {!isPending && !isStale && !meta.cacheHit ? ' (stored)' : ''}
         {typeof meta.cacheSize === 'number' ? `, size:${meta.cacheSize}` : ''}
+      </div>
+      <div>
+        date(load):{timingDateKey ?? 'unknown'}
+        {currentDateKey ? `, current:${currentDateKey}` : ''}
       </div>
       <div>
         calcs:{meta.calculationsSource || 'unknown'}

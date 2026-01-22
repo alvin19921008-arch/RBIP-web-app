@@ -17,6 +17,7 @@ todos:
   - id: deprecate-tiebreak-dialog
     content: Remove TieBreakDialog usage from floating PCA allocation flow
     status: completed
+isProject: false
 ---
 
 # Step 3.1: Floating PCA Configuration Dialog
@@ -129,7 +130,7 @@ Using the existing Tailwind color palette to match the app's theme:
 
 ## Key Files to Create/Modify
 
-| File | Action | Description ||------|--------|-------------|| [`components/allocation/FloatingPCAConfigDialog.tsx`](components/allocation/FloatingPCAConfigDialog.tsx) | CREATE | New dialog component for Step 3.1 || [`components/allocation/TeamPendingCard.tsx`](components/allocation/TeamPendingCard.tsx) | CREATE | Reusable card component for each team || [`app/(dashboard)/schedule/page.tsx`](app/\\\\\\(dashboard)/schedule/page.tsx) | MODIFY | Add state for adjusted values, dialog trigger button, pass data to Step 3.2+ || [`lib/algorithms/pcaAllocation.ts`](lib/algorithms/pcaAllocation.ts) | MODIFY | Accept `teamAllocationOrder` to override default sorting || [`components/allocation/TieBreakDialog.tsx`](components/allocation/TieBreakDialog.tsx) | DEPRECATE | No longer needed after Step 3.1 handles tie-breakers upfront |
+| File | Action | Description ||------|--------|-------------|| [`components/allocation/FloatingPCAConfigDialog.tsx`](components/allocation/FloatingPCAConfigDialog.tsx) | CREATE | New dialog component for Step 3.1 || [`components/allocation/TeamPendingCard.tsx`](components/allocation/TeamPendingCard.tsx) | CREATE | Reusable card component for each team || [`app/(dashboard)/schedule/page.tsx`](app/\\\\\\\\\(dashboard)/schedule/page.tsx) | MODIFY | Add state for adjusted values, dialog trigger button, pass data to Step 3.2+ || [`lib/algorithms/pcaAllocation.ts`](lib/algorithms/pcaAllocation.ts) | MODIFY | Accept `teamAllocationOrder` to override default sorting || [`components/allocation/TieBreakDialog.tsx`](components/allocation/TieBreakDialog.tsx) | DEPRECATE | No longer needed after Step 3.1 handles tie-breakers upfront |
 
 ## State Structure
 

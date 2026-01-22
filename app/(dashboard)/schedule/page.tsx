@@ -23,7 +23,6 @@ import { TeamColumn } from '@/components/allocation/TeamColumn'
 import { StaffPool } from '@/components/allocation/StaffPool'
 import { TherapistBlock } from '@/components/allocation/TherapistBlock'
 import { PCABlock } from '@/components/allocation/PCABlock'
-import { PCADedicatedScheduleTable } from '@/components/allocation/PCADedicatedScheduleTable'
 import { AllocationNotesBoard } from '@/components/allocation/AllocationNotesBoard'
 import { BedBlock } from '@/components/allocation/BedBlock'
 import { LeaveBlock } from '@/components/allocation/LeaveBlock'
@@ -57,7 +56,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useAccessControl } from '@/lib/access/useAccessControl'
-import { getHongKongHolidays } from '@/lib/utils/hongKongHolidays'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
 import { getWeekday, formatDateDDMMYYYY, formatDateForInput, parseDateFromInput } from '@/lib/features/schedule/date'
 import {
@@ -71,9 +69,9 @@ import {
 import { computeBedsDesignatedByTeam, computeBedsForRelieving, formatWardLabel } from '@/lib/features/schedule/bedMath'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { allocateTherapists, StaffData, AllocationContext } from '@/lib/algorithms/therapistAllocation'
-import { allocatePCA, PCAAllocationContext, PCAData, FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
-import { allocateBeds, BedAllocationContext } from '@/lib/algorithms/bedAllocation'
+import type { StaffData, AllocationContext } from '@/lib/algorithms/therapistAllocation'
+import type { PCAAllocationContext, PCAData, FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
+import type { BedAllocationContext } from '@/lib/algorithms/bedAllocation'
 import { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { executeSlotAssignments, SlotAssignment } from '@/lib/utils/reservationLogic'
@@ -102,6 +100,10 @@ const BufferStaffCreateDialog = dynamic(
   () => import('@/components/allocation/BufferStaffCreateDialog').then(m => m.BufferStaffCreateDialog),
   { ssr: false }
 )
+const PCADedicatedScheduleTable = dynamic(
+  () => import('@/components/allocation/PCADedicatedScheduleTable').then(m => m.PCADedicatedScheduleTable),
+  { ssr: false }
+)
 
 const prefetchScheduleCopyWizard = () => import('@/components/allocation/ScheduleCopyWizard')
 const prefetchStaffEditDialog = () => import('@/components/allocation/StaffEditDialog')
@@ -126,7 +128,7 @@ import { useActionToast } from '@/lib/hooks/useActionToast'
 import { useResizeObservedHeight } from '@/lib/hooks/useResizeObservedHeight'
 import { useScheduleDateParam } from '@/lib/hooks/useScheduleDateParam'
 import { resetStep2OverridesForAlgoEntry } from '@/lib/features/schedule/stepReset'
-import { diffBaselineSnapshot, type SnapshotDiffResult } from '@/lib/features/schedule/snapshotDiff'
+import type { SnapshotDiffResult } from '@/lib/features/schedule/snapshotDiff'
 import { useAnchoredPopoverPosition } from '@/lib/hooks/useAnchoredPopoverPosition'
 import { useOnClickOutside } from '@/lib/hooks/useOnClickOutside'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
@@ -203,6 +205,9 @@ function SchedulePageContent() {
     loadScheduleForDate,
     loadAndHydrateDate,
     runStep4BedRelieving,
+    prefetchStep2Algorithms,
+    prefetchStep3Algorithms,
+    prefetchBedAlgorithm,
     goToStep,
     goToNextStep,
     goToPreviousStep,
@@ -415,6 +420,7 @@ function SchedulePageContent() {
   const [lastSaveTiming, setLastSaveTiming] = useState<TimingReport | null>(null)
   const [lastCopyTiming, setLastCopyTiming] = useState<TimingReport | null>(null)
   const [lastLoadTiming, setLastLoadTiming] = useState<TimingReport | null>(null)
+  const latestLoadTimingKeyRef = useRef<string | null>(null)
   const perfStatsRef = useRef<
     Record<
       string,
@@ -580,6 +586,10 @@ function SchedulePageContent() {
   const [datesWithDataLoading, setDatesWithDataLoading] = useState(false)
   const datesWithDataLoadedAtRef = useRef<number | null>(null)
   const datesWithDataInFlightRef = useRef<Promise<void> | null>(null)
+  // Adjacent-day schedule prefetch (warm `scheduleCache` without creating schedules)
+  const adjacentSchedulePrefetchBaseKeyRef = useRef<string | null>(null)
+  const adjacentSchedulePrefetchInFlightRef = useRef<Promise<void> | null>(null)
+  const adjacentSchedulePrefetchedDatesRef = useRef<Set<string>>(new Set())
   const [holidays, setHolidays] = useState<Map<string, string>>(new Map())
   const calendarButtonRef = useRef<HTMLButtonElement>(null)
   const calendarPopoverRef = useRef<HTMLDivElement>(null)
@@ -1370,6 +1380,31 @@ function SchedulePageContent() {
     const day = String(selectedDate.getDate()).padStart(2, '0')
     const dateStr = `${year}-${month}-${day}`
     if (scheduleLoadedForDate === dateStr) return
+    latestLoadTimingKeyRef.current = dateStr
+
+    // Immediately reflect the *current* selected date in the diagnostics tooltip to avoid a
+    // transient "stale" display while the async load for this date is still in-flight.
+    setLastLoadTiming((prev) => {
+      const prevMeta: any = (prev as any)?.meta || {}
+      if (typeof prevMeta?.dateStr === 'string' && prevMeta.dateStr === dateStr && !prevMeta.pending) {
+        return prev
+      }
+
+      const cachedNow = !!getCachedSchedule(dateStr)
+      const pending: any = {
+        at: new Date().toISOString(),
+        totalMs: 0,
+        stages: [],
+        meta: {
+          dateStr,
+          pending: true,
+          cacheHit: cachedNow,
+          cacheSize: getCacheSize(),
+        },
+      }
+
+      return pending
+    })
 
     const controller = new AbortController()
 
@@ -1381,10 +1416,18 @@ function SchedulePageContent() {
         recalculateScheduleCalculations,
       })
       if (cancelled || controller.signal.aborted) return
+      if (latestLoadTimingKeyRef.current !== dateStr) {
+        return
+      }
       if (report) setLastLoadTiming(report)
     })().catch((e) => {
       console.error('Error loading schedule:', e)
-      if (cancelled) return
+      if (cancelled || controller.signal.aborted) {
+        return
+      }
+      if (latestLoadTimingKeyRef.current !== dateStr) {
+        return
+      }
       setLastLoadTiming(
         createTimingCollector().finalize({
           dateStr,
@@ -1397,8 +1440,11 @@ function SchedulePageContent() {
       cancelled = true
       controller.abort()
     }
+    // NOTE: do not depend on scheduleLoadedForDate here; it is set during loadAndHydrateDate(),
+    // and including it would cause this effect to re-run and abort in-flight loads (leaving
+    // diagnostics stuck in "pending" on cache-hit navigations).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialDateResolved, selectedDate, scheduleLoadedForDate])
+  }, [initialDateResolved, selectedDate])
 
   // Once the grid is ready (and skeleton is gone), render below-the-fold heavy components when the browser is idle.
   useEffect(() => {
@@ -1528,8 +1574,13 @@ function SchedulePageContent() {
 
   // Load holidays when calendar or copy wizard opens (reuses same CalendarGrid UI)
   useEffect(() => {
-    if (calendarOpen || copyWizardOpen || copyMenuOpen) {
-      loadDatesWithData()
+    if (!(calendarOpen || copyWizardOpen || copyMenuOpen)) return
+    loadDatesWithData()
+
+    let cancelled = false
+    void (async () => {
+      const { getHongKongHolidays } = await import('@/lib/utils/hongKongHolidays')
+      if (cancelled) return
       // Generate holidays for selected year and next year
       const baseYear = selectedDate.getFullYear()
       const holidaysMap = new Map<string, string>()
@@ -1537,7 +1588,12 @@ function SchedulePageContent() {
       const nextYearHolidays = getHongKongHolidays(baseYear + 1)
       yearHolidays.forEach((value, key) => holidaysMap.set(key, value))
       nextYearHolidays.forEach((value, key) => holidaysMap.set(key, value))
+      if (cancelled) return
       setHolidays(holidaysMap)
+    })().catch(() => {})
+
+    return () => {
+      cancelled = true
     }
   }, [calendarOpen, copyWizardOpen, copyMenuOpen, selectedDate])
 
@@ -1596,6 +1652,142 @@ function SchedulePageContent() {
       window.clearTimeout(t)
     }
   }, [scheduleLoadedForDate])
+
+  // Background prefetch: warm cache for previous/next working day schedules (only if meaningful),
+  // while avoiding accidental creation of new schedule rows.
+  useEffect(() => {
+    if (!scheduleLoadedForDate) return
+    const baseKey = toDateKey(selectedDate)
+    if (scheduleLoadedForDate !== baseKey) return
+    if (adjacentSchedulePrefetchBaseKeyRef.current === baseKey) return
+
+    let cancelled = false
+    const run = () => {
+      if (cancelled) return
+      if (adjacentSchedulePrefetchInFlightRef.current) return
+      if (adjacentSchedulePrefetchBaseKeyRef.current === baseKey) return
+      adjacentSchedulePrefetchBaseKeyRef.current = baseKey
+
+      adjacentSchedulePrefetchInFlightRef.current = (async () => {
+        const isMeaningfulStep1Edit = (rawStaffOverrides: any): boolean => {
+          if (!rawStaffOverrides || typeof rawStaffOverrides !== 'object') return false
+
+          // 1) Staff status overrides (counts as meaningful)
+          const statusOverrides = (rawStaffOverrides as any).__staffStatusOverrides
+          if (statusOverrides && typeof statusOverrides === 'object' && Object.keys(statusOverrides).length > 0) {
+            return true
+          }
+
+          // 2) Per-staff step-1 edits (ignore schedule-level __ keys like __allocationNotes)
+          for (const [k, v] of Object.entries(rawStaffOverrides as any)) {
+            if (k.startsWith('__')) continue
+            if (!v || typeof v !== 'object') continue
+            const o: any = v
+            if (o.leaveType != null) return true
+            if (typeof o.fteRemaining === 'number') return true
+            if (o.invalidSlot != null) return true
+            if (Array.isArray(o.invalidSlots) && o.invalidSlots.length > 0) return true
+            if (o.leaveComebackTime != null) return true
+            if (o.isLeave != null) return true
+          }
+          return false
+        }
+
+        const prefetchOneIfMeaningful = async (date: Date) => {
+          const dateKey = toDateKey(date)
+          if (adjacentSchedulePrefetchedDatesRef.current.has(dateKey)) return
+
+          // Already cached → nothing to do.
+          const beforeCacheSize = getCacheSize()
+          const alreadyCached = getCachedSchedule(dateKey)
+          if (alreadyCached) {
+            adjacentSchedulePrefetchedDatesRef.current.add(dateKey)
+
+            // Surface updated cache size in the existing load diagnostics tooltip.
+            setLastLoadTiming((prev) => {
+              if (!prev) return prev
+              const metaPrev = (prev.meta as any) || {}
+            if (typeof metaPrev.dateStr === 'string' && metaPrev.dateStr !== baseKey) return prev
+              return { ...prev, meta: { ...metaPrev, cacheSize: getCacheSize() } }
+            })
+            return
+          }
+
+          // Peek schedule row first (DO NOT create schedules as part of prefetch).
+          const { data: schedRow, error: schedErr } = await supabase
+            .from('daily_schedules')
+            .select('id, staff_overrides, workflow_state')
+            .eq('date', dateKey)
+            .maybeSingle()
+
+          if (schedErr || !schedRow?.id) return
+          const scheduleId = (schedRow as any).id as string
+          const rawStaffOverrides = (schedRow as any).staff_overrides
+
+          const step1Edits = isMeaningfulStep1Edit(rawStaffOverrides)
+
+          // Allocation presence check (any allocation row counts as meaningful)
+          const [tRes, pRes, bRes] = await Promise.all([
+            supabase.from('schedule_therapist_allocations').select('id').eq('schedule_id', scheduleId).limit(1),
+            supabase.from('schedule_pca_allocations').select('id').eq('schedule_id', scheduleId).limit(1),
+            supabase.from('schedule_bed_allocations').select('id').eq('schedule_id', scheduleId).limit(1),
+          ])
+
+          const hasAlloc =
+            (tRes.data?.length ?? 0) > 0 || (pRes.data?.length ?? 0) > 0 || (bRes.data?.length ?? 0) > 0
+
+          if (!hasAlloc && !step1Edits) return
+
+          // Now it is safe to prefetch via the normal loader (it will cache, and won't create missing schedules).
+          await loadScheduleForDate(date, { prefetchOnly: true })
+          adjacentSchedulePrefetchedDatesRef.current.add(dateKey)
+
+          // Surface updated cache size in the existing load diagnostics tooltip.
+          setLastLoadTiming((prev) => {
+            if (!prev) return prev
+            const metaPrev = (prev.meta as any) || {}
+            if (typeof metaPrev.dateStr === 'string' && metaPrev.dateStr !== baseKey) return prev
+            const nextMeta = {
+              ...metaPrev,
+              cacheSize: getCacheSize(),
+            }
+            return { ...prev, meta: nextMeta }
+          })
+        }
+
+        const prev = getPreviousWorkingDay(selectedDate)
+        const next = getNextWorkingDay(selectedDate)
+        await Promise.all([prefetchOneIfMeaningful(prev), prefetchOneIfMeaningful(next)])
+
+        // Ensure the tooltip reflects the latest cache size even if we didn't prefetch (or hit cache short-circuits).
+        setLastLoadTiming((prev) => {
+          if (!prev) return prev
+          const metaPrev = (prev.meta as any) || {}
+          if (typeof metaPrev.dateStr === 'string' && metaPrev.dateStr !== baseKey) return prev
+          return { ...prev, meta: { ...metaPrev, cacheSize: getCacheSize() } }
+        })
+      })()
+        .catch(() => {})
+        .finally(() => {
+          adjacentSchedulePrefetchInFlightRef.current = null
+        })
+    }
+
+    const w = window as any
+    if (typeof w?.requestIdleCallback === 'function') {
+      const id = w.requestIdleCallback(run, { timeout: 1200 })
+      return () => {
+        cancelled = true
+        if (typeof w?.cancelIdleCallback === 'function') w.cancelIdleCallback(id)
+      }
+    }
+
+    const t = window.setTimeout(run, 350)
+    return () => {
+      cancelled = true
+      window.clearTimeout(t)
+    }
+  }, [scheduleLoadedForDate, selectedDate, supabase, loadScheduleForDate, toDateKey])
 
   // -----------------------------------------------------------------------------
   // Thin top loading bar (stage-driven, shown for everyone during Save/Copy)
@@ -2428,8 +2620,17 @@ function SchedulePageContent() {
       bedsForRelieving,
       wards: wards.map(w => ({ name: w.name, team_assignments: w.team_assignments })),
     }
-    const bedResult = allocateBeds(bedContext)
-    setBedAllocations(bedResult.allocations)
+    let cancelled = false
+    void (async () => {
+      const { allocateBeds } = await import('@/lib/algorithms/bedAllocation')
+      if (cancelled) return
+      const bedResult = allocateBeds(bedContext)
+      if (cancelled) return
+      setBedAllocations(bedResult.allocations)
+    })().catch((e) => console.error('Failed to recompute bed allocations:', e))
+    return () => {
+      cancelled = true
+    }
   }, [
     bedCountsOverridesByTeam,
     hasLoadedStoredCalculations,
@@ -2676,6 +2877,7 @@ function SchedulePageContent() {
         includeSPTAllocation: false, // Skip SPT allocation in step 1
       }
 
+      const { allocateTherapists } = await import('@/lib/algorithms/therapistAllocation')
       const therapistResult = allocateTherapists(therapistContext)
 
       // Group therapist allocations by team and add staff info
@@ -2823,6 +3025,7 @@ function SchedulePageContent() {
         // onTieBreak removed - Step 2 does not trigger tie-breakers (handled in Step 3)
       }
 
+      const { allocatePCA } = await import('@/lib/algorithms/pcaAllocation')
       const pcaResult = await allocatePCA(pcaContext)
 
       // Extract and store errors (for full allocation - includes both phases)
@@ -2960,6 +3163,7 @@ function SchedulePageContent() {
           wards: wards.map(w => ({ name: w.name, team_assignments: w.team_assignments })),
         }
 
+        const { allocateBeds } = await import('@/lib/algorithms/bedAllocation')
         const bedResult = allocateBeds(bedContext)
         setBedAllocations(bedResult.allocations)
       } else {
@@ -4374,6 +4578,7 @@ function SchedulePageContent() {
             (sptRes as any).error
           if (firstError) return
 
+          const { diffBaselineSnapshot } = await import('@/lib/features/schedule/snapshotDiff')
           const diff = diffBaselineSnapshot({
             snapshot: baselineSnapshot as any,
             live: {
@@ -4501,6 +4706,7 @@ function SchedulePageContent() {
         return
       }
 
+      const { diffBaselineSnapshot } = await import('@/lib/features/schedule/snapshotDiff')
       const diff = diffBaselineSnapshot({
         snapshot: baselineSnapshot,
         live: {
@@ -7640,6 +7846,7 @@ function SchedulePageContent() {
           perfTick={perfTick}
           perfStats={perfStatsRef.current}
           selectedDate={selectedDate}
+          selectedDateKey={toDateKey(selectedDate)}
           weekdayName={weekdayName}
           isDateHighlighted={isDateHighlighted}
           calendarButtonRef={calendarButtonRef}
@@ -7954,6 +8161,11 @@ function SchedulePageContent() {
             canGoNext={currentStep !== 'review'}
             canGoPrevious={currentStep !== 'leave-fte'}
             onInitialize={handleInitializeAlgorithm}
+            onInitializePrefetch={() => {
+              if (currentStep === 'therapist-pca') prefetchStep2Algorithms()
+              else if (currentStep === 'floating-pca') prefetchStep3Algorithms()
+              else if (currentStep === 'bed-relieving') prefetchBedAlgorithm()
+            }}
             onClearStep={handleClearStep}
             showClear={showClearForCurrentStep}
             isInitialized={initializedSteps.has(currentStep)}

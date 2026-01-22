@@ -24,6 +24,7 @@ interface StepIndicatorProps {
   canGoPrevious?: boolean
   className?: string
   onInitialize?: () => void
+  onInitializePrefetch?: () => void
   onClearStep?: (stepId: string) => void
   // Developer-only: show "Reset to baseline" under the Clear button.
   userRole?: 'developer' | 'admin' | 'user'
@@ -48,6 +49,7 @@ export function StepIndicator({
   canGoPrevious = true,
   className,
   onInitialize,
+  onInitializePrefetch,
   onClearStep,
   userRole,
   canResetToBaseline,
@@ -264,6 +266,8 @@ export function StepIndicator({
             {canInitialize ? (
               <Button
                 onClick={onInitialize}
+                onMouseEnter={onInitializePrefetch}
+                onFocus={onInitializePrefetch}
                 disabled={isLoading}
                 variant="default"
                 className="bg-blue-600 hover:bg-blue-700 text-white"

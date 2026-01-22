@@ -3,7 +3,7 @@
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
 **Last Updated**: 2026-01-22
-**Latest Phase**: Phase 29 - Access Settings, Rebased Copy, Drift Reminders, Cleanup
+**Latest Phase**: Phase 30 - Auth Fast-path, Adjacent Prefetch, Diagnostic Fixes
 **Note**: Legacy development phases (1-20) have been moved to `Journal_legacy.md` for reference.  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 16.1+ (App Router, Turbopack), React 19.2+, TypeScript, Supabase (PostgreSQL), Tailwind CSS 4.1+ (CSS-first config), ESLint 9+, Shadcn/ui
@@ -315,48 +315,6 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
 - **RPC support**: Added `supabase/migrations/update_copy_schedule_rpc_buffer_staff_ids.sql` to update `copy_schedule_v1` to exclude allocations via passed `buffer_staff_ids` rather than global `staff.status`.
 - **Cache gotcha**: After Sync/Publish “Pull Global → snapshot”, the Schedule page may still show older snapshot data until cache expires or you hard-refresh.
 
-## Phase 29: Account access settings, rebased copy, drift reminders, and cleanup delete
-
-### Account management + UI access settings
-- ✅ **Access Settings (UI-only RBAC)**: Added `access_control_settings` (single-row) with role hierarchy enforcement (Developer can set Admin/User; Admin can set User; User cannot edit).
-- ✅ **Feature catalog + hook**: Introduced `lib/access/*` (typed `FeatureId`, defaults, normalization) + `useAccessControl()` for consistent client gating.
-- ✅ **Account Management UI**: Added “Accounts / Access settings” tabs and an `AccessSettingsPanel` with role tabs (Developer/Admin/User) and toggle switches.
-- ✅ **Role badges**: Added role-specific badge variants (Developer/Admin/User) and applied consistently across the app.
-- ✅ **Dashboard access**: `/(dashboard)/dashboard` now uses `requireAuth()` so all authenticated roles can access the dashboard (visibility controlled by access settings).
-
-### Copy: rebase target baseline to current published (Global)
-- ✅ **Copy API rebases baseline**: After copy, target `baseline_snapshot` is overwritten from current published Global (fresh baseline), preventing legacy baselines from rolling forward.
-- ✅ **DB RPC support**: Updated `pull_global_to_snapshot_v1` to accept `p_include_buffer_staff` and (when false) downgrade buffer staff in the snapshot baseline.
-
-### Drift notifications (Schedule reminders)
-- ✅ **“Always” is diff-based**: When drift threshold is “Always”, Schedule computes a real `diffBaselineSnapshot` against live Global slices after initial paint and shows a reminder if non-empty.
-- ✅ **UI revamp**: Sync/Publish “Schedule setup reminders” now uses an **Off / Always / Custom** segmented control with clearer, non-technical copy; drift toast wording improved and includes “Show differences”.
-
-### Cleanup / delete empty schedules (test snapshots)
-- ✅ **History Cleanup mode**: History can optionally show “Step 1 or earlier + no allocations” schedules (hidden by default) and allow batch selection.
-- ✅ **Server-side safe delete**: `POST /api/schedules/cleanup-delete` revalidates eligibility (Step ≤ 1 + no allocations) and deletes `daily_schedules` rows; restricted to Admin/Developer.
-
-## Phase 29: Account access settings, rebased copy, drift reminders, and cleanup delete
-
-### Account management + UI access settings
-- ✅ **Access Settings (UI-only RBAC)**: Added `access_control_settings` (single-row) with role hierarchy enforcement (Developer can set Admin/User; Admin can set User; User cannot edit).
-- ✅ **Feature catalog + hook**: Introduced `lib/access/*` (typed `FeatureId`, defaults, normalization) + `useAccessControl()` for consistent client gating.
-- ✅ **Account Management UI**: Added “Accounts / Access settings” tabs and an `AccessSettingsPanel` with role tabs (Developer/Admin/User) and toggle switches.
-- ✅ **Role badges**: Added role-specific badge variants (Developer/Admin/User) and applied consistently across the app.
-- ✅ **Dashboard access**: `/(dashboard)/dashboard` now uses `requireAuth()` so all authenticated roles can access the dashboard (visibility controlled by access settings).
-
-### Copy: rebase target baseline to current published (Global)
-- ✅ **Copy API rebases baseline**: After copy, target `baseline_snapshot` is overwritten from current published Global (fresh baseline), preventing legacy baselines from rolling forward.
-- ✅ **DB RPC support**: Updated `pull_global_to_snapshot_v1` to accept `p_include_buffer_staff` and (when false) downgrade buffer staff in the snapshot baseline.
-
-### Drift notifications (Schedule reminders)
-- ✅ **“Always” is diff-based**: When drift threshold is “Always”, Schedule computes a real `diffBaselineSnapshot` against live Global slices after initial paint and shows a reminder if non-empty.
-- ✅ **UI revamp**: Sync/Publish “Schedule setup reminders” now uses an **Off / Always / Custom** segmented control with clearer, non-technical copy; drift toast wording improved and includes “Show differences”.
-
-### Cleanup / delete empty schedules (test snapshots)
-- ✅ **History Cleanup mode**: History can optionally show “Step 1 or earlier + no allocations” schedules (hidden by default) and allow batch selection.
-- ✅ **Server-side safe delete**: `POST /api/schedules/cleanup-delete` revalidates eligibility (Step ≤ 1 + no allocations) and deletes `daily_schedules` rows; restricted to Admin/Developer.
-
 ## Phase 29: Access Settings, Rebased Copy, Drift Reminders, Cleanup
 
 - **Account management + UI access settings**:
@@ -376,6 +334,23 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
 - **Delete snapshot / cleanup tool**:
   - Added **Cleanup mode** in History + server API delete (`/api/schedules/cleanup-delete`) for safe removal of schedules that have **no allocations** and are **Step 1 or earlier** (notes do not block deletion).
   - Server re-validates eligibility and restricts deletion to **admin/developer**. Sync/Publish links to cleanup.
+
+## Phase 30: Authentication Fast-path & Schedule Navigation Optimization
+
+- **Auth Fast-path (TTFB reduction)**:
+  - Implemented local Supabase access token verification in `lib/auth.ts` using `SUPABASE_JWT_SECRET` and `jose`.
+  - Bypasses the `supabase.auth.getUser()` network call for active sessions, significantly reducing TTFB on authenticated dashboard layouts.
+
+- **Adjacent Day Prefetch Restoration**:
+  - Restored background prefetching for the previous and next working day schedules in `app/(dashboard)/schedule/page.tsx`.
+  - **Lightweight Peeking**: Uses a direct DB query (`daily_schedules`) to check for existence and meaningful data (allocations or Step 1 edits) before triggering a full prefetch, avoiding accidental creation of empty schedule rows.
+  - **Meaningful Data Filter**: Only prefetches dates with active allocations or "Step 1" overrides (leave types, FTE adjustments).
+
+- **Load Diagnostics & Navigation Fixes**:
+  - **Pending State**: Added a "pending" state to the load diagnostics tooltip to immediately reflect the newly selected date during transitions, eliminating "stale" diagnostic displays.
+  - **Self-Cancellation Fix**: Fixed a bug where the date-load effect would re-run and abort in-flight loads on cache hits due to a dependency on `scheduleLoadedForDate`.
+  - **UI Clarity**: Renamed `cache` → `cache(read)`, added `(stored)` suffix for misses, and `(cached)`/`(not cached)` indicators for pending states.
+
 ---
 
 ## Data Architecture

@@ -21,13 +21,9 @@ import { ALLOCATION_STEPS, TEAMS } from '@/lib/features/schedule/constants'
 import { formatDateForInput, getWeekday } from '@/lib/features/schedule/date'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
-import { allocateTherapists, type StaffData, type AllocationContext } from '@/lib/algorithms/therapistAllocation'
-import {
-  allocatePCA,
-  type PCAAllocationContext,
-  type PCAData,
-} from '@/lib/algorithms/pcaAllocation'
-import { allocateBeds, type BedAllocationContext } from '@/lib/algorithms/bedAllocation'
+import type { StaffData, AllocationContext } from '@/lib/algorithms/therapistAllocation'
+import type { PCAAllocationContext, PCAData } from '@/lib/algorithms/pcaAllocation'
+import type { BedAllocationContext } from '@/lib/algorithms/bedAllocation'
 import { computeBedsDesignatedByTeam, computeBedsForRelieving } from '@/lib/features/schedule/bedMath'
 import { computeStep3ResetForReentry } from '@/lib/features/schedule/stepReset'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
@@ -50,6 +46,25 @@ import {
   sortPcaNonFloatingFirstOnly,
   sortPcaNonFloatingFirstThenName,
 } from '@/lib/features/schedule/grouping'
+
+let therapistAlgoImport: Promise<typeof import('@/lib/algorithms/therapistAllocation')> | null = null
+let pcaAlgoImport: Promise<typeof import('@/lib/algorithms/pcaAllocation')> | null = null
+let bedAlgoImport: Promise<typeof import('@/lib/algorithms/bedAllocation')> | null = null
+
+function loadTherapistAlgo() {
+  therapistAlgoImport = therapistAlgoImport ?? import('@/lib/algorithms/therapistAllocation')
+  return therapistAlgoImport
+}
+
+function loadPcaAlgo() {
+  pcaAlgoImport = pcaAlgoImport ?? import('@/lib/algorithms/pcaAllocation')
+  return pcaAlgoImport
+}
+
+function loadBedAlgo() {
+  bedAlgoImport = bedAlgoImport ?? import('@/lib/algorithms/bedAllocation')
+  return bedAlgoImport
+}
 
 export type ScheduleWardRow = {
   name: string
@@ -2538,6 +2553,7 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
         includeSPTAllocation: true,
       }
 
+      const { allocateTherapists } = await loadTherapistAlgo()
       const therapistResult = allocateTherapists(therapistContext)
 
       const therapistByTeam: Record<Team, (TherapistAllocation & { staff: Staff })[]> = createEmptyTeamRecordFactory(() => [])
@@ -2750,6 +2766,7 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
         existingAllocations: existingAllocsForSubstitution as any,
       }
 
+      const { allocatePCA } = await loadPcaAlgo()
       const pcaResult = await allocatePCA(pcaContext)
 
       // Extract and store errors (for Step 2 - non-floating PCA + special program)
@@ -2968,6 +2985,7 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
         userTeamOrder: args.userTeamOrder,
       }
 
+      const { allocatePCA } = await loadPcaAlgo()
       const pcaResult = await allocatePCA(pcaContext)
 
       const overrides = staffOverrides as any
@@ -3006,7 +3024,7 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
    * Step 4: Calculate bed relieving allocations (derived from therapist allocations + ward bed counts).
    * No UI required; page can still show a toast via `toast` callback.
    */
-  const runStep4BedRelieving = (args?: {
+  const runStep4BedRelieving = async (args?: {
     toast?: (title: string, variant?: any, description?: string) => void
   }) => {
     const toast = args?.toast ?? (() => {})
@@ -3040,6 +3058,7 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
       wards: (wards || []).map((w: any) => ({ name: w.name, team_assignments: w.team_assignments })),
     }
 
+    const { allocateBeds } = await loadBedAlgo()
     const bedResult = allocateBeds(bedContext)
     setBedAllocations(bedResult.allocations)
 
@@ -3101,6 +3120,19 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
     setTieBreakDecisions,
   }
 
+  const prefetchStep2Algorithms = () => {
+    void loadTherapistAlgo()
+    void loadPcaAlgo()
+  }
+
+  const prefetchStep3Algorithms = () => {
+    void loadPcaAlgo()
+  }
+
+  const prefetchBedAlgorithm = () => {
+    void loadBedAlgo()
+  }
+
   const actions = {
     // Date / navigation
     beginDateTransition,
@@ -3128,6 +3160,9 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
     runStep2TherapistAndNonFloatingPCA,
     runStep3FloatingPCA,
     runStep4BedRelieving,
+    prefetchStep2Algorithms,
+    prefetchStep3Algorithms,
+    prefetchBedAlgorithm,
 
     // Legacy helpers still referenced by page/controller
     buildBaselineSnapshotFromCurrentState,

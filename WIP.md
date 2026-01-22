@@ -1,6 +1,6 @@
 # Work In Progress - Schedule Page Refactor & Performance Roadmap
 
-**Last Updated**: 2026-01-18  
+**Last Updated**: 2026-01-22  
 **Status**: In progress  
 **Current Stage**: Stage 2 (Controller Hook + State Consolidation)
 
@@ -169,12 +169,27 @@ This document tracks a **step-by-step refactor + loading speed optimization plan
 
 ### 3B. Reduce main bundle / first JS cost
 
-- [ ] **3.3 Dynamic-import below-the-fold heavy UI**
-  - Candidates: `PCADedicatedScheduleTable`, `AllocationNotesBoard`, possibly `BedBlock`
-  - Provide skeletons so layout doesn’t jump
+- [x] **3.3 Dynamic-import below-the-fold heavy UI**
+  - `PCADedicatedScheduleTable` is now `next/dynamic` (ssr:false) and still gated by `deferBelowFold` with an existing skeleton placeholder.
+  - `AllocationNotesBoard` is now **read-only by default** (lightweight renderer) and lazy-loads the TipTap editor only when user clicks **Edit** (with loading skeleton).
+  - Notes editor is preloaded on hover/focus of the Edit button.
 
-- [ ] **3.4 Keep `page.tsx` imports lightweight**
-  - Large helper modules used only in certain actions should be imported inside those actions (lazy) if safe
+- [x] **3.4 Keep `page.tsx` imports lightweight**
+  - Step algorithms (`allocateTherapists` / `allocatePCA` / `allocateBeds`) are lazy-imported inside controller step runners; remaining legacy call sites in `schedule/page.tsx` also switched to dynamic imports.
+  - Heavy helpers are deferred:
+    - HK holidays (`date-holidays`) is now loaded only when Calendar/Copy UI opens.
+    - Snapshot diff logic is loaded only when drift check/diff popover needs it.
+  - Step “Initialize Algorithm” button now prefetches the relevant algorithm chunk on hover/focus.
+
+### 3C. Reduce TTFB for authenticated routes (auth fast-path)
+
+- [x] **3.5 Verify Supabase sessions locally with `SUPABASE_JWT_SECRET`**
+  - Goal: remove the high-latency auth network call that can dominate **TTFB** on dashboard layouts.
+  - Change: `lib/auth.ts#getCurrentUser()` now attempts a fast-path by verifying `session.access_token` locally via `jose` (`jwtVerify`) when `SUPABASE_JWT_SECRET` is set.
+  - Benefit: avoids `supabase.auth.getUser()` (network) in the common case; keeps a secure fallback to Supabase if local verification fails.
+  - Validation (manual):
+    - Log in, navigate to `/schedule` or `/dashboard`, and confirm **no** `supabase.co/auth/v1/user` call is made for basic auth checks (Network tab).
+    - Compare TTFB / Document Latency for authenticated navigations; expect meaningful reduction vs the network-validated path.
 
 **Exit criteria**: faster first paint and faster date switch under cache.
 

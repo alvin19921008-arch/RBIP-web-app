@@ -28,6 +28,11 @@ If you're working on a different laptop for the first time:
      ```
      NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url_here
      NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key_here
+     # Optional but strongly recommended for faster server-side auth (reduces TTFB):
+     # Used to verify Supabase access tokens locally (no network call).
+     SUPABASE_JWT_SECRET=your_supabase_jwt_secret_here
+     # Optional for server-only admin routes/scripts (never expose to client):
+     SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
      ```
    - Get these values from: https://supabase.com/dashboard/project/YOUR_PROJECT_ID/settings/api
 

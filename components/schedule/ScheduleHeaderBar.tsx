@@ -26,6 +26,7 @@ export function ScheduleHeaderBar(props: {
   // Title + developer diagnostics
   userRole: 'developer' | 'admin' | 'user'
   showLoadDiagnostics?: boolean
+  currentDateKey?: string
   lastLoadTiming: any
   navToScheduleTiming: any
   perfTick: number
@@ -33,6 +34,7 @@ export function ScheduleHeaderBar(props: {
 
   // Date controls
   selectedDate: Date
+  selectedDateKey?: string
   weekdayName: string
   isDateHighlighted: boolean
   calendarButtonRef: React.RefObject<HTMLButtonElement | null>
@@ -83,6 +85,7 @@ export function ScheduleHeaderBar(props: {
             userRole={props.userRole}
             showDiagnostics={props.showLoadDiagnostics}
             title="Schedule Allocation"
+            currentDateKey={props.selectedDateKey ?? props.currentDateKey}
             lastLoadTiming={props.lastLoadTiming}
             navToScheduleTiming={props.navToScheduleTiming}
             perfTick={props.perfTick}
