@@ -148,8 +148,7 @@ CREATE TABLE schedule_pca_allocations (
   leave_type leave_type,
   special_program_ids UUID[],
   invalid_slot INTEGER,
-  leave_comeback_time TEXT,
-  leave_mode TEXT
+  -- leave_comeback_time / leave_mode removed (legacy feature)
 );
 
 -- PCA unmet needs tracking

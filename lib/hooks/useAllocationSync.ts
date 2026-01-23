@@ -27,8 +27,6 @@ export interface StaffOverride {
   fteSubtraction?: number
   availableSlots?: number[]
   invalidSlot?: number
-  leaveComebackTime?: string
-  isLeave?: boolean
   therapistTeamFTEByTeam?: Partial<Record<Team, number>>
   therapistNoAllocation?: boolean
 }

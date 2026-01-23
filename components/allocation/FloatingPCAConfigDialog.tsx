@@ -296,22 +296,54 @@ export function FloatingPCAConfigDialog({
         .map(s => s.id)
     )
     
-    // Calculate assigned slots per team from existingAllocations
-    existingAllocations.forEach(alloc => {
-      if (bufferFloatingPCAIds.has(alloc.staff_id)) {
-        TEAMS.forEach(team => {
-          let bufferSlots = 0
-          if (alloc.slot1 === team) bufferSlots++
-          if (alloc.slot2 === team) bufferSlots++
-          if (alloc.slot3 === team) bufferSlots++
-          if (alloc.slot4 === team) bufferSlots++
-          result[team] += bufferSlots * 0.25
-        })
-      }
+    // Count buffer-floating manual assignments from BOTH:
+    // - existingAllocations (already materialized allocations)
+    // - staffOverrides (slotOverrides / bufferManualSlotOverrides), which can exist even if allocations weren't rebuilt yet
+    //
+    // IMPORTANT: this "Assigned" value is intended to explain Step 3.1 pending reductions due to Step 3.0,
+    // and should NOT include special-program assignments / non-floating / substitution logic.
+    const slotsByPcaIdByTeam = new Map<string, Map<Team, Set<1 | 2 | 3 | 4>>>()
+    const ensure = (pcaId: string, team: Team) => {
+      const byTeam = slotsByPcaIdByTeam.get(pcaId) ?? new Map<Team, Set<1 | 2 | 3 | 4>>()
+      const set = byTeam.get(team) ?? new Set<1 | 2 | 3 | 4>()
+      byTeam.set(team, set)
+      slotsByPcaIdByTeam.set(pcaId, byTeam)
+      return set
+    }
+
+    // 1) From allocations
+    existingAllocations.forEach((alloc) => {
+      if (!bufferFloatingPCAIds.has(alloc.staff_id)) return
+      TEAMS.forEach((team) => {
+        if (alloc.slot1 === team) ensure(alloc.staff_id, team).add(1)
+        if (alloc.slot2 === team) ensure(alloc.staff_id, team).add(2)
+        if (alloc.slot3 === team) ensure(alloc.staff_id, team).add(3)
+        if (alloc.slot4 === team) ensure(alloc.staff_id, team).add(4)
+      })
+    })
+
+    // 2) From overrides (slotOverrides / bufferManualSlotOverrides)
+    bufferFloatingPCAIds.forEach((pcaId) => {
+      const o: any = (staffOverrides as any)?.[pcaId]
+      const manual = o?.bufferManualSlotOverrides ?? o?.slotOverrides
+      if (!manual) return
+      TEAMS.forEach((team) => {
+        if (manual.slot1 === team) ensure(pcaId, team).add(1)
+        if (manual.slot2 === team) ensure(pcaId, team).add(2)
+        if (manual.slot3 === team) ensure(pcaId, team).add(3)
+        if (manual.slot4 === team) ensure(pcaId, team).add(4)
+      })
+    })
+
+    // Reduce into per-team totals
+    slotsByPcaIdByTeam.forEach((byTeam) => {
+      byTeam.forEach((slots, team) => {
+        result[team] += slots.size * 0.25
+      })
     })
     
     return result
-  }, [bufferStaff, existingAllocations])
+  }, [bufferStaff, existingAllocations, staffOverrides])
   
   // Calculate non-floating PCA assigned (check if any non-floating PCA exists in allocations)
   // Since existingAllocations includes non-floating PCA from Step 2, we can check by looking at floatingPCAs

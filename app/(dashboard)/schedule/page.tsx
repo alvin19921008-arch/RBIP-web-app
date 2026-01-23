@@ -51,6 +51,7 @@ import { SnapshotDiffPopover } from '@/components/schedule/SnapshotDiffPopover'
 import { ScheduleHeaderBar } from '@/components/schedule/ScheduleHeaderBar'
 import { ScheduleDialogsLayer } from '@/components/schedule/ScheduleDialogsLayer'
 import { ScheduleMainLayout } from '@/components/schedule/ScheduleMainLayout'
+import { DevLeaveSimPanel } from '@/components/schedule/DevLeaveSimPanel'
 import { Save, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -413,6 +414,7 @@ function SchedulePageContent() {
   const [showBackButton, setShowBackButton] = useState(false)
   const gridLoadingUsesLocalBarRef = useRef(false)
   const [userRole, setUserRole] = useState<'developer' | 'admin' | 'user'>('user')
+  const [devLeaveSimOpen, setDevLeaveSimOpen] = useState(false)
   const { actionToast, actionToastContainerRef, showActionToast, dismissActionToast, handleToastExited } = useActionToast()
   const highlightTimerRef = useRef<any>(null)
   const [highlightDateKey, setHighlightDateKey] = useState<string | null>(null)
@@ -677,23 +679,12 @@ function SchedulePageContent() {
 
         setStaffOverrides(mergedOverrides)
 
-        // Reset Step 2-related data: clear availableSlots for floating PCAs (preserve buffer PCA)
-        const cleanedOverrides = { ...mergedOverrides }
-        const floatingPCAIds = new Set(
-          staff
-            .filter(s => s.rank === 'PCA' && s.floating)
-            .map(s => s.id)
-        )
-        floatingPCAIds.forEach(pcaId => {
-          if (cleanedOverrides[pcaId]) {
-            const staffMember = staff.find(s => s.id === pcaId)
-            const isBuffer = staffMember?.status === 'buffer'
-            if (isBuffer) return
-            const { availableSlots, ...otherOverrides } = cleanedOverrides[pcaId]
-            cleanedOverrides[pcaId] = otherOverrides
-          }
+        // RESET Step 2-related data when initializing the algorithm (shared helper).
+        // IMPORTANT: preserve leave-derived availability (e.g. half-day leave availableSlots) for floating PCAs.
+        const cleanedOverrides = resetStep2OverridesForAlgoEntry({
+          staffOverrides: mergedOverrides,
+          allStaff: [...staff, ...bufferStaff],
         })
-
         setStaffOverrides(cleanedOverrides)
 
         await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides)
@@ -1687,8 +1678,6 @@ function SchedulePageContent() {
             if (typeof o.fteRemaining === 'number') return true
             if (o.invalidSlot != null) return true
             if (Array.isArray(o.invalidSlots) && o.invalidSlots.length > 0) return true
-            if (o.leaveComebackTime != null) return true
-            if (o.isLeave != null) return true
           }
           return false
         }
@@ -2822,7 +2811,7 @@ function SchedulePageContent() {
     }
   }
 
-  const generateAllocationsWithOverrides = async (overrides: Record<string, { leaveType: LeaveType | null; fteRemaining: number; team?: Team; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean }>) => {
+  const generateAllocationsWithOverrides = async (overrides: Record<string, { leaveType: LeaveType | null; fteRemaining: number; team?: Team; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number }>) => {
     if (staff.length === 0) return
 
     setLoading(true)
@@ -2941,8 +2930,6 @@ function SchedulePageContent() {
             team: s.team,
             availableSlots: override?.availableSlots,
             invalidSlot: override?.invalidSlot,
-            leaveComebackTime: override?.leaveComebackTime,
-            isLeave: override?.isLeave,
           }
         })
 
@@ -3402,8 +3389,6 @@ function SchedulePageContent() {
           is_available: effectiveBaseFTERemaining > 0,
           availableSlots: availableSlots,
           invalidSlot: override?.invalidSlot,
-          leaveComebackTime: override?.leaveComebackTime,
-          isLeave: override?.isLeave,
           floor_pca: s.floor_pca || null,  // Include floor_pca for floor matching detection
         }
       })
@@ -4368,6 +4353,34 @@ function SchedulePageContent() {
   const weekdayName = WEEKDAY_NAMES[WEEKDAYS.indexOf(currentWeekday)]
 
   const allPCAAllocationsFlat = useMemo(() => Object.values(pcaAllocations).flat(), [pcaAllocations])
+
+  // Step 3.1 "final" order (after user adjustments) for tooltip/display.
+  const step3OrderPositionByTeam = useMemo(() => {
+    const map: Record<Team, number | undefined> = { FO: undefined, SMM: undefined, SFM: undefined, CPPC: undefined, MC: undefined, GMC: undefined, NSM: undefined, DRO: undefined }
+    if (!teamAllocationOrder || teamAllocationOrder.length === 0) return map
+    teamAllocationOrder.forEach((t, idx) => {
+      map[t] = idx + 1
+    })
+    return map
+  }, [teamAllocationOrder])
+
+  // Remaining floating PCA slot capacity (FTE) after current allocations (for diagnostics/tooltips).
+  const floatingPoolRemainingFte = useMemo(() => {
+    const byId = new Map<string, number>()
+    for (const alloc of allPCAAllocationsFlat as any[]) {
+      const staffRow = (alloc as any)?.staff
+      if (!staffRow?.floating) continue
+      const id = String((alloc as any)?.staff_id ?? '')
+      if (!id) continue
+      const rem = typeof (alloc as any)?.fte_remaining === 'number' ? (alloc as any).fte_remaining : 0
+      byId.set(id, Math.max(byId.get(id) ?? 0, rem))
+    }
+    let sum = 0
+    byId.forEach((v) => {
+      sum += Math.max(0, v)
+    })
+    return sum
+  }, [allPCAAllocationsFlat])
 
   const onEditTherapistByTeam = useMemo(() => {
     const next = createEmptyTeamRecordFactory<(staffId: string, e?: React.MouseEvent) => void>(() => () => {})
@@ -5527,8 +5540,6 @@ function SchedulePageContent() {
         leave_type: null,
         special_program_ids: null,
         invalid_slot: undefined,
-        leave_comeback_time: undefined,
-        leave_mode: undefined,
         fte_subtraction: 0,
         staff: staffMember,
       }
@@ -5740,8 +5751,6 @@ function SchedulePageContent() {
           leave_type: null,
           special_program_ids: null,
           invalid_slot: undefined,
-          leave_comeback_time: undefined,
-          leave_mode: undefined,
           fte_subtraction: 0,
           staff: staffMember,
         } as any)
@@ -7860,6 +7869,22 @@ function SchedulePageContent() {
           onToggleSnapshotDiff={() => setSnapshotDiffOpen((v) => !v)}
           rightActions={
             <>
+              {userRole === 'developer' ? (
+                <Tooltip
+                  side="bottom"
+                  content="Developer-only: seeded leave simulation harness (generate/apply/replay + invariants)."
+                >
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => setDevLeaveSimOpen(true)}
+                    disabled={saving || copying}
+                  >
+                    Leave Sim
+                  </Button>
+                </Tooltip>
+              ) : null}
+
               {/* Copy dropdown button */}
               <div className="relative">
                 {access.can('schedule.diagnostics.copy') || access.can('schedule.diagnostics.snapshot-health') ? (
@@ -8136,6 +8161,377 @@ function SchedulePageContent() {
           result={snapshotDiffResult}
           onClose={() => setSnapshotDiffOpen(false)}
         />
+
+        {userRole === 'developer' ? (
+          <DevLeaveSimPanel
+            open={devLeaveSimOpen}
+            onOpenChange={setDevLeaveSimOpen}
+            userRole={userRole}
+            selectedDate={selectedDate}
+            selectedDateKey={toDateKey(selectedDate)}
+            weekday={currentWeekday}
+            staff={staff}
+            specialPrograms={specialPrograms}
+            sptAllocations={sptAllocations}
+            staffOverrides={staffOverrides as any}
+            setStaffOverrides={(next) => setStaffOverrides(next as any)}
+            clearDomainFromStep={(stepId) => scheduleActions.clearDomainFromStep(stepId as any)}
+            goToStep={goToStep as any}
+            setInitializedSteps={(next) => setInitializedSteps(next as any)}
+            setStepStatus={(next) => setStepStatus(next as any)}
+            setStep2Result={(next) => setStep2Result(next as any)}
+            setHasSavedAllocations={(next) => setHasSavedAllocations(next as any)}
+            setTieBreakDecisions={(next) => setTieBreakDecisions(next as any)}
+            recalculateScheduleCalculations={recalculateScheduleCalculations}
+            runStep2={async ({ cleanedOverrides }) => {
+              return await scheduleActions.runStep2TherapistAndNonFloatingPCA({
+                cleanedOverrides: cleanedOverrides as any,
+                toast: showActionToast,
+              })
+            }}
+            runStep2Auto={async ({ autoStep20, autoStep21 }) => {
+              // Auto Step 2.1: skip special program override wizard and proceed.
+              // Auto Step 2.0: auto-handle substitution decisions (no dialog).
+
+              // If the caller wants the real special-program override dialog, open it and await results.
+              let baseOverrides: any = { ...(staffOverrides as any) }
+
+              const weekday = getWeekday(selectedDate)
+              const activeSpecialPrograms = specialPrograms.filter((p) => (p as any)?.weekdays?.includes?.(weekday))
+
+              if (!autoStep21 && activeSpecialPrograms.length > 0) {
+                const overridesFromDialog = await new Promise<Record<string, any>>((resolve) => {
+                  const resolver = (overrides: Record<string, any>) => resolve(overrides || {})
+                  setSpecialProgramOverrideResolver(() => resolver as any)
+                  specialProgramOverrideResolverRef.current = resolver as any
+                  prefetchSpecialProgramOverrideDialog().catch(() => {})
+                  setShowSpecialProgramOverrideDialog(true)
+                })
+
+                Object.entries(overridesFromDialog || {}).forEach(([staffId, override]) => {
+                  baseOverrides[staffId] = {
+                    ...(baseOverrides[staffId] ?? { leaveType: null, fteRemaining: 1.0 }),
+                    ...(override as any),
+                  }
+                })
+              }
+
+              const cleanedOverrides = resetStep2OverridesForAlgoEntry({
+                staffOverrides: baseOverrides,
+                allStaff: [...staff, ...bufferStaff],
+              })
+              setStaffOverrides(cleanedOverrides as any)
+
+              if (!autoStep20) {
+                // Use the real substitution wizard flow.
+                await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides as any)
+                return
+              }
+
+              const autoSelectSubstitutions = (params: {
+                teams: Team[]
+                substitutionsByTeam: Record<Team, any[]>
+              }): Record<string, Array<{ floatingPCAId: string; slots: number[] }>> => {
+                const selections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>> = {}
+                const used = new Set<string>() // `${floatingId}:${slot}`
+
+                const scoreCandidate = (c: any, missing: number[]) => {
+                  const avail: number[] = Array.isArray(c?.availableSlots) ? c.availableSlots : []
+                  const coverage = missing.filter((s) => avail.includes(s)).length
+                  const preferred = c?.isPreferred ? 1 : 0
+                  const floor = c?.isFloorPCA ? 1 : 0
+                  return { preferred, floor, coverage, name: String(c?.name ?? '') }
+                }
+
+                for (const team of params.teams) {
+                  const subs = params.substitutionsByTeam?.[team] ?? []
+                  for (const sub of subs) {
+                    const key = `${team}-${sub.nonFloatingPCAId}`
+                    const missingSlots: number[] = Array.isArray(sub?.missingSlots) ? sub.missingSlots : []
+                    const candidates: any[] = Array.isArray(sub?.availableFloatingPCAs) ? sub.availableFloatingPCAs : []
+                    if (missingSlots.length === 0 || candidates.length === 0) continue
+
+                    let remaining = [...missingSlots]
+                    const picked: Array<{ floatingPCAId: string; slots: number[] }> = []
+
+                    const sorted = [...candidates].sort((a, b) => {
+                      const sa = scoreCandidate(a, missingSlots)
+                      const sb = scoreCandidate(b, missingSlots)
+                      if (sa.preferred !== sb.preferred) return sb.preferred - sa.preferred
+                      if (sa.floor !== sb.floor) return sb.floor - sa.floor
+                      if (sa.coverage !== sb.coverage) return sb.coverage - sa.coverage
+                      return sa.name.localeCompare(sb.name)
+                    })
+
+                    for (const c of sorted) {
+                      if (remaining.length === 0) break
+                      const id = String(c?.id ?? '')
+                      if (!id) continue
+                      const avail: number[] = Array.isArray(c?.availableSlots) ? c.availableSlots : []
+                      const slots = remaining.filter((s) => avail.includes(s) && !used.has(`${id}:${s}`))
+                      if (slots.length === 0) continue
+                      slots.forEach((s) => used.add(`${id}:${s}`))
+                      picked.push({ floatingPCAId: id, slots })
+                      remaining = remaining.filter((s) => !slots.includes(s))
+                    }
+
+                    if (picked.length > 0) selections[key] = picked
+                  }
+                }
+
+                return selections
+              }
+
+              await scheduleActions.runStep2TherapistAndNonFloatingPCA({
+                cleanedOverrides: cleanedOverrides as any,
+                toast: showActionToast,
+                onNonFloatingSubstitutionWizard: async ({ teams, substitutionsByTeam }) => {
+                  return autoSelectSubstitutions({ teams, substitutionsByTeam: substitutionsByTeam as any })
+                },
+              })
+            }}
+            runStep3={async ({ onTieBreak }) => {
+              await scheduleActions.runStep3FloatingPCA({
+                onTieBreak: onTieBreak as any,
+              })
+            }}
+            runStep3V2Auto={async ({ autoStep32, autoStep33, bufferPreAssignRatio }) => {
+              // Build defaults similar to the wizard (3.1/3.4), optionally auto-applying 3.0/3.2/3.3.
+              const pending0 = pendingPCAFTEPerTeam
+              const teamOrder = [...TEAMS].sort((a, b) => {
+                const d = (pending0[b] || 0) - (pending0[a] || 0)
+                if (d !== 0) return d
+                return TEAMS.indexOf(a) - TEAMS.indexOf(b)
+              })
+
+              const floatingPCAs = buildPCADataFromCurrentState().filter((p) => p.floating)
+              const baseExistingAllocations = recalculateFromCurrentState().existingAllocations
+
+              const { allocateFloatingPCA_v2 } = await import('@/lib/algorithms/pcaAllocation')
+              const { computeReservations, computeAdjacentSlotReservations, executeSlotAssignments } = await import('@/lib/utils/reservationLogic')
+              const {
+                recordAssignment,
+                getTeamPreferenceInfo,
+                getTeamFloor,
+                isFloorPCAForTeam,
+                finalizeTrackerSummary,
+              } = await import('@/lib/utils/floatingPCAHelpers')
+
+              // Mutable working state across 3.0/3.2/3.3
+              let currentPending: Record<Team, number> = { ...pending0 }
+              let currentAllocations: any[] = baseExistingAllocations.map((a: any) => ({ ...a }))
+
+              const step30Assignments: Array<{ team: Team; slot: number; pcaId: string; pcaName: string }> = []
+              const step32Assignments: Array<{ team: Team; slot: number; pcaId: string; pcaName: string }> = []
+              const step33Assignments: Array<{ team: Team; slot: number; pcaId: string; pcaName: string }> = []
+
+              const pickNextTeam = (pending: Record<Team, number>): Team | null => {
+                // Choose the highest pending team by current teamOrder.
+                let best: Team | null = null
+                let bestVal = -Infinity
+                for (const t of teamOrder) {
+                  const v = pending[t] || 0
+                  if (v > bestVal) {
+                    bestVal = v
+                    best = t
+                  }
+                }
+                if (!best) return null
+                return (pending[best] || 0) > 0 ? best : null
+              }
+
+              // Step 3.0 (simulated): pre-assign some buffer-floating PCA slots before 3.1.
+              const ratio = Math.max(0, Math.min(1, bufferPreAssignRatio || 0))
+              if (ratio > 0) {
+                const bufferFloatingPCAs = (bufferStaff || []).filter(
+                  (s) => s.rank === 'PCA' && s.status === 'buffer' && (s as any).floating
+                )
+                const byId = new Map<string, any>(floatingPCAs.map((p: any) => [p.id, p]))
+                const countAssignedSlots = (alloc: any) => {
+                  let n = 0
+                  if (alloc.slot1) n++
+                  if (alloc.slot2) n++
+                  if (alloc.slot3) n++
+                  if (alloc.slot4) n++
+                  return n
+                }
+
+                for (const staffRow of bufferFloatingPCAs) {
+                  const p = byId.get(staffRow.id)
+                  if (!p) continue
+                  const totalSlots = Math.max(0, Math.min(4, Math.round((p.fte_pca || 0) / 0.25)))
+                  if (totalSlots <= 0) continue
+
+                  const existing = currentAllocations.find((a: any) => a.staff_id === staffRow.id)
+                  const already = existing ? countAssignedSlots(existing) : 0
+                  const remainingSlots = Math.max(0, totalSlots - already)
+                  const target = Math.max(0, Math.min(remainingSlots, Math.floor(remainingSlots * ratio)))
+                  if (target <= 0) continue
+
+                  // Find which slots are free.
+                  const taken = new Set<number>()
+                  if (existing?.slot1) taken.add(1)
+                  if (existing?.slot2) taken.add(2)
+                  if (existing?.slot3) taken.add(3)
+                  if (existing?.slot4) taken.add(4)
+                  const freeSlots = [1, 2, 3, 4].filter((s) => !taken.has(s)).slice(0, target)
+
+                  for (const slot of freeSlots) {
+                    const team = pickNextTeam(currentPending)
+                    if (!team) break
+                    const assignment = { team, slot, pcaId: staffRow.id, pcaName: p.name }
+                    step30Assignments.push(assignment)
+                    const r = executeSlotAssignments([assignment], currentPending, currentAllocations, floatingPCAs as any)
+                    currentPending = r.updatedPendingFTE as any
+                    currentAllocations = r.updatedAllocations as any
+                  }
+                }
+              }
+
+              // Step 3.2 (auto): preferred PCA + preferred slot reservations.
+              if (autoStep32) {
+                const res = computeReservations(
+                  pcaPreferences,
+                  currentPending,
+                  floatingPCAs as any,
+                  currentAllocations as any,
+                  staffOverrides as any
+                )
+                const used = new Set<string>() // pcaId:slot
+                for (const team of teamOrder) {
+                  const info = res.teamReservations[team]
+                  if (!info) continue
+                  const slot = info.slot
+                  const candidates = [...(info.pcaIds || [])].sort((a, b) => {
+                    const an = info.pcaNames?.[a] || a
+                    const bn = info.pcaNames?.[b] || b
+                    if (an !== bn) return an.localeCompare(bn)
+                    return a.localeCompare(b)
+                  })
+                  for (const pcaId of candidates) {
+                    const key = `${pcaId}:${slot}`
+                    if (used.has(key)) continue
+                    used.add(key)
+                    const assignment = { team, slot, pcaId, pcaName: info.pcaNames?.[pcaId] || 'Unknown PCA' }
+                    step32Assignments.push(assignment)
+                    const r = executeSlotAssignments([assignment], currentPending, currentAllocations, floatingPCAs as any)
+                    currentPending = r.updatedPendingFTE as any
+                    currentAllocations = r.updatedAllocations as any
+                    break
+                  }
+                }
+              }
+
+              // Step 3.3 (auto): adjacent-slot reservations from special program PCAs.
+              if (autoStep33) {
+                // Keep selecting greedily until no more valid options.
+                const used = new Set<string>()
+                const markUsedFromAllocations = () => {
+                  used.clear()
+                  for (const alloc of currentAllocations as any[]) {
+                    if (alloc.slot1) used.add(`${alloc.staff_id}:1`)
+                    if (alloc.slot2) used.add(`${alloc.staff_id}:2`)
+                    if (alloc.slot3) used.add(`${alloc.staff_id}:3`)
+                    if (alloc.slot4) used.add(`${alloc.staff_id}:4`)
+                  }
+                }
+                markUsedFromAllocations()
+
+                while (true) {
+                  const adj = computeAdjacentSlotReservations(
+                    currentPending,
+                    currentAllocations as any,
+                    floatingPCAs as any,
+                    specialPrograms as any
+                  )
+                  if (!adj.hasAnyAdjacentReservations) break
+
+                  let picked = false
+                  for (const team of teamOrder) {
+                    const pending = currentPending[team] || 0
+                    if (pending <= 0) continue
+                    const options = [...(adj.adjacentReservations[team] || [])].sort((a, b) => {
+                      if (a.pcaName !== b.pcaName) return a.pcaName.localeCompare(b.pcaName)
+                      return a.adjacentSlot - b.adjacentSlot
+                    })
+                    for (const opt of options) {
+                      const slot = opt.adjacentSlot
+                      const key = `${opt.pcaId}:${slot}`
+                      if (used.has(key)) continue
+                      const assignment = { team, slot, pcaId: opt.pcaId, pcaName: opt.pcaName }
+                      step33Assignments.push(assignment)
+                      const r = executeSlotAssignments([assignment], currentPending, currentAllocations, floatingPCAs as any)
+                      currentPending = r.updatedPendingFTE as any
+                      currentAllocations = r.updatedAllocations as any
+                      markUsedFromAllocations()
+                      picked = true
+                      break
+                    }
+                  }
+
+                  if (!picked) break
+                }
+              }
+
+              const result = await allocateFloatingPCA_v2({
+                teamOrder,
+                currentPendingFTE: currentPending,
+                existingAllocations: currentAllocations as any,
+                pcaPool: floatingPCAs as any,
+                pcaPreferences,
+                specialPrograms,
+              })
+
+              // Add Step 3.0/3.2/3.3 assignments into tracker for visibility, matching wizard behavior.
+              const allocationOrderMap = new Map<Team, number>()
+              teamOrder.forEach((team, idx) => allocationOrderMap.set(team, idx + 1))
+
+              const addAssignmentsToTracker = (assignments: Array<{ team: Team; slot: number; pcaId: string; pcaName: string }>, assignedIn: 'step30' | 'step32' | 'step33') => {
+                for (const assignment of assignments) {
+                  const pca = (floatingPCAs as any[]).find((p) => p.id === assignment.pcaId)
+                  if (!pca) continue
+                  const teamPref = getTeamPreferenceInfo(assignment.team, pcaPreferences)
+                  const teamFloor = getTeamFloor(assignment.team, pcaPreferences)
+                  const isPreferredPCA = teamPref.preferredPCAIds.includes(assignment.pcaId)
+                  const isPreferredSlot = teamPref.preferredSlot === assignment.slot
+                  recordAssignment(result.tracker as any, assignment.team, {
+                    slot: assignment.slot,
+                    pcaId: assignment.pcaId,
+                    pcaName: assignment.pcaName,
+                    assignedIn,
+                    wasPreferredSlot: isPreferredSlot,
+                    wasPreferredPCA: isPreferredPCA,
+                    wasFloorPCA: isFloorPCAForTeam(pca, teamFloor),
+                    allocationOrder: allocationOrderMap.get(assignment.team),
+                    isBufferAssignment: assignedIn === 'step30',
+                  } as any)
+                }
+              }
+
+              addAssignmentsToTracker(step30Assignments, 'step30')
+              addAssignmentsToTracker(step32Assignments, 'step32')
+              addAssignmentsToTracker(step33Assignments, 'step33')
+              finalizeTrackerSummary(result.tracker as any)
+
+              await handleFloatingPCAConfigSave(result, teamOrder, step32Assignments as any, step33Assignments as any)
+            }}
+            openStep3Wizard={() => {
+              if (!step2Result) {
+                showActionToast('Step 2 must be completed before Step 3.', 'warning')
+                return
+              }
+              goToStep('floating-pca' as any)
+              setDevLeaveSimOpen(false)
+              setFloatingPCAConfigOpen(true)
+            }}
+            runStep4={async () => {
+              await runStep4BedRelieving({ toast: showActionToast })
+            }}
+            therapistAllocationsByTeam={therapistAllocations as any}
+            pcaAllocationsByTeam={pcaAllocations as any}
+            calculationsByTeam={calculations as any}
+          />
+        ) : null}
 
         {/* Step Indicator with Navigation */}
         <div className="mb-4">
@@ -8611,6 +9007,9 @@ function SchedulePageContent() {
                           weekday={currentWeekday}
                           externalHover={popoverDragHoverTeam === team}
                           allocationLog={allocationTracker?.[team]}
+                          step3OrderPosition={step3OrderPositionByTeam[team]}
+                          pendingPcaFte={pendingPCAFTEPerTeam?.[team]}
+                          floatingPoolRemainingFte={floatingPoolRemainingFte}
                       />
                       </Fragment>
                     ))}

@@ -65,8 +65,6 @@ export interface DbPCAAllocation {
   leave_type: DbLeaveType | null  // DB enum only
   special_program_ids: string[] | null  // UUID[]
   invalid_slot: number | null  // INTEGER
-  leave_comeback_time: string | null  // TEXT
-  leave_mode: string | null  // TEXT - 'leave' or 'come_back'
 }
 
 export interface DbDailySchedule {
@@ -374,8 +372,6 @@ export interface PreparePCAAllocationOptions {
     leave_type: LeaveType
     special_program_ids: string[] | null
     invalid_slot?: number | null
-    leave_comeback_time?: string | null
-    leave_mode?: string | null
   }
   specialPrograms: SpecialProgramRef[]
 }
@@ -417,8 +413,6 @@ export function preparePCAAllocationForDb(
     leave_type: toDbLeaveType(allocation.leave_type),
     special_program_ids: programIds,
     invalid_slot: allocation.invalid_slot ?? null,
-    leave_comeback_time: allocation.leave_comeback_time ?? null,
-    leave_mode: allocation.leave_mode ?? null,
   }
 }
 

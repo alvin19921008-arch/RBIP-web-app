@@ -89,10 +89,8 @@ export type StaffOverrideState = {
   team?: Team
   fteSubtraction?: number
   availableSlots?: number[]
-  // Backward-compatible leave/come-back fields (used by PCA allocation algorithm + DB columns)
+  // Legacy single-slot marker used by PCA allocation algorithm (derived from `invalidSlots` when present).
   invalidSlot?: number
-  leaveComebackTime?: string
-  isLeave?: boolean
   // Invalid slots with time ranges
   invalidSlots?: Array<{
     slot: number
@@ -1222,8 +1220,6 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
             leave_type: (o?.leaveType ?? null) as any,
             special_program_ids: null,
             invalid_slot: null,
-            leave_comeback_time: null,
-            leave_mode: null,
             staff: s as Staff,
           } as any)
         })
@@ -1499,8 +1495,6 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
         leave_type: (o?.leaveType ?? null) as any,
         special_program_ids: null,
         invalid_slot: null,
-        leave_comeback_time: null,
-        leave_mode: null,
         staff: s,
       } as any)
     })
@@ -1702,8 +1696,6 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
         leaveType: LeaveType | null
         alloc: TherapistAllocation | PCAAllocation | null
         invalidSlot?: number
-        leaveComebackTime?: string
-        isLeave?: boolean
         fteSubtraction?: number
       }> = []
 
@@ -1762,8 +1754,6 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
             leaveType: override ? override.leaveType : alloc.leave_type,
             alloc: alloc,
             invalidSlot: override?.invalidSlot,
-            leaveComebackTime: override?.leaveComebackTime,
-            isLeave: override?.isLeave,
             fteSubtraction: override?.fteSubtraction,
           })
         })
@@ -1808,8 +1798,6 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
           leaveType: (override as any).leaveType,
           alloc: currentAlloc,
           invalidSlot: (override as any).invalidSlot,
-          leaveComebackTime: (override as any).leaveComebackTime,
-          isLeave: (override as any).isLeave,
           fteSubtraction: (override as any).fteSubtraction,
         })
       })
@@ -1871,13 +1859,6 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
             leave_type: item.leaveType,
             special_program_ids: (alloc as any)?.special_program_ids ?? null,
             invalid_slot: item.invalidSlot ?? (alloc as any)?.invalid_slot ?? null,
-            leave_comeback_time: item.leaveComebackTime ?? (alloc as any)?.leave_comeback_time ?? null,
-            leave_mode:
-              item.isLeave !== undefined
-                ? item.isLeave
-                  ? 'leave'
-                  : 'come_back'
-                : ((alloc as any)?.leave_mode ?? null),
           }
           pcaRows.push(
             preparePCAAllocationForDb({
@@ -2598,6 +2579,21 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
           const effectiveTeam = replacedNonFloatingIds.has(s.id) ? null : s.team
           const effectiveAvailableSlots = override?.availableSlots
 
+          // NEW: Support the newer `invalidSlots` array (UI) by deriving the legacy `invalidSlot`
+          // that the PCA allocation algorithm understands.
+          const invalidSlotFromArray =
+            Array.isArray((override as any)?.invalidSlots) && (override as any).invalidSlots.length > 0
+              ? (override as any).invalidSlots[0]?.slot
+              : undefined
+          const effectiveInvalidSlot =
+            typeof (override as any)?.invalidSlot === 'number' ? (override as any).invalidSlot : invalidSlotFromArray
+
+          // IMPORTANT: invalid slot should NOT be in availableSlots (algorithm assumes this).
+          const normalizedAvailableSlots =
+            effectiveInvalidSlot && Array.isArray(effectiveAvailableSlots)
+              ? effectiveAvailableSlots.filter((x: any) => x !== effectiveInvalidSlot)
+              : effectiveAvailableSlots
+
           return {
             id: s.id,
             name: s.name,
@@ -2607,10 +2603,8 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
             leave_type: override ? override.leaveType : null,
             is_available: override ? override.fteRemaining > 0 : true,
             team: effectiveTeam as any,
-            availableSlots: effectiveAvailableSlots,
-            invalidSlot: (override as any)?.invalidSlot,
-            leaveComebackTime: (override as any)?.leaveComebackTime,
-            isLeave: (override as any)?.isLeave,
+            availableSlots: normalizedAvailableSlots,
+            invalidSlot: effectiveInvalidSlot,
             floor_pca: (s as any).floor_pca || null,
           }
         })
@@ -2920,6 +2914,19 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
             availableSlots = baseAvailableSlots.filter((slot: number) => !substitutionSlots.includes(slot))
           }
 
+          // NEW: Support `invalidSlots` (UI) by deriving legacy invalidSlot for the algorithm.
+          const invalidSlotFromArray =
+            Array.isArray((override as any)?.invalidSlots) && (override as any).invalidSlots.length > 0
+              ? (override as any).invalidSlots[0]?.slot
+              : undefined
+          const effectiveInvalidSlot =
+            typeof (override as any)?.invalidSlot === 'number' ? (override as any).invalidSlot : invalidSlotFromArray
+
+          // IMPORTANT: invalid slot should NOT be in availableSlots.
+          if (effectiveInvalidSlot && Array.isArray(availableSlots)) {
+            availableSlots = availableSlots.filter((slot: number) => slot !== effectiveInvalidSlot)
+          }
+
           return {
             id: s.id,
             name: s.name,
@@ -2930,9 +2937,7 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
             leave_type: override ? override.leaveType : null,
             is_available: override ? override.fteRemaining > 0 : true,
             availableSlots,
-            invalidSlot: override?.invalidSlot,
-            leaveComebackTime: override?.leaveComebackTime,
-            isLeave: override?.isLeave,
+            invalidSlot: effectiveInvalidSlot,
             floor_pca: (s as any).floor_pca || null,
           }
         })

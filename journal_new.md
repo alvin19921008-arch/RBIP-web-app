@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
 
-**Last Updated**: 2026-01-22
-**Latest Phase**: Phase 30 - Auth Fast-path, Adjacent Prefetch, Diagnostic Fixes
+**Last Updated**: 2026-01-23
+**Latest Phase**: Phase 31 - Developer Leave Simulation Harness + Legacy PCA Leave Field Removal
 **Note**: Legacy development phases (1-20) have been moved to `Journal_legacy.md` for reference.  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 16.1+ (App Router, Turbopack), React 19.2+, TypeScript, Supabase (PostgreSQL), Tailwind CSS 4.1+ (CSS-first config), ESLint 9+, Shadcn/ui
@@ -81,6 +81,35 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
 ---
 
 ## Core Development Accomplishments
+
+## Phase 31: Developer Leave Simulation Harness + Legacy PCA Leave Field Removal
+
+- ✅ **Developer Leave Simulation (Schedule header)**
+  - Developer-only dialog `components/schedule/DevLeaveSimPanel.tsx` to generate realistic leave scenarios and stress-test Steps 2–4.
+  - **Seeded deterministic RNG** (`lib/dev/leaveSim/rng.ts`) + scenario generator (`lib/dev/leaveSim/generator.ts`).
+  - **Tabs**: Leave edit + draft · Run steps · Debug bundle (export/import).
+  - **Scenario controls**: planned therapist count (max 3), planned PCA leave budget (max 1.5 FTE), sick leave count (0–6), urgent leave count (0–2), rank weighting, leave-type weights, special-program targeting, non-floating PCA targeting.
+  - **PCA realism**: half-day leave sets `availableSlots`; urgent medical follow-up can generate `invalidSlots` time ranges (displayed in blue + brackets) while excluding the slot from valid team assignment.
+  - **Apply semantics**: Apply (clean/merge) updates **Step 1 only**; run controls execute Steps 2–4. “Reset generated-only” reverts only harness-touched overrides.
+  - **Run behavior**: pipeline runs are staged to avoid stale state; run actions auto-close the dialog for allocation review.
+  - **Auto step controls**:
+    - Step 2 auto: 2.0 substitution decisions, 2.1 special program override wizard skip.
+    - Step 3 auto: 3.0 buffer pre-assign ratio, 3.2 preferred reservations, 3.3 adjacent reservations; plus “Open Step 3 wizard”.
+  - **Invariant checks**: `lib/dev/leaveSim/invariants.ts` validates allocation sanity after runs.
+
+- ✅ **Floating PCA diagnostics improvements**
+  - Team/PCA tooltips improved to explain “no assignment” cases (pool exhausted vs already fulfilled vs order), and show invalid slot intervals consistently.
+  - Step 3.1 “Assigned” calculations include manual buffer-floating assignments from overrides (so pending/assigned displays match reality).
+
+- ✅ **Conservative Step 2 reset for floating PCA availability**
+  - `resetStep2OverridesForAlgoEntry` preserves floating PCA `availableSlots` when leave/partial-availability signals exist (leave type, non-1.0 FTE, invalid slots), preventing Step 2 entry resets from erasing half-day capacity signals.
+
+- ✅ **Remove legacy PCA leave fields (radical removal)**
+  - Removed legacy `leaveComebackTime` / `isLeave` / DB `leave_comeback_time` / `leave_mode` from:
+    - Algorithm/types/UI (`lib/algorithms/pcaAllocation.ts`, `types/schedule.ts`, UI components, overrides typing, etc.)
+    - DB conversion payloads (`lib/db/types.ts`)
+  - Added migration to drop DB columns and update RPC payloads: `supabase/migrations/remove_pca_leave_comeback_fields.sql`
+  - Updated schema snapshot: `supabase/schema.sql`
 
 ### Phase 21: Account Management, Access Roles, Step Clear & Step Validation Enhancements
 - ✅ **Account Management Dashboard**
@@ -420,9 +449,7 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - `slot1-4`: `team` enum (nullable - slot-based assignments)
   - `leave_type`: `leave_type` enum
   - `special_program_ids`: UUID[] (NOT TEXT[] - must convert from names)
-  - `invalid_slot`: INTEGER (slot that is leave/come back)
-  - `leave_comeback_time`: TEXT (HH:MM format)
-  - `leave_mode`: TEXT ('leave' | 'come_back')
+  - `invalid_slot`: INTEGER (legacy single-slot marker for partial presence; UI uses `staffOverrides.invalidSlots` for time ranges)
   - `fte_subtraction`: DECIMAL (FTE subtraction from leave, excluding special program)
 
 #### Bed Allocations

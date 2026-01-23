@@ -22,7 +22,7 @@ interface BufferStaffPoolProps {
   specialPrograms?: SpecialProgram[]
   currentStep?: string
   pcaAllocations?: Record<string, any[]>
-  staffOverrides?: Record<string, { leaveType?: any; fteRemaining?: number; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean }>
+  staffOverrides?: Record<string, { leaveType?: any; fteRemaining?: number; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number }>
   weekday?: 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
   onOpenStaffContextMenu?: (staffId: string, event?: React.MouseEvent) => void
   disableDragging?: boolean

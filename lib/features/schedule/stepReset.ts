@@ -14,22 +14,47 @@ function createEmptyByTeam<T>(): Record<Team, T[]> {
   }, {} as Record<Team, T[]>)
 }
 
+function shouldPreserveFloatingAvailableSlotsForStep2Reset(override: any): boolean {
+  if (!override || typeof override !== 'object') return false
+
+  // If the user (or dev tools) set leave/partial-availability signals, preserve availableSlots:
+  // - We want Step 2 to respect "real-world" availability constraints (half-day leave, medical follow-up, etc.).
+  // - Only clear availableSlots when it was algorithm-derived noise from previous runs.
+  const leaveType = (override as any).leaveType
+  const hasLeaveType = leaveType !== null && leaveType !== undefined && String(leaveType).length > 0
+
+  const fteRemaining = typeof (override as any).fteRemaining === 'number' ? (override as any).fteRemaining : undefined
+  const fteSubtraction =
+    typeof (override as any).fteSubtraction === 'number' ? (override as any).fteSubtraction : undefined
+  const hasLeaveFteSignal =
+    (typeof fteSubtraction === 'number' && Math.abs(fteSubtraction) > 1e-6) ||
+    (typeof fteRemaining === 'number' && fteRemaining < 1 - 1e-6)
+
+  const invalidSlots = (override as any).invalidSlots
+  const hasInvalidSlots = Array.isArray(invalidSlots) && invalidSlots.length > 0
+
+  const hasLegacyInvalidSlotSignal = (override as any).invalidSlot !== null && (override as any).invalidSlot !== undefined
+
+  return hasLeaveType || hasLeaveFteSignal || hasInvalidSlots || hasLegacyInvalidSlotSignal
+}
+
 export function resetStep2OverridesForAlgoEntry(args: {
   staffOverrides: OverridesByStaffId
   /** Include buffer staff here so we can preserve their availability. */
   allStaff: Staff[]
 }): OverridesByStaffId {
   const cleaned = { ...(args.staffOverrides ?? {}) }
-  const staffById = new Map<string, Staff>()
-  args.allStaff.forEach((s) => staffById.set(s.id, s))
 
-  // Clear availableSlots for floating PCAs (Step 2 computes from fresh state).
+  // Clear availableSlots for floating PCAs ONLY when it isn't leave-driven.
+  // This app is used rolling-forward; users may copy yesterday's leave matrix into today.
+  // We must preserve leave-derived partial availability (e.g. half-day leave slots).
   for (const s of args.allStaff) {
     if (s.rank !== 'PCA' || !s.floating) continue
     const o = cleaned[s.id]
     if (!o) continue
     // Preserve buffer PCA availability (it’s used later in Step 3)
     if (s.status === 'buffer') continue
+    if (shouldPreserveFloatingAvailableSlotsForStep2Reset(o)) continue
     const { availableSlots, ...rest } = o
     cleaned[s.id] = rest
   }
@@ -139,8 +164,6 @@ export function computeStep3ResetForReentry(args: {
       leave_type: null,
       special_program_ids: null,
       invalid_slot: undefined,
-      leave_comeback_time: undefined,
-      leave_mode: undefined,
       fte_subtraction: 0,
       staff: staffMember,
     }

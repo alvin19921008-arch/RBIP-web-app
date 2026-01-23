@@ -41,8 +41,6 @@ export interface StaffEdit {
   fteSubtraction?: number
   availableSlots?: number[]
   invalidSlot?: number
-  leaveComebackTime?: string
-  isLeave?: boolean
 }
 
 export interface PCASlotEdit {
@@ -430,8 +428,6 @@ export function useScheduleState(options: UseScheduleStateOptions): UseScheduleS
               leaveType: fromDbLeaveType(alloc.leave_type, fte, null),
               fteRemaining: fte,
               invalidSlot: alloc.invalid_slot ?? undefined,
-              leaveComebackTime: alloc.leave_comeback_time ?? undefined,
-              isLeave: alloc.leave_mode === 'leave',
             }
           }
         }
@@ -564,10 +560,6 @@ export function useScheduleState(options: UseScheduleStateOptions): UseScheduleS
                   slot3: slotEdit?.slot3 ?? alloc.slot3,
                   slot4: slotEdit?.slot4 ?? alloc.slot4,
                   invalid_slot: override?.invalidSlot ?? alloc.invalid_slot,
-                  leave_comeback_time: override?.leaveComebackTime ?? alloc.leave_comeback_time,
-                  leave_mode: override?.isLeave !== undefined 
-                    ? (override.isLeave ? 'leave' : 'come_back')
-                    : alloc.leave_mode,
                 },
                 specialPrograms: specialProgramsRef,
               })

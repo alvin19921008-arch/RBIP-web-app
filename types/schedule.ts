@@ -44,8 +44,6 @@ export interface PCAAllocation {
   leave_type: LeaveType
   special_program_ids: string[] | null
   invalid_slot?: number // Slot (1-4) that is leave/come back, assigned but not counted
-  leave_comeback_time?: string // Time in HH:MM format
-  leave_mode?: string // 'leave' or 'come_back'
   fte_subtraction?: number // FTE subtraction from leave (excluding special program subtraction). Used to calculate base_FTE_remaining = 1.0 - fte_subtraction. NOT stored in database - calculated from staffOverrides when needed
 }
 

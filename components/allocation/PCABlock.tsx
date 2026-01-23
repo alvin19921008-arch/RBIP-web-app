@@ -28,8 +28,6 @@ interface PCABlockProps {
     availableSlots?: number[]
     invalidSlot?: number
     invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
-    leaveComebackTime?: string
-    isLeave?: boolean
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
   }> // Current staff overrides (leave + substitution UI)
   allPCAStaff?: Staff[] // All PCA staff (for identifying non-floating PCAs even when not in allocations)
@@ -39,9 +37,15 @@ interface PCABlockProps {
   weekday?: 'mon' | 'tue' | 'wed' | 'thu' | 'fri' // Weekday for checking if DRM is active
   externalHover?: boolean // External hover state (e.g., from popover drag)
   allocationLog?: TeamAllocationLog // Allocation tracking log for this team (from Step 3.4)
+  /** Final Step 3.1 allocation order position (1-based), if known. */
+  step3OrderPosition?: number
+  /** Current pending PCA FTE for this team (from Step 2/3 state), if known. */
+  pendingPcaFte?: number
+  /** Total remaining floating PCA capacity (fte_remaining sum) across the pool, if known. */
+  floatingPoolRemainingFte?: number
 }
 
-export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averagePCAPerTeam, baseAveragePCAPerTeam, specialPrograms = [], allPCAAllocations = [], staffOverrides = {}, allPCAStaff = [], currentStep = 'leave-fte', step2Initialized = false, initializedSteps, weekday, externalHover = false, allocationLog }: PCABlockProps) {
+export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averagePCAPerTeam, baseAveragePCAPerTeam, specialPrograms = [], allPCAAllocations = [], staffOverrides = {}, allPCAStaff = [], currentStep = 'leave-fte', step2Initialized = false, initializedSteps, weekday, externalHover = false, allocationLog, step3OrderPosition, pendingPcaFte, floatingPoolRemainingFte }: PCABlockProps) {
   // Only show substitution styling AFTER Step 2 algorithm has run (not just when navigating to Step 2)
   const showSubstitutionStyling = currentStep !== 'leave-fte' && step2Initialized
   
@@ -130,12 +134,6 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     return allocation.team === currentTeam
   }, [specialPrograms])
 
-  // Helper function to format time as 4-digit (HHMM)
-  const formatTime4Digit = (timeStr: string): string => {
-    // Convert HH:MM to HHMM (4-digit)
-    return timeStr.replace(':', '')
-  }
-
   // Helper function to get slot display for PCA allocation in this team
   // Helper function to get slot display with optional slot filter
   const getSlotDisplayForTeamFiltered = (allocation: PCAAllocation & { staff: Staff }, slotsToInclude?: number[]): string | null => {
@@ -152,14 +150,6 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     const invalidSlotsArray = override?.invalidSlots || []
     const hasInvalidSlots = invalidSlotsArray.length > 0
     const effectiveInvalidSlot = hasInvalidSlots ? null : (override?.invalidSlot ?? (allocation as any).invalid_slot)
-    const effectiveLeaveComebackTime = override?.leaveComebackTime ?? (allocation as any).leave_comeback_time
-    const leaveMode = (allocation as any).leave_mode
-    const effectiveIsLeave =
-      typeof override?.isLeave === 'boolean'
-        ? override.isLeave
-        : leaveMode === 'come_back'
-          ? false
-          : true
     
     let effectiveSlotsToInclude = slotsToInclude
     if (!effectiveSlotsToInclude && currentStep === 'leave-fte' && !allocation.staff.floating) {
@@ -179,8 +169,6 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     if (filteredSlots.length === 0) return null
     
     const invalidSlot = effectiveInvalidSlot
-    const leaveComebackTime = effectiveLeaveComebackTime
-    const isLeave = effectiveIsLeave
     
     // Get available slots (excluding invalid slots) from filtered slots
     const invalidSlotNumbers = hasInvalidSlots 
@@ -196,20 +184,6 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
         filteredSlots.includes(3) && 
         filteredSlots.includes(4) &&
         !hasInvalidSlots && !invalidSlot) { // FIX: Only show whole day if no invalid slots (new or old system)
-      // Check if there's a leave/come back time
-      if (invalidSlot && leaveComebackTime) {
-        const time4Digit = formatTime4Digit(leaveComebackTime)
-        const slotTime = getSlotTime(invalidSlot)
-        const slotStart = slotTime.split('-')[0].replace(':', '')
-        const slotEnd = slotTime.split('-')[1].replace(':', '')
-        if (isLeave) {
-          // Leave: "Whole day, (slot_end-leave_time)" - Eg: "Whole day, (1600-1500)" for slot 4
-          return `Whole day, (${slotEnd}-${time4Digit})`
-        } else {
-          // Come back: "(come_back_time-slot_start), Whole day" - Eg: "(0930-0900), Whole day" for slot 1
-          return `(${time4Digit}-${slotStart}), Whole day`
-        }
-      }
       return 'Whole day'
     }
     
@@ -300,37 +274,8 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
       }
     }
     
-    // Handle invalid slot in old system (for backward compatibility)
-    if (!hasInvalidSlots) {
-      if (invalidSlot === 1 && leaveComebackTime) {
-        const time4Digit = formatTime4Digit(leaveComebackTime)
-        const slotTime = getSlotTime(1)
-        const slotStart = slotTime.split('-')[0].replace(':', '')
-        const slotEnd = slotTime.split('-')[1].replace(':', '')
-        parts.push(`(${slotStart}-${time4Digit})`)
-      } else if (invalidSlot === 2 && leaveComebackTime) {
-        const time4Digit = formatTime4Digit(leaveComebackTime)
-        const slotTime = getSlotTime(2)
-        const slotStart = slotTime.split('-')[0].replace(':', '')
-        const slotEnd = slotTime.split('-')[1].replace(':', '')
-        parts.push(`(${slotStart}-${time4Digit})`)
-      } else if (invalidSlot === 3 && leaveComebackTime) {
-        const time4Digit = formatTime4Digit(leaveComebackTime)
-        const slotTime = getSlotTime(3)
-        const slotStart = slotTime.split('-')[0].replace(':', '')
-        const slotEnd = slotTime.split('-')[1].replace(':', '')
-        parts.push(`(${slotStart}-${time4Digit})`)
-      } else if (invalidSlot === 4 && leaveComebackTime) {
-        const time4Digit = formatTime4Digit(leaveComebackTime)
-        const slotTime = getSlotTime(4)
-        const slotStart = slotTime.split('-')[0].replace(':', '')
-        const slotEnd = slotTime.split('-')[1].replace(':', '')
-        parts.push(`(${slotStart}-${time4Digit})`)
-      }
-    }
-    
     // Note: New system (invalidSlots array) positions invalid slots in natural slot order (1->2->3->4)
-    // Old system "come back" reordering is no longer needed - invalid slots appear in their natural position
+    // Legacy leave/come-back time display has been removed.
     
     const result = parts.length > 0 ? parts.join(', ') : null
     return result
@@ -697,9 +642,6 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
   ): React.ReactNode => {
     if (!displayText) return null
 
-    const invalidSlot = (allocation as any).invalid_slot
-    const leaveComebackTime = (allocation as any).leave_comeback_time
-
     // NEW: Check for invalid slots from staffOverrides (new system)
     const override = staffOverrides[allocation.staff_id]
     const invalidSlots = override?.invalidSlots || []
@@ -722,34 +664,12 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     // Separate substituting slots from regular slots
     const regularSlots = allSlotsForTeam.filter(slot => !substitutedSlots.includes(slot))
     
-    // Handle leave/come back time display (blue/bold)
-    if (invalidSlot && leaveComebackTime) {
-      const time4Digit = formatTime4Digit(leaveComebackTime)
-      const parts = displayText.split(/(\([^)]+\))/g)
-      
-      return (
-        <span>
-          {parts.map((part, index) => {
-            if (part.startsWith('(') && part.includes(time4Digit)) {
-              // This is the leave/come back time - make it blue and bold
-              return (
-                <span key={index} className="text-blue-600 font-bold">
-                  {part}
-                </span>
-              )
-            }
-            return <span key={index}>{part}</span>
-          })}
-        </span>
-      )
-    }
-    
     // If no substitution, return display text (invalid slots are already integrated into displayText)
     if (!isSubstituting || substitutedSlots.length === 0) {
       // Invalid slot time ranges are now part of displayText, so we need to highlight them in blue
-      const invalidSlotTimeRanges = invalidSlots
-        .filter(is => allSlotsForTeam.includes(is.slot))
-        .map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
+      // NOTE: invalidSlots represent "present interval inside an invalid (non-counted) slot".
+      // They should be highlighted even if that slot isn't counted as assigned to this team.
+      const invalidSlotTimeRanges = invalidSlots.map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
       
       if (invalidSlotTimeRanges.length > 0) {
         // Split displayText by invalid slot time ranges and highlight them
@@ -773,9 +693,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     // Case 1: Whole day substitution (all 4 slots are substituting)
     if (substitutedSlots.length === 4 && displayText === 'Whole day') {
       // Add invalid slot time ranges if any
-      const invalidSlotTimeRanges = invalidSlots
-        .filter(is => allSlotsForTeam.includes(is.slot))
-        .map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
+      const invalidSlotTimeRanges = invalidSlots.map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
         .join('')
       
       if (invalidSlotTimeRanges) {
@@ -818,9 +736,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
       }
       
       // Add invalid slot time ranges if any
-      const invalidSlotTimeRanges = invalidSlots
-        .filter(is => allSlotsForTeam.includes(is.slot))
-        .map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
+      const invalidSlotTimeRanges = invalidSlots.map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
         .join('')
       
       if (invalidSlotTimeRanges) {
@@ -836,9 +752,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
       const substitutingDisplay = formatSlotGroup(substitutedSlots)
       
       // Add invalid slot time ranges if any
-      const invalidSlotTimeRanges = invalidSlots
-        .filter(is => allSlotsForTeam.includes(is.slot))
-        .map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
+      const invalidSlotTimeRanges = invalidSlots.map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
         .join('')
       
       // Show substituting slots in green
@@ -872,9 +786,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     const parts = displayText.split(/(AM|PM|\d{4}-\d{4})/g)
     
     // Add invalid slot time ranges if any
-    const invalidSlotTimeRanges = invalidSlots
-      .filter(is => allSlotsForTeam.includes(is.slot))
-      .map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
+    const invalidSlotTimeRanges = invalidSlots.map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
       .join('')
     
     return (
@@ -1258,14 +1170,15 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
               
               // Check if team was fulfilled by buffer assignments
               const hasBufferAssignments = bufferFloatingSlots.length > 0
-              const hasAllocationLog = allocationLog && allocationLog.assignments.length > 0
+              const hasTracker = !!allocationLog
+              const hasAllocationAssignments = !!allocationLog && allocationLog.assignments.length > 0
               
               // Group assignments by PCA name for display
               // Exclude buffer floating PCAs from groupedByPCA (they're shown separately above)
               const bufferPCAIds = new Set(bufferFloatingAssignments.map(b => b.pcaId))
               type AllocationAssignment = TeamAllocationLog['assignments'][number]
               const groupedByPCA = new Map<string, Array<{ slot: number; assignment: AllocationAssignment }>>()
-              if (hasAllocationLog) {
+              if (hasAllocationAssignments) {
                 allocationLog.assignments.forEach(a => {
                   // Skip buffer floating PCAs - they're already shown in bufferFloatingAssignments section
                   if (bufferPCAIds.has(a.pcaId)) return
@@ -1281,7 +1194,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
               // This means if 光劭 has slots [1,2,4] and 友好 has slot [2], total = 4 slots (1+2+4+2)
               // From allocation log: get all slot numbers (including duplicates)
               // BUT exclude buffer floating PCAs - they're counted separately
-              const slotsFromLog = hasAllocationLog 
+              const slotsFromLog = hasAllocationAssignments
                 ? allocationLog.assignments
                     .filter(a => !bufferPCAIds.has(a.pcaId))  // Exclude buffer PCAs from log
                     .map(a => a.slot)
@@ -1293,26 +1206,29 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
               
               // Check if team was fulfilled by buffer assignments only
               // This happens when buffer assignments cover all the team's needs and no algorithm ran
-              const fulfilledByBufferOnly = hasBufferAssignments && !hasAllocationLog && bufferFloatingSlots.length > 0
+              const fulfilledByBufferOnly = hasBufferAssignments && !hasAllocationAssignments && bufferFloatingSlots.length > 0
               
               // Get allocation order for each cycle (if available)
               // Cycle 1 order is always available (from step 3.1 teamOrder) - all teams are processed in cycle 1
               // Cycle 2/3 orders are only shown if the team received assignments in those cycles
-              const cycle1Assignments = hasAllocationLog 
+              const cycle1Assignments = hasAllocationAssignments
                 ? allocationLog.assignments.filter(a => a.cycle === 1)
                 : []
-              const cycle2Assignments = hasAllocationLog 
+              const cycle2Assignments = hasAllocationAssignments
                 ? allocationLog.assignments.filter(a => a.cycle === 2)
                 : []
-              const cycle3Assignments = hasAllocationLog 
+              const cycle3Assignments = hasAllocationAssignments
                 ? allocationLog.assignments.filter(a => a.cycle === 3)
                 : []
               
               // Cycle 1 order: Get from any assignment (all should have the same allocationOrder based on teamOrder from step 3.1)
               // Always show cycle 1 order since all teams are processed in cycle 1
-              const allocationOrderCycle1 = hasAllocationLog && allocationLog.assignments.length > 0 && allocationLog.assignments[0].allocationOrder !== undefined
-                ? allocationLog.assignments[0].allocationOrder
-                : undefined
+              const allocationOrderCycle1 =
+                step3OrderPosition !== undefined
+                  ? step3OrderPosition
+                  : (hasAllocationAssignments && allocationLog.assignments[0].allocationOrder !== undefined
+                      ? allocationLog.assignments[0].allocationOrder
+                      : undefined)
               
               // Cycle 2 order: Only show if team received assignments in cycle 2
               const allocationOrderCycle2 = cycle2Assignments.length > 0 && cycle2Assignments[0].allocationOrder !== undefined
@@ -1345,7 +1261,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                   </div>
                   {/* Allocation Tracking Tooltip on hover */}
                   <div className={`absolute ${showOnLeft ? 'right-0' : 'left-0'} bottom-full mb-2 w-80 p-3 bg-gray-900 text-white text-xs rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity z-50 pointer-events-none`}>
-                    {(hasAllocationLog || hasBufferAssignments) ? (
+                    {(hasTracker || hasBufferAssignments) ? (
                       <div className="space-y-2">
                         {/* Summary Header */}
                         <div className="font-semibold border-b border-gray-700 pb-1">
@@ -1377,7 +1293,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                         <div className="grid grid-cols-2 gap-1 text-[10px] border-t border-gray-700 pt-1">
                           <div>Total slots: {totalActualSlots}</div>
                           {hasBufferAssignments && <div>From 3.0: {bufferFloatingSlots.length}</div>}
-                          {hasAllocationLog && (() => {
+                          {hasAllocationAssignments && (() => {
                             // Recalculate step 3.4 count by filtering out buffer PCAs (same as slotsFromLog)
                             const step34Assignments = allocationLog.assignments.filter(a => 
                               a.assignedIn === 'step34' && !bufferPCAIds.has(a.pcaId)
@@ -1396,6 +1312,25 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                             )
                           })()}
                         </div>
+
+                        {/* Pending/diagnostic note when there are no Step 3 assignments */}
+                        {!hasAllocationAssignments && (
+                          <div className="text-[10px] border-t border-gray-700 pt-1 text-gray-300 space-y-1">
+                            <div>Pending (current): {typeof pendingPcaFte === 'number' ? pendingPcaFte.toFixed(2) : '—'}</div>
+                            {typeof pendingPcaFte === 'number' && pendingPcaFte <= 0.001 ? (
+                              <div>No floating PCA assignment needed (pending ≈ 0).</div>
+                            ) : (
+                              <div>
+                                No Step 3 assignments recorded for this team.
+                                {typeof floatingPoolRemainingFte === 'number' && floatingPoolRemainingFte <= 0.001
+                                  ? ' Floating pool appears exhausted.'
+                                  : typeof floatingPoolRemainingFte === 'number'
+                                    ? ' Floating pool still has capacity; constraints/preferences may have blocked assignment.'
+                                    : ''}
+                              </div>
+                            )}
+                          </div>
+                        )}
                         
                         {/* Show message if fulfilled by buffer only */}
                         {fulfilledByBufferOnly && (
@@ -1450,7 +1385,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                         </div>
                         
                         {/* Constraint Status */}
-                        {hasAllocationLog && (
+                        {hasAllocationAssignments && (
                           <div className="text-[10px] border-t border-gray-700 pt-1 text-gray-400">
                             AM/PM: {allocationLog.summary.amPmBalanced ? '✓ Balanced' : '○ Not balanced'}
                             {' | '}

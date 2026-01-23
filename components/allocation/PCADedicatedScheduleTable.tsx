@@ -23,8 +23,6 @@ type StaffOverridesLike = Record<
     availableSlots?: number[]
     invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
     invalidSlot?: number
-    leaveComebackTime?: string
-    isLeave?: boolean
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
   }
 >
@@ -244,26 +242,6 @@ export function PCADedicatedScheduleTable({
           m[inv.slot] = { start: inv.timeRange.start, end: inv.timeRange.end }
         }
       })
-
-      // Backward-compat fallback to allocation.invalid_slot + leave_comeback_time if needed
-      if (Object.keys(m).length === 0) {
-        const a = allocationByStaffId.get(s.id)
-        const legacySlot = (a as any)?.invalid_slot as number | undefined
-        const legacyTime = (a as any)?.leave_comeback_time as string | undefined
-        if (typeof legacySlot === 'number' && isValidSlot(legacySlot) && typeof legacyTime === 'string') {
-          // We cannot accurately reconstruct interval without direction (leave/come_back),
-          // so fall back to showing the raw HH:MM as HHMM-HHMM by using slot bounds.
-          const slotBounds: Record<RowSlot, { start: string; end: string }> = {
-            1: { start: '0900', end: '1030' },
-            2: { start: '1030', end: '1200' },
-            3: { start: '1330', end: '1500' },
-            4: { start: '1500', end: '1630' },
-          }
-          const time4 = legacyTime.replace(':', '')
-          const base = slotBounds[legacySlot]
-          m[legacySlot] = { start: base.start, end: time4 || base.end }
-        }
-      }
 
       if (Object.keys(m).length > 0) map.set(s.id, m)
     }

@@ -23,7 +23,7 @@ interface StaffPoolProps {
   snapshotDateLabel?: string
   onConvertInactiveToBuffer?: (args: { staff: Staff; bufferFTE: number; availableSlots?: number[] }) => void
   onOpenStaffContextMenu?: (staffId: string, event?: React.MouseEvent) => void
-  staffOverrides?: Record<string, { leaveType?: any; fteRemaining?: number; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number; leaveComebackTime?: string; isLeave?: boolean }>
+  staffOverrides?: Record<string, { leaveType?: any; fteRemaining?: number; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number }>
   specialPrograms?: any[]
   pcaAllocations?: Record<string, any[]>
   currentStep?: string
@@ -223,8 +223,7 @@ export function StaffPool({
     const override = staffOverrides[staff.id]
     const explicitLeaveSignal =
       (!!override && !isOnDutyLeaveType(((override as any).leaveType ?? null) as any)) ||
-      (typeof override?.fteSubtraction === 'number' && override.fteSubtraction > 0) ||
-      (override as any)?.isLeave === true
+      (typeof override?.fteSubtraction === 'number' && override.fteSubtraction > 0)
 
     // SPT: duty FTE may be < 1.0 per SPT dashboard configuration; only treat as leave if explicit signal exists.
     if (staff.rank === 'SPT') return explicitLeaveSignal

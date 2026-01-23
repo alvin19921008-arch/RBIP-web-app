@@ -16,8 +16,6 @@ export interface PCAData {
   floor_pca?: ('upper' | 'lower')[] | null // Floor PCA property: upper, lower, or both
   availableSlots?: number[] // Slots (1, 2, 3, 4) that are available for this PCA
   invalidSlot?: number // Slot (1-4) that is leave/come back, assigned but not counted
-  leaveComebackTime?: string // Time in HH:MM format
-  isLeave?: boolean // true for leave, false for come back
 }
 
 export interface PCAAllocationContext {
@@ -986,12 +984,6 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
     // Add invalid slot fields if they exist
     if (pca.invalidSlot !== undefined && pca.invalidSlot !== null) {
       (allocation as any).invalid_slot = pca.invalidSlot
-      if (pca.leaveComebackTime) {
-        (allocation as any).leave_comeback_time = pca.leaveComebackTime
-      }
-      if (pca.isLeave !== undefined) {
-        (allocation as any).leave_mode = pca.isLeave ? 'leave' : 'come_back'
-      }
     }
     
     allocations.push(allocation)
@@ -3066,12 +3058,6 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         // Add invalid slot fields if they exist (invalid slot will be assigned in post-processing)
         if (pcaToAssign.invalidSlot !== undefined && pcaToAssign.invalidSlot !== null) {
           (newAllocation as any).invalid_slot = pcaToAssign.invalidSlot
-          if (pcaToAssign.leaveComebackTime) {
-            (newAllocation as any).leave_comeback_time = pcaToAssign.leaveComebackTime
-          }
-          if (pcaToAssign.isLeave !== undefined) {
-            (newAllocation as any).leave_mode = pcaToAssign.isLeave ? 'leave' : 'come_back'
-          }
         }
         
         allocations.push(newAllocation)
@@ -3132,12 +3118,6 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
       
       // Add invalid slot fields
       ;(allocation as any).invalid_slot = invalidSlot
-      if (pca.leaveComebackTime) {
-        ;(allocation as any).leave_comeback_time = pca.leaveComebackTime
-      }
-      if (pca.isLeave !== undefined) {
-        ;(allocation as any).leave_mode = pca.isLeave ? 'leave' : 'come_back'
-      }
     }
   })
   } // End of shouldDoFloating block
