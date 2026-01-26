@@ -459,7 +459,7 @@ export function NonFloatingSubstitutionDialog({
                         </div>
                       )}
 
-                      {remainingSlots.length > 0 ? (
+                      {primarySelection && remainingSlots.length > 0 ? (
                         <div className="border-t pt-4 space-y-2">
                           <div className="text-sm font-medium">
                             Cover remaining slots: {remainingSlots.join(', ')}
@@ -501,9 +501,6 @@ export function NonFloatingSubstitutionDialog({
                                           >
                                             {pca.name} ({getDisplaySlotsCount(pca.id, pca.availableSlots)} slots available)
                                             {reservedLabel ? <span className="ml-2 text-xs text-muted-foreground">{reservedLabel}</span> : null}
-                                            <span className="ml-2 text-xs text-muted-foreground">
-                                              Will cover: {coverable.join(', ')}
-                                            </span>
                                           </label>
                                         </div>
                                       )
@@ -545,9 +542,6 @@ export function NonFloatingSubstitutionDialog({
                                           >
                                             {pca.name} ({getDisplaySlotsCount(pca.id, pca.availableSlots)} slots available)
                                             {reservedLabel ? <span className="ml-2 text-xs text-muted-foreground">{reservedLabel}</span> : null}
-                                            <span className="ml-2 text-xs text-muted-foreground">
-                                              Will cover: {coverable.join(', ')}
-                                            </span>
                                           </label>
                                         </div>
                                       )
@@ -587,9 +581,6 @@ export function NonFloatingSubstitutionDialog({
                                           >
                                             {pca.name} ({getDisplaySlotsCount(pca.id, pca.availableSlots)} slots available)
                                             {reservedLabel ? <span className="ml-2 text-xs text-muted-foreground">{reservedLabel}</span> : null}
-                                            <span className="ml-2 text-xs text-muted-foreground">
-                                              Will cover: {coverable.join(', ')}
-                                            </span>
                                           </label>
                                         </div>
                                       )

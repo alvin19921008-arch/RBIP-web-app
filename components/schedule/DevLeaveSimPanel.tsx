@@ -158,6 +158,18 @@ export function DevLeaveSimPanel(props: {
   const [sickCountInput, setSickCountInput] = useState<string>(() => String(config.sickCount))
   const [urgentCountInput, setUrgentCountInput] = useState<string>(() => String(config.urgentCount))
   const [pcaUrgentInvalidProbInput, setPcaUrgentInvalidProbInput] = useState<string>(() => String(config.pcaUrgentInvalidSlotProbability))
+  const [rankWeightInputs, setRankWeightInputs] = useState<Record<'SPT' | 'APPT' | 'RPT' | 'PCA', string>>(() => ({
+    SPT: String((config.rankWeights as any)?.SPT ?? 1),
+    APPT: String((config.rankWeights as any)?.APPT ?? 1),
+    RPT: String((config.rankWeights as any)?.RPT ?? 1),
+    PCA: String((config.rankWeights as any)?.PCA ?? 1),
+  }))
+  const [plannedLeaveTypeWeightInputs, setPlannedLeaveTypeWeightInputs] = useState<string[]>(
+    () => (config.plannedLeaveTypeWeights || []).map((x) => String(x.weight))
+  )
+  const [urgentLeaveTypeWeightInputs, setUrgentLeaveTypeWeightInputs] = useState<string[]>(
+    () => (config.urgentLeaveTypeWeights || []).map((x) => String(x.weight))
+  )
 
   const staffById = useMemo(() => new Map(props.staff.map((s) => [s.id, s] as const)), [props.staff])
 
@@ -167,6 +179,14 @@ export function DevLeaveSimPanel(props: {
     setSickCountInput(String(next.sickCount))
     setUrgentCountInput(String(next.urgentCount))
     setPcaUrgentInvalidProbInput(String(next.pcaUrgentInvalidSlotProbability))
+    setRankWeightInputs({
+      SPT: String((next.rankWeights as any)?.SPT ?? 1),
+      APPT: String((next.rankWeights as any)?.APPT ?? 1),
+      RPT: String((next.rankWeights as any)?.RPT ?? 1),
+      PCA: String((next.rankWeights as any)?.PCA ?? 1),
+    })
+    setPlannedLeaveTypeWeightInputs((next.plannedLeaveTypeWeights || []).map((x) => String(x.weight)))
+    setUrgentLeaveTypeWeightInputs((next.urgentLeaveTypeWeights || []).map((x) => String(x.weight)))
   }
 
   // Load persisted config/draft when opened.
@@ -286,7 +306,7 @@ export function DevLeaveSimPanel(props: {
     // Randomize the quotas in a visible way (so dev can still tweak before generating).
     const nextSeed = String(Date.now())
     const therapistCount = Math.floor(Math.random() * (config.plannedTherapistMax + 1))
-    const pcaBudgetChoices = [0, 0.5, 1.0, Math.min(1.5, config.plannedPcaFteBudgetMax)]
+    const pcaBudgetChoices = [0, 0.5, 1.0, Math.min(1.5, config.plannedPcaFteBudgetMax), Math.min(2, config.plannedPcaFteBudgetMax)]
     const pcaBudget = pcaBudgetChoices[Math.floor(Math.random() * pcaBudgetChoices.length)] ?? 0
     const sick = Math.floor(Math.random() * 7) // 0..6
     const urgent = Math.floor(Math.random() * 3) // 0..2
@@ -343,6 +363,7 @@ export function DevLeaveSimPanel(props: {
     props.setStaffOverrides(next)
     props.recalculateScheduleCalculations()
     setReport(null)
+    setActiveTab('run')
   }
 
   const resetGeneratedOnly = () => {
@@ -1015,7 +1036,7 @@ export function DevLeaveSimPanel(props: {
                 />
               </div>
               <div className="space-y-1">
-                <Tooltip side="bottom" content="Planned PCA leave budget in FTE (0–1.5). Generated as 1.0 and 0.5 chunks.">
+                <Tooltip side="bottom" content="Planned PCA leave budget in FTE (0–2.0). Generated as 1.0 and 0.5 chunks.">
                   <Label className="text-xs cursor-default">Planned PCA budget</Label>
                 </Tooltip>
                 <Input
@@ -1152,16 +1173,21 @@ export function DevLeaveSimPanel(props: {
                         <Label className="text-[11px] cursor-default">{rank} weight</Label>
                       </Tooltip>
                       <Input
-                        value={String((config.rankWeights as any)?.[rank] ?? 1)}
+                        value={rankWeightInputs[rank] ?? String((config.rankWeights as any)?.[rank] ?? 1)}
                         onChange={(e) => {
-                          const n = safeNumberInput(e.target.value, (config.rankWeights as any)?.[rank] ?? 1)
+                          const v = e.target.value
+                          setRankWeightInputs((prev) => ({ ...prev, [rank]: v }))
+                        }}
+                        onBlur={(e) => {
+                          const n = clampNumber(safeNumberInput(e.target.value, (config.rankWeights as any)?.[rank] ?? 1), 0, 1)
                           setConfig((c) => ({
                             ...c,
                             rankWeights: {
                               ...(c.rankWeights as any),
-                              [rank]: clampNumber(n, 0, 999),
+                              [rank]: n,
                             },
                           }))
+                          setRankWeightInputs((prev) => ({ ...prev, [rank]: String(n) }))
                         }}
                       />
                     </div>
@@ -1183,13 +1209,26 @@ export function DevLeaveSimPanel(props: {
                   <div key={`pltw-${idx}`} className="space-y-1">
                     <div className="text-[11px] text-muted-foreground">{String(row.leaveType)}</div>
                     <Input
-                      value={String(row.weight)}
+                      value={plannedLeaveTypeWeightInputs[idx] ?? String(row.weight)}
                       onChange={(e) => {
-                        const n = safeNumberInput(e.target.value, row.weight)
+                        const v = e.target.value
+                        setPlannedLeaveTypeWeightInputs((prev) => {
+                          const next = [...prev]
+                          next[idx] = v
+                          return next
+                        })
+                      }}
+                      onBlur={(e) => {
+                        const n = clampNumber(safeNumberInput(e.target.value, row.weight), 0, 1)
                         setConfig((c) => {
                           const next = [...(c.plannedLeaveTypeWeights || [])]
-                          next[idx] = { ...next[idx], weight: clampNumber(n, 0, 999) }
+                          next[idx] = { ...next[idx], weight: n }
                           return { ...c, plannedLeaveTypeWeights: next }
+                        })
+                        setPlannedLeaveTypeWeightInputs((prev) => {
+                          const next = [...prev]
+                          next[idx] = String(n)
+                          return next
                         })
                       }}
                     />
@@ -1210,13 +1249,26 @@ export function DevLeaveSimPanel(props: {
                   <div key={`ultw-${idx}`} className="space-y-1">
                     <div className="text-[11px] text-muted-foreground">{String(row.leaveType)}</div>
                     <Input
-                      value={String(row.weight)}
+                      value={urgentLeaveTypeWeightInputs[idx] ?? String(row.weight)}
                       onChange={(e) => {
-                        const n = safeNumberInput(e.target.value, row.weight)
+                        const v = e.target.value
+                        setUrgentLeaveTypeWeightInputs((prev) => {
+                          const next = [...prev]
+                          next[idx] = v
+                          return next
+                        })
+                      }}
+                      onBlur={(e) => {
+                        const n = clampNumber(safeNumberInput(e.target.value, row.weight), 0, 1)
                         setConfig((c) => {
                           const next = [...(c.urgentLeaveTypeWeights || [])]
-                          next[idx] = { ...next[idx], weight: clampNumber(n, 0, 999) }
+                          next[idx] = { ...next[idx], weight: n }
                           return { ...c, urgentLeaveTypeWeights: next }
+                        })
+                        setUrgentLeaveTypeWeightInputs((prev) => {
+                          const next = [...prev]
+                          next[idx] = String(n)
+                          return next
                         })
                       }}
                     />
@@ -1267,22 +1319,6 @@ export function DevLeaveSimPanel(props: {
 
             <div className="flex items-center gap-2 pt-1">
               <Button onClick={generate}>Generate draft</Button>
-              <Tooltip
-                side="bottom"
-                content="Apply the generated leave overrides into Step 1 on a clean base (uses the production Clear logic). Does not run Step 2–4."
-              >
-                <Button variant="outline" disabled={!draft} onClick={() => applyMergedOverrides('clean')}>
-                  Apply (clean)
-                </Button>
-              </Tooltip>
-              <Tooltip
-                side="bottom"
-                content="Apply the generated overrides on top of your current Step 1 edits (still invalidates downstream steps). Does not run Step 2–4."
-              >
-                <Button variant="outline" disabled={!draft} onClick={() => applyMergedOverrides('merge')}>
-                  Apply (merge)
-                </Button>
-              </Tooltip>
             </div>
 
             <div className="flex items-center gap-2">
@@ -1326,6 +1362,28 @@ export function DevLeaveSimPanel(props: {
             ) : (
               <div className="text-sm text-muted-foreground">Click “Generate draft” to create a seeded scenario.</div>
             )}
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <Tooltip
+                side="bottom"
+                content="Apply the generated leave overrides into Step 1 on a clean base (uses the production Clear logic). Does not run Step 2–4."
+              >
+                <Button variant="outline" disabled={!draft} onClick={() => applyMergedOverrides('clean')}>
+                  Apply (clean)
+                </Button>
+              </Tooltip>
+              <Tooltip
+                side="bottom"
+                content="Apply the generated overrides on top of your current Step 1 edits (still invalidates downstream steps). Does not run Step 2–4."
+              >
+                <Button variant="outline" disabled={!draft} onClick={() => applyMergedOverrides('merge')}>
+                  Apply (merge)
+                </Button>
+              </Tooltip>
+              <div className="text-[11px] text-muted-foreground">
+                After applying, you’ll be taken to “Run steps”.
+              </div>
+            </div>
 
             <div className="rounded-md border border-border p-3 text-[11px] text-muted-foreground">
               Go to the “Run steps” tab to execute Step 2–4 (the run actions auto-close this dialog for review).

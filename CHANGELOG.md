@@ -1,10 +1,11 @@
-# RBIP Duty List - Project Journal
+# RBIP Duty List - Changelog
 
-> **Purpose**: This document serves as a comprehensive reference for the RBIP Duty List web application. It captures project context, data architecture, code rules, and key patterns to ensure consistency across development sessions and new chat agents.
+> **Purpose**: This document serves as a comprehensive historical changelog and reference for the RBIP Duty List web application. It captures detailed project history, data architecture, code rules, and key patterns. For essential patterns that are auto-loaded, see `.cursor/rules/`. For quick context, see `CONTEXT.md`.
 
 **Last Updated**: 2026-01-23
-**Latest Phase**: Phase 31 - Developer Leave Simulation Harness + Legacy PCA Leave Field Removal
-**Note**: Legacy development phases (1-20) have been moved to `Journal_legacy.md` for reference.  
+**Latest Phase**: Phase 32 - UI Refinements & SPT On-Duty Display Fixes
+**Note**: Legacy development phases (1-20) have been moved to `Journal_legacy.md` for reference.
+**Optimization Note**: Essential patterns have been extracted to `.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc` for automatic loading. This changelog is read on-demand for historical context.  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
 **Tech Stack**: Next.js 16.1+ (App Router, Turbopack), React 19.2+, TypeScript, Supabase (PostgreSQL), Tailwind CSS 4.1+ (CSS-first config), ESLint 9+, Shadcn/ui
 
@@ -110,6 +111,46 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
     - DB conversion payloads (`lib/db/types.ts`)
   - Added migration to drop DB columns and update RPC payloads: `supabase/migrations/remove_pca_leave_comeback_fields.sql`
   - Updated schema snapshot: `supabase/schema.sql`
+
+## Phase 32: UI Refinements & SPT On-Duty Display Fixes
+
+- ✅ **Invalid Slot Display Correction**
+  - Fixed bug where invalid slots were displayed on all staff cards (including special program cards) for a PCA.
+  - **Solution**: Modified `PCABlock.tsx` `getSlotDisplayForTeamFiltered` to use `cardKind` parameter:
+    - Special program cards never show invalid slots.
+    - Regular floating PCA cards show invalid slots only when adjacent to a valid slot (e.g., invalid slot 4 must pair with valid slot 3).
+  - Invalid slots are always excluded from `availableSlots` for FTE calculations.
+
+- ✅ **Special Program Display in Dedicated Schedule**
+  - Fixed bug where special program labels (e.g., "CRP") were not showing in the "PCA Dedicated Schedule" table in pre-algorithm state.
+  - **Solution**: Modified `PCADedicatedScheduleTable.tsx` to display special program labels even when `stage: 'none'` by removing the `!isPreAlgo` condition from `programNameByStaffIdBySlot` logic.
+
+- ✅ **Copy Wizard "Inactive" Badge Styling**
+  - Updated Step 2 text in `ScheduleCopyWizard.tsx` to render the word "inactive" as a grey badge using `Badge` component with classes `bg-gray-400 text-white hover:bg-gray-400 px-2 py-0.5 text-[11px] font-semibold align-middle`, matching the staff profile inactive badge style.
+
+- ✅ **Dropdown Menu Styling Consistency**
+  - Transcribed dropdown menu option style from leave sim dialog to SPT Allocation Dashboard dialog.
+  - Converted native `<select>` elements for "SPT staff" and "Specialty" in `SPTAllocationPanel.tsx` to shadcn `Select` component with `SelectTrigger`, `SelectValue`, `SelectContent`, and `SelectItem`s for consistent UI/UX.
+  - Updated `design-elements-commonality.mdc` with dropdown menu styling rules.
+
+- ✅ **Leave Sim Dialog Refinements**
+  - **Planned PCA Budget Limit**: Increased upper limit from 1.5 to 2.0 FTE in `DevLeaveSimPanel.tsx` and `lib/dev/leaveSim/types.ts`.
+  - **Numeric Input Editing**: Fixed text fields for "Planned leave type weights," "Urgent leave type weights," and "Rank weighting" (under 'custom' mode) to allow backspacing and editing existing numbers, while still enforcing 0-1 validation on blur using `safeNumberInput` and `clampNumber`.
+  - **Apply Button Placement & Auto-Navigation**: Moved "Apply (clean)" and "Apply (merge)" buttons to appear under the "Draft patches" section, and added automatic redirect to "Run steps" tab after clicking an Apply button via `setActiveTab('run')`.
+
+- ✅ **Navbar User Role Badge**
+  - Added user role badge (user/developer/admin) next to the username button in `Navbar.tsx`, reusing existing badge styling from account management panel.
+  - Extended user profile query to fetch `role` field and display appropriate badge variant (`roleDeveloper`, `roleAdmin`, `roleUser`).
+
+- ✅ **SPT On-Duty (FTE=0) Display Correction**
+  - **Leave Block Exclusion**: Fixed bug where SPT staff on-duty with FTE=0 (supervisory role) were incorrectly appearing in the Leave Arrangements block.
+    - **Solution**: Modified `app/(dashboard)/schedule/page.tsx` to include staff in Leave block only when `effectiveLeaveType` is truly a non-on-duty leave type (using `isTrulyOnLeave` helper).
+    - On-duty staff with FTE=0 no longer appear in Leave block.
+  - **Therapist Block "No Duty" Display**: For SPT staff on-duty with FTE=0, the staff card in therapist block now displays:
+    - Greyed-out card styling (`bg-muted/70 hover:bg-muted/70`).
+    - "No Duty" label in header right position.
+    - No AM/PM slot text (suppressed via `sptDisplay = undefined` when `isSupervisoryNoDuty` is true).
+  - **Implementation**: Modified `TherapistBlock.tsx` to detect `isSupervisoryNoDuty` condition (SPT + FTE=0 + on-duty + has `spt_slot_display`) and apply appropriate styling and display logic.
 
 ### Phase 21: Account Management, Access Roles, Step Clear & Step Validation Enhancements
 - ✅ **Account Management Dashboard**

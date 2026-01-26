@@ -4081,6 +4081,7 @@ function SchedulePageContent() {
         updatedPcaAllocations[team] = teamAllocs
       }
     }
+
     setPcaAllocations(updatedPcaAllocations)
     
     // Handle any errors from the algorithm
@@ -9060,29 +9061,31 @@ function SchedulePageContent() {
                   <div className="grid grid-cols-8 gap-2">
                     {TEAMS.map((team) => {
                       // Get staff on leave from allocations AND staffOverrides
-                      // Include staff with leave_type set OR staff with FTE = 0 (full leave)
-                      // Prioritize staffOverrides leave type over allocation leave type
+                      // Only include staff who are truly on leave (not on-duty).
                       const therapistLeaves = therapistAllocations[team]
                         .filter(alloc => {
                           const override = staffOverrides[alloc.staff.id]
-                          const hasLeaveType = override?.leaveType !== null && override?.leaveType !== undefined
-                          const hasLeaveTypeInAlloc = alloc.leave_type !== null
-                          const hasZeroFTE = (alloc.fte_therapist || 0) === 0
-                          return hasLeaveType || hasLeaveTypeInAlloc || hasZeroFTE
+                          const effectiveLeaveType =
+                            override?.leaveType !== undefined ? override.leaveType : (alloc.leave_type as any)
+                          const hasLeaveType = effectiveLeaveType !== null && effectiveLeaveType !== undefined
+                          const isTrulyOnLeave = hasLeaveType && !isOnDutyLeaveType(effectiveLeaveType as any)
+
+                          // IMPORTANT:
+                          // - SPT can be "on duty" with FTE=0 (supervisory), and should NOT show in leave block.
+                          // - Only show in leave block when leave type is truly a leave type (not on-duty).
+                          return isTrulyOnLeave
                         })
                         .map(alloc => {
                           const override = staffOverrides[alloc.staff.id]
-                          // Use override leave type if available, otherwise use allocation leave type
-                          const leaveType = override?.leaveType !== null && override?.leaveType !== undefined
-                            ? override.leaveType
-                            : (alloc.leave_type || 'On Leave')
+                          const effectiveLeaveType =
+                            override?.leaveType !== undefined ? override.leaveType : (alloc.leave_type as any)
                           // Use override FTE if available, otherwise use allocation FTE
                           const fteRemaining = override?.fteRemaining !== undefined
                             ? override.fteRemaining
                             : (alloc.fte_therapist || 0)
                           return { 
                             ...alloc.staff, 
-                            leave_type: leaveType,
+                            leave_type: effectiveLeaveType as LeaveType,
                             fteRemaining: fteRemaining
                           }
                         })
@@ -9095,13 +9098,15 @@ function SchedulePageContent() {
                           const staffMember = staff.find(s => s.id === staffId)
                           // Include only therapists with any leave type set, regardless of FTE
                           const isTherapist = staffMember && ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)
-                          return isTherapist && staffMember.team === team && override.leaveType !== null && override.leaveType !== undefined
+                          const hasLeaveType = override.leaveType !== null && override.leaveType !== undefined
+                          const isTrulyOnLeave = hasLeaveType && !isOnDutyLeaveType(override.leaveType as any)
+                          return isTherapist && staffMember.team === team && isTrulyOnLeave
                         })
                         .map(([staffId, override]) => {
                           const staffMember = staff.find(s => s.id === staffId)!
                           return {
                             ...staffMember,
-                            leave_type: override.leaveType || 'On Leave',
+                            leave_type: override.leaveType as any,
                             fteRemaining: override.fteRemaining
                           }
                         })
@@ -9180,6 +9185,7 @@ function SchedulePageContent() {
                   weekday={currentWeekday}
                   stepStatus={stepStatus}
                   initializedSteps={initializedSteps}
+                  showStaffIds={userRole === 'developer'}
                 />
                     </MaybeProfiler>
                   ) : (

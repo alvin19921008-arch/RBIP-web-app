@@ -2738,7 +2738,72 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
         })
 
         const keys = Object.keys(selections || {})
-        return keys.length === 0 && Object.keys(preSelections).length > 0 ? preSelections : (selections || {})
+        const resolvedSelections = keys.length === 0 && Object.keys(preSelections).length > 0 ? preSelections : (selections || {})
+
+        // Persist substitution selections into staffOverrides so:
+        // - UI substitution highlighting is accurate (no heuristic mismatch)
+        // - Step 3 can reliably exclude substitution slots via staffOverrides.substitutionFor
+        //
+        // Note: Page-level manual confirm also persists; this is mainly for auto/wizard flows.
+        try {
+          const teamsTouched = new Set<Team>(
+            Object.keys(resolvedSelections || {}).map((key) => {
+              const dashIdx = key.indexOf('-')
+              return (dashIdx >= 0 ? key.slice(0, dashIdx) : key) as Team
+            })
+          )
+          const nextTargets = new Set(
+            Object.keys(resolvedSelections || {}).map((key) => {
+              const dashIdx = key.indexOf('-')
+              const team = (dashIdx >= 0 ? key.slice(0, dashIdx) : key) as Team
+              const nonFloatingPCAId = dashIdx >= 0 ? key.slice(dashIdx + 1) : ''
+              return `${team}::${nonFloatingPCAId}`
+            })
+          )
+
+          setStaffOverrides((prev: any) => {
+            const next = { ...prev }
+
+            // Clear existing substitutionFor entries for the affected teams.
+            // This prevents stale "green substitution" styling from earlier runs / other non-floating keys.
+            Object.entries(next).forEach(([staffId, o]) => {
+              const sf = (o as any)?.substitutionFor
+              if (!sf) return
+              if (!teamsTouched.has(sf.team as Team)) return
+              const { substitutionFor, ...rest } = o as any
+              next[staffId] = rest
+            })
+
+            // Apply new selections.
+            Object.entries(resolvedSelections || {}).forEach(([key, selectionArr]) => {
+              const dashIdx = key.indexOf('-')
+              const team = (dashIdx >= 0 ? key.slice(0, dashIdx) : key) as Team
+              const nonFloatingPCAId = dashIdx >= 0 ? key.slice(dashIdx + 1) : ''
+              const nonFloating = staff.find((s) => s.id === nonFloatingPCAId)
+
+              ;(selectionArr || []).forEach((sel: any) => {
+                const floatingPCAId = String(sel?.floatingPCAId ?? '')
+                const slots = Array.isArray(sel?.slots) ? sel.slots : []
+                if (!floatingPCAId || slots.length === 0) return
+
+                next[floatingPCAId] = {
+                  ...(next[floatingPCAId] ?? { leaveType: null, fteRemaining: 1.0 }),
+                  substitutionFor: {
+                    nonFloatingPCAId,
+                    nonFloatingPCAName: nonFloating?.name ?? '',
+                    team,
+                    slots,
+                  },
+                }
+              })
+            })
+
+            return next
+          })
+
+        } catch {}
+
+        return resolvedSelections
       }
 
       const existingAllocsForSubstitution = existingAllocationsRaw.filter((alloc: any) => {
@@ -2809,6 +2874,140 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
                 : 1.0
             next[bufferId] = {
               ...(next[bufferId] ?? { leaveType: null, fteRemaining: baseFTE }),
+              ...patch,
+            }
+          }
+          return next
+        })
+      }
+
+      // Detect auto-assigned substitutions from Step 2.1 and set substitutionFor in staffOverrides
+      // This ensures Step 3 knows which slots are reserved for substitution
+      const autoSubstitutionUpdates: Record<
+        string,
+        {
+          substitutionFor: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
+        }
+      > = {}
+
+      try {
+        // Group allocations by team
+        const allocationsByTeam = new Map<Team, Array<{ alloc: any; staff: Staff }>>()
+        ;(pcaResult as any).allocations.forEach((alloc: any) => {
+          const staffMember = staff.find((s) => s.id === alloc.staff_id)
+          if (!staffMember) return
+          const team = alloc.team as Team
+          if (!allocationsByTeam.has(team)) {
+            allocationsByTeam.set(team, [])
+          }
+          allocationsByTeam.get(team)!.push({ alloc, staff: staffMember })
+        })
+
+        // For each team, detect substitutions
+        allocationsByTeam.forEach((allocs, team) => {
+          // Find non-floating PCAs in this team with missing slots
+          const nonFloatingPCAs = allocs.filter(
+            (item) => item.staff.rank === 'PCA' && !item.staff.floating && item.staff.status !== 'buffer'
+          )
+
+          // Find floating PCA allocations in this team (potential substitutes)
+          const floatingPCAAllocs = allocs.filter(
+            (item) =>
+              item.staff.rank === 'PCA' &&
+              item.staff.floating &&
+              !item.alloc.special_program_ids?.length &&
+              // Only consider allocations that don't already have substitutionFor set
+              !(overrides[item.alloc.staff_id] as any)?.substitutionFor
+          )
+
+          for (const nfItem of nonFloatingPCAs) {
+            const nfAlloc = nfItem.alloc
+            const nfStaff = nfItem.staff
+            const nfOverride = overrides[nfStaff.id]
+
+            // Determine missing slots for this non-floating PCA
+            // Missing slots = slots not in availableSlots, or if FTE < 1.0
+            const nfAvailableSlots = nfOverride?.availableSlots
+            const nfFTE = nfOverride?.fteRemaining ?? 1.0
+          let expectedSlots: number | null = null
+
+            let missingSlots: number[] = []
+            if (nfAvailableSlots && Array.isArray(nfAvailableSlots) && nfAvailableSlots.length > 0) {
+              // Missing slots are those not in availableSlots
+              missingSlots = [1, 2, 3, 4].filter((slot) => !nfAvailableSlots.includes(slot))
+            } else if (nfFTE < 1.0) {
+              // If FTE < 1.0, calculate missing slots based on FTE
+            expectedSlots = Math.round(nfFTE / 0.25)
+              const assignedSlots: number[] = []
+              if (nfAlloc.slot1 === team) assignedSlots.push(1)
+              if (nfAlloc.slot2 === team) assignedSlots.push(2)
+              if (nfAlloc.slot3 === team) assignedSlots.push(3)
+              if (nfAlloc.slot4 === team) assignedSlots.push(4)
+              // Missing slots are those not assigned
+              missingSlots = [1, 2, 3, 4].filter((slot) => !assignedSlots.includes(slot))
+            }
+
+            if (missingSlots.length === 0) continue
+
+            // Find floating PCA allocations that cover these missing slots
+            for (const floatItem of floatingPCAAllocs) {
+              const floatAlloc = floatItem.alloc
+              const floatStaff = floatItem.staff
+
+              // Get slots assigned to this team by this floating PCA
+              const assignedSlots: number[] = []
+              if (floatAlloc.slot1 === team) assignedSlots.push(1)
+              if (floatAlloc.slot2 === team) assignedSlots.push(2)
+              if (floatAlloc.slot3 === team) assignedSlots.push(3)
+              if (floatAlloc.slot4 === team) assignedSlots.push(4)
+
+              // Check if assigned slots match missing slots (or are a subset)
+              const matchingSlots = assignedSlots.filter((slot) => missingSlots.includes(slot))
+              if (matchingSlots.length > 0) {
+                // This floating PCA is substituting for the non-floating PCA
+                // Set substitutionFor if not already set
+                if (!autoSubstitutionUpdates[floatStaff.id]) {
+                  autoSubstitutionUpdates[floatStaff.id] = {
+                    substitutionFor: {
+                      nonFloatingPCAId: nfStaff.id,
+                      nonFloatingPCAName: nfStaff.name,
+                      team,
+                      slots: matchingSlots,
+                    },
+                  }
+                } else {
+                  // Merge slots if multiple non-floating PCAs are being substituted
+                  const existing = autoSubstitutionUpdates[floatStaff.id].substitutionFor
+                  const mergedSlots = [...new Set([...existing.slots, ...matchingSlots])].sort()
+                  autoSubstitutionUpdates[floatStaff.id] = {
+                    substitutionFor: {
+                      ...existing,
+                      slots: mergedSlots,
+                    },
+                  }
+                }
+                break // Found a match, move to next non-floating PCA
+              }
+            }
+          }
+        })
+
+      } catch (error) {
+        console.error('Error detecting auto-assigned substitutions:', error)
+      }
+
+      // Apply auto-substitution updates to staffOverrides
+      if (Object.keys(autoSubstitutionUpdates).length > 0) {
+        setStaffOverrides((prev: any) => {
+          const next = { ...prev }
+          for (const [floatingPCAId, patch] of Object.entries(autoSubstitutionUpdates)) {
+            const staffMember = staff.find((s) => s.id === floatingPCAId)
+            const baseFTE = staffMember?.status === 'buffer' && (staffMember as any).buffer_fte !== undefined
+              ? (staffMember as any).buffer_fte
+              : 1.0
+            const existingOverride = next[floatingPCAId] ?? { leaveType: null, fteRemaining: baseFTE }
+            next[floatingPCAId] = {
+              ...existingOverride,
               ...patch,
             }
           }

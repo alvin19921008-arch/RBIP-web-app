@@ -45,10 +45,34 @@ export function StaffProfilePanel() {
   const [editingNameValue, setEditingNameValue] = useState<string>('')
   const [savingNameId, setSavingNameId] = useState<string | null>(null)
   const [inactiveTogglePopover, setInactiveTogglePopover] = useState<{ staffId: string; name: string; position: { x: number; y: number } } | null>(null)
+  const [openStatusMenu, setOpenStatusMenu] = useState<{ staffId: string; left: number; top: number } | null>(null)
   const [showBufferSlotDialog, setShowBufferSlotDialog] = useState(false)
   const [pcaStaffForBuffer, setPcaStaffForBuffer] = useState<Staff | null>(null)
   const supabase = createClientComponentClient()
   const toast = useToast()
+
+  // Close status menu when clicking elsewhere / scroll / resize.
+  useEffect(() => {
+    if (!openStatusMenu) return
+
+    const onMouseDown = (e: MouseEvent) => {
+      const anchor = document.getElementById(`status-menu-anchor:${openStatusMenu.staffId}`)
+      if (anchor && anchor.contains(e.target as Node)) return
+      const menuEl = document.getElementById('staff-status-menu')
+      if (menuEl && menuEl.contains(e.target as Node)) return
+      setOpenStatusMenu(null)
+    }
+    const close = () => setOpenStatusMenu(null)
+
+    document.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [openStatusMenu])
 
   useEffect(() => {
     loadData()
@@ -697,24 +721,45 @@ export function StaffProfilePanel() {
               }
             }
             
+            const label = currentStatus === 'active' ? 'Active' : currentStatus === 'inactive' ? 'Inactive' : 'Buffer'
             return (
-              <div className="relative inline-block">
-                <select
-                  value={currentStatus}
-                  onChange={(e) => handleStatusChange(staffMember.id, e.target.value as 'active' | 'inactive' | 'buffer')}
+              <div className="flex items-center gap-1">
+                <div
                   className={cn(
-                    'h-6 px-2 pr-7 text-[11px] font-medium text-white rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 appearance-none cursor-pointer relative z-0',
-                    getStatusColor(currentStatus),
-                    currentStatus === 'active' ? 'focus:ring-green-500' : currentStatus === 'inactive' ? 'focus:ring-gray-400' : 'focus:ring-[#a4b1ed]'
+                    // Badge-style pill sized to text (no fixed min-width)
+                    'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors border-transparent text-white',
+                    getStatusColor(currentStatus)
                   )}
-                  style={{ minWidth: '76px' }}
                 >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                  <option value="buffer">Buffer</option>
-                </select>
-                <div className="absolute inset-y-0 right-1.5 flex items-center pointer-events-none z-[1]">
-                  <ChevronDown className="h-3.5 w-3.5 text-white" />
+                  {label}
+                </div>
+                <div className="relative" id={`status-menu-anchor:${staffMember.id}`}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className={cn(
+                      'h-7 w-7',
+                      currentStatus === 'active'
+                        ? 'focus-visible:ring-green-500'
+                        : currentStatus === 'inactive'
+                          ? 'focus-visible:ring-gray-400'
+                          : 'focus-visible:ring-[#a4b1ed]'
+                    )}
+                    title="Change status"
+                    onClick={(e) => {
+                      const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect()
+                      const desiredLeft = rect.left
+                      const desiredTop = rect.bottom + 6
+                      const menuWidth = 160
+                      const clampedLeft = Math.max(8, Math.min(desiredLeft, window.innerWidth - menuWidth - 8))
+                      setOpenStatusMenu((prev) =>
+                        prev?.staffId === staffMember.id ? null : { staffId: staffMember.id, left: clampedLeft, top: desiredTop }
+                      )
+                    }}
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
                 </div>
               </div>
             )
@@ -1017,6 +1062,29 @@ export function StaffProfilePanel() {
           )}
         </CardContent>
       </Card>
+
+      {/* Floating staff status menu (fixed-position) to avoid clipping inside overflow containers */}
+      {openStatusMenu ? (
+        <div
+          id="staff-status-menu"
+          className="fixed z-[9999] w-40 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md shadow-lg p-1"
+          style={{ left: openStatusMenu.left, top: openStatusMenu.top }}
+        >
+          {(['active', 'inactive', 'buffer'] as const).map((status) => (
+            <button
+              key={`status-${openStatusMenu.staffId}-${status}`}
+              type="button"
+              className="w-full text-left px-2 py-1.5 rounded text-sm hover:bg-accent"
+              onClick={() => {
+                void handleStatusChange(openStatusMenu.staffId, status)
+                setOpenStatusMenu(null)
+              }}
+            >
+              {status === 'active' ? 'Active' : status === 'inactive' ? 'Inactive' : 'Buffer'}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {editingStaff && (
         <StaffEditDialog

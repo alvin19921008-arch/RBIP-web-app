@@ -217,7 +217,7 @@ This document tracks a **step-by-step refactor + loading speed optimization plan
   - Smoke test: load date, switch date, run Step 2/3, open key dialogs
   - Ensure snapshot envelope + validation rules remain enforced
 
-- [ ] **5.2 Update `journal_new.md`**
+- [ ] **5.2 Update `CHANGELOG.md`** (formerly `journal_new.md`)
   - Add a short note of what refactors were done and where the controller hook lives
 
 ---

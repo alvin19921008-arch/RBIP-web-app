@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SPTAllocation } from '@/types/allocation'
 import { Staff, Team, Weekday } from '@/types/staff'
 import { getSlotLabel } from '@/lib/utils/slotHelpers'
@@ -276,6 +278,7 @@ function SPTAllocationForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (!selectedStaff) return
       const savePayload = {
       staff_id: selectedStaff,
       teams,
@@ -315,24 +318,23 @@ function SPTAllocationForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-4 border p-4 rounded">
       <div>
-        <label className="block text-sm font-medium mb-1">SPT Staff</label>
-        <select
-          value={selectedStaff}
-          onChange={(e) => setSelectedStaff(e.target.value)}
-          className="w-full px-3 py-2 border rounded-md"
-          required
-        >
-          <option value="">Select SPT</option>
-          {staff.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
+        <Label className="text-sm font-medium mb-1">SPT staff</Label>
+        <Select value={selectedStaff} onValueChange={setSelectedStaff}>
+          <SelectTrigger>
+            <SelectValue placeholder="Select SPT" />
+          </SelectTrigger>
+          <SelectContent>
+            {staff.map((s) => (
+              <SelectItem key={s.id} value={s.id}>
+                {s.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <div>
-        <label className="block text-sm font-medium mb-2">Teams</label>
+        <Label className="text-sm font-medium mb-2">Teams</Label>
         <div className="flex flex-wrap gap-2">
           {allTeams.map((team) => (
             <button
@@ -350,7 +352,7 @@ function SPTAllocationForm({
       </div>
 
       <div>
-        <label className="block text-sm font-medium mb-2">Weekdays</label>
+        <Label className="text-sm font-medium mb-2">Weekdays</Label>
         <div className="flex space-x-2">
           {(['mon', 'tue', 'wed', 'thu', 'fri'] as Weekday[]).map((day) => (
             <button
@@ -369,7 +371,7 @@ function SPTAllocationForm({
 
       {weekdays.length > 0 && (
         <div>
-          <label className="block text-sm font-medium mb-1">Slots per Weekday</label>
+          <Label className="text-sm font-medium mb-1">Slots per weekday</Label>
           {weekdays.map((day) => {
             const selectedSlots = slots[day] || []
             const amSlots = selectedSlots.filter(s => s === 1 || s === 2)
@@ -533,6 +535,25 @@ function SPTAllocationForm({
       )}
 
       <div>
+        <Label className="text-sm font-medium mb-1">Specialty</Label>
+        <Select
+          value={specialty || 'nil'}
+          onValueChange={(v) => setSpecialty(v === 'nil' ? '' : v)}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="nil">-- None --</SelectItem>
+            <SelectItem value="MSK/Ortho">MSK/Ortho</SelectItem>
+            <SelectItem value="Cardiac">Cardiac</SelectItem>
+            <SelectItem value="Neuro">Neuro</SelectItem>
+            <SelectItem value="Cancer">Cancer</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div>
         <label className="block text-sm font-medium mb-1">FTE Add-on to the assigned team</label>
         <input
           type="number"
@@ -544,21 +565,6 @@ function SPTAllocationForm({
           className="w-full px-3 py-2 border rounded-md"
           required
         />
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium mb-1">Specialty (Optional)</label>
-        <select
-          value={specialty || 'nil'}
-          onChange={(e) => setSpecialty(e.target.value === 'nil' ? '' : e.target.value)}
-          className="w-full px-3 py-2 border rounded-md"
-        >
-          <option value="nil">-- None --</option>
-          <option value="MSK/Ortho">MSK/Ortho</option>
-          <option value="Cardiac">Cardiac</option>
-          <option value="Neuro">Neuro</option>
-          <option value="Cancer">Cancer</option>
-        </select>
       </div>
 
       <div className="flex items-center space-x-2">

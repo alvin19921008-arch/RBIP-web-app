@@ -136,7 +136,11 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
 
   // Helper function to get slot display for PCA allocation in this team
   // Helper function to get slot display with optional slot filter
-  const getSlotDisplayForTeamFiltered = (allocation: PCAAllocation & { staff: Staff }, slotsToInclude?: number[]): string | null => {
+  const getSlotDisplayForTeamFiltered = (
+    allocation: PCAAllocation & { staff: Staff },
+    slotsToInclude?: number[],
+    opts?: { cardKind?: 'regular' | 'specialProgram' }
+  ): string | null => {
     const slotsForThisTeam: number[] = []
     if (allocation.slot1 === team) slotsForThisTeam.push(1)
     if (allocation.slot2 === team) slotsForThisTeam.push(2)
@@ -146,6 +150,8 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     // Step 1 (leave-fte): For NON-floating PCA, show the a/v slots from staffOverrides early,
     // so the staff card updates immediately when user edits leave/FTE/slots.
     const override = staffOverrides[allocation.staff_id]
+    const cardKind = opts?.cardKind ?? 'regular'
+
     // NEW: Check for invalidSlots array first, fallback to old invalidSlot for backward compatibility
     const invalidSlotsArray = override?.invalidSlots || []
     const hasInvalidSlots = invalidSlotsArray.length > 0
@@ -170,11 +176,11 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     
     const invalidSlot = effectiveInvalidSlot
     
-    // Get available slots (excluding invalid slots) from filtered slots
-    const invalidSlotNumbers = hasInvalidSlots 
-      ? invalidSlotsArray.map(is => is.slot)
+    // Exclude invalid slots from availability for THIS card, even if we don't display them here.
+    const invalidSlotNumbersAll = hasInvalidSlots
+      ? invalidSlotsArray.map((is) => is.slot)
       : (invalidSlot ? [invalidSlot] : [])
-    const availableSlots = filteredSlots.filter(slot => !invalidSlotNumbers.includes(slot))
+    const availableSlots = filteredSlots.filter((slot) => !invalidSlotNumbersAll.includes(slot))
     
     // Rule 1: If all filtered slots 1-4 assigned to this team only: show "Whole day"
     // BUT: exclude invalid slots from this check - if there's an invalid slot, don't show "Whole day"
@@ -191,11 +197,28 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     // Invalid slots appear in their natural position with time ranges in brackets
     const parts: string[] = []
     
+    // Decide which invalid slots are allowed to DISPLAY on this card.
+    // Requirement:
+    // - Never show invalid-slot formatting on special-program cards
+    // - For floating PCA cards: show invalid slot only when the card includes the adjacent paired slot
+    //   (1↔2, 3↔4). Example: invalid=4 shows only on the card that includes slot 3.
+    const invalidSlotsForDisplay = (() => {
+      if (!hasInvalidSlots) return []
+      if (cardKind === 'specialProgram') return []
+      if (!allocation.staff.floating) return invalidSlotsArray
+      const has = (s: number) => filteredSlots.includes(s)
+      const paired = (s: number) => (s === 1 ? 2 : s === 2 ? 1 : s === 3 ? 4 : s === 4 ? 3 : null)
+      return invalidSlotsArray.filter((inv) => {
+        const p = paired(inv.slot)
+        return typeof p === 'number' && has(p)
+      })
+    })()
+
     // Get invalid slot time ranges from new system (invalidSlots array)
-    const invalidSlot1 = invalidSlotsArray.find(is => is.slot === 1)
-    const invalidSlot2 = invalidSlotsArray.find(is => is.slot === 2)
-    const invalidSlot3 = invalidSlotsArray.find(is => is.slot === 3)
-    const invalidSlot4 = invalidSlotsArray.find(is => is.slot === 4)
+    const invalidSlot1 = invalidSlotsForDisplay.find((is) => is.slot === 1)
+    const invalidSlot2 = invalidSlotsForDisplay.find((is) => is.slot === 2)
+    const invalidSlot3 = invalidSlotsForDisplay.find((is) => is.slot === 3)
+    const invalidSlot4 = invalidSlotsForDisplay.find((is) => is.slot === 4)
     
     // Check which slots are available (not invalid)
     const hasSlot1 = availableSlots.includes(1)
@@ -277,8 +300,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     // Note: New system (invalidSlots array) positions invalid slots in natural slot order (1->2->3->4)
     // Legacy leave/come-back time display has been removed.
     
-    const result = parts.length > 0 ? parts.join(', ') : null
-    return result
+    return parts.length > 0 ? parts.join(', ') : null
   }
 
   // Original function (calls filtered version with no filter)
@@ -348,6 +370,16 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     // - subbing for specific slot(s) AND
     // - assigned regular slots in Step 3 to the same team.
     try {
+      const hasAnyExplicitSubstitutionForTeam =
+        Object.values(staffOverrides).some((o: any) => o?.substitutionFor?.team === team && Array.isArray(o?.substitutionFor?.slots) && o.substitutionFor.slots.length > 0)
+
+      // If explicit substitutionFor exists for this team (from Step 2.1),
+      // do NOT use heuristic inference. Otherwise we can incorrectly paint
+      // other floating PCAs green just because they share a missing slot.
+      if (hasAnyExplicitSubstitutionForTeam) {
+        return { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
+      }
+
       // If a whole-day buffer/non-floating substitute exists for a missing non-floating PCA in this team,
       // we should NOT mark unrelated floating allocations as "substituting" for that missing PCA.
       const bufferWholeDayTargets = new Set(
@@ -977,7 +1009,7 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
             const splitInfo = splitAllocationSlots.get(`${allocation.id}-${team}`)
             const slotsToDisplay = splitInfo ? splitInfo.regularSlots : undefined
             const slotDisplay = slotsToDisplay 
-              ? getSlotDisplayForTeamFiltered(allocation, slotsToDisplay)
+              ? getSlotDisplayForTeamFiltered(allocation, slotsToDisplay, { cardKind: 'regular' })
               : getSlotDisplayForTeam(allocation)
             const slotDisplayNode = renderSlotDisplay(slotDisplay, allocation, slotsToDisplay)
             
@@ -1050,8 +1082,8 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
             const splitInfo = splitAllocationSlots.get(`${allocation.id}-${team}`)
             const slotsToDisplay = splitInfo ? splitInfo.specialProgramSlots : undefined
             const slotDisplay = slotsToDisplay
-              ? getSlotDisplayForTeamFiltered(allocation, slotsToDisplay)
-              : getSlotDisplayForTeam(allocation)
+              ? getSlotDisplayForTeamFiltered(allocation, slotsToDisplay, { cardKind: 'specialProgram' })
+              : getSlotDisplayForTeamFiltered(allocation, undefined, { cardKind: 'specialProgram' })
             // IMPORTANT: Special program card should show ONLY special-program slot time(s),
             // and should NOT inherit non-floating substitution (green) styling.
             const slotDisplayNode = slotDisplay ? <span>{slotDisplay}</span> : null

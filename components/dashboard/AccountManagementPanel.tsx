@@ -464,7 +464,7 @@ export function AccountManagementPanel() {
                           ) : null}
                           <td className="p-3 text-muted-foreground">{formatDate(a.created_at)}</td>
                           <td className="p-3">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1">
                               <Badge variant={roleBadgeVariant(a.role)} className="capitalize">
                                 {a.role}
                               </Badge>

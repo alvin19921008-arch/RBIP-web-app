@@ -59,8 +59,8 @@ export type DevLeaveSimConfig = {
   // Planned leave knobs (developer-specified)
   plannedTherapistCount: number // therapists excluding SPT
   plannedTherapistMax: number // quota cap (default 3)
-  plannedPcaFteBudget: number // 0..1.5, in chunks of 0.5/1.0
-  plannedPcaFteBudgetMax: number // quota cap (default 1.5)
+  plannedPcaFteBudget: number // 0..2.0, in chunks of 0.5/1.0
+  plannedPcaFteBudgetMax: number // quota cap (default 2.0)
 
   // Unplanned leave knobs
   sickCount: number // 0..N
@@ -129,7 +129,7 @@ export function defaultDevLeaveSimConfig(): DevLeaveSimConfig {
     plannedTherapistCount: 0,
     plannedTherapistMax: 3,
     plannedPcaFteBudget: 0,
-    plannedPcaFteBudgetMax: 1.5,
+    plannedPcaFteBudgetMax: 2,
     sickCount: 0,
     urgentCount: 0,
     rankWeightMode: 'pool_proportional',

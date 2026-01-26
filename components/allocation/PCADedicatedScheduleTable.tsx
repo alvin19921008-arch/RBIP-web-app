@@ -37,6 +37,8 @@ interface PCADedicatedScheduleTableProps {
   weekday?: Weekday
   stepStatus: StepStatus
   initializedSteps: Set<string>
+  /** Developer-only helper to map UI cards ↔ staff_id. */
+  showStaffIds?: boolean
 }
 
 type CellKind =
@@ -123,6 +125,7 @@ export function PCADedicatedScheduleTable({
   weekday,
   stepStatus,
   initializedSteps,
+  showStaffIds = false,
 }: PCADedicatedScheduleTableProps) {
   const toast = useToast()
   const [refreshKey, setRefreshKey] = useState(0)
@@ -192,7 +195,9 @@ export function PCADedicatedScheduleTable({
 
   const programNameByStaffIdBySlot = useMemo(() => {
     const byStaff = new Map<string, Partial<Record<RowSlot, string>>>()
-    if (!weekday) return byStaff
+    if (!weekday) {
+      return byStaff
+    }
 
     for (const a of allAllocations) {
       if (!Array.isArray(a.special_program_ids) || a.special_program_ids.length === 0) continue
@@ -309,7 +314,8 @@ export function PCADedicatedScheduleTable({
             : [1, 2, 3, 4]
 
         // If whole day on-duty and no special program and no invalid slots, show a single 主位 cell.
-        const hasAnySpecialProgramSlot = !isPreAlgo && Object.keys(programBySlot).length > 0
+        // Special programs come from persisted allocations, so show them even pre-algorithm.
+        const hasAnySpecialProgramSlot = Object.keys(programBySlot).length > 0
         const hasAnyInvalid = Object.keys(invalids).length > 0
         if (
           !s.floating &&
@@ -332,7 +338,8 @@ export function PCADedicatedScheduleTable({
         const baseCells: Record<RowSlot, CellKind> = { 1: { kind: 'empty' }, 2: { kind: 'empty' }, 3: { kind: 'empty' }, 4: { kind: 'empty' } }
         for (const slot of [1, 2, 3, 4] as const) {
           const inv = invalids[slot]
-          const prog = !isPreAlgo ? programBySlot[slot] : undefined
+          // Show special program labels even in stage 'none' (pre-algorithm).
+          const prog = programBySlot[slot]
 
           if (inv && homeTeam) {
             baseCells[slot] = { kind: 'invalidSlot', team: homeTeam, timeRange: inv }
@@ -341,7 +348,7 @@ export function PCADedicatedScheduleTable({
 
           const isAvailable = availableSlots.includes(slot)
           if (isAvailable) {
-            if (!isPreAlgo && homeTeam && prog) {
+            if (homeTeam && prog) {
               baseCells[slot] = { kind: 'teamAndProgram', team: homeTeam, programName: prog }
             } else if (homeTeam) {
               // candidate for 主位 merge
@@ -661,6 +668,14 @@ export function PCADedicatedScheduleTable({
                   className="border-b border-r px-1 py-1 text-center text-xs font-semibold min-w-[80px] max-w-[100px]"
                 >
                   <div className="whitespace-normal break-words leading-tight">{s.name}</div>
+                  {showStaffIds ? (
+                    <div
+                      className="mt-0.5 font-normal text-[10px] leading-tight text-muted-foreground whitespace-normal break-all"
+                      title={s.id}
+                    >
+                      {s.id.slice(0, 8)}
+                    </div>
+                  ) : null}
                 </th>
               ))}
             </tr>

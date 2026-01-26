@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
 import { useOnClickOutside } from '@/lib/hooks/useOnClickOutside'
@@ -12,6 +13,14 @@ import { CalendarDays, LayoutDashboard, History, UserCircle, LogOut, KeyRound, C
 import { useEffect, useRef, useState } from 'react'
 import { ChangePasswordDialog } from '@/components/auth/ChangePasswordDialog'
 import { EditProfileDialog } from '@/components/auth/EditProfileDialog'
+
+type AccountRole = 'user' | 'admin' | 'developer'
+
+function roleBadgeVariant(role: AccountRole): 'roleDeveloper' | 'roleAdmin' | 'roleUser' {
+  if (role === 'developer') return 'roleDeveloper'
+  if (role === 'admin') return 'roleAdmin'
+  return 'roleUser'
+}
 
 export function Navbar() {
   const pathname = usePathname()
@@ -21,6 +30,7 @@ export function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const [profileName, setProfileName] = useState<string>('Account')
+  const [profileRole, setProfileRole] = useState<AccountRole>('user')
   const [changePwOpen, setChangePwOpen] = useState(false)
   const [editProfileOpen, setEditProfileOpen] = useState(false)
   const [profileRefreshKey, setProfileRefreshKey] = useState(0)
@@ -52,12 +62,20 @@ export function Navbar() {
 
         const { data: profile } = await supabase
           .from('user_profiles')
-          .select('username')
+          .select('username, role')
           .eq('id', userId)
           .maybeSingle()
 
         const name = (profile as any)?.username || fallback
+        const rawRole = (profile as any)?.role
+        const role: AccountRole =
+          rawRole === 'developer' || rawRole === 'admin' || rawRole === 'user'
+            ? rawRole
+            : rawRole === 'regular'
+              ? 'user'
+              : 'user'
         if (!cancelled) setProfileName(name)
+        if (!cancelled) setProfileRole(role)
       } catch {
         // ignore
       }
@@ -103,6 +121,9 @@ export function Navbar() {
           >
             <UserCircle className="h-5 w-5" />
             <span className="max-w-[160px] truncate">{profileName}</span>
+            <Badge variant={roleBadgeVariant(profileRole)} className="capitalize">
+              {profileRole}
+            </Badge>
             <ChevronDown className="h-4 w-4 opacity-70" />
           </Button>
           {menuOpen ? (

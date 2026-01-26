@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { CalendarGrid } from '@/components/ui/calendar-grid'
+import { Badge } from '@/components/ui/badge'
 import { Staff } from '@/types/staff'
 import { formatDate } from '@/lib/utils/dateHelpers'
 
@@ -395,8 +396,14 @@ export function ScheduleCopyWizard({
               onChange={(e) => setIncludeBuffer(e.target.checked)}
             />
             <span>
-              Keep buffer staff in copied schedule (uncheck to convert them to inactive and hide
-              them).
+              Keep buffer staff in copied schedule (uncheck to convert them to{' '}
+              <Badge
+                variant="secondary"
+                className="bg-gray-400 text-white hover:bg-gray-400 px-2 py-0.5 text-[11px] font-semibold align-middle"
+              >
+                inactive
+              </Badge>{' '}
+              and hide them).
             </span>
           </label>
         </div>

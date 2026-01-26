@@ -12,6 +12,7 @@ import { useDroppable, useDndContext } from '@dnd-kit/core'
 import { SpecialProgram } from '@/types/allocation'
 import { formatFTE } from '@/lib/utils/rounding'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
+import { cn } from '@/lib/utils'
 
 interface TherapistBlockProps {
   team: Team
@@ -53,17 +54,16 @@ export const TherapistBlock = memo(function TherapistBlock({ team, allocations, 
   // Also filter out staff with FTE = 0 (they should only appear in leave block),
   // EXCEPT SPT with configured FTE=0 that are still on-duty (leave_type null) and have SPT slot display.
   const therapistAllocations = useMemo(() => {
-    return allocations.filter(alloc => {
-    const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-    const fte = alloc.fte_therapist ?? 0
-    const isOnDuty = isOnDutyLeaveType(alloc.leave_type as any)
-    const isOnDutyZeroFteSPT =
-      alloc.staff.rank === 'SPT' &&
-      fte === 0 &&
-      isOnDuty &&
-      !!alloc.spt_slot_display
-    return isTherapist && (fte > 0 || isOnDutyZeroFteSPT)
-  })
+    const filtered = allocations.filter((alloc) => {
+      const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
+      const fte = alloc.fte_therapist ?? 0
+      const isOnDuty = isOnDutyLeaveType(alloc.leave_type as any)
+      const isOnDutyZeroFteSPT =
+        alloc.staff.rank === 'SPT' && fte === 0 && isOnDuty && !!alloc.spt_slot_display
+      return isTherapist && (fte > 0 || isOnDutyZeroFteSPT)
+    })
+
+    return filtered
   }, [allocations])
 
   // Calculate sum of therapist FTE per team
@@ -107,11 +107,21 @@ export const TherapistBlock = memo(function TherapistBlock({ team, allocations, 
         <div className="space-y-1 flex-1">
           {therapistAllocations.map((allocation) => {
             const fte = allocation.fte_therapist ?? 0
-            const sptDisplay = allocation.spt_slot_display
-              ? (allocation.staff.rank === 'SPT' && fte === 0
-                  ? allocation.spt_slot_display
-                  : `${fte} ${allocation.spt_slot_display}`)
-              : undefined
+            // SPT supervisory case: can be on duty with FTE=0 (should look "disabled" / non-workforce)
+            const isSupervisoryNoDuty =
+              allocation.staff.rank === 'SPT' &&
+              fte === 0 &&
+              isOnDutyLeaveType(allocation.leave_type as any) &&
+              !!allocation.spt_slot_display
+
+            // For supervisory "No Duty" SPT, hide weekday slot display (AM/PM) and show only "No Duty".
+            const sptDisplay = isSupervisoryNoDuty
+              ? undefined
+              : allocation.spt_slot_display
+                ? (allocation.staff.rank === 'SPT' && fte === 0
+                    ? allocation.spt_slot_display
+                    : `${fte} ${allocation.spt_slot_display}`)
+                : undefined
             
             // Calculate FTE for display
             // For buffer staff, use buffer_fte if available, otherwise default to 1.0
@@ -189,9 +199,19 @@ export const TherapistBlock = memo(function TherapistBlock({ team, allocations, 
                 allocation={allocation}
                 fteRemaining={displayFTE}
                 sptDisplay={sptDisplay}
+                headerRight={
+                  isSupervisoryNoDuty ? (
+                    <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">
+                      No Duty
+                    </span>
+                  ) : undefined
+                }
                 onEdit={(e) => onEditStaff?.(allocation.staff_id, e)}
                 onOpenContextMenu={(e) => onEditStaff?.(allocation.staff_id, e)}
-                fillColorClassName={(staffOverrides as any)?.[allocation.staff_id]?.cardColorByTeam?.[team]}
+                fillColorClassName={cn(
+                  (staffOverrides as any)?.[allocation.staff_id]?.cardColorByTeam?.[team],
+                  isSupervisoryNoDuty && 'bg-muted/70 hover:bg-muted/70'
+                )}
                 draggable={true} // Always allow dragging (will snap back if not in correct step)
                 dragTeam={team}
               />

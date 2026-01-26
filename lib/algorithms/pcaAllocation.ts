@@ -1412,7 +1412,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         const existingAllocation = allocations.find(a => a.staff_id === floatingPca.id)
         const slots = Array.isArray(userSelection.slots) ? userSelection.slots : []
         let assignedCount = 0
-        
+
         if (existingAllocation) {
           // Update existing allocation
           slots.forEach(slot => {
@@ -1464,9 +1464,95 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
       // Track which slots couldn't be substituted
       const remainingMissingSlots: number[] = []
       
-      // For each missing slot, find a floating PCA to substitute
-      subNeed.missingSlots.forEach((missingSlot) => {
+      // IMPROVED: Try to assign ALL missing slots to the same PCA first (preferred behavior)
+      const missingSlots = subNeed.missingSlots
+      let allSlotsAssigned = false
+      let strategy1ChosenPcaId: string | null = null
+      
+      // Helper function to check if a PCA can cover specific slots
+      const canPCACoverSlots = (pca: PCAData, slots: number[], existingAlloc: PCAAllocation | undefined): boolean => {
+        if (!pca.is_available) return false
+        
+        // Check if all slots are in PCA's availableSlots
+        if (pca.availableSlots && pca.availableSlots.length > 0) {
+          const canCover = slots.every(slot => pca.availableSlots!.includes(slot))
+          if (!canCover) return false
+        }
+        
+        // Check if slots are already assigned to special program
+        if (existingAlloc) {
+          for (const slot of slots) {
+            const slotField = slot === 1 ? 'slot1' : slot === 2 ? 'slot2' : slot === 3 ? 'slot3' : 'slot4'
+            if (existingAlloc[slotField] !== null && existingAlloc.special_program_ids && existingAlloc.special_program_ids.length > 0) {
+              return false // Slot already assigned to special program
+            }
+          }
+        }
+        
+        return true
+      }
+      
+      // Strategy 1: Try to find a single preferred PCA that can cover ALL missing slots
+      if (preferredPCAIds.length > 0 && missingSlots.length > 1) {
+        for (const preferredPcaId of preferredPCAIds) {
+          const floatingPca = floatingPCA.find(pca => pca.id === preferredPcaId)
+          if (!floatingPca) continue
+          
+          const existingAllocation = allocations.find(a => a.staff_id === floatingPca.id)
+          if (!canPCACoverSlots(floatingPca, missingSlots, existingAllocation)) continue
+          
+          // Found PCA that can cover all slots - assign all at once
+          if (existingAllocation) {
+            missingSlots.forEach(slot => {
+              const slotField = slot === 1 ? 'slot1' : slot === 2 ? 'slot2' : slot === 3 ? 'slot3' : 'slot4'
+              if (existingAllocation[slotField] === null) {
+                existingAllocation[slotField] = subNeed.team
+              }
+            })
+            const baseFTE = floatingPca.fte_pca
+            updateAllocationFTE(existingAllocation, baseFTE)
+          } else {
+            // Create new allocation with all missing slots
+            const slot1Team = missingSlots.includes(1) ? subNeed.team : null
+            const slot2Team = missingSlots.includes(2) ? subNeed.team : null
+            const slot3Team = missingSlots.includes(3) ? subNeed.team : null
+            const slot4Team = missingSlots.includes(4) ? subNeed.team : null
+            
+            const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
+            const newAllocation: PCAAllocation = {
+              id: crypto.randomUUID(),
+              schedule_id: '',
+              staff_id: floatingPca.id,
+              team: subNeed.team,
+              fte_pca: floatingPca.fte_pca,
+              fte_remaining: floatingPca.fte_pca - fteAssigned,
+              slot_assigned: fteAssigned,
+              slot_whole: null,
+              slot1: slot1Team,
+              slot2: slot2Team,
+              slot3: slot3Team,
+              slot4: slot4Team,
+              leave_type: floatingPca.leave_type,
+              special_program_ids: null,
+            }
+            allocations.push(newAllocation)
+          }
+          
+          // Update tracking
+          teamPCAAssigned[subNeed.team] += missingSlots.length * 0.25
+          allSlotsAssigned = true
+          strategy1ChosenPcaId = floatingPca.id
+          break // Found substitute for all slots
+        }
+      }
+      
+      // Strategy 2: If couldn't assign all slots to one PCA, fall back to per-slot assignment
+      if (!allSlotsAssigned) {
+        // For each missing slot, find a floating PCA to substitute
+        subNeed.missingSlots.forEach((missingSlot) => {
       let substituteFound = false
+      let chosenPcaId: string | null = null
+      let chosenPath: 'preferred' | 'nonPreferred' | 'fallback' | null = null
       
       // If team has preferences, try preferred PCA IDs first
       if (preferredPCAIds.length > 0) {
@@ -1530,6 +1616,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           // Update tracking
           teamPCAAssigned[subNeed.team] += 0.25
           substituteFound = true
+          chosenPcaId = floatingPca.id
+          chosenPath = 'preferred'
           break // Exit preference loop - found substitute
         }
       }
@@ -1562,6 +1650,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               updateAllocationFTE(existingAllocation, baseFTE)
               teamPCAAssigned[subNeed.team] += 0.25
               substituteFound = true
+              chosenPcaId = nonPreferredFloating.id
+              chosenPath = 'nonPreferred'
             }
           } else {
             // Create new allocation
@@ -1590,6 +1680,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             allocations.push(newAllocation)
             teamPCAAssigned[subNeed.team] += 0.25
             substituteFound = true
+            chosenPcaId = nonPreferredFloating.id
+            chosenPath = 'nonPreferred'
           }
         }
         
@@ -1619,6 +1711,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                 updateAllocationFTE(existingAllocation, baseFTE)
                 teamPCAAssigned[subNeed.team] += 0.25
                 substituteFound = true
+                chosenPcaId = fallbackFloating.id
+                chosenPath = 'fallback'
               }
             } else {
               const slot1Team = missingSlot === 1 ? subNeed.team : null
@@ -1646,6 +1740,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               allocations.push(newAllocation)
               teamPCAAssigned[subNeed.team] += 0.25
               substituteFound = true
+              chosenPcaId = fallbackFloating.id
+              chosenPath = 'fallback'
             }
           }
         }
@@ -1675,6 +1771,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               updateAllocationFTE(existingAllocation, baseFTE)
               teamPCAAssigned[subNeed.team] += 0.25
               substituteFound = true
+              chosenPcaId = fallbackFloating.id
+              chosenPath = 'fallback'
             }
           } else {
             const slot1Team = missingSlot === 1 ? subNeed.team : null
@@ -1702,15 +1800,18 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             allocations.push(newAllocation)
             teamPCAAssigned[subNeed.team] += 0.25
             substituteFound = true
+            chosenPcaId = fallbackFloating.id
+            chosenPath = 'fallback'
           }
         }
       }
-      
+
         // Track if slot couldn't be substituted
         if (!substituteFound) {
           remainingMissingSlots.push(missingSlot)
         }
-      })
+        })
+      } // End of Strategy 2: per-slot assignment fallback
       
       // Track unsubstituted slots for error reporting
       if (remainingMissingSlots.length > 0) {
