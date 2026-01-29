@@ -16,6 +16,7 @@ import {
   ScheduleStepId,
   BaselineSnapshot,
   BaselineSnapshotStored,
+  GlobalHeadAtCreation,
   SnapshotHealthReport,
 } from '@/types/schedule'
 import { Staff } from '@/types/staff'
@@ -68,6 +69,7 @@ import {
   sortPcaNonFloatingFirstThenName,
 } from '@/lib/features/schedule/grouping'
 import { computeBedsDesignatedByTeam, computeBedsForRelieving, formatWardLabel } from '@/lib/features/schedule/bedMath'
+import { getSptWeekdayConfigMap } from '@/lib/features/schedule/sptConfig'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { StaffData, AllocationContext } from '@/lib/algorithms/therapistAllocation'
@@ -771,12 +773,14 @@ function SchedulePageContent() {
   const [staffContextMenu, setStaffContextMenu] = useState<{
     show: boolean
     position: { x: number; y: number } | null
+    anchor: { x: number; y: number } | null
     staffId: string | null
     team: Team | null
     kind: 'therapist' | 'pca' | null
   }>({
     show: false,
     position: null,
+    anchor: null,
     staffId: null,
     team: null,
     kind: null,
@@ -785,10 +789,12 @@ function SchedulePageContent() {
   const [staffPoolContextMenu, setStaffPoolContextMenu] = useState<{
     show: boolean
     position: { x: number; y: number } | null
+    anchor: { x: number; y: number } | null
     staffId: string | null
   }>({
     show: false,
     position: null,
+    anchor: null,
     staffId: null,
   })
 
@@ -887,6 +893,8 @@ function SchedulePageContent() {
     sourceTeam: Team | null
     targetTeam: Team | null
     movedFteQuarter: number | null
+    splitMovedHalfDayChoice?: 'AUTO' | 'AM' | 'PM' | 'UNSPECIFIED'
+    splitStayHalfDayChoice?: 'AUTO' | 'AM' | 'PM' | 'UNSPECIFIED'
     splitInputMode?: 'moved' | 'stay'
     mergeInputMode?: 'intoSource' | 'intoSelected'
     mergeTeams: Team[]
@@ -900,6 +908,8 @@ function SchedulePageContent() {
     sourceTeam: null,
     targetTeam: null,
     movedFteQuarter: null,
+    splitMovedHalfDayChoice: 'AUTO',
+    splitStayHalfDayChoice: 'AUTO',
     splitInputMode: 'moved',
     mergeInputMode: 'intoSource',
     mergeTeams: [],
@@ -956,6 +966,8 @@ function SchedulePageContent() {
           sourceTeam: null,
           targetTeam: null,
           movedFteQuarter: null,
+          splitMovedHalfDayChoice: 'AUTO',
+          splitStayHalfDayChoice: 'AUTO',
           splitInputMode: 'moved',
           mergeInputMode: 'intoSource',
           mergeTeams: [],
@@ -1407,6 +1419,7 @@ function SchedulePageContent() {
         recalculateScheduleCalculations,
       })
       if (cancelled || controller.signal.aborted) return
+
       if (latestLoadTimingKeyRef.current !== dateStr) {
         return
       }
@@ -1951,7 +1964,7 @@ function SchedulePageContent() {
 
   const loadSPTAllocations = async () => {
     // Load all SPT allocations (active and inactive), filter in code
-    const { data } = await supabase.from('spt_allocations').select('*')
+    const { data, error } = await supabase.from('spt_allocations').select('*')
     if (data) {
       // Filter for active allocations (active !== false, handles null as active)
       const activeAllocations = data.filter(a => a.active !== false) as SPTAllocation[]
@@ -2041,6 +2054,7 @@ function SchedulePageContent() {
     setStaffContextMenu({
       show: false,
       position: null,
+      anchor: null,
       staffId: null,
       team: null,
       kind: null,
@@ -2061,6 +2075,7 @@ function SchedulePageContent() {
         show: true,
         // Document-relative position (so popover scrolls with page)
         position: { x: sx + 100, y: sy + 100 },
+        anchor: null,
         staffId,
         team,
         kind,
@@ -2094,6 +2109,8 @@ function SchedulePageContent() {
       show: true,
       // Store document-relative coords so it scrolls away naturally.
       position: { x: xClient + scrollX, y: yClient + scrollY },
+      // Animate expanding from the pencil icon.
+      anchor: { x: rect.left + rect.width / 2 + scrollX, y: rect.top + rect.height / 2 + scrollY },
       staffId,
       team,
       kind,
@@ -2104,6 +2121,7 @@ function SchedulePageContent() {
     setStaffPoolContextMenu({
       show: false,
       position: null,
+      anchor: null,
       staffId: null,
     })
   }, [])
@@ -2115,6 +2133,7 @@ function SchedulePageContent() {
       setStaffPoolContextMenu({
         show: true,
         position: { x: sx + 100, y: sy + 100 },
+        anchor: null,
         staffId,
       })
       return
@@ -2154,6 +2173,7 @@ function SchedulePageContent() {
     setStaffPoolContextMenu({
       show: true,
       position: { x: xClient + scrollX, y: yClient + scrollY },
+      anchor: { x: rect.left + rect.width / 2 + scrollX, y: rect.top + rect.height / 2 + scrollY },
       staffId,
     })
   }, [])
@@ -2250,6 +2270,8 @@ function SchedulePageContent() {
       sourceTeam: null,
       targetTeam: null,
       movedFteQuarter: null,
+      splitMovedHalfDayChoice: 'AUTO',
+      splitStayHalfDayChoice: 'AUTO',
       splitInputMode: 'moved',
       mergeInputMode: 'intoSource',
       mergeTeams: [],
@@ -2282,6 +2304,8 @@ function SchedulePageContent() {
       sourceTeam: options.sourceTeam,
       targetTeam: null,
       movedFteQuarter: null,
+      splitMovedHalfDayChoice: 'AUTO',
+      splitStayHalfDayChoice: 'AUTO',
       splitInputMode: 'moved',
       mergeInputMode: 'intoSource',
       mergeTeams: [],
@@ -4483,7 +4507,72 @@ function SchedulePageContent() {
   const selectedDateStr = formatDateForInput(selectedDate)
   const currentHasData = datesWithData.has(selectedDateStr)
   const isToday = selectedDateStr === formatDateForInput(new Date())
-  const showSnapshotUiReminder = !!baselineSnapshot
+
+  // Snapshot vs Global head metadata (cheap drift gate for UI reminders).
+  const [snapshotHeadAtCreation, setSnapshotHeadAtCreation] = useState<GlobalHeadAtCreation | null>(null)
+  const [globalConfigHead, setGlobalConfigHead] = useState<GlobalHeadAtCreation | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const res = await supabase.rpc('get_config_global_head_v1')
+      if (cancelled) return
+      if (!res.error && res.data) setGlobalConfigHead(res.data as any)
+    })().catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [supabase])
+
+  useEffect(() => {
+    if (!currentScheduleId) {
+      setSnapshotHeadAtCreation(null)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      const { data, error } = await supabase
+        .from('daily_schedules')
+        .select('baseline_snapshot')
+        .eq('id', currentScheduleId)
+        .maybeSingle()
+      if (cancelled) return
+      if (error) {
+        setSnapshotHeadAtCreation(null)
+        return
+      }
+      const stored = (data as any)?.baseline_snapshot as BaselineSnapshotStored | null | undefined
+      const { envelope } = unwrapBaselineSnapshotStored(stored as any)
+      const head = (envelope as any)?.globalHeadAtCreation ?? null
+      setSnapshotHeadAtCreation(head)
+    })().catch(() => {
+      if (cancelled) return
+      setSnapshotHeadAtCreation(null)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [supabase, currentScheduleId])
+
+  const snapshotDiffersFromGlobalHead = useMemo(() => {
+    // If there is no baseline snapshot, there is no "saved setup" reminder.
+    if (!baselineSnapshot) return false
+    // If either side is missing metadata (legacy snapshots / transient load), be conservative and show the reminder.
+    if (!snapshotHeadAtCreation || !globalConfigHead) return true
+
+    if (Number(snapshotHeadAtCreation.global_version) !== Number(globalConfigHead.global_version)) return true
+
+    const a = (snapshotHeadAtCreation.category_versions || {}) as Record<string, number>
+    const b = (globalConfigHead.category_versions || {}) as Record<string, number>
+    const keys = new Set<string>([...Object.keys(a), ...Object.keys(b)])
+    for (const k of keys) {
+      if (Number(a[k] ?? -1) !== Number(b[k] ?? -1)) return true
+    }
+    return false
+  }, [baselineSnapshot, snapshotHeadAtCreation, globalConfigHead])
+
+  // Header reminder icon should only show when snapshot settings differ from Global.
+  const showSnapshotUiReminder = !!baselineSnapshot && snapshotDiffersFromGlobalHead
 
   // Drift notification (post-load; admin/developer only)
   const lastDriftToastKeyRef = useRef<string | null>(null)
@@ -4801,21 +4890,22 @@ function SchedulePageContent() {
   const specificDirection: 'to' | 'from' = currentHasData ? 'to' : 'from'
   const specificEnabled = datesWithData.size > 0 || currentHasData
 
+  const sptWeekdayByStaffId = useMemo(() => {
+    return getSptWeekdayConfigMap({ weekday: currentWeekday, sptAllocations })
+  }, [currentWeekday, sptAllocations])
+
   const sptBaseFteByStaffId = useMemo(() => {
     const next: Record<string, number> = {}
-    for (const a of sptAllocations) {
-      if (!a.weekdays?.includes(currentWeekday)) continue
-      const raw = (a as any).fte_addon
-      const fte = typeof raw === 'number' ? raw : raw != null ? parseFloat(String(raw)) : NaN
-      if (Number.isFinite(fte)) next[a.staff_id] = fte
-    }
+    Object.entries(sptWeekdayByStaffId).forEach(([staffId, cfg]) => {
+      next[staffId] = cfg.baseFte
+    })
     return next
-  }, [sptAllocations, currentWeekday])
+  }, [sptWeekdayByStaffId])
 
   // SPT leave edit enhancement:
   // Nullify legacy auto-filled "FTE Cost due to Leave" for SPT where it was derived from (1.0 - remaining),
   // even when there is no real leave. New model:
-  // - Base SPT FTE comes from spt_allocations.fte_addon (dashboard) unless overridden.
+  // - Base SPT FTE comes from SPT weekday config (dashboard) unless overridden.
   // - Leave cost is user input (stored in staffOverrides[staffId].fteSubtraction).
   // - Remaining on duty is derived (stored in staffOverrides[staffId].fteRemaining).
   useEffect(() => {
@@ -4828,15 +4918,8 @@ function SchedulePageContent() {
 
     for (const s of staff) {
       if (s.rank !== 'SPT') continue
-      const cfg = sptAllocations.find(a => a.staff_id === s.id && a.weekdays?.includes(currentWeekday))
-      const cfgFTEraw = (cfg as any)?.fte_addon
-      const cfgFTE =
-        typeof cfgFTEraw === 'number'
-          ? cfgFTEraw
-          : cfgFTEraw != null
-            ? parseFloat(String(cfgFTEraw))
-            : NaN
-      if (!Number.isFinite(cfgFTE)) continue
+      const cfgFTE = sptWeekdayByStaffId?.[s.id]?.baseFte
+      if (typeof cfgFTE !== 'number' || !Number.isFinite(cfgFTE)) continue
 
       const o = next[s.id]
       if (!o) continue
@@ -4874,7 +4957,7 @@ function SchedulePageContent() {
     if (changed) {
       setStaffOverrides(next)
     }
-  }, [staff, sptAllocations, staffOverrides, currentWeekday])
+  }, [staff, sptAllocations.length, staffOverrides, currentWeekday, sptWeekdayByStaffId])
 
   // Filter out buffer staff from regular pools (they appear in Buffer Staff Pool)
   const therapists = staff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank) && s.status !== 'buffer')
@@ -6722,6 +6805,7 @@ function SchedulePageContent() {
       <StaffContextMenu
         open={staffContextMenu.show}
         position={staffContextMenu.position}
+        anchor={staffContextMenu.anchor}
         onClose={closeStaffContextMenu}
         items={gridStaffContextMenuItems}
       />
@@ -6730,6 +6814,7 @@ function SchedulePageContent() {
       <StaffContextMenu
         open={staffPoolContextMenu.show}
         position={staffPoolContextMenu.position}
+        anchor={staffPoolContextMenu.anchor}
         onClose={closeStaffPoolContextMenu}
         items={staffPoolContextMenuItems}
       />
@@ -6884,6 +6969,8 @@ function SchedulePageContent() {
                     leaveType,
                     fteRemaining: total,
                     therapistTeamFTEByTeam: nextMap,
+                    therapistTeamHalfDayByTeam: undefined,
+                    therapistTeamHalfDayUiByTeam: undefined,
                     therapistNoAllocation: false,
                     team: undefined,
                   },
@@ -7095,6 +7182,8 @@ function SchedulePageContent() {
                         leaveType,
                         fteRemaining: total,
                         therapistTeamFTEByTeam: nextMap,
+                        therapistTeamHalfDayByTeam: undefined,
+                        therapistTeamHalfDayUiByTeam: undefined,
                         therapistNoAllocation: false,
                         team: undefined,
                       },
@@ -7133,6 +7222,8 @@ function SchedulePageContent() {
                         leaveType,
                         fteRemaining: total,
                         therapistTeamFTEByTeam: nextMap,
+                        therapistTeamHalfDayByTeam: undefined,
+                        therapistTeamHalfDayUiByTeam: undefined,
                         therapistNoAllocation: !hasAnyAllocation,
                         team: undefined,
                       },
@@ -7237,6 +7328,26 @@ function SchedulePageContent() {
                   const totalOk = Math.abs((moved + stay) - sourceFte) < 1e-6
                   const quarterOk = isSourceQuarterMultiple ? (movedIsQuarter && stayIsQuarter) : (movedIsQuarter || stayIsQuarter)
 
+                  const staffMember = staff.find(s => s.id === staffId) || bufferStaff.find(s => s.id === staffId)
+                  const isSPT = staffMember?.rank === 'SPT'
+                  const isSeventyFiveTotal = Math.abs(sourceFte - 0.75) < 0.01
+                  const isSeventyFiveSplit =
+                    isSeventyFiveTotal &&
+                    ((Math.abs(moved - 0.5) < 0.01 && Math.abs(stay - 0.25) < 0.01) ||
+                      (Math.abs(moved - 0.25) < 0.01 && Math.abs(stay - 0.5) < 0.01))
+
+                  const movedHalfDayChoice = therapistContextAction.splitMovedHalfDayChoice ?? 'AUTO'
+                  const stayHalfDayChoice = therapistContextAction.splitStayHalfDayChoice ?? 'AUTO'
+                  const canHalfDayTag =
+                    !!isSPT && isSeventyFiveSplit && !!sptWeekdayByStaffId?.[staffId]?.hasAM && !!sptWeekdayByStaffId?.[staffId]?.hasPM
+                  const halfDayConflict =
+                    canHalfDayTag &&
+                    movedHalfDayChoice !== 'AUTO' &&
+                    movedHalfDayChoice !== 'UNSPECIFIED' &&
+                    stayHalfDayChoice !== 'AUTO' &&
+                    stayHalfDayChoice !== 'UNSPECIFIED' &&
+                    movedHalfDayChoice === stayHalfDayChoice
+
                   const canConfirm =
                     !!targetTeam &&
                     !hasExistingMultiTeam &&
@@ -7244,7 +7355,8 @@ function SchedulePageContent() {
                     moved >= 0.25 &&
                     stay >= 0.25 &&
                     totalOk &&
-                    quarterOk
+                    quarterOk &&
+                    !halfDayConflict
 
                   return (
                     <>
@@ -7300,6 +7412,71 @@ function SchedulePageContent() {
                             <div className="text-[10px] text-slate-500 dark:text-slate-400">
                               Stays in {sourceTeam}: {stay.toFixed(2)}
                             </div>
+                            {canHalfDayTag && (
+                              <div className="mt-2 space-y-1">
+                                <div className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+                                  Half-day tag (0.75 split only): <span className="font-semibold">Auto</span> resolves AM/PM from weekday slot config.{' '}
+                                  <span className="font-semibold">Unspecified</span> hides the label but still resolves internally (Auto).
+                                </div>
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="text-[10px] text-slate-600 dark:text-slate-300">
+                                      Move to {targetTeam ?? '—'}
+                                    </div>
+                                    <div className="inline-flex rounded border border-input overflow-hidden">
+                                      {(['AUTO', 'AM', 'PM', 'UNSPECIFIED'] as const).map(opt => (
+                                        <button
+                                          key={opt}
+                                          type="button"
+                                          className={cn(
+                                            'px-2 py-1 text-[10px] font-medium',
+                                            (therapistContextAction.splitMovedHalfDayChoice ?? 'AUTO') === opt
+                                              ? 'bg-slate-700 text-white'
+                                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                          )}
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            setTherapistContextAction(prev => ({ ...prev, splitMovedHalfDayChoice: opt }))
+                                          }}
+                                        >
+                                          {opt === 'UNSPECIFIED' ? 'UNSP' : opt}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="text-[10px] text-slate-600 dark:text-slate-300">
+                                      Stays in {sourceTeam}
+                                    </div>
+                                    <div className="inline-flex rounded border border-input overflow-hidden">
+                                      {(['AUTO', 'AM', 'PM', 'UNSPECIFIED'] as const).map(opt => (
+                                        <button
+                                          key={opt}
+                                          type="button"
+                                          className={cn(
+                                            'px-2 py-1 text-[10px] font-medium',
+                                            (therapistContextAction.splitStayHalfDayChoice ?? 'AUTO') === opt
+                                              ? 'bg-slate-700 text-white'
+                                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                          )}
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            setTherapistContextAction(prev => ({ ...prev, splitStayHalfDayChoice: opt }))
+                                          }}
+                                        >
+                                          {opt === 'UNSPECIFIED' ? 'UNSP' : opt}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                                {halfDayConflict && (
+                                  <div className="text-[10px] text-amber-700 dark:text-amber-300">
+                                    Half-day tags cannot be the same for both portions.
+                                  </div>
+                                )}
+                              </div>
+                            )}
                             {!quarterOk && (
                               <div className="text-[10px] text-amber-700 dark:text-amber-300">
                                 For non-0.25-multiple totals, ensure either the moved portion or the stay-in portion is a multiple of 0.25 (use “Swap input”).
@@ -7367,6 +7544,59 @@ function SchedulePageContent() {
                                 }
                                 const total = stay + moved
 
+                                // Optional half-day tagging for 0.75 split SPT (for display + validation).
+                                let halfDayByTeam: Partial<Record<Team, 'AM' | 'PM'>> | undefined = undefined
+                                let halfDayUiByTeam:
+                                  | Partial<Record<Team, 'AUTO' | 'AM' | 'PM' | 'UNSPECIFIED'>>
+                                  | undefined = undefined
+
+                                if (canHalfDayTag) {
+                                  const cfg = sptWeekdayByStaffId?.[staffId]
+                                  const computeEff = (slots: number[], mode: 'AND' | 'OR') => {
+                                    if (slots.length === 0) return 0
+                                    if (mode === 'OR' && slots.length > 1) return 1
+                                    return slots.length
+                                  }
+                                  const resolveAutoForPortion = (portionFte: number): 'AM' | 'PM' => {
+                                    if (!cfg) return portionFte >= 0.5 ? 'AM' : 'PM'
+                                    const amSlots = (cfg.slots || []).filter(s => s === 1 || s === 2)
+                                    const pmSlots = (cfg.slots || []).filter(s => s === 3 || s === 4)
+                                    const amEff = computeEff(amSlots, (cfg.slotModes?.am ?? 'AND') as any)
+                                    const pmEff = computeEff(pmSlots, (cfg.slotModes?.pm ?? 'AND') as any)
+                                    if (amEff === 0 && pmEff > 0) return 'PM'
+                                    if (pmEff === 0 && amEff > 0) return 'AM'
+                                    if (portionFte >= 0.5) {
+                                      return amEff >= pmEff ? 'AM' : 'PM'
+                                    }
+                                    return amEff <= pmEff ? 'AM' : 'PM'
+                                  }
+
+                                  const movedUi = movedHalfDayChoice
+                                  const stayUi = stayHalfDayChoice
+
+                                  const movedResolved: 'AM' | 'PM' =
+                                    movedUi === 'AM'
+                                      ? 'AM'
+                                      : movedUi === 'PM'
+                                        ? 'PM'
+                                        : resolveAutoForPortion(moved)
+                                  const stayResolved: 'AM' | 'PM' =
+                                    stayUi === 'AM'
+                                      ? 'AM'
+                                      : stayUi === 'PM'
+                                        ? 'PM'
+                                        : (movedResolved === 'AM' ? 'PM' : 'AM')
+
+                                  halfDayByTeam = {
+                                    [sourceTeam]: stayResolved,
+                                    [targetTeam]: movedResolved,
+                                  }
+                                  halfDayUiByTeam = {
+                                    [sourceTeam]: stayUi,
+                                    [targetTeam]: movedUi,
+                                  }
+                                }
+
                                 setStaffOverrides(prev => {
                                   const existing = prev[staffId]
                                   const leaveType = existing?.leaveType ?? getTherapistLeaveType(staffId)
@@ -7377,6 +7607,8 @@ function SchedulePageContent() {
                                       leaveType,
                                       fteRemaining: total,
                                       therapistTeamFTEByTeam: nextMap,
+                                      therapistTeamHalfDayByTeam: halfDayByTeam,
+                                      therapistTeamHalfDayUiByTeam: halfDayUiByTeam,
                                       therapistNoAllocation: false,
                                       team: undefined,
                                     },
@@ -7556,6 +7788,8 @@ function SchedulePageContent() {
                                     leaveType,
                                     fteRemaining: total,
                                     therapistTeamFTEByTeam: nextMap,
+                                        therapistTeamHalfDayByTeam: undefined,
+                                        therapistTeamHalfDayUiByTeam: undefined,
                                     therapistNoAllocation: false,
                                     team: undefined,
                                   },
@@ -8980,6 +9214,7 @@ function SchedulePageContent() {
                         currentStep={currentStep}
                         onEditStaff={onEditTherapistByTeam[team]}
                         staffOverrides={therapistOverridesByTeam[team]}
+                        sptWeekdayByStaffId={sptWeekdayByStaffId}
                       />
                     ))}
                   </div>
@@ -9027,6 +9262,7 @@ function SchedulePageContent() {
                         currentStep === 'bed-relieving' ||
                         currentStep === 'review'
                       const visibleBedAllocs = canShowBeds ? bedAllocations : EMPTY_BED_ALLOCATIONS
+
                       return TEAMS.map((team) => (
                         <BedBlock
                           key={`bed-${team}`}

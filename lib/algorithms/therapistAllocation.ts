@@ -3,6 +3,7 @@ import { TherapistAllocation, DailySchedule } from '@/types/schedule'
 import { SPTAllocation, SpecialProgram } from '@/types/allocation'
 import { roundToNearestQuarter } from '@/lib/utils/rounding'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
+import { getSptWeekdayConfig } from '@/lib/features/schedule/sptConfig'
 
 export interface StaffData {
   id: string
@@ -124,6 +125,37 @@ export function allocateTherapists(context: AllocationContext): AllocationResult
 
   // Step 6: Apply SPT allocations (only active ones)
   const weekday = getWeekday(context.date)
+
+  // Deduplicate SPT allocation rows (single-row-per-staff model).
+  // Keep the canonical row per staff_id: prefer active, then most recently updated.
+  const canonicalSptAllocs: SPTAllocation[] = (() => {
+    const byStaff = new Map<string, SPTAllocation[]>()
+    for (const a of context.sptAllocations || []) {
+      if (!a?.staff_id) continue
+      const list = byStaff.get(a.staff_id) ?? []
+      list.push(a)
+      byStaff.set(a.staff_id, list)
+    }
+    const pickCanonical = (rows: SPTAllocation[]) => {
+      const sorted = [...rows].sort((a, b) => {
+        const aActive = a.active !== false
+        const bActive = b.active !== false
+        if (aActive !== bActive) return aActive ? -1 : 1
+        const aT = a.updated_at ? Date.parse(a.updated_at) : 0
+        const bT = b.updated_at ? Date.parse(b.updated_at) : 0
+        return bT - aT
+      })
+      return sorted[0] ?? null
+    }
+    const out: SPTAllocation[] = []
+    for (const [staffId, rows] of byStaff.entries()) {
+      const canonical = pickCanonical(rows)
+      if (!canonical) continue
+      if (canonical.active === false) continue
+      out.push(canonical)
+    }
+    return out
+  })()
   
   // Helper function to evaluate teams for SPT allocation
   const evaluateTeamsForSPT = (sptAlloc: SPTAllocation, availableTeams: Team[]) => {
@@ -282,113 +314,90 @@ export function allocateTherapists(context: AllocationContext): AllocationResult
   // Phase 6a: Apply regular SPT allocations (skip RBIP supervisors)
   // Only run if includeSPTAllocation is not explicitly set to false
   if (context.includeSPTAllocation !== false) {
-    context.sptAllocations
-      .filter(sptAlloc => sptAlloc.active !== false && !sptAlloc.is_rbip_supervisor) // Only include active, non-supervisor allocations
+    canonicalSptAllocs
+      .filter((sptAlloc) => !sptAlloc.is_rbip_supervisor)
       .forEach((sptAlloc) => {
-    if (!sptAlloc.weekdays.includes(weekday)) return
+        const staffMember = context.staff.find((s) => s.id === sptAlloc.staff_id)
+        if (staffMember && !staffMember.is_available) return
 
-    // Respect leave/availability overrides: if the staff is not available (e.g. full-day leave),
-    // skip allocating this SPT to a team even if they have slots configured.
-    const staffMember = context.staff.find(s => s.id === sptAlloc.staff_id)
-    if (staffMember && !staffMember.is_available) return
-    
-    const slots = sptAlloc.slots[weekday] || []
-    if (slots.length === 0) return
+        const sptCfg = getSptWeekdayConfig({
+          staffId: sptAlloc.staff_id,
+          weekday,
+          sptAllocations: [sptAlloc],
+        })
+        if (!sptCfg.enabled) return
 
-    // Get slot modes for this weekday (separate for AM and PM groups)
-    // Handle backward compatibility: old format was just a string, new format is { am: 'AND'|'OR', pm: 'AND'|'OR' }
-    let slotModes: { am: 'AND' | 'OR', pm: 'AND' | 'OR' } = { am: 'AND', pm: 'AND' }
-    if (sptAlloc.slot_modes?.[weekday]) {
-      const dayMode = sptAlloc.slot_modes[weekday]
-      if (typeof dayMode === 'string') {
-        // Old format: convert to new format
-        slotModes = { am: dayMode as 'AND' | 'OR', pm: dayMode as 'AND' | 'OR' }
-      } else if (dayMode.am || dayMode.pm) {
-        // New format
-        slotModes = {
-          am: dayMode.am || 'AND',
-          pm: dayMode.pm || 'AND',
+        const slots = sptCfg.slots
+        if (slots.length === 0) return
+
+        const slotModes = sptCfg.slotModes
+
+        // Normal SPT allocation processing
+        const availableTeams = sptAlloc.teams.filter((team) => {
+          return !allocations.some((a) => a.staff_id === sptAlloc.staff_id && a.team === team)
+        })
+        if (availableTeams.length === 0) return
+
+        const selectedEvaluation = evaluateTeamsForSPT(sptAlloc, availableTeams)
+        if (!selectedEvaluation) return
+
+        const selectedTeam = selectedEvaluation.team
+        // Prefer the effective staff FTE (already accounts for schedule overrides),
+        // fallback to the config-derived value.
+        const fteToAdd = staffMember?.fte_therapist ?? sptCfg.baseFte
+        const slotDisplay = sptCfg.slotDisplay
+
+        const allocation: TherapistAllocation = {
+          id: crypto.randomUUID(),
+          schedule_id: '',
+          staff_id: sptAlloc.staff_id,
+          team: selectedTeam,
+          fte_therapist: fteToAdd,
+          fte_remaining: 0,
+          slot_whole: null,
+          slot1: null,
+          slot2: null,
+          slot3: null,
+          slot4: null,
+          leave_type: null,
+          special_program_ids: null,
+          is_substitute_team_head: false,
+          spt_slot_display: slotDisplay,
+          is_manual_override: false,
+          manual_override_note: null,
         }
-      }
-    }
 
-    // Normal SPT allocation processing
-    // Priority: 1) Team with lowest ptPerTeam & no pre-SPT, 2) Team with lowest ptPerTeam & has pre-SPT, 3) Tiebreaker: yesterday's pattern
-    const availableTeams = sptAlloc.teams.filter(team => {
-      // Skip if this staff member is already allocated to this team
-      return !allocations.some(
-        a => a.staff_id === sptAlloc.staff_id && a.team === team
-      )
-    })
+        applySlotAssignments(allocation, slots, slotModes, selectedTeam, staffMember?.availableSlots)
 
-    if (availableTeams.length === 0) return // No available teams
-
-    const selectedEvaluation = evaluateTeamsForSPT(sptAlloc, availableTeams)
-    if (!selectedEvaluation) return // No team selected
-
-    const selectedTeam = selectedEvaluation.team
-    const fteToAdd = sptAlloc.fte_addon
-    const slotDisplay = getSlotDisplay(slots)
-    
-    const staffAvailableSlots = staffMember?.availableSlots
-
-    const allocation: TherapistAllocation = {
-      id: crypto.randomUUID(),
-      schedule_id: '',
-      staff_id: sptAlloc.staff_id,
-      team: selectedTeam,
-      fte_therapist: fteToAdd,
-      fte_remaining: 0,
-      slot_whole: null,
-      slot1: null,
-      slot2: null,
-      slot3: null,
-      slot4: null,
-      leave_type: null,
-      special_program_ids: null,
-      is_substitute_team_head: false,
-      spt_slot_display: slotDisplay,
-      is_manual_override: false,
-      manual_override_note: null,
-    }
-    
-    applySlotAssignments(allocation, slots, slotModes, selectedTeam, staffAvailableSlots)
-    
-    allocations.push(allocation)
-    ptPerTeam[selectedTeam] += fteToAdd
-  })
+        allocations.push(allocation)
+        ptPerTeam[selectedTeam] += fteToAdd
+      })
   }
 
   // Phase 6b: Apply RBIP supervisor logic
   // Only run if includeSPTAllocation is not explicitly set to false
   if (context.includeSPTAllocation !== false) {
-    const supervisors = context.sptAllocations.filter(
-    sptAlloc => sptAlloc.active !== false && sptAlloc.is_rbip_supervisor
-  )
+    const supervisors = canonicalSptAllocs.filter((sptAlloc) => !!sptAlloc.is_rbip_supervisor)
 
-  supervisors.forEach((supervisorAlloc) => {
-    if (!supervisorAlloc.weekdays.includes(weekday)) return
-    
-    const slots = supervisorAlloc.slots[weekday] || []
-    if (slots.length === 0) return
+    supervisors.forEach((supervisorAlloc) => {
+      const staffMember = context.staff.find((s) => s.id === supervisorAlloc.staff_id)
+      if (staffMember && !staffMember.is_available) return
 
-    // Check if already allocated
-    const alreadyAllocated = allocations.some(a => a.staff_id === supervisorAlloc.staff_id)
-    if (alreadyAllocated) return
+      const sptCfg = getSptWeekdayConfig({
+        staffId: supervisorAlloc.staff_id,
+        weekday,
+        sptAllocations: [supervisorAlloc],
+      })
+      if (!sptCfg.enabled) return
 
-    // Get slot modes for this weekday
-    let slotModes: { am: 'AND' | 'OR', pm: 'AND' | 'OR' } = { am: 'AND', pm: 'AND' }
-    if (supervisorAlloc.slot_modes?.[weekday]) {
-      const dayMode = supervisorAlloc.slot_modes[weekday]
-      if (typeof dayMode === 'string') {
-        slotModes = { am: dayMode as 'AND' | 'OR', pm: dayMode as 'AND' | 'OR' }
-      } else if (dayMode.am || dayMode.pm) {
-        slotModes = {
-          am: dayMode.am || 'AND',
-          pm: dayMode.pm || 'AND',
-        }
-      }
-    }
+      const slots = sptCfg.slots
+      if (slots.length === 0) return
+
+      // Check if already allocated
+      const alreadyAllocated = allocations.some((a) => a.staff_id === supervisorAlloc.staff_id)
+      if (alreadyAllocated) return
+
+      const slotModes = sptCfg.slotModes
 
     // Find teams without team heads
     const teamsWithoutHeads: Team[] = []
@@ -403,17 +412,16 @@ export function allocateTherapists(context: AllocationContext): AllocationResult
     if (teamsWithoutHeads.length > 0) {
       // Substitute for first team needing head
       const targetTeam = teamsWithoutHeads[0]
-      const supervisorStaff = context.staff.find(s => s.id === supervisorAlloc.staff_id)
-      
+      const supervisorStaff = staffMember
       if (supervisorStaff && supervisorStaff.is_available) {
-        const slotDisplay = getSlotDisplay(slots)
+        const slotDisplay = sptCfg.slotDisplay
         const allocation: TherapistAllocation = {
           id: crypto.randomUUID(),
           schedule_id: '',
           staff_id: supervisorAlloc.staff_id,
           team: targetTeam,
-          fte_therapist: supervisorAlloc.fte_addon,
-          fte_remaining: 1 - supervisorAlloc.fte_addon,
+          fte_therapist: supervisorStaff.fte_therapist ?? sptCfg.baseFte,
+          fte_remaining: 1 - (supervisorStaff.fte_therapist ?? sptCfg.baseFte),
           slot_whole: null,
           slot1: null,
           slot2: null,
@@ -429,7 +437,7 @@ export function allocateTherapists(context: AllocationContext): AllocationResult
         
         applySlotAssignments(allocation, slots, slotModes, targetTeam, supervisorStaff.availableSlots)
         allocations.push(allocation)
-        ptPerTeam[targetTeam] += supervisorAlloc.fte_addon
+        ptPerTeam[targetTeam] += supervisorStaff.fte_therapist ?? sptCfg.baseFte
       }
     } else {
       // Fallback: Use SPT allocation teams and priority logic
@@ -451,14 +459,10 @@ export function allocateTherapists(context: AllocationContext): AllocationResult
       if (!selectedEvaluation) return
 
       const selectedTeam = selectedEvaluation.team
-      const fteToAdd = supervisorAlloc.fte_addon
-      const slotDisplay = getSlotDisplay(slots)
+      const fteToAdd = staffMember?.fte_therapist ?? sptCfg.baseFte
+      const slotDisplay = sptCfg.slotDisplay
       
-      // Get staff data to check available slots
-      const staffMember = context.staff.find(s => s.id === supervisorAlloc.staff_id)
       const staffAvailableSlots = staffMember?.availableSlots
-
-      if (staffMember && !staffMember.is_available) return
 
       const allocation: TherapistAllocation = {
         id: crypto.randomUUID(),
@@ -601,11 +605,11 @@ function getWeekday(date: Date): 'mon' | 'tue' | 'wed' | 'thu' | 'fri' {
   return weekdays[day === 0 ? 6 : day - 1] // Sunday = 0, adjust to Monday = 0
 }
 
-function getSlotDisplay(slots: number[]): 'AM' | 'PM' | null {
+function getSlotDisplay(slots: number[]): 'AM' | 'PM' | 'AM+PM' | null {
   const hasAM = slots.some(s => s === 1 || s === 2)
   const hasPM = slots.some(s => s === 3 || s === 4)
   
-  if (hasAM && hasPM) return 'AM' // For simplicity, return AM if both
+  if (hasAM && hasPM) return 'AM+PM'
   if (hasAM) return 'AM'
   if (hasPM) return 'PM'
   return null

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip } from '@/components/ui/tooltip'
+import { useOnClickOutside } from '@/lib/hooks/useOnClickOutside'
 import {
   Select,
   SelectContent,
@@ -61,6 +62,7 @@ export function BedBlock({
   currentStep,
   onInvalidEditAttempt,
 }: BedBlockProps) {
+  const cardRef = React.useRef<HTMLDivElement | null>(null)
   const receiving = React.useMemo(
     () => allocations.filter(a => a.to_team === team),
     [allocations, team]
@@ -107,6 +109,27 @@ export function BedBlock({
   }, [receiving])
 
   const canEdit = currentStep === 'bed-relieving'
+
+  // When exiting edit mode, re-align this block into a "top-center / center" viewport position
+  // so the user can immediately review the Takes/Releases summary.
+  const wasEditingRef = React.useRef(false)
+  React.useEffect(() => {
+    const wasEditing = wasEditingRef.current
+    wasEditingRef.current = isEditingTakes
+    if (!wasEditing || isEditingTakes) return
+    const el = cardRef.current
+    if (!el) return
+    // Double RAF to ensure layout is settled after closing editor UI.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        try {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        } catch {
+          // ignore
+        }
+      })
+    })
+  }, [isEditingTakes])
 
   const reportInvalidEdit = React.useCallback(
     (e: React.MouseEvent) => {
@@ -301,6 +324,24 @@ export function BedBlock({
     setDraftByFromTeam({})
   }
 
+  // UX: click outside the taking-team card → auto "save" (into schedule state) + exit edit mode.
+  // Important: ignore clicks inside Radix Select portals (ward dropdown) so choosing options
+  // doesn't immediately close+save.
+  useOnClickOutside(
+    cardRef,
+    (event) => {
+      if (!isEditingTakes) return
+      const target = (event.target ?? null) as unknown
+      if (target && target instanceof Element) {
+        // Radix Select content renders in a portal (outside the card), but should be treated as "inside".
+        if (target.closest('[data-radix-popper-content-wrapper]')) return
+        if (target.closest('[role="listbox"]')) return
+      }
+      handleSave()
+    },
+    { enabled: isEditingTakes && canEdit, event: 'pointerdown' }
+  )
+
   const handleCancel = () => {
     setIsEditingTakes(false)
     setDraftByFromTeam({})
@@ -322,67 +363,89 @@ export function BedBlock({
     )
 
     if (!hasAnyNotes) {
-      return receiving.map(allocation => (
-        <div key={allocation.id} className="text-xs">
-          {allocation.num_beds} beds from {allocation.from_team}
+      // Show one line per releasing team (aggregated), consistent with the edit UI.
+      return receivingFromTeams.map((fromTeam) => (
+        <div key={`pending-${fromTeam}`} className="text-xs">
+          {expectedBedsFromTeam[fromTeam] ?? 0} beds from {fromTeam}
         </div>
       ))
     }
 
-    const fromTeamsInDisplay: Team[] = Array.from(
+    const allFromTeamsInDisplay: Team[] = Array.from(
       new Set<Team>([
         ...receivingFromTeams,
         ...Object.keys(existingNotesForToTeam as any).map(k => k as Team),
       ])
     )
 
-    return fromTeamsInDisplay
-      .map((fromTeam) => {
-        const r = ((existingNotesForToTeam as any)?.[fromTeam] as BedRelievingNoteRow[]) || []
-        if (r.length === 0) return null
-      return (
-        <div key={`notes-${fromTeam}`} className="group space-y-1">
-          {r.map((row, idx) => (
-            <div
-              key={`row-${fromTeam}-${idx}`}
-              className="grid grid-cols-[1fr_auto] gap-2 text-xs items-start"
-            >
-              <div className="text-left font-medium">
-                {fromTeam}
-                {row.ward ? ` (${row.ward})` : ''}
-              </div>
-              <div className="flex items-start justify-end gap-1 text-muted-foreground">
-                <span className="text-right">{formatBedNumbersForDisplay(row.bedNumbersText || '')}</span>
-                {onSaveBedRelievingNotesForToTeam && idx === 0 ? (
-                  <Tooltip side="top" content={`Edit ${fromTeam}`}>
-                    <span className="inline-flex">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-4 w-4 p-0 opacity-0 group-hover:opacity-100"
-                        onClick={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          if (!canEdit) {
-                            reportInvalidEdit(e)
-                            return
-                          }
-                          openEditFromTeam(fromTeam)
-                        }}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                    </span>
-                  </Tooltip>
-                ) : null}
-              </div>
+    const doneFromTeams = allFromTeamsInDisplay.filter((fromTeam) => {
+      const r = ((existingNotesForToTeam as any)?.[fromTeam] as BedRelievingNoteRow[]) || []
+      return r.length > 0
+    })
+
+    // "Pending" means: expected by algorithm for this taking team, but no saved bed numbers yet.
+    const pendingFromTeams = receivingFromTeams.filter(
+      (fromTeam) => !doneFromTeams.includes(fromTeam)
+    )
+
+    return (
+      <div className="space-y-1">
+        {doneFromTeams.map((fromTeam) => {
+          const r = ((existingNotesForToTeam as any)?.[fromTeam] as BedRelievingNoteRow[]) || []
+          return (
+            <div key={`notes-${fromTeam}`} className="group space-y-1">
+              {r.map((row, idx) => (
+                <div
+                  key={`row-${fromTeam}-${idx}`}
+                  className="grid grid-cols-[1fr_auto] gap-2 text-xs items-start"
+                >
+                  <div className="text-left font-medium">
+                    {fromTeam}
+                    {row.ward ? ` (${row.ward})` : ''}
+                  </div>
+                  <div className="flex items-start justify-end gap-1 text-muted-foreground">
+                    <span className="text-right">{formatBedNumbersForDisplay(row.bedNumbersText || '')}</span>
+                    {onSaveBedRelievingNotesForToTeam && idx === 0 ? (
+                      <Tooltip side="top" content={`Edit ${fromTeam}`}>
+                        <span className="inline-flex">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-4 w-4 p-0 opacity-0 group-hover:opacity-100"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              if (!canEdit) {
+                                reportInvalidEdit(e)
+                                return
+                              }
+                              openEditFromTeam(fromTeam)
+                            }}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        </span>
+                      </Tooltip>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      )
-      })
-      .filter(Boolean)
+          )
+        })}
+
+        {doneFromTeams.length > 0 && pendingFromTeams.length > 0 ? (
+          <div className="border-t border-border/60 my-1" />
+        ) : null}
+
+        {pendingFromTeams.map((fromTeam) => (
+          <div key={`pending-${fromTeam}`} className="text-xs text-muted-foreground">
+            {expectedBedsFromTeam[fromTeam] ?? 0} beds from {fromTeam}
+          </div>
+        ))}
+      </div>
+    )
   }
 
   const renderTakesEditor = () => {
@@ -575,8 +638,8 @@ export function BedBlock({
                     rows={(row.bedNumbersText || '').trim().length === 0 ? 3 : 1}
                     className={
                       (row.bedNumbersText || '').trim().length === 0
-                        ? 'min-h-[72px] text-xs resize-none'
-                        : 'min-h-0 text-xs resize-none'
+                        ? 'min-h-[72px] text-xs resize-none whitespace-pre-wrap break-keep [overflow-wrap:normal]'
+                        : 'min-h-0 text-xs resize-none whitespace-pre-wrap break-keep [overflow-wrap:normal]'
                     }
                     placeholder="Bed numbers to take (e.g. 19, 20)"
                     value={row.bedNumbersText || ''}
@@ -692,7 +755,7 @@ export function BedBlock({
   }
 
   return (
-    <Card>
+    <Card ref={cardRef}>
       <CardContent className="p-2 pt-1">
         <div className="space-y-1">
           {receiving.length > 0 && (
@@ -767,7 +830,12 @@ export function BedBlock({
                     key={allocation.id}
                     className={done ? 'text-xs text-muted-foreground' : 'text-xs'}
                   >
-                    {allocation.num_beds} beds to {allocation.to_team}
+                    <div className="flex items-center justify-between gap-2">
+                      <span>
+                        {allocation.num_beds} beds to {allocation.to_team}
+                      </span>
+                      {done ? <Check className="h-3.5 w-3.5 text-muted-foreground" /> : null}
+                    </div>
                   </div>
                 )
               })}

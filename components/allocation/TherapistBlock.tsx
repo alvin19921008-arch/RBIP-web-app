@@ -13,6 +13,7 @@ import { SpecialProgram } from '@/types/allocation'
 import { formatFTE } from '@/lib/utils/rounding'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { cn } from '@/lib/utils'
+import type { SptWeekdayComputed } from '@/lib/features/schedule/sptConfig'
 
 interface TherapistBlockProps {
   team: Team
@@ -21,6 +22,7 @@ interface TherapistBlockProps {
   weekday?: 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
   currentStep?: string
   onEditStaff?: (staffId: string, event?: React.MouseEvent) => void
+  sptWeekdayByStaffId?: Record<string, SptWeekdayComputed>
   staffOverrides?: Record<string, {
     leaveType?: any
     fteRemaining?: number
@@ -29,7 +31,7 @@ interface TherapistBlockProps {
   }>
 }
 
-export const TherapistBlock = memo(function TherapistBlock({ team, allocations, specialPrograms = [], weekday, onEditStaff, currentStep, staffOverrides }: TherapistBlockProps) {
+export const TherapistBlock = memo(function TherapistBlock({ team, allocations, specialPrograms = [], weekday, onEditStaff, currentStep, staffOverrides, sptWeekdayByStaffId }: TherapistBlockProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: `therapist-${team}`,
     data: { type: 'therapist', team },
@@ -114,13 +116,18 @@ export const TherapistBlock = memo(function TherapistBlock({ team, allocations, 
               isOnDutyLeaveType(allocation.leave_type as any) &&
               !!allocation.spt_slot_display
 
+            const sptMeta = sptWeekdayByStaffId?.[allocation.staff_id]
+            const supervisoryRightText = sptMeta?.displayText ?? null
+
             // For supervisory "No Duty" SPT, hide weekday slot display (AM/PM) and show only "No Duty".
             const sptDisplay = isSupervisoryNoDuty
               ? undefined
               : allocation.spt_slot_display
                 ? (allocation.staff.rank === 'SPT' && fte === 0
                     ? allocation.spt_slot_display
-                    : `${fte} ${allocation.spt_slot_display}`)
+                    : allocation.staff.rank === 'SPT' && fte === 0.75
+                      ? '0.75'
+                      : `${fte} ${allocation.spt_slot_display}`)
                 : undefined
             
             // Calculate FTE for display
@@ -172,11 +179,27 @@ export const TherapistBlock = memo(function TherapistBlock({ team, allocations, 
             }
             // If no leave but special program FTE subtraction exists, don't show FTE (displayFTE remains undefined)
             // If therapist split override is active, always show per-team FTE (even if it equals 1.0)
-            const splitMap = (staffOverrides as any)?.[allocation.staff_id]?.therapistTeamFTEByTeam as
+            const overrideForSplit = staffOverrides?.[allocation.staff_id] as any
+            const splitMap = overrideForSplit?.therapistTeamFTEByTeam as
               | Partial<Record<Team, number>>
               | undefined
             if (!hasLeave && splitMap && typeof splitMap[team] === 'number') {
-              displayFTE = splitMap[team] as number
+              const fte = splitMap[team] as number
+              const halfDay = overrideForSplit?.therapistTeamHalfDayByTeam?.[team] as ('AM' | 'PM' | undefined)
+              const halfDayUi = overrideForSplit?.therapistTeamHalfDayUiByTeam?.[team] as
+                | 'AUTO'
+                | 'AM'
+                | 'PM'
+                | 'UNSPECIFIED'
+                | undefined
+
+              if (fte === 0.75) {
+                displayFTE = '0.75'
+              } else if ((fte === 0.5 || fte === 0.25) && halfDay && halfDayUi !== 'UNSPECIFIED') {
+                displayFTE = `${fte} ${halfDay}`
+              } else {
+                displayFTE = fte
+              }
             }
             
             // Buffer therapist: transferrable in Step 2 only
@@ -202,7 +225,7 @@ export const TherapistBlock = memo(function TherapistBlock({ team, allocations, 
                 headerRight={
                   isSupervisoryNoDuty ? (
                     <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">
-                      No Duty
+                      {supervisoryRightText ?? 'No Duty'}
                     </span>
                   ) : undefined
                 }

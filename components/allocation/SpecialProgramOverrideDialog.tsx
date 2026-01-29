@@ -562,7 +562,7 @@ export function SpecialProgramOverrideDialog({
     const fteRemaining =
       override?.fteRemaining ??
       (staff.rank === 'SPT'
-        ? (sptBaseFteByStaffId?.[staff.id] ?? (isOnDuty ? 1.0 : 0))
+        ? (sptBaseFteByStaffId?.[staff.id] ?? 0)
         : (isOnDuty ? 1.0 : 0))
 
     // Availability rule:

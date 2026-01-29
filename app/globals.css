@@ -85,6 +85,58 @@
       transform: translateX(100%);
     }
   }
+
+  /* Popover entrance/exit (direction via --popover-in-x/y, --popover-out-x/y) */
+  --animate-popover-in: popover-in 0.28s ease-out both;
+  --animate-popover-out: popover-out 0.2s ease-in both;
+
+  /* Staff contextual menu (pencil click): expand FROM the icon + retract TO it */
+  --animate-context-menu-in: context-menu-in 0.18s ease-out both;
+  --animate-context-menu-out: context-menu-out 0.14s ease-in both;
+
+  @keyframes popover-in {
+    from {
+      opacity: 0;
+      transform: scale(0.92) translate(var(--popover-in-x, 8px), var(--popover-in-y, 0));
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translate(0, 0);
+    }
+  }
+
+  @keyframes popover-out {
+    from {
+      opacity: 1;
+      transform: scale(1) translate(0, 0);
+    }
+    to {
+      opacity: 0;
+      transform: scale(0.96) translate(var(--popover-out-x, -6px), var(--popover-out-y, 0));
+    }
+  }
+
+  @keyframes context-menu-in {
+    from {
+      opacity: 0;
+      transform: translate(var(--ctx-from-x, 0px), var(--ctx-from-y, 0px)) scale(0.88);
+    }
+    to {
+      opacity: 1;
+      transform: translate(0, 0) scale(1);
+    }
+  }
+
+  @keyframes context-menu-out {
+    from {
+      opacity: 1;
+      transform: translate(0, 0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translate(var(--ctx-from-x, 0px), var(--ctx-from-y, 0px)) scale(0.88);
+    }
+  }
 }
 
 /* Recreate Tailwind v3 container behavior (center + padding + 2xl=1400px) */

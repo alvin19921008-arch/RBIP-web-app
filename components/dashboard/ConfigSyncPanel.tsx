@@ -396,6 +396,7 @@ export function ConfigSyncPanel() {
   const snapshotHead = (snapshotEnvelope as any)?.globalHeadAtCreation as GlobalHeadAtCreation | null | undefined
   const globalUpdatedAt = formatFriendlyDateTime(globalHead?.global_updated_at)
   const snapshotCreatedAt = formatFriendlyDateTime(snapshotEnvelope?.createdAt)
+  const snapshotGlobalUpdatedAt = formatFriendlyDateTime(snapshotHead?.global_updated_at)
 
   return (
     <div className="space-y-4">
@@ -408,10 +409,22 @@ export function ConfigSyncPanel() {
             <div className="space-y-2">
               <div className="text-sm font-semibold">Published configuration (Global)</div>
               <div className="text-sm text-muted-foreground">
-                Global Config ID: <span className="font-medium text-foreground">{globalHead?.global_version ?? '--'}</span>
-              </div>
-              <div className="text-sm text-muted-foreground">
-                Updated: <span className="font-medium text-foreground">{globalUpdatedAt}</span>
+                Global config:{' '}
+                <span className="font-medium text-foreground">{globalUpdatedAt}</span>
+                {typeof globalHead?.global_version === 'number' ? (
+                  <Tooltip
+                    side="top"
+                    content={
+                      <>
+                        Internal Config ID: <span className="font-medium">v{globalHead.global_version}</span>
+                      </>
+                    }
+                  >
+                    <span className="ml-2 text-xs text-muted-foreground underline decoration-dotted underline-offset-2 cursor-help">
+                      v{globalHead.global_version}
+                    </span>
+                  </Tooltip>
+                ) : null}
               </div>
             </div>
 
@@ -447,10 +460,28 @@ export function ConfigSyncPanel() {
                 Snapshot created: <span className="font-medium text-foreground">{snapshotCreatedAt}</span>
               </div>
               <div className="text-xs text-muted-foreground">
-                {snapshotHead?.global_version != null ? (
-                  <>Based on Global Config ID v{snapshotHead.global_version}</>
+                {snapshotHead ? (
+                  <>
+                    Based on Global config:{' '}
+                    <span className="font-medium text-foreground">{snapshotGlobalUpdatedAt}</span>
+                    {typeof snapshotHead.global_version === 'number' ? (
+                      <Tooltip
+                        side="top"
+                        content={
+                          <>
+                            Internal Config ID at snapshot creation:{' '}
+                            <span className="font-medium">v{snapshotHead.global_version}</span>
+                          </>
+                        }
+                      >
+                        <span className="ml-2 text-xs text-muted-foreground underline decoration-dotted underline-offset-2 cursor-help">
+                          v{snapshotHead.global_version}
+                        </span>
+                      </Tooltip>
+                    ) : null}
+                  </>
                 ) : (
-                  <>Based on Global Config ID: unknown (older snapshot)</>
+                  <>Based on Global config: unknown (older snapshot)</>
                 )}
               </div>
             </div>

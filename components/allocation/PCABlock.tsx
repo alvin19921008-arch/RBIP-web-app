@@ -226,6 +226,12 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
     const hasSlot3 = availableSlots.includes(3)
     const hasSlot4 = availableSlots.includes(4)
     
+    // Also check if slots are assigned (for fallback display when slot is assigned but filtered out)
+    const hasSlot1Assigned = filteredSlots.includes(1)
+    const hasSlot2Assigned = filteredSlots.includes(2)
+    const hasSlot3Assigned = filteredSlots.includes(3)
+    const hasSlot4Assigned = filteredSlots.includes(4)
+    
     // Process slots in order: 1, 2, 3, 4
     // Slot 1
     if (invalidSlot1) {
@@ -295,6 +301,11 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
         // Only slot 4 is available - show individual time range
         parts.push(formatTimeRange(getSlotTime(4)))
       }
+    } else if (hasSlot4Assigned && allocation.slot4 === team) {
+      // FIX: If slot 4 is assigned to this team but not in availableSlots (shouldn't happen normally,
+      // but handle edge case where filtering might have removed it incorrectly), still show it.
+      // This ensures slot 4 displays correctly when slot 3 is invalid.
+      parts.push(formatTimeRange(getSlotTime(4)))
     }
     
     // Note: New system (invalidSlots array) positions invalid slots in natural slot order (1->2->3->4)
@@ -1008,6 +1019,25 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
             // Check if this is a split allocation - if so, only show regular slots
             const splitInfo = splitAllocationSlots.get(`${allocation.id}-${team}`)
             const slotsToDisplay = splitInfo ? splitInfo.regularSlots : undefined
+
+            // Hide "ghost" cards that exist in this team ONLY because of invalid slot(s).
+            // Example (from bug): invalid slot 3 is assigned to SFM in allocations, but should be paired with slot 4,
+            // so we should not render a standalone card in SFM when this team only contains invalid slots.
+            const override = staffOverrides?.[allocation.staff_id]
+            const invalidNums = Array.isArray(override?.invalidSlots) ? override!.invalidSlots.map((x) => x.slot) : []
+            const hasInvalidNums = invalidNums.length > 0
+            if (hasInvalidNums) {
+              const slotsInThisTeam: number[] = []
+              const allow = Array.isArray(slotsToDisplay) && slotsToDisplay.length > 0 ? slotsToDisplay : null
+              if (allocation.slot1 === team && (!allow || allow.includes(1))) slotsInThisTeam.push(1)
+              if (allocation.slot2 === team && (!allow || allow.includes(2))) slotsInThisTeam.push(2)
+              if (allocation.slot3 === team && (!allow || allow.includes(3))) slotsInThisTeam.push(3)
+              if (allocation.slot4 === team && (!allow || allow.includes(4))) slotsInThisTeam.push(4)
+              if (slotsInThisTeam.length > 0 && slotsInThisTeam.every((s) => invalidNums.includes(s))) {
+                return null
+              }
+            }
+
             const slotDisplay = slotsToDisplay 
               ? getSlotDisplayForTeamFiltered(allocation, slotsToDisplay, { cardKind: 'regular' })
               : getSlotDisplayForTeam(allocation)

@@ -17,13 +17,35 @@ export interface SPTAllocation {
   staff_id: string
   specialty: string | null
   teams: Team[]
-  weekdays: Weekday[]
-  slots: Record<Weekday, number[]>
-  slot_modes?: Record<Weekday, { am: 'AND' | 'OR', pm: 'AND' | 'OR' }> // Separate modes for AM (slots 1-2) and PM (slots 3-4)
-  fte_addon: number
+  /**
+   * Legacy shape (kept for backward compatibility with older snapshots / DB rows).
+   * New code should prefer `config_by_weekday`.
+   */
+  weekdays?: Weekday[]
+  slots?: Record<Weekday, number[]>
+  slot_modes?: Record<Weekday, { am: 'AND' | 'OR'; pm: 'AND' | 'OR' }>
+  fte_addon?: number
+  /**
+   * New shape (single-row-per-SPT): weekday configuration stored as JSONB.
+   * `fte_addon` becomes derived from slots/modes when `contributes_fte=true`.
+   */
+  config_by_weekday?: Partial<
+    Record<
+      Weekday,
+      {
+        enabled?: boolean
+        contributes_fte?: boolean
+        slots?: number[]
+        slot_modes?: { am?: 'AND' | 'OR'; pm?: 'AND' | 'OR' }
+        display_text?: string | null
+      }
+    >
+  >
   substitute_team_head: boolean
   is_rbip_supervisor?: boolean // If true, this SPT can substitute for team heads when needed
   active?: boolean // If false, this allocation is not included in work schedules
+  created_at?: string
+  updated_at?: string
 }
 
 export interface PCAPreference {

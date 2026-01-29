@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import { AlertCircle, ArrowLeft, Calendar, ChevronLeft, ChevronRight } from 'lucide-react'
 import type { Weekday } from '@/types/staff'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
 import { formatDateDDMMYYYY, getWeekday } from '@/lib/features/schedule/date'
 import { ScheduleTitleWithLoadDiagnostics } from '@/components/schedule/ScheduleTitleWithLoadDiagnostics'
+import { Popover, PopoverContent, PopoverTrigger, PopoverArrow } from '@/components/ui/popover'
 
 const WEEKDAY_NAMES: Record<Weekday, string> = {
   mon: 'Monday',
@@ -49,26 +50,12 @@ export function ScheduleHeaderBar(props: {
   // Right-side actions slot (copy/save/etc.)
   rightActions: ReactNode
 }) {
-  const [snapshotBannerExpanded, setSnapshotBannerExpanded] = useState(false)
-  const snapshotBannerWrapRef = useRef<HTMLDivElement | null>(null)
   const prevWorkingDay = getPreviousWorkingDay(props.selectedDate)
   const nextWorkingDay = getNextWorkingDay(props.selectedDate)
   const prevW = WEEKDAY_NAMES[getWeekday(prevWorkingDay)]
   const nextW = WEEKDAY_NAMES[getWeekday(nextWorkingDay)]
   const prevLabel = `${formatDateDDMMYYYY(prevWorkingDay)} (${prevW})`
   const nextLabel = `${formatDateDDMMYYYY(nextWorkingDay)} (${nextW})`
-
-  useEffect(() => {
-    if (!snapshotBannerExpanded) return
-    const onMouseDown = (e: MouseEvent) => {
-      const el = snapshotBannerWrapRef.current
-      if (!el) return
-      if (el.contains(e.target as Node)) return
-      setSnapshotBannerExpanded(false)
-    }
-    document.addEventListener('mousedown', onMouseDown)
-    return () => document.removeEventListener('mousedown', onMouseDown)
-  }, [snapshotBannerExpanded])
 
   return (
     <>
@@ -154,72 +141,53 @@ export function ScheduleHeaderBar(props: {
               </button>
 
               {props.showSnapshotUiReminder ? (
-                <div ref={snapshotBannerWrapRef} className="relative">
+                <Popover>
                   <Tooltip
                     side="bottom"
                     className="whitespace-normal max-w-[320px]"
-                    content={
-                      snapshotBannerExpanded
-                        ? 'Click outside to close.'
-                        : 'This schedule is using its saved setup. Click to view details.'
-                    }
+                    content="This schedule is using its saved setup. Click to view details."
                   >
-                    <button
-                      type="button"
-                      aria-label={snapshotBannerExpanded ? 'Close saved setup reminder' : 'Open saved setup reminder'}
-                      onClick={() => setSnapshotBannerExpanded((v) => !v)}
-                      className={cn(
-                        'inline-flex h-7 w-7 items-center justify-center rounded-full',
-                        'text-amber-700 hover:text-amber-800',
-                        'hover:bg-amber-50 transition-colors'
-                      )}
-                    >
-                      <AlertCircle className="h-4 w-4" />
-                    </button>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label="Open saved setup reminder"
+                        className={cn(
+                          'inline-flex h-7 w-7 items-center justify-center rounded-full',
+                          'text-amber-700 hover:text-amber-800',
+                          'hover:bg-amber-50 transition-colors'
+                        )}
+                      >
+                        <AlertCircle className="h-4 w-4" />
+                      </button>
+                    </PopoverTrigger>
                   </Tooltip>
 
-                  <div
-                    className={cn(
-                      'absolute z-50 left-full ml-2 top-1/2 -translate-y-1/2',
-                      'transition-[opacity,transform] duration-200 ease-out origin-left',
-                      snapshotBannerExpanded
-                        ? 'opacity-100 translate-x-0 scale-100'
-                        : 'opacity-0 -translate-x-1 scale-95 pointer-events-none'
-                    )}
-                    aria-hidden={!snapshotBannerExpanded}
+                  <PopoverContent
+                    side="right"
+                    align="center"
+                    sideOffset={8}
+                    className="rounded-lg border border-amber-200 bg-amber-50/95 backdrop-blur-sm px-3.5 py-2.5 text-xs text-amber-950 leading-snug w-[360px] max-w-[420px] shadow-xl"
                   >
-                    <div className="relative">
-                      {/* Arrow pointer */}
-                      <div
-                        className={cn(
-                          'absolute -left-1 top-1/2 -translate-y-1/2 h-2 w-2 rotate-45',
-                          'bg-amber-50 border-l border-b border-amber-200 shadow-[-2px_2px_3px_rgba(0,0,0,0.05)]'
-                        )}
-                        aria-hidden="true"
-                      />
-
-                      <div className="inline-flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/95 backdrop-blur-sm px-3.5 py-2.5 text-xs text-amber-950 leading-snug w-[360px] max-w-[420px] whitespace-normal shadow-xl">
-                        <div className="min-w-0 flex-1 space-y-0.5">
-                          <div className="font-semibold">Saved setup for this date</div>
-                          <div className="text-amber-900/75">
-                            New dashboard changes may not apply here.
-                          </div>
-                        </div>
-                        <button
-                          ref={props.snapshotDiffButtonRef}
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            props.onToggleSnapshotDiff()
-                          }}
-                          className="inline-flex items-center rounded-md border border-amber-300 bg-amber-100/80 px-2 py-1.5 text-[11px] font-medium text-amber-950 hover:bg-amber-200 transition-colors flex-shrink-0 shadow-sm"
-                        >
-                          Show differences
-                        </button>
+                    <PopoverArrow width={10} height={6} />
+                    <div className="inline-flex items-start gap-3 w-full">
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="font-semibold">Saved setup for this date</div>
+                        <div className="text-amber-900/75">New dashboard changes may not apply here.</div>
                       </div>
+                      <button
+                        ref={props.snapshotDiffButtonRef}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          props.onToggleSnapshotDiff()
+                        }}
+                        className="inline-flex items-center rounded-md border border-amber-300 bg-amber-100/80 px-2 py-1.5 text-[11px] font-medium text-amber-950 hover:bg-amber-200 transition-colors flex-shrink-0 shadow-sm"
+                      >
+                        Show differences
+                      </button>
                     </div>
-                  </div>
-                </div>
+                  </PopoverContent>
+                </Popover>
               ) : null}
             </div>
           </div>

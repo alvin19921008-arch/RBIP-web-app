@@ -16,6 +16,8 @@ import { Team, Staff, LeaveType } from '@/types/staff'
 import { TherapistAllocation, PCAAllocation, ScheduleCalculations } from '@/types/schedule'
 import { SpecialProgram, SPTAllocation } from '@/types/allocation'
 import { allocateTherapists, StaffData, AllocationContext } from '@/lib/algorithms/therapistAllocation'
+import { getSptWeekdayConfigMap } from '@/lib/features/schedule/sptConfig'
+import { getWeekday } from '@/lib/features/schedule/date'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -182,23 +184,31 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
     }
 
     // Transform staff data for therapist allocation algorithm
+    const weekday = getWeekday(selectedDate)
+
+    const sptWeekdayByStaffId = getSptWeekdayConfigMap({ weekday, sptAllocations })
+
     const staffData: StaffData[] = staff
       // Exclude therapists that are explicitly overridden (split/merge) or discarded (no allocation)
       .filter(s => {
         if (!['SPT', 'APPT', 'RPT'].includes(s.rank)) return true
         if (therapistNoAllocationIds.has(s.id)) return false
         if (therapistSplitIds.has(s.id)) return false
+        // IMPORTANT: Do not regenerate SPT allocations in sync.
+        // SPT allocations are created in Step 2 and preserved separately below.
+        if (s.rank === 'SPT') return false
         return true
       })
       .map(s => {
       const override = staffOverrides[s.id]
+      const sptBase = s.rank === 'SPT' ? (sptWeekdayByStaffId[s.id]?.baseFte ?? 0) : 1
       return {
         id: s.id,
         name: s.name,
         rank: s.rank,
         team: override?.team ?? s.team,
         special_program: s.special_program,
-        fte_therapist: override ? override.fteRemaining : 1,
+        fte_therapist: override ? override.fteRemaining : sptBase,
         leave_type: override ? override.leaveType : null,
         is_available: override ? (override.fteRemaining > 0) : true,
         availableSlots: override?.availableSlots,

@@ -1,203 +1,32 @@
 ---
 description: TypeScript strict mode patterns to prevent type errors during build
-globs: ["**/*.ts", "**/*.tsx"]
-alwaysApply: true
+globs: ["app/**/*.ts", "app/**/*.tsx", "components/**/*.tsx", "hooks/**/*.ts", "lib/**/*.ts"]
+alwaysApply: false
 ---
 
-# TypeScript Strict Mode Patterns
+# TypeScript Strict Mode (Essentials)
 
-This project uses TypeScript strict mode during `npm run build`. These patterns prevent common type errors that pass in dev mode but fail during build.
+Keep these in mind to avoid “works in dev, fails in build” TypeScript errors.
 
-## Record Type Initialization
+## Common strict-mode traps
 
-TypeScript strict mode rejects initializing `Record<K, V>` types with empty objects.
+- **`Record<K, V>` defaults**: don’t use `{}` for required records. Prefer `createEmptyTeamRecord(...)` / `createEmptyTeamRecordFactory(...)`.
+- **Nullable types**: never use non-null assertions (`!`). Use guard clauses or a safe fallback.
+- **Literal inference**: avoid `as const` on objects you intend to reassign; annotate the type instead.
+- **Prop types**: define shared aliases for “extended” types and reuse across parent/child.
+- **Supabase + `Promise.all()`**: query builders aren’t `Promise`; use `PromiseLike<any>[]`.
 
-### WRONG Patterns:
 ```typescript
-// Error: Type '{}' is not assignable to type 'Record<Team, string[]>'
-const [state, setState] = useState<Record<Team, string[]>>({})
+// from '@/lib/utils/types'
+// Record defaults (strict-safe)
+const teamMap = createEmptyTeamRecord<string[]>([])
+const teamBuckets = createEmptyTeamRecordFactory<string[]>(() => [])
 
-// Error: Type '{}' is missing properties from type 'Record<Team, number>'
-const teamCounts: Record<Team, number> = {}
-```
-
-### CORRECT Patterns:
-
-**Option 1: Type Assertion (acceptable for simple cases)**
-```typescript
-const [state, setState] = useState<Record<Team, string[]>>({} as Record<Team, string[]>)
-```
-
-**Option 2: Utility Function (preferred for reusability)**
-```typescript
-import { createEmptyTeamRecord } from '@/lib/utils/types'
-
-// For primitive/immutable default values
-const [state, setState] = useState(createEmptyTeamRecord<string[]>([]))
-
-// For mutable defaults (creates new array per team)
-const [state, setState] = useState(createEmptyTeamRecordFactory(() => []))
-```
-
-**Option 3: Partial Type (when not all keys are required)**
-```typescript
-const partialRecord: Partial<Record<Team, string[]>> = {}
-// Later: cast when needed
-setFullRecord(partialRecord as Record<Team, string[]>)
-```
-
----
-
-## Nullable Type Handling (Team | null)
-
-Never use non-null assertions (`!`) to silence type errors. They hide bugs.
-
-### WRONG Pattern:
-```typescript
-// BAD: Non-null assertion hides potential null bugs
-team: pca.team!,
-teamPCAAssigned[pca.team!] += 0.25
-```
-
-### CORRECT Patterns:
-
-**Option 1: Guard Clause with Early Return/Continue**
-```typescript
-// GOOD: Explicitly handle null case
-if (!pca.team) {
-  console.warn('Skipping PCA without team assignment:', pca.id)
-  continue  // or return
-}
-// TypeScript now knows pca.team is not null
-team: pca.team,
-teamPCAAssigned[pca.team] += 0.25
-```
-
-**Option 2: Explicit Fallback**
-```typescript
-// GOOD: Provide a default value
-const effectiveTeam = pca.team ?? 'FO'
-teamPCAAssigned[effectiveTeam] += 0.25
-```
-
-**Option 3: Filter Before Processing**
-```typescript
-// GOOD: Filter out nulls before iteration
-const pcasWithTeams = pcaPool.filter((p): p is PCAData & { team: Team } => p.team !== null)
-pcasWithTeams.forEach(pca => {
-  // pca.team is guaranteed non-null here
-  teamPCAAssigned[pca.team] += 0.25
-})
-```
-
----
-
-## Literal Type Inference
-
-TypeScript infers literal types with `as const`, but reassignment can cause issues.
-
-### WRONG Pattern:
-```typescript
-// Type inference creates readonly literal type
-let slotModes = { am: 'AND' as const, pm: 'AND' as const }
-// Error: Cannot assign 'AND' | 'OR' to readonly 'AND'
-slotModes = { am: dayMode as 'AND' | 'OR', pm: dayMode as 'AND' | 'OR' }
-```
-
-### CORRECT Pattern:
-```typescript
-// GOOD: Explicit type annotation allows reassignment
-let slotModes: { am: 'AND' | 'OR', pm: 'AND' | 'OR' } = { am: 'AND', pm: 'AND' }
-slotModes = { am: dayMode, pm: dayMode }  // Works!
-```
-
----
-
-## Component Prop Types
-
-Parent and child component prop types must match exactly.
-
-### WRONG Pattern:
-```typescript
-// Parent component
-interface ParentProps {
-  staffOnLeave: Staff[]  // Basic type
-}
-
-// Child component
-interface ChildProps {
-  staffOnLeave: (Staff & { leave_type: LeaveType })[]  // Extended type
-}
-
-// Error: Types don't match
-<ChildComponent staffOnLeave={staffOnLeave} />
-```
-
-### CORRECT Pattern:
-```typescript
-// Define the extended type once and use everywhere
-type StaffOnLeave = Staff & { leave_type: LeaveType; fteRemaining?: number }
-
-// Parent
-interface ParentProps {
-  staffOnLeave: StaffOnLeave[]
-}
-
-// Child
-interface ChildProps {
-  staffOnLeave: StaffOnLeave[]
-}
-```
-
----
-
-## Supabase Query Builder Types
-
-Supabase's query builder returns `PostgrestFilterBuilder`, not `Promise`. This causes issues with `Promise.all()`.
-
-### WRONG Pattern:
-```typescript
-// Error: PostgrestFilterBuilder is not assignable to Promise
-const promises: Promise<any>[] = []
-promises.push(supabase.from('table').upsert(data))
-```
-
-### CORRECT Patterns:
-
-**Option 1: Use PromiseLike**
-```typescript
+// Supabase Promise.all typing
 const promises: PromiseLike<any>[] = []
 promises.push(supabase.from('table').upsert(data))
 await Promise.all(promises)
 ```
-
-**Option 2: Convert to Promise with .then()**
-```typescript
-const promises: Promise<any>[] = []
-promises.push(
-  supabase.from('table').upsert(data).then(result => {
-    if (result.error) console.error('Error:', result.error)
-    return result
-  })
-)
-await Promise.all(promises)
-```
-
----
-
-## Type Utility Reference
-
-Import from `@/lib/utils/types`:
-
-```typescript
-import {
-  createEmptyTeamRecord,      // For immutable defaults
-  createEmptyTeamRecordFactory,  // For mutable defaults (new instance per key)
-  TEAMS,                       // Readonly array of all teams
-} from '@/lib/utils/types'
-```
-
----
 
 ## Build Verification
 

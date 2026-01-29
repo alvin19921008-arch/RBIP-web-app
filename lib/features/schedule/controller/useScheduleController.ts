@@ -25,6 +25,7 @@ import type { StaffData, AllocationContext } from '@/lib/algorithms/therapistAll
 import type { PCAAllocationContext, PCAData } from '@/lib/algorithms/pcaAllocation'
 import type { BedAllocationContext } from '@/lib/algorithms/bedAllocation'
 import { computeBedsDesignatedByTeam, computeBedsForRelieving } from '@/lib/features/schedule/bedMath'
+import { getSptWeekdayConfigMap } from '@/lib/features/schedule/sptConfig'
 import { computeStep3ResetForReentry } from '@/lib/features/schedule/stepReset'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
@@ -108,6 +109,15 @@ export type StaffOverrideState = {
   substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
   // Therapist per-team split/merge overrides (ad hoc fallback)
   therapistTeamFTEByTeam?: Partial<Record<Team, number>>
+  /**
+   * Optional half-day tagging for therapist split portions (UI display + validation).
+   * - `therapistTeamHalfDayByTeam`: resolved internal assignment ('AM'|'PM')
+   * - `therapistTeamHalfDayUiByTeam`: UI choice ('AUTO'|'AM'|'PM'|'UNSPECIFIED')
+   *
+   * NOTE: "UNSPECIFIED" means hide label in UI, but still resolves internally (auto).
+   */
+  therapistTeamHalfDayByTeam?: Partial<Record<Team, 'AM' | 'PM'>>
+  therapistTeamHalfDayUiByTeam?: Partial<Record<Team, 'AUTO' | 'AM' | 'PM' | 'UNSPECIFIED'>>
   therapistNoAllocation?: boolean
   // Staff card fill color (schedule grid only)
   cardColorByTeam?: Partial<Record<Team, string>>
@@ -481,7 +491,58 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
       setSpecialPrograms(snapshot.specialPrograms as any)
     }
     if (snapshot.sptAllocations) {
-      setSptAllocations(snapshot.sptAllocations as any)
+      // Merge strategy:
+      // Older baseline snapshots may contain `sptAllocations` rows without `config_by_weekday` (pre-migration),
+      // which can clobber the newer global config during late hydration and cause UI to revert (e.g. "8 beds" -> "No Duty").
+      // We prefer the "more complete" row per staff_id (has non-empty config_by_weekday / display_text).
+      const hasNonEmptyConfig = (r: any) => {
+        const cfg = r?.config_by_weekday
+        return !!cfg && typeof cfg === 'object' && Object.keys(cfg).length > 0
+      }
+      const hasAnyDisplayText = (r: any) => {
+        const cfg = r?.config_by_weekday
+        if (!cfg || typeof cfg !== 'object') return false
+        return Object.values(cfg).some((c: any) => typeof c?.display_text === 'string' && c.display_text.trim() !== '')
+      }
+
+      const incomingRaw = snapshot.sptAllocations as any
+      const existingRaw = sptAllocations as any
+      let nextSptAllocations: any = incomingRaw
+      let mergeApplied = false
+
+      if (Array.isArray(incomingRaw) && Array.isArray(existingRaw) && existingRaw.length > 0) {
+        const existingByStaffId = new Map<string, any>()
+        existingRaw.forEach((r: any) => {
+          if (r?.staff_id) existingByStaffId.set(r.staff_id, r)
+        })
+
+        const mergedByStaffId = new Map<string, any>()
+        // start with incoming (snapshot), then replace with existing when existing is more complete
+        incomingRaw.forEach((r: any) => {
+          if (!r?.staff_id) return
+          const staffId = r.staff_id as string
+          const existing = existingByStaffId.get(staffId)
+          if (existing && (hasNonEmptyConfig(existing) || hasAnyDisplayText(existing)) && !(hasNonEmptyConfig(r) || hasAnyDisplayText(r))) {
+            mergedByStaffId.set(staffId, existing)
+            mergeApplied = true
+          } else {
+            mergedByStaffId.set(staffId, r)
+          }
+        })
+
+        // ensure any existing rows not present in incoming are kept (defensive)
+        existingRaw.forEach((r: any) => {
+          if (!r?.staff_id) return
+          if (!mergedByStaffId.has(r.staff_id)) {
+            mergedByStaffId.set(r.staff_id, r)
+            mergeApplied = true
+          }
+        })
+
+        nextSptAllocations = Array.from(mergedByStaffId.values())
+      }
+
+      setSptAllocations(nextSptAllocations as any)
     }
     if (snapshot.wards) {
       setWards(
@@ -1107,6 +1168,10 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
           staffForLookup: staffFromSnapshot,
         })
         timer.stage('applySavedAllocations')
+
+        // Apply saved Step 4 bed allocations from DB immediately.
+        // Without this, Block 3 can appear empty after refresh even though loadScheduleForDate returned bedAllocs.
+        setBedAllocations((hasBedData ? (resultAny.bedAllocs || []) : []) as any)
 
         setInitializedSteps(
           new Set<string>([
@@ -2421,21 +2486,14 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
 
       // Transform staff data for algorithms
       const weekday: Weekday = getWeekday(selectedDate)
-      const sptAddonByStaffId = new Map<string, number>()
-      for (const a of sptAllocations) {
-        if ((a as any).weekdays?.includes(weekday)) {
-          const raw = (a as any).fte_addon
-          const fte = typeof raw === 'number' ? raw : raw != null ? parseFloat(String(raw)) : NaN
-          if (Number.isFinite(fte)) sptAddonByStaffId.set((a as any).staff_id, fte)
-        }
-      }
+      const sptWeekdayByStaffId = getSptWeekdayConfigMap({ weekday, sptAllocations: sptAllocations as any })
 
       const staffData: StaffData[] = staff.map((s) => {
         const override = overrides[s.id]
         const isBufferStaff = s.status === 'buffer'
         const baseFTE =
           s.rank === 'SPT'
-            ? (sptAddonByStaffId.get(s.id) ?? 1.0)
+            ? (sptWeekdayByStaffId[s.id]?.baseFte ?? 0)
             : isBufferStaff && (s as any).buffer_fte !== undefined
               ? (s as any).buffer_fte
               : 1.0

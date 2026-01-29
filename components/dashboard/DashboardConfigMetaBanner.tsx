@@ -46,14 +46,22 @@ export function DashboardConfigMetaBanner() {
         <div className="min-w-0">
           <div className="text-sm font-semibold">Published configuration (Global)</div>
           <div className="text-xs text-muted-foreground">
-            Config ID{' '}
-            <span className="font-medium text-foreground">
-              {typeof head?.global_version === 'number' ? `v${head.global_version}` : '--'}
-            </span>{' '}
-            · Updated{' '}
-            <span className="font-medium text-foreground">
-              {formatFriendlyDateTime(head?.global_updated_at)}
-            </span>
+            Global config{' '}
+            <span className="font-medium text-foreground">{formatFriendlyDateTime(head?.global_updated_at)}</span>
+            {typeof head?.global_version === 'number' ? (
+              <Tooltip
+                side="top"
+                content={
+                  <>
+                    Internal Config ID: <span className="font-medium">v{head.global_version}</span>
+                  </>
+                }
+              >
+                <span className="ml-2 text-xs text-muted-foreground underline decoration-dotted underline-offset-2 cursor-help">
+                  v{head.global_version}
+                </span>
+              </Tooltip>
+            ) : null}
           </div>
         </div>
         <Tooltip content="Schedules can use saved snapshots per date. Use Dashboard → Sync / Publish to compare/sync.">

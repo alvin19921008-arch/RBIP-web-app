@@ -63,6 +63,8 @@ export function SpecialProgramSubstitutionDialog({
     if (s.rank === 'SPT' && sptBaseFteByStaffId && typeof sptBaseFteByStaffId[s.id] === 'number') {
       return sptBaseFteByStaffId[s.id]!
     }
+    // SPT base FTE is weekday-configured; when missing, default to 0 (not 1.0).
+    if (s.rank === 'SPT') return 0
     return 1.0
   }
 

@@ -19,13 +19,28 @@ export type StaffContextMenuPosition = { x: number; y: number }
 interface StaffContextMenuProps {
   open: boolean
   position: StaffContextMenuPosition | null
+  /** Anchor point (usually pencil icon center). Used for "expand from icon" animation. */
+  anchor?: StaffContextMenuPosition | null
   items: StaffContextMenuItem[]
   onClose: () => void
   className?: string
 }
 
-export function StaffContextMenu({ open, position, items, onClose, className }: StaffContextMenuProps) {
+export function StaffContextMenu({
+  open,
+  position,
+  anchor,
+  items,
+  onClose,
+  className,
+}: StaffContextMenuProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
+
+  const [rendered, setRendered] = useState(false)
+  const [closing, setClosing] = useState(false)
+  const [renderPos, setRenderPos] = useState<StaffContextMenuPosition | null>(null)
+  const [renderAnchor, setRenderAnchor] = useState<StaffContextMenuPosition | null>(null)
+  const closeTimerRef = useRef<number | null>(null)
 
   const isOpen = open && !!position
 
@@ -33,11 +48,46 @@ export function StaffContextMenu({ open, position, items, onClose, className }: 
   const [disabledTooltipContent, setDisabledTooltipContent] = useState<React.ReactNode>(null)
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
 
-  useOnClickOutside(containerRef, onClose, { enabled: isOpen, event: 'pointerdown' })
+  useEffect(() => {
+    if (closeTimerRef.current) {
+      window.clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = null
+    }
+
+    if (isOpen) {
+      setRendered(true)
+      setClosing(false)
+      setRenderPos(position!)
+      setRenderAnchor(anchor ?? null)
+      return
+    }
+
+    if (!rendered) return
+    setClosing(true)
+    // Keep mounted briefly so the retract animation can play.
+    closeTimerRef.current = window.setTimeout(() => {
+      setRendered(false)
+      setClosing(false)
+      setRenderPos(null)
+      setRenderAnchor(null)
+      closeTimerRef.current = null
+    }, 160)
+  }, [anchor, isOpen, position, rendered])
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current)
+    }
+  }, [])
+
+  useOnClickOutside(containerRef, onClose, { enabled: rendered && !closing, event: 'pointerdown' })
 
   const renderedItems = useMemo(() => items, [items])
 
-  if (!isOpen) return null
+  if (!rendered || !renderPos) return null
+
+  const deltaX = (renderAnchor?.x ?? renderPos.x) - renderPos.x
+  const deltaY = (renderAnchor?.y ?? renderPos.y) - renderPos.y
 
   return (
     <>
@@ -46,11 +96,16 @@ export function StaffContextMenu({ open, position, items, onClose, className }: 
       className={cn(
         // Use document-relative positioning so it scrolls with the page.
         'absolute z-[10001] w-[180px] rounded-md border border-border bg-white dark:bg-slate-800 shadow-xl p-0.5',
+        'will-change-[transform,opacity]',
+        closing ? 'animate-context-menu-out pointer-events-none' : 'animate-context-menu-in',
         className
       )}
       style={{
-        left: position!.x,
-        top: position!.y,
+        left: renderPos.x,
+        top: renderPos.y,
+        // Animate "from/to" the pencil icon click point.
+        ['--ctx-from-x' as any]: `${deltaX}px`,
+        ['--ctx-from-y' as any]: `${deltaY}px`,
       }}
       onPointerDown={(e) => {
         // Prevent schedule page global handlers from seeing this click.

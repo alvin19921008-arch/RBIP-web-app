@@ -23,7 +23,13 @@ export interface TherapistAllocation {
   leave_type: LeaveType
   special_program_ids: string[] | null
   is_substitute_team_head: boolean
-  spt_slot_display: 'AM' | 'PM' | null
+  /**
+   * SPT availability label derived from configured weekday slots.
+   * - 'AM' when only AM slots (1-2) are configured
+   * - 'PM' when only PM slots (3-4) are configured
+   * - 'AM+PM' when both AM and PM slots are configured
+   */
+  spt_slot_display: 'AM' | 'PM' | 'AM+PM' | null
   is_manual_override: boolean
   manual_override_note: string | null
 }

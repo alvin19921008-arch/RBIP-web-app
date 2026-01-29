@@ -340,13 +340,18 @@ export function PCADedicatedScheduleTable({
           const inv = invalids[slot]
           // Show special program labels even in stage 'none' (pre-algorithm).
           const prog = programBySlot[slot]
+          // FIX: Also check if slot is assigned in allocation (for post-algorithm display)
+          // This ensures slot 4 shows correctly even when slot 3 is invalid
+          const isAssignedInAllocation = slotTeams[slot] !== null
 
           if (inv && homeTeam) {
             baseCells[slot] = { kind: 'invalidSlot', team: homeTeam, timeRange: inv }
             continue
           }
 
-          const isAvailable = availableSlots.includes(slot)
+          // FIX: For non-floating PCA, if slot is assigned in allocation, show it even if not in availableSlots
+          // (This handles edge cases where availableSlots might be incomplete)
+          const isAvailable = availableSlots.includes(slot) || (isAssignedInAllocation && slotTeams[slot] === homeTeam)
           if (isAvailable) {
             if (homeTeam && prog) {
               baseCells[slot] = { kind: 'teamAndProgram', team: homeTeam, programName: prog }
@@ -430,7 +435,18 @@ export function PCADedicatedScheduleTable({
         }
 
         if (inv) {
-          baseCells[slot] = { kind: 'invalidSlot', team: assignedTeam, timeRange: inv, isSubstitution }
+          // FIX: Invalid slots should be displayed with the team of the adjacent paired slot (1↔2, 3↔4),
+          // not with whatever stale team might be sitting in the invalid slot field.
+          // This matches the rule: invalid slot is always paired with its adjacent slot within the same half-day.
+          const pairedSlot: RowSlot | null = slot === 1 ? 2 : slot === 2 ? 1 : slot === 3 ? 4 : slot === 4 ? 3 : null
+          const pairedTeam = pairedSlot ? slotTeams[pairedSlot] : null
+          const displayTeam = pairedTeam ?? assignedTeam
+
+          if (!displayTeam) {
+            baseCells[slot] = { kind: 'empty' }
+          } else {
+            baseCells[slot] = { kind: 'invalidSlot', team: displayTeam, timeRange: inv, isSubstitution }
+          }
           continue
         }
 

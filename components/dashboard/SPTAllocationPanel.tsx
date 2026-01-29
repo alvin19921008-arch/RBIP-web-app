@@ -14,6 +14,7 @@ import { ChevronUp, ChevronDown } from 'lucide-react'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
 import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
+import { Input } from '@/components/ui/input'
 
 export function SPTAllocationPanel() {
   const [allocations, setAllocations] = useState<SPTAllocation[]>([])
@@ -54,10 +55,11 @@ export function SPTAllocationPanel() {
     }
     
     try {
-      await supabase
+      const { error } = await supabase
         .from('spt_allocations')
         .update({ active: false })
         .eq('id', allocationId)
+      if (error) throw error
       await loadData()
       toast.success('SPT allocation removed from work schedules.')
     } catch (err) {
@@ -68,14 +70,20 @@ export function SPTAllocationPanel() {
 
   const handleSave = async (allocation: Partial<SPTAllocation>) => {
     try {
-      if (editingAllocation?.id) {
-        await supabase
-          .from('spt_allocations')
-          .update(allocation)
-          .eq('id', editingAllocation.id)
-      } else {
-        await supabase.from('spt_allocations').insert(allocation)
+      // IMPORTANT:
+      // - Supabase does NOT throw by default; always check `error`.
+      // - We treat `staff_id` as the canonical unique key (migration adds unique index),
+      //   so we upsert by `staff_id` for both create + edit.
+      if (!allocation.staff_id) {
+        throw new Error('Missing staff_id in save payload.')
       }
+
+      const { error } = await supabase
+        .from('spt_allocations')
+        .upsert(allocation, { onConflict: 'staff_id' })
+
+      if (error) throw error
+
       await loadData()
       setEditingAllocation(null)
       toast.success(editingAllocation?.id ? 'SPT allocation updated.' : 'SPT allocation created.')
@@ -85,6 +93,9 @@ export function SPTAllocationPanel() {
     }
   }
 
+  const configuredStaffIds = new Set(allocations.map((a) => a.staff_id))
+  const availableStaffForNew = staff.filter((s) => !configuredStaffIds.has(s.id))
+
   return (
     <Card>
       <CardContent className="pt-6">
@@ -93,10 +104,13 @@ export function SPTAllocationPanel() {
           <p>Loading...</p>
         ) : (
           <div className="space-y-4">
-            <Button onClick={() => {
-              setEditingAllocation({} as SPTAllocation)
-              expand.open('new')
-            }}>
+            <Button
+              disabled={availableStaffForNew.length === 0}
+              onClick={() => {
+                setEditingAllocation({} as SPTAllocation)
+                expand.open('new')
+              }}
+            >
               Add New SPT Allocation
             </Button>
             
@@ -145,7 +159,36 @@ export function SPTAllocationPanel() {
                         )}
                       </h3>
                       <p className="text-sm text-muted-foreground">
-                        Teams: {alloc.teams.join(', ')} | FTE: {alloc.fte_addon}
+                        Teams: {alloc.teams.join(', ')} | Weekday FTE:{' '}
+                        {(() => {
+                          const cfg = (alloc as any).config_by_weekday as any
+                          const days: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri']
+                          const computeEff = (slots: number[], mode: 'AND' | 'OR') => {
+                            if (slots.length === 0) return 0
+                            if (mode === 'OR' && slots.length > 1) return 1
+                            return slots.length
+                          }
+                          const parts: string[] = []
+                          days.forEach((d) => {
+                            const c = cfg?.[d]
+                            const enabled = c ? c.enabled !== false : false
+                            if (!enabled) return
+                            const contributes = c.contributes_fte !== false
+                            const slots = Array.isArray(c.slots) ? c.slots.filter((n: any) => [1, 2, 3, 4].includes(n)) : []
+                            const modes: { am: 'AND' | 'OR'; pm: 'AND' | 'OR' } = c.slot_modes
+                              ? {
+                                  am: c.slot_modes.am === 'OR' ? 'OR' : 'AND',
+                                  pm: c.slot_modes.pm === 'OR' ? 'OR' : 'AND',
+                                }
+                              : { am: 'AND', pm: 'AND' }
+                            const amSlots = slots.filter((s: number) => s === 1 || s === 2)
+                            const pmSlots = slots.filter((s: number) => s === 3 || s === 4)
+                            const eff = computeEff(amSlots, modes.am) + computeEff(pmSlots, modes.pm)
+                            const fte = contributes ? eff * 0.25 : 0
+                            parts.push(`${d}:${fte.toFixed(2)}`)
+                          })
+                          return parts.length > 0 ? parts.join(', ') : '--'
+                        })()}
                         {alloc.specialty && (
                           <span className="ml-2 text-xs font-semibold text-primary">Specialized service: {alloc.specialty}</span>
                         )}
@@ -197,7 +240,7 @@ export function SPTAllocationPanel() {
                   </div>
                   <SPTAllocationForm
                     allocation={editingAllocation}
-                    staff={staff}
+                    staff={availableStaffForNew}
                     onSave={handleSave}
                     onCancel={() => expand.close(() => setEditingAllocation(null))}
                   />
@@ -222,76 +265,143 @@ function SPTAllocationForm({
   onSave: (allocation: Partial<SPTAllocation>) => void
   onCancel: () => void
 }) {
-  const [selectedStaff, setSelectedStaff] = useState(allocation.staff_id || '')
-  const [teams, setTeams] = useState<Team[]>(allocation.teams || [])
-  const [weekdays, setWeekdays] = useState<Weekday[]>(allocation.weekdays || [])
-  const [slots, setSlots] = useState<Record<Weekday, number[]>>(
-    allocation.slots || { mon: [], tue: [], wed: [], thu: [], fri: [] }
-  )
-  // Convert old format (string) to new format (object with am/pm) if needed
-  const normalizeSlotModes = (modes: any): Record<Weekday, { am: 'AND' | 'OR', pm: 'AND' | 'OR' }> => {
-    if (!modes) {
-      return {
-        mon: { am: 'AND', pm: 'AND' },
-        tue: { am: 'AND', pm: 'AND' },
-        wed: { am: 'AND', pm: 'AND' },
-        thu: { am: 'AND', pm: 'AND' },
-        fri: { am: 'AND', pm: 'AND' },
-      }
-    }
-    
-    const defaultModes = { am: 'AND' as const, pm: 'AND' as const }
-    const result: Record<Weekday, { am: 'AND' | 'OR', pm: 'AND' | 'OR' }> = {
-      mon: defaultModes,
-      tue: defaultModes,
-      wed: defaultModes,
-      thu: defaultModes,
-      fri: defaultModes,
-    }
-    
-    ;(['mon', 'tue', 'wed', 'thu', 'fri'] as Weekday[]).forEach(day => {
-      if (modes[day]) {
-        if (typeof modes[day] === 'string') {
-          // Old format: just a string 'AND' or 'OR'
-          result[day] = { am: modes[day] as 'AND' | 'OR', pm: modes[day] as 'AND' | 'OR' }
-        } else if (modes[day].am || modes[day].pm) {
-          // New format: object with am/pm
-          result[day] = {
-            am: modes[day].am || 'AND',
-            pm: modes[day].pm || 'AND',
-          }
+  type SlotModes = { am: 'AND' | 'OR'; pm: 'AND' | 'OR' }
+  type WeekdayConfigState = {
+    enabled: boolean
+    contributesFte: boolean
+    slots: number[]
+    slotModes: SlotModes
+    displayText: string
+  }
+
+  const WEEKDAYS: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri']
+  const defaultCfg: WeekdayConfigState = {
+    enabled: false,
+    contributesFte: true,
+    slots: [],
+    slotModes: { am: 'AND', pm: 'AND' },
+    displayText: '',
+  }
+
+  const normalizeSlotModes = (m: any): SlotModes => ({
+    am: m?.am === 'OR' ? 'OR' : 'AND',
+    pm: m?.pm === 'OR' ? 'OR' : 'AND',
+  })
+
+  const initWeekdayConfigState = (): Record<Weekday, WeekdayConfigState> => {
+    const next = {
+      mon: { ...defaultCfg },
+      tue: { ...defaultCfg },
+      wed: { ...defaultCfg },
+      thu: { ...defaultCfg },
+      fri: { ...defaultCfg },
+    } as Record<Weekday, WeekdayConfigState>
+
+    // Prefer new config_by_weekday
+    const cfgByDay = allocation.config_by_weekday as any
+    if (cfgByDay) {
+      WEEKDAYS.forEach((day) => {
+        const c = cfgByDay?.[day]
+        if (!c) return
+        next[day] = {
+          enabled: c.enabled !== false,
+          contributesFte: c.contributes_fte !== false,
+          slots: Array.isArray(c.slots) ? c.slots.filter((n: any) => [1, 2, 3, 4].includes(n)) : [],
+          slotModes: normalizeSlotModes(c.slot_modes),
+          displayText: typeof c.display_text === 'string' ? c.display_text : '',
         }
+      })
+      return next
+    }
+
+    // Legacy fallback
+    const legacyWeekdays = (allocation.weekdays || []) as Weekday[]
+    WEEKDAYS.forEach((day) => {
+      if (!legacyWeekdays.includes(day)) return
+      const slots = (allocation.slots?.[day] || []) as number[]
+      const slotModes = allocation.slot_modes?.[day] as any
+      next[day] = {
+        enabled: true,
+        contributesFte: (allocation.fte_addon ?? 0) > 0,
+        slots: Array.isArray(slots) ? slots.filter((n) => [1, 2, 3, 4].includes(n)) : [],
+        slotModes: normalizeSlotModes(slotModes),
+        displayText: '',
       }
     })
-    
-    return result
+    return next
   }
-  
-  const [slotModes, setSlotModes] = useState<Record<Weekday, { am: 'AND' | 'OR', pm: 'AND' | 'OR' }>>(
-    normalizeSlotModes(allocation.slot_modes)
-  )
-  const [fteAddon, setFteAddon] = useState(allocation.fte_addon || 0)
+
+  const [selectedStaff, setSelectedStaff] = useState(allocation.staff_id || '')
+  const isEditingExisting = !!allocation.id
+  const [teams, setTeams] = useState<Team[]>(allocation.teams || [])
+  const [weekdayCfg, setWeekdayCfg] = useState<Record<Weekday, WeekdayConfigState>>(initWeekdayConfigState)
   const [specialty, setSpecialty] = useState(allocation.specialty || '')
   const [isRbipSupervisor, setIsRbipSupervisor] = useState(allocation.is_rbip_supervisor || false)
+  const [addWeekday, setAddWeekday] = useState<Weekday | ''>('')
 
   const allTeams: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
+  const weekdayLabel: Record<Weekday, string> = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri' }
+
+  const computeEffectiveSlotCount = (slots: number[], mode: 'AND' | 'OR'): number => {
+    if (slots.length === 0) return 0
+    if (mode === 'OR' && slots.length > 1) return 1
+    return slots.length
+  }
+
+  const computeDerivedFteForDay = (day: Weekday): { fte: number; effectiveSlots: number } => {
+    const c = weekdayCfg[day]
+    if (!c?.enabled) return { fte: 0, effectiveSlots: 0 }
+    if (!c.contributesFte) return { fte: 0, effectiveSlots: 0 }
+    const amSlots = c.slots.filter((s) => s === 1 || s === 2)
+    const pmSlots = c.slots.filter((s) => s === 3 || s === 4)
+    const eff = computeEffectiveSlotCount(amSlots, c.slotModes.am) + computeEffectiveSlotCount(pmSlots, c.slotModes.pm)
+    return { fte: eff * 0.25, effectiveSlots: eff }
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedStaff) return
-      const savePayload = {
+
+    const config_by_weekday: any = {}
+    WEEKDAYS.forEach((day) => {
+      const c = weekdayCfg[day]
+      const enabled = !!c.enabled
+      const cleanedSlots = Array.isArray(c.slots) ? c.slots.filter((n) => [1, 2, 3, 4].includes(n)) : []
+      config_by_weekday[day] = {
+        enabled,
+        contributes_fte: !!c.contributesFte,
+        slots: cleanedSlots,
+        slot_modes: { am: c.slotModes.am, pm: c.slotModes.pm },
+        display_text: c.displayText && c.displayText.trim() !== '' ? c.displayText.trim() : null,
+      }
+    })
+
+    // Keep legacy columns populated minimally for backward compatibility (best-effort)
+    const legacyWeekdays = WEEKDAYS.filter((d) => weekdayCfg[d].enabled)
+    const legacySlots: any = {}
+    const legacyModes: any = {}
+    legacyWeekdays.forEach((d) => {
+      legacySlots[d] = weekdayCfg[d].slots
+      legacyModes[d] = weekdayCfg[d].slotModes
+    })
+
+    const savePayload: Partial<SPTAllocation> = {
       staff_id: selectedStaff,
       teams,
-      weekdays,
-      slots,
-      slot_modes: slotModes,
-      fte_addon: fteAddon,
       specialty: specialty || null,
       substitute_team_head: allocation.substitute_team_head || false,
       is_rbip_supervisor: isRbipSupervisor,
-      active: allocation.active !== undefined ? allocation.active : true, // Default to active for new allocations
+      active: allocation.active !== undefined ? allocation.active : true,
+      // new config
+      config_by_weekday,
+      // legacy best-effort
+      weekdays: legacyWeekdays,
+      slots: legacySlots,
+      slot_modes: legacyModes,
+      fte_addon: 0,
     }
-      onSave(savePayload)
+
+    onSave(savePayload)
   }
 
   const toggleTeam = (team: Team) => {
@@ -300,26 +410,40 @@ function SPTAllocationForm({
     )
   }
 
-  const toggleWeekday = (day: Weekday) => {
-    setWeekdays(prev =>
-      prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
-    )
+  const toggleDayEnabled = (day: Weekday) => {
+    setWeekdayCfg((prev) => ({
+      ...prev,
+      [day]: { ...prev[day], enabled: !prev[day].enabled },
+    }))
+  }
+
+  const enableDay = (day: Weekday) => {
+    setWeekdayCfg((prev) => ({
+      ...prev,
+      [day]: { ...prev[day], enabled: true },
+    }))
+  }
+
+  const removeDay = (day: Weekday) => {
+    setWeekdayCfg((prev) => ({
+      ...prev,
+      [day]: { ...defaultCfg, enabled: false },
+    }))
   }
 
   const toggleSlot = (day: Weekday, slot: number) => {
-    setSlots(prev => ({
-      ...prev,
-      [day]: prev[day].includes(slot)
-        ? prev[day].filter(s => s !== slot)
-        : [...prev[day], slot],
-    }))
+    setWeekdayCfg((prev) => {
+      const cur = prev[day]
+      const slots = cur.slots.includes(slot) ? cur.slots.filter((s) => s !== slot) : [...cur.slots, slot]
+      return { ...prev, [day]: { ...cur, slots } }
+    })
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 border p-4 rounded">
       <div>
         <Label className="text-sm font-medium mb-1">SPT staff</Label>
-        <Select value={selectedStaff} onValueChange={setSelectedStaff}>
+        <Select value={selectedStaff} onValueChange={setSelectedStaff} disabled={isEditingExisting}>
           <SelectTrigger>
             <SelectValue placeholder="Select SPT" />
           </SelectTrigger>
@@ -352,187 +476,241 @@ function SPTAllocationForm({
       </div>
 
       <div>
-        <Label className="text-sm font-medium mb-2">Weekdays</Label>
-        <div className="flex space-x-2">
-          {(['mon', 'tue', 'wed', 'thu', 'fri'] as Weekday[]).map((day) => (
-            <button
-              key={day}
-              type="button"
-              onClick={() => toggleWeekday(day)}
-              className={`px-3 py-1 rounded text-sm ${
-                weekdays.includes(day) ? 'bg-blue-600 text-white' : 'bg-secondary'
-              }`}
-            >
-              {day}
-            </button>
-          ))}
+        <Label className="text-sm font-medium mb-2">Weekday configuration</Label>
+        <div className="space-y-2">
+          {(() => {
+            const enabledDays = WEEKDAYS.filter((d) => !!weekdayCfg[d]?.enabled)
+            const remainingDays = WEEKDAYS.filter((d) => !weekdayCfg[d]?.enabled)
+
+            return (
+              <>
+                {enabledDays.length === 0 ? (
+                  <div className="text-xs text-muted-foreground border rounded-md p-3">
+                    No weekday configured yet.
+                  </div>
+                ) : null}
+
+                {enabledDays.map((day) => {
+                  const c = weekdayCfg[day]
+                  const derived = computeDerivedFteForDay(day)
+                  const amSlots = c.slots.filter((s) => s === 1 || s === 2)
+                  const pmSlots = c.slots.filter((s) => s === 3 || s === 4)
+
+                  return (
+                    <div key={day} className="border rounded-md p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold">{weekdayLabel[day]}</span>
+                          <span className="text-[11px] text-muted-foreground">configured</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="text-xs font-semibold text-muted-foreground whitespace-nowrap">
+                            FTE: {derived.fte.toFixed(2)}
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                            onClick={() => removeDay(day)}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 space-y-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* AM Group */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => toggleSlot(day, 1)}
+                          className={`px-2 py-1 rounded text-xs ${c.slots.includes(1) ? 'bg-blue-600 text-white' : 'bg-secondary'}`}
+                        >
+                          {getSlotLabel(1)}
+                        </button>
+                        {amSlots.length > 1 && (
+                          <div className="inline-flex rounded border border-input overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setWeekdayCfg((prev) => ({
+                                  ...prev,
+                                  [day]: { ...prev[day], slotModes: { ...prev[day].slotModes, am: 'AND' } },
+                                }))
+                              }
+                              className={`px-2 py-1 text-xs font-medium transition-colors ${
+                                c.slotModes.am === 'AND' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                              }`}
+                              title="AND: Both slots 1-2"
+                            >
+                              AND
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setWeekdayCfg((prev) => ({
+                                  ...prev,
+                                  [day]: { ...prev[day], slotModes: { ...prev[day].slotModes, am: 'OR' } },
+                                }))
+                              }
+                              className={`px-2 py-1 text-xs font-medium transition-colors border-l border-input ${
+                                c.slotModes.am === 'OR' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                              }`}
+                              title="OR: One of slots 1-2"
+                            >
+                              OR
+                            </button>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => toggleSlot(day, 2)}
+                          className={`px-2 py-1 rounded text-xs ${c.slots.includes(2) ? 'bg-blue-600 text-white' : 'bg-secondary'}`}
+                        >
+                          {getSlotLabel(2)}
+                        </button>
+                      </div>
+
+                      <span className="text-muted-foreground mx-1">|</span>
+
+                      {/* PM Group */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => toggleSlot(day, 3)}
+                          className={`px-2 py-1 rounded text-xs ${c.slots.includes(3) ? 'bg-blue-600 text-white' : 'bg-secondary'}`}
+                        >
+                          {getSlotLabel(3)}
+                        </button>
+                        {pmSlots.length > 1 && (
+                          <div className="inline-flex rounded border border-input overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setWeekdayCfg((prev) => ({
+                                  ...prev,
+                                  [day]: { ...prev[day], slotModes: { ...prev[day].slotModes, pm: 'AND' } },
+                                }))
+                              }
+                              className={`px-2 py-1 text-xs font-medium transition-colors ${
+                                c.slotModes.pm === 'AND' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                              }`}
+                              title="AND: Both slots 3-4"
+                            >
+                              AND
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setWeekdayCfg((prev) => ({
+                                  ...prev,
+                                  [day]: { ...prev[day], slotModes: { ...prev[day].slotModes, pm: 'OR' } },
+                                }))
+                              }
+                              className={`px-2 py-1 text-xs font-medium transition-colors border-l border-input ${
+                                c.slotModes.pm === 'OR' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                              }`}
+                              title="OR: One of slots 3-4"
+                            >
+                              OR
+                            </button>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => toggleSlot(day, 4)}
+                          className={`px-2 py-1 rounded text-xs ${c.slots.includes(4) ? 'bg-blue-600 text-white' : 'bg-secondary'}`}
+                        >
+                          {getSlotLabel(4)}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={c.contributesFte}
+                          onChange={(e) =>
+                            setWeekdayCfg((prev) => ({
+                              ...prev,
+                              [day]: { ...prev[day], contributesFte: e.target.checked },
+                            }))
+                          }
+                          className="h-4 w-4"
+                        />
+                        <span className="text-xs text-muted-foreground">Contributes FTE</span>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">
+                        AM: {c.slotModes.am} ({amSlots.join(',') || '-'}) · PM: {c.slotModes.pm} ({pmSlots.join(',') || '-'})
+                      </div>
+                    </div>
+
+                    {!c.contributesFte && (
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground">
+                          When on duty and FTE=0, Block 1 will show this text on the right (else “No Duty”).
+                        </div>
+                        <Input
+                          value={c.displayText}
+                          onChange={(e) =>
+                            setWeekdayCfg((prev) => ({
+                              ...prev,
+                              [day]: { ...prev[day], displayText: e.target.value },
+                            }))
+                          }
+                          placeholder="e.g. 8 beds"
+                          className="h-8 text-xs"
+                        />
+                      </div>
+                    )}
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {remainingDays.length > 0 ? (
+                  <div className="border rounded-md p-2 bg-muted/10">
+                    <div className="text-xs font-semibold">Add other weekday configuration</div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <Select value={addWeekday} onValueChange={(v) => setAddWeekday(v as any)}>
+                        <SelectTrigger className="h-8">
+                          <SelectValue placeholder="Select weekday" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {remainingDays.map((d) => (
+                            <SelectItem key={d} value={d}>
+                              {weekdayLabel[d]} ({d.toUpperCase()})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="button"
+                        className="h-8"
+                        disabled={!addWeekday}
+                        onClick={() => {
+                          if (!addWeekday) return
+                          enableDay(addWeekday)
+                          setAddWeekday('')
+                        }}
+                      >
+                        Add
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted-foreground border rounded-md p-2">
+                    All weekdays are configured.
+                  </div>
+                )}
+              </>
+            )
+          })()}
         </div>
       </div>
-
-      {weekdays.length > 0 && (
-        <div>
-          <Label className="text-sm font-medium mb-1">Slots per weekday</Label>
-          {weekdays.map((day) => {
-            const selectedSlots = slots[day] || []
-            const amSlots = selectedSlots.filter(s => s === 1 || s === 2)
-            const pmSlots = selectedSlots.filter(s => s === 3 || s === 4)
-            const dayModes = slotModes[day] || { am: 'AND', pm: 'AND' }
-            
-            return (
-              <div key={day} className="mb-3">
-                <span className="text-sm font-medium">{day}:</span>
-                <div className="flex items-center space-x-2 mt-1">
-                  {/* AM Group: Slots 1-2 */}
-                  <div className="flex items-center space-x-1">
-                    <button
-                      type="button"
-                      onClick={() => toggleSlot(day, 1)}
-                      className={`px-2 py-1 rounded text-xs ${
-                        selectedSlots.includes(1) ? 'bg-blue-600 text-white' : 'bg-secondary'
-                      }`}
-                    >
-                      {getSlotLabel(1)}
-                    </button>
-                    {amSlots.length > 1 && (
-                      <div className="inline-flex rounded border border-input overflow-hidden">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSlotModes(prev => ({
-                              ...prev,
-                              [day]: {
-                                ...prev[day],
-                                am: 'AND'
-                              }
-                            }))
-                          }}
-                          className={`px-2 py-1 text-xs font-medium transition-colors ${
-                            dayModes.am === 'AND'
-                              ? 'bg-green-600 text-white'
-                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                          }`}
-                          title="AND: Both slots 1-2"
-                        >
-                          AND
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSlotModes(prev => ({
-                              ...prev,
-                              [day]: {
-                                ...prev[day],
-                                am: 'OR'
-                              }
-                            }))
-                          }}
-                          className={`px-2 py-1 text-xs font-medium transition-colors border-l border-input ${
-                            dayModes.am === 'OR'
-                              ? 'bg-green-600 text-white'
-                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                          }`}
-                          title="OR: One of slots 1-2"
-                        >
-                          OR
-                        </button>
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => toggleSlot(day, 2)}
-                      className={`px-2 py-1 rounded text-xs ${
-                        selectedSlots.includes(2) ? 'bg-blue-600 text-white' : 'bg-secondary'
-                      }`}
-                    >
-                      {getSlotLabel(2)}
-                    </button>
-                  </div>
-                  
-                  {/* Divider */}
-                  <span className="text-muted-foreground mx-2">|</span>
-                  
-                  {/* PM Group: Slots 3-4 */}
-                  <div className="flex items-center space-x-1">
-                    <button
-                      type="button"
-                      onClick={() => toggleSlot(day, 3)}
-                      className={`px-2 py-1 rounded text-xs ${
-                        selectedSlots.includes(3) ? 'bg-blue-600 text-white' : 'bg-secondary'
-                      }`}
-                    >
-                      {getSlotLabel(3)}
-                    </button>
-                    {pmSlots.length > 1 && (
-                      <div className="inline-flex rounded border border-input overflow-hidden">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSlotModes(prev => ({
-                              ...prev,
-                              [day]: {
-                                ...prev[day],
-                                pm: 'AND'
-                              }
-                            }))
-                          }}
-                          className={`px-2 py-1 text-xs font-medium transition-colors ${
-                            dayModes.pm === 'AND'
-                              ? 'bg-green-600 text-white'
-                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                          }`}
-                          title="AND: Both slots 3-4"
-                        >
-                          AND
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSlotModes(prev => ({
-                              ...prev,
-                              [day]: {
-                                ...prev[day],
-                                pm: 'OR'
-                              }
-                            }))
-                          }}
-                          className={`px-2 py-1 text-xs font-medium transition-colors border-l border-input ${
-                            dayModes.pm === 'OR'
-                              ? 'bg-green-600 text-white'
-                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                          }`}
-                          title="OR: One of slots 3-4"
-                        >
-                          OR
-                        </button>
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => toggleSlot(day, 4)}
-                      className={`px-2 py-1 rounded text-xs ${
-                        selectedSlots.includes(4) ? 'bg-blue-600 text-white' : 'bg-secondary'
-                      }`}
-                    >
-                      {getSlotLabel(4)}
-                    </button>
-                  </div>
-                </div>
-                {(amSlots.length > 1 || pmSlots.length > 1) && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {amSlots.length > 1 && (
-                      <span>AM ({dayModes.am}): {dayModes.am === 'OR' ? 'One of' : 'Both'} slots {amSlots.join(', ')}</span>
-                    )}
-                    {amSlots.length > 1 && pmSlots.length > 1 && ' | '}
-                    {pmSlots.length > 1 && (
-                      <span>PM ({dayModes.pm}): {dayModes.pm === 'OR' ? 'One of' : 'Both'} slots {pmSlots.join(', ')}</span>
-                    )}
-                  </p>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
 
       <div>
         <Label className="text-sm font-medium mb-1">Specialty</Label>
@@ -553,19 +731,7 @@ function SPTAllocationForm({
         </Select>
       </div>
 
-      <div>
-        <label className="block text-sm font-medium mb-1">FTE Add-on to the assigned team</label>
-        <input
-          type="number"
-          step="0.25"
-          min="0"
-          max="1"
-          value={fteAddon}
-          onChange={(e) => setFteAddon(parseFloat(e.target.value) || 0)}
-          className="w-full px-3 py-2 border rounded-md"
-          required
-        />
-      </div>
+      {/* NOTE: FTE add-on is now computed per weekday from slots/modes + contributes toggle. */}
 
       <div className="flex items-center space-x-2">
         <input
