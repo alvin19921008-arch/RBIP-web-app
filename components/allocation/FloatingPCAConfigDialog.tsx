@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, Fragment } from 'react'
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import { Team } from '@/types/staff'
 import { PCAAllocation } from '@/types/schedule'
 import { PCAPreference, SpecialProgram } from '@/types/allocation'
@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { TeamPendingCard, TIE_BREAKER_COLORS } from './TeamPendingCard'
 import { TeamReservationCard } from './TeamReservationCard'
 import { TeamAdjacentSlotCard } from './TeamAdjacentSlotCard'
-import { ChevronRight, ArrowLeft, ArrowRight, Lightbulb, GripVertical, Check, Circle } from 'lucide-react'
+import { ChevronRight, ArrowLeft, ArrowRight, Lightbulb, GripVertical, Check, Circle, AlertTriangle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { 
@@ -50,6 +50,7 @@ import {
   horizontalListSortingStrategy,
   arrayMove,
 } from '@dnd-kit/sortable'
+import { createClientComponentClient } from '@/lib/supabase/client'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -159,6 +160,7 @@ export function FloatingPCAConfigDialog({
   onSave,
   onCancel,
 }: FloatingPCAConfigDialogProps) {
+  const supabase = createClientComponentClient()
   // Current mini-step
   const [currentMiniStep, setCurrentMiniStep] = useState<MiniStep>('3.0')
   
@@ -178,6 +180,207 @@ export function FloatingPCAConfigDialog({
   
   // State: current team order (for display and saving)
   const [teamOrder, setTeamOrder] = useState<Team[]>([])
+
+  // Step 3.4: allocation mode (Standard vs Balanced)
+  const [allocationMode, setAllocationMode] = useState<'standard' | 'balanced'>('standard')
+  const [scarcityPendingThresholdFte, setScarcityPendingThresholdFte] = useState<number>(0.75)
+  const [scarcityMinTeams, setScarcityMinTeams] = useState<number>(3)
+  const [scarcityTeamsCount, setScarcityTeamsCount] = useState<number>(0)
+  const [scarcityTriggered, setScarcityTriggered] = useState(false)
+  const [scarcityAutoSelected, setScarcityAutoSelected] = useState(false)
+  const [scarcityBehavior, setScarcityBehavior] = useState<'auto_select' | 'remind_only' | 'off'>('auto_select')
+
+  type Step31PreviewState =
+    | { status: 'idle' }
+    | { status: 'loading' }
+    | {
+        status: 'ready'
+        computedAt: number
+        standardZeroTeams: Team[]
+        balancedShortTeams: Team[]
+      }
+    | { status: 'error'; message: string }
+
+  const [step31Preview, setStep31Preview] = useState<Step31PreviewState>({ status: 'idle' })
+  const previewRunIdRef = useRef(0)
+  const previewDebounceRef = useRef<number | null>(null)
+  const previewLastHashRef = useRef<string>('')
+
+  // Load scarcity threshold from global config head (once per open)
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    ;(async () => {
+      const res = await supabase.rpc('get_config_global_head_v1')
+      if (cancelled) return
+      if (res.error) return
+      const raw = (res.data as any)?.floating_pca_scarcity_threshold
+      const pending = typeof raw?.pending_fte === 'number' ? raw.pending_fte : Number(raw?.pending_fte ?? 0.75)
+      const minTeams = typeof raw?.min_teams === 'number' ? raw.min_teams : Number(raw?.min_teams ?? 3)
+      const behaviorRaw = String(raw?.behavior ?? 'auto_select')
+      const pendingSafe = Number.isFinite(pending) && pending >= 0 ? pending : 0.75
+      const minTeamsSafe = Number.isFinite(minTeams) ? Math.max(1, Math.min(8, Math.round(minTeams))) : 3
+      const behaviorSafe =
+        behaviorRaw === 'remind_only' || behaviorRaw === 'off' || behaviorRaw === 'auto_select'
+          ? (behaviorRaw as any)
+          : 'auto_select'
+      setScarcityPendingThresholdFte(pendingSafe)
+      setScarcityMinTeams(minTeamsSafe)
+      setScarcityBehavior(behaviorSafe)
+    })().catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [open, supabase])
+
+  // Scarcity trigger: count how many teams have pending >= X
+  useEffect(() => {
+    const count = TEAMS.reduce((sum, t) => {
+      const v = roundToNearestQuarterWithMidpoint(adjustedFTE[t] || 0)
+      return sum + (v >= scarcityPendingThresholdFte ? 1 : 0)
+    }, 0)
+    setScarcityTeamsCount(count)
+    const triggered = scarcityBehavior !== 'off' && scarcityPendingThresholdFte > 0 && count >= scarcityMinTeams
+    setScarcityTriggered(triggered)
+    // Auto-select Balanced once when entering Step 3.1 (do not fight user toggles afterwards).
+    if (
+      triggered &&
+      scarcityBehavior === 'auto_select' &&
+      currentMiniStep === '3.1' &&
+      allocationMode !== 'balanced' &&
+      !scarcityAutoSelected
+    ) {
+      setAllocationMode('balanced')
+      setScarcityAutoSelected(true)
+    }
+  }, [
+    adjustedFTE,
+    scarcityPendingThresholdFte,
+    scarcityMinTeams,
+    scarcityBehavior,
+    currentMiniStep,
+    allocationMode,
+    scarcityAutoSelected,
+  ])
+
+  const roundedPendingByTeam = useMemo(() => {
+    const out: Record<Team, number> = {} as any
+    TEAMS.forEach((t) => {
+      out[t] = roundToNearestQuarterWithMidpoint(adjustedFTE[t] || 0)
+    })
+    return out
+  }, [adjustedFTE])
+
+  const maxRoundedPending = useMemo(() => {
+    return Math.max(0, ...TEAMS.map((t) => roundedPendingByTeam[t] || 0))
+  }, [roundedPendingByTeam])
+
+  // Step 3.1 preview: run BOTH standard + balanced (dry-run) and summarize risks.
+  useEffect(() => {
+    const canRun =
+      open &&
+      bufferPCAConfirmed &&
+      currentMiniStep === '3.1' &&
+      floatingPCAs.length > 0
+
+    if (!canRun) {
+      if (previewDebounceRef.current) window.clearTimeout(previewDebounceRef.current)
+      previewDebounceRef.current = null
+      setStep31Preview({ status: 'idle' })
+      return
+    }
+
+    const hash = (() => {
+      const orderKey = teamOrder.join(',')
+      const pendingKey = TEAMS.map((t) => `${t}:${roundedPendingByTeam[t].toFixed(2)}`).join('|')
+      const allocKey = existingAllocations
+        .map((a) => {
+          const inv = (a as any)?.invalid_slot ?? ''
+          return `${a.staff_id}:${a.slot1 ?? ''}${a.slot2 ?? ''}${a.slot3 ?? ''}${a.slot4 ?? ''}:${inv}`
+        })
+        .join('|')
+      const poolKey = floatingPCAs
+        .map((p) => `${p.id}:${(p.fte_pca ?? 0).toFixed(2)}:${Array.isArray(p.availableSlots) ? p.availableSlots.join('') : ''}`)
+        .join('|')
+      return `${orderKey}__${pendingKey}__${allocKey}__${poolKey}`
+    })()
+
+    if (hash === previewLastHashRef.current) return
+    previewLastHashRef.current = hash
+
+    if (previewDebounceRef.current) window.clearTimeout(previewDebounceRef.current)
+    previewDebounceRef.current = window.setTimeout(() => {
+      const runId = ++previewRunIdRef.current
+      setStep31Preview({ status: 'loading' })
+
+      ;(async () => {
+        const basePending = { ...roundedPendingByTeam }
+        const baseAllocations = existingAllocations.map((a) => ({ ...a }))
+
+        const [standardRes, balancedRes] = await Promise.all([
+          allocateFloatingPCA_v2({
+            mode: 'standard',
+            teamOrder,
+            currentPendingFTE: basePending,
+            existingAllocations: baseAllocations,
+            pcaPool: floatingPCAs,
+            pcaPreferences,
+            specialPrograms,
+          }),
+          allocateFloatingPCA_v2({
+            mode: 'balanced',
+            teamOrder,
+            currentPendingFTE: basePending,
+            existingAllocations: baseAllocations,
+            pcaPool: floatingPCAs,
+            pcaPreferences,
+            specialPrograms,
+          }),
+        ])
+
+        if (runId !== previewRunIdRef.current) return
+
+        const teamsNeeding = TEAMS.filter((t) => (roundedPendingByTeam[t] || 0) > 0)
+
+        const standardZeroTeams = teamsNeeding.filter((t) => {
+          const count = (standardRes.tracker?.[t]?.assignments || []).filter((a) => a.assignedIn === 'step34').length
+          return count === 0
+        })
+
+        const balancedShortTeams = teamsNeeding.filter((t) => {
+          const left = roundToNearestQuarterWithMidpoint((balancedRes.pendingPCAFTEPerTeam as any)?.[t] || 0)
+          return left >= 0.25
+        })
+
+        setStep31Preview({
+          status: 'ready',
+          computedAt: Date.now(),
+          standardZeroTeams,
+          balancedShortTeams,
+        })
+      })().catch((e) => {
+        if (runId !== previewRunIdRef.current) return
+        const msg = e instanceof Error ? e.message : String(e)
+        setStep31Preview({ status: 'error', message: msg })
+      })
+    }, 420)
+
+    return () => {
+      if (previewDebounceRef.current) window.clearTimeout(previewDebounceRef.current)
+      previewDebounceRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    open,
+    bufferPCAConfirmed,
+    currentMiniStep,
+    teamOrder,
+    roundedPendingByTeam,
+    existingAllocations,
+    floatingPCAs,
+    pcaPreferences,
+    specialPrograms,
+  ])
   
   // Step 3.2: reservations computed from Step 3.1 output
   const [teamReservations, setTeamReservations] = useState<TeamReservations | null>(null)
@@ -391,6 +594,10 @@ export function FloatingPCAConfigDialog({
   
   // Compute tie groups from current adjusted FTE
   const tieGroups = useMemo(() => identifyTieGroups(adjustedFTE), [adjustedFTE])
+
+  const maxTieGroupSize = useMemo(() => {
+    return Math.max(0, ...tieGroups.map((g) => g.teams.length))
+  }, [tieGroups])
   
   // Map team -> tie group info for quick lookup
   const teamTieInfo = useMemo(() => {
@@ -589,95 +796,128 @@ export function FloatingPCAConfigDialog({
   // State: algorithm running indicator
   const [isRunningAlgorithm, setIsRunningAlgorithm] = useState(false)
   
-  // Handle final save (runs the full floating PCA algorithm v2)
-  const handleFinalSave = async () => {
+  const runFinalAlgorithm = async (params: {
+    mode: 'standard' | 'balanced'
+    basePendingFTE: Record<Team, number>
+    baseAllocations: PCAAllocation[]
+    step32Assignments: SlotAssignment[]
+    step33Assignments: SlotAssignment[]
+  }) => {
+    const {
+      mode,
+      basePendingFTE,
+      baseAllocations,
+      step32Assignments,
+      step33Assignments,
+    } = params
+
+    // First, execute any 3.3 assignments (they happen before the main algorithm).
+    let finalPendingFTE = basePendingFTE
+    let finalAllocations = baseAllocations
+    if (step33Assignments.length > 0) {
+      const result = executeSlotAssignments(
+        step33Assignments,
+        basePendingFTE,
+        baseAllocations,
+        floatingPCAs
+      )
+      finalPendingFTE = result.updatedPendingFTE
+      finalAllocations = result.updatedAllocations
+    }
+
+    const algorithmResult = await allocateFloatingPCA_v2({
+      mode,
+      teamOrder: teamOrder,
+      currentPendingFTE: finalPendingFTE,
+      existingAllocations: finalAllocations,
+      pcaPool: floatingPCAs,
+      pcaPreferences: pcaPreferences,
+      specialPrograms: specialPrograms,
+    })
+
+    // Add Step 3.2 and 3.3 assignments to the tracker for visibility.
+    const allocationOrderMap = new Map<Team, number>()
+    teamOrder.forEach((team, index) => {
+      allocationOrderMap.set(team, index + 1)
+    })
+
+    for (const assignment of step32Assignments) {
+      const pca = floatingPCAs.find(p => p.id === assignment.pcaId)
+      if (!pca) continue
+
+      const teamPref = getTeamPreferenceInfo(assignment.team, pcaPreferences)
+      const teamFloor = getTeamFloor(assignment.team, pcaPreferences)
+      const isPreferredPCA = teamPref.preferredPCAIds.includes(assignment.pcaId)
+      const isPreferredSlot = teamPref.preferredSlot === assignment.slot
+
+      recordAssignment(algorithmResult.tracker, assignment.team, {
+        slot: assignment.slot,
+        pcaId: assignment.pcaId,
+        pcaName: assignment.pcaName,
+        assignedIn: 'step32',
+        wasPreferredSlot: isPreferredSlot,
+        wasPreferredPCA: isPreferredPCA,
+        wasFloorPCA: isFloorPCAForTeam(pca, teamFloor),
+        allocationOrder: allocationOrderMap.get(assignment.team),
+      })
+    }
+
+    for (const assignment of step33Assignments) {
+      const pca = floatingPCAs.find(p => p.id === assignment.pcaId)
+      if (!pca) continue
+
+      const teamPref = getTeamPreferenceInfo(assignment.team, pcaPreferences)
+      const teamFloor = getTeamFloor(assignment.team, pcaPreferences)
+      const isPreferredPCA = teamPref.preferredPCAIds.includes(assignment.pcaId)
+      const isPreferredSlot = teamPref.preferredSlot === assignment.slot
+
+      recordAssignment(algorithmResult.tracker, assignment.team, {
+        slot: assignment.slot,
+        pcaId: assignment.pcaId,
+        pcaName: assignment.pcaName,
+        assignedIn: 'step33',
+        wasPreferredSlot: isPreferredSlot,
+        wasPreferredPCA: isPreferredPCA,
+        wasFloorPCA: isFloorPCAForTeam(pca, teamFloor),
+        allocationOrder: allocationOrderMap.get(assignment.team),
+      })
+    }
+
+    finalizeTrackerSummary(algorithmResult.tracker)
+    onSave(algorithmResult, teamOrder, step32Assignments, step33Assignments)
+  }
+
+  // Handle final save from Step 3.3 (runs the full floating PCA algorithm v2).
+  const handleFinalSave = async (modeOverride?: 'standard' | 'balanced') => {
     setIsRunningAlgorithm(true)
-    
     try {
-      // First, execute any 3.3 assignments
-      let finalPendingFTE = currentPendingFTE
-      let finalAllocations = updatedAllocations
-      
-      if (step33Selections.length > 0) {
-        const result = executeSlotAssignments(
-          step33Selections,
-          currentPendingFTE,
-          updatedAllocations,
-          floatingPCAs
-        )
-        finalPendingFTE = result.updatedPendingFTE
-        finalAllocations = result.updatedAllocations
-      }
-      
-      // Run the full floating PCA algorithm v2
-      const algorithmResult = await allocateFloatingPCA_v2({
-        teamOrder: teamOrder,
-        currentPendingFTE: finalPendingFTE,
-        existingAllocations: finalAllocations,
-        pcaPool: floatingPCAs,
-        pcaPreferences: pcaPreferences,
-        specialPrograms: specialPrograms,
+      await runFinalAlgorithm({
+        mode: modeOverride ?? allocationMode,
+        basePendingFTE: currentPendingFTE,
+        baseAllocations: updatedAllocations,
+        step32Assignments,
+        step33Assignments: step33Selections,
       })
-      
-      // Add Step 3.2 and 3.3 assignments to the tracker
-      // These assignments were made before the algorithm ran, so they need to be added to the tracker
-      // Get allocation order for each team
-      const allocationOrderMap = new Map<Team, number>()
-      teamOrder.forEach((team, index) => {
-        allocationOrderMap.set(team, index + 1)
-      })
-      
-      // Add Step 3.2 assignments to tracker
-      for (const assignment of step32Assignments) {
-        const pca = floatingPCAs.find(p => p.id === assignment.pcaId)
-        if (!pca) continue
-        
-        const teamPref = getTeamPreferenceInfo(assignment.team, pcaPreferences)
-        const teamFloor = getTeamFloor(assignment.team, pcaPreferences)
-        const isPreferredPCA = teamPref.preferredPCAIds.includes(assignment.pcaId)
-        const isPreferredSlot = teamPref.preferredSlot === assignment.slot
-        
-        recordAssignment(algorithmResult.tracker, assignment.team, {
-          slot: assignment.slot,
-          pcaId: assignment.pcaId,
-          pcaName: assignment.pcaName,
-          assignedIn: 'step32',
-          wasPreferredSlot: isPreferredSlot,
-          wasPreferredPCA: isPreferredPCA,
-          wasFloorPCA: isFloorPCAForTeam(pca, teamFloor),
-          allocationOrder: allocationOrderMap.get(assignment.team),
-        })
-      }
-      
-      // Add Step 3.3 assignments to tracker
-      for (const assignment of step33Selections) {
-        const pca = floatingPCAs.find(p => p.id === assignment.pcaId)
-        if (!pca) continue
-        
-        const teamPref = getTeamPreferenceInfo(assignment.team, pcaPreferences)
-        const teamFloor = getTeamFloor(assignment.team, pcaPreferences)
-        const isPreferredPCA = teamPref.preferredPCAIds.includes(assignment.pcaId)
-        const isPreferredSlot = teamPref.preferredSlot === assignment.slot
-        
-        recordAssignment(algorithmResult.tracker, assignment.team, {
-          slot: assignment.slot,
-          pcaId: assignment.pcaId,
-          pcaName: assignment.pcaName,
-          assignedIn: 'step33',
-          wasPreferredSlot: isPreferredSlot,
-          wasPreferredPCA: isPreferredPCA,
-          wasFloorPCA: isFloorPCAForTeam(pca, teamFloor),
-          allocationOrder: allocationOrderMap.get(assignment.team),
-        })
-      }
-      
-      // Finalize tracker summary after adding Step 3.2/3.3 assignments
-      finalizeTrackerSummary(algorithmResult.tracker)
-      
-      // Pass the full result to the parent
-      onSave(algorithmResult, teamOrder, step32Assignments, step33Selections)
     } catch (error) {
       console.error('Error running floating PCA algorithm:', error)
+    } finally {
+      setIsRunningAlgorithm(false)
+    }
+  }
+
+  // Shortcut: run Balanced mode directly after Step 3.1 (skips 3.2/3.3).
+  const handleRunBalancedNow = async () => {
+    setIsRunningAlgorithm(true)
+    try {
+      await runFinalAlgorithm({
+        mode: 'balanced',
+        basePendingFTE: { ...adjustedFTE },
+        baseAllocations: [...existingAllocations],
+        step32Assignments: [],
+        step33Assignments: [],
+      })
+    } catch (error) {
+      console.error('Error running floating PCA algorithm (balanced):', error)
     } finally {
       setIsRunningAlgorithm(false)
     }
@@ -857,10 +1097,48 @@ export function FloatingPCAConfigDialog({
           </li>
           <li className="flex items-start gap-2">
             <Lightbulb className="mt-0.5 h-4 w-4 text-amber-500 flex-shrink-0" />
-            <span>Consider manual adjustment when a tie group has ≥ 3 teams or pending ≥ 0.75.</span>
+            <span>
+              {step31Preview.status === 'loading'
+                ? 'Preview is calculating…'
+                : step31Preview.status === 'error'
+                  ? 'Preview unavailable today (you can still continue).'
+                  : step31Preview.status === 'ready' && step31Preview.standardZeroTeams.length >= 1
+                    ? `Risk detected: running Standard now may leave ${step31Preview.standardZeroTeams.length} team(s) with 0 floating PCA. Consider switching to Balanced, or reorder tie groups.`
+                    : maxTieGroupSize >= 3 || maxRoundedPending >= 0.75
+                      ? 'Consider manual adjustment when many teams are tied or the top pending is high.'
+                      : 'No obvious risk detected from the preview today.'}
+            </span>
           </li>
         </ul>
       </details>
+
+      {/* Scarcity callout (inline, no toast) */}
+      {scarcityTriggered ? (
+        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50/90 px-3.5 py-2.5 text-sm text-amber-950">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-700 flex-shrink-0" />
+            <div className="min-w-0 space-y-0.5">
+              <div className="font-semibold">
+                {scarcityBehavior === 'auto_select'
+                  ? 'Scarcity detected — Balanced auto-selected'
+                  : 'Scarcity detected — Balanced recommended'}
+              </div>
+              <div className="text-amber-900/80 text-xs">
+                Rule: trigger when at least {scarcityMinTeams} team(s) have pending ≥ {scarcityPendingThresholdFte.toFixed(2)} FTE.
+                Today: {scarcityTeamsCount} team(s).
+                {scarcityBehavior === 'remind_only'
+                  ? ' You can keep Standard to use Step 3.2/3.3, but Balanced may reduce “0-slot” outcomes.'
+                  : ' You can switch back to Standard if you want to use Step 3.2/3.3.'}
+              </div>
+              {step31Preview.status === 'ready' && step31Preview.standardZeroTeams.length > 0 ? (
+                <div className="text-amber-900/80 text-xs">
+                  Preview (Standard if run now): {step31Preview.standardZeroTeams.length} team(s) with 0 floating PCA.
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Tick-to-do list (must be outside DialogDescription since it renders a <p>) */}
       <div className="mt-3 space-y-1.5 text-sm text-muted-foreground">
@@ -906,6 +1184,53 @@ export function FloatingPCAConfigDialog({
           </div>
         )}
       </div>
+
+      {/* Step 3.1 preview (auto-updating) */}
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="rounded-md border bg-background p-3">
+          <div className="text-sm font-semibold text-foreground">Standard preview</div>
+          <div className="text-xs text-muted-foreground">If you run now from Step 3.1</div>
+          <div className="mt-2 text-sm text-foreground">
+            {step31Preview.status === 'loading' || step31Preview.status === 'idle' ? (
+              <span className="text-muted-foreground">Calculating…</span>
+            ) : step31Preview.status === 'error' ? (
+              <span className="text-muted-foreground">Preview unavailable</span>
+            ) : (
+              <>
+                Teams with 0 floating PCA: <span className="font-semibold">{step31Preview.standardZeroTeams.length}</span>
+              </>
+            )}
+          </div>
+          {step31Preview.status === 'ready' && step31Preview.standardZeroTeams.length > 0 ? (
+            <div className="mt-1 text-xs text-muted-foreground">
+              {step31Preview.standardZeroTeams.slice(0, 4).join(', ')}
+              {step31Preview.standardZeroTeams.length > 4 ? ` +${step31Preview.standardZeroTeams.length - 4}` : ''}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="rounded-md border bg-background p-3">
+          <div className="text-sm font-semibold text-foreground">Balanced preview</div>
+          <div className="text-xs text-muted-foreground">If you run now from Step 3.1</div>
+          <div className="mt-2 text-sm text-foreground">
+            {step31Preview.status === 'loading' || step31Preview.status === 'idle' ? (
+              <span className="text-muted-foreground">Calculating…</span>
+            ) : step31Preview.status === 'error' ? (
+              <span className="text-muted-foreground">Preview unavailable</span>
+            ) : (
+              <>
+                Teams still short after allocation: <span className="font-semibold">{step31Preview.balancedShortTeams.length}</span>
+              </>
+            )}
+          </div>
+          {step31Preview.status === 'ready' && step31Preview.balancedShortTeams.length > 0 ? (
+            <div className="mt-1 text-xs text-muted-foreground">
+              {step31Preview.balancedShortTeams.slice(0, 4).join(', ')}
+              {step31Preview.balancedShortTeams.length > 4 ? ` +${step31Preview.balancedShortTeams.length - 4}` : ''}
+            </div>
+          ) : null}
+        </div>
+      </div>
       
       <div className="py-4">
         <DndContext
@@ -943,6 +1268,62 @@ export function FloatingPCAConfigDialog({
           </SortableContext>
         </DndContext>
       </div>
+
+      <div className="rounded-md border bg-muted/30 p-3">
+        <div className="text-sm font-medium text-foreground">Allocation method (Step 3.4)</div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant={allocationMode === 'standard' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setAllocationMode('standard')}
+          >
+            Standard
+          </Button>
+          <Button
+            type="button"
+            variant={allocationMode === 'balanced' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setAllocationMode('balanced')}
+          >
+            Balanced (take turns)
+          </Button>
+        </div>
+        <div className="mt-2 text-xs text-muted-foreground space-y-2">
+          {allocationMode === 'standard' ? (
+            <>
+              <div className="font-medium text-foreground">Standard (manual-friendly)</div>
+              <ul className="list-disc pl-5 space-y-1">
+                <li><span className="font-medium text-foreground">Pros</span>: continues to Step 3.2/3.3 so user can pick preferred/adjacent slots.</li>
+                <li><span className="font-medium text-foreground">Cons</span>: under tight manpower, a high-need team can end up with near-zero floating slots.</li>
+                <li><span className="font-medium text-foreground">Always enforced</span>: avoid the team’s gym slot.</li>
+              </ul>
+            </>
+          ) : (
+            <>
+              <div className="font-medium text-foreground">Balanced (fairness-first)</div>
+              <ul className="list-disc pl-5 space-y-1">
+                <li><span className="font-medium text-foreground">Pros</span>: gives teams turns (1 slot at a time) to reduce “0-slot” outcomes.</li>
+                <li><span className="font-medium text-foreground">Cons</span>: skips Step 3.2/3.3 (no preferred/adjacent manual picking).</li>
+                <li><span className="font-medium text-foreground">Always enforced</span>: avoid the team’s gym slot.</li>
+                <li><span className="font-medium text-foreground">May relax</span>: floor matching and “reserved preferred PCA of other teams” if needed.</li>
+              </ul>
+            </>
+          )}
+
+          {scarcityBehavior !== 'off' ? (
+            <div>
+              <span className="font-medium text-foreground">Scarcity check</span>: trigger when at least {scarcityMinTeams} team(s) have pending ≥ {scarcityPendingThresholdFte.toFixed(2)} FTE.
+              Currently: {scarcityTeamsCount} team(s).
+              {scarcityTriggered
+                ? scarcityBehavior === 'auto_select'
+                  ? ' Balanced was auto-selected.'
+                  : ' Balanced is recommended (no auto switch).'
+                : ''}
+            </div>
+          ) : null}
+        </div>
+      </div>
       
       <DialogFooter className="flex justify-between">
         <Button variant="outline" onClick={handleResetToOriginal}>
@@ -952,9 +1333,20 @@ export function FloatingPCAConfigDialog({
           <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
-          <Button onClick={handleProceedToStep32}>
-            Continue to 3.2 <ArrowRight className="ml-2 h-4 w-4" />
-          </Button>
+          {allocationMode === 'balanced' ? (
+            <Button
+              type="button"
+              onClick={handleRunBalancedNow}
+              disabled={isRunningAlgorithm}
+              title="Balanced mode runs the allocation directly (skips Step 3.2 and 3.3)"
+            >
+              Run Balanced now
+            </Button>
+          ) : (
+            <Button onClick={handleProceedToStep32}>
+              Continue to 3.2 <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          )}
         </div>
       </DialogFooter>
     </>
@@ -1073,8 +1465,8 @@ export function FloatingPCAConfigDialog({
           >
             Skip Assignments
           </Button>
-          <Button onClick={handleFinalSave}>
-            Complete Configuration
+          <Button onClick={() => handleFinalSave('standard')} disabled={isRunningAlgorithm}>
+            Complete (Standard)
           </Button>
         </div>
       </DialogFooter>

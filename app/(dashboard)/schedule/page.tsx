@@ -3395,6 +3395,19 @@ function SchedulePageContent() {
           availableSlots = baseAvailableSlots.filter(slot => !substitutionSlots.includes(slot))
         }
 
+        // Derive legacy invalidSlot from newer invalidSlots array when present (fallback to legacy invalidSlot).
+        const invalidSlotFromArray =
+          Array.isArray((override as any)?.invalidSlots) && (override as any).invalidSlots.length > 0
+            ? (override as any).invalidSlots[0]?.slot
+            : undefined
+        const effectiveInvalidSlot =
+          typeof (override as any)?.invalidSlot === 'number' ? (override as any).invalidSlot : invalidSlotFromArray
+
+        // IMPORTANT: invalid slot should NOT be in availableSlots.
+        if (effectiveInvalidSlot && Array.isArray(availableSlots)) {
+          availableSlots = availableSlots.filter((slot) => slot !== effectiveInvalidSlot)
+        }
+
         // NOTE: Do NOT clamp buffer PCA availableSlots here.
         // A floating buffer PCA with buffer_fte=0.5 does not mean it is only available for slots [1,2].
         // It means it has CAPACITY for 2 slots, and Step 2.1 should still be able to pick which missing slots it covers.
@@ -3412,7 +3425,7 @@ function SchedulePageContent() {
           leave_type: override?.leaveType || null,
           is_available: effectiveBaseFTERemaining > 0,
           availableSlots: availableSlots,
-          invalidSlot: override?.invalidSlot,
+          invalidSlot: effectiveInvalidSlot,
           floor_pca: s.floor_pca || null,  // Include floor_pca for floor matching detection
         }
       })

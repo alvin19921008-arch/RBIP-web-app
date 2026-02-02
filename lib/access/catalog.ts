@@ -30,6 +30,12 @@ export const FEATURE_CATALOG: FeatureDefinition[] = [
     description: 'Dashboard sidebar: PCA Preferences panel',
   },
   {
+    id: 'dashboard.pca-preferences.scarcity-threshold',
+    group: 'dashboard',
+    label: 'PCA scarcity trigger threshold',
+    description: 'PCA Preferences panel: show/edit Balanced-mode auto-trigger threshold',
+  },
+  {
     id: 'dashboard.category.staff-profile',
     group: 'dashboard',
     label: 'Staff Profile',

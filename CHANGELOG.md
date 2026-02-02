@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive historical changelog and reference for the RBIP Duty List web application. It captures detailed project history, data architecture, code rules, and key patterns. For essential patterns that are auto-loaded, see `.cursor/rules/`. For quick context, see `CONTEXT.md`.
 
-**Last Updated**: 2026-01-23
-**Latest Phase**: Phase 32 - UI Refinements & SPT On-Duty Display Fixes
+**Last Updated**: 2026-02-02
+**Latest Phase**: Phase 34 - Floating PCA Step 3 Preview, Balanced Mode & Scarcity Controls
 **Note**: Legacy development phases (1-20) have been moved to `Journal_legacy.md` for reference.
 **Optimization Note**: Essential patterns have been extracted to `.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc` for automatic loading. This changelog is read on-demand for historical context.  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
@@ -151,6 +151,55 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
     - "No Duty" label in header right position.
     - No AM/PM slot text (suppressed via `sptDisplay = undefined` when `isSupervisoryNoDuty` is true).
   - **Implementation**: Modified `TherapistBlock.tsx` to detect `isSupervisoryNoDuty` condition (SPT + FTE=0 + on-duty + has `spt_slot_display`) and apply appropriate styling and display logic.
+
+## Phase 34: Floating PCA Step 3 Preview, Balanced Mode & Scarcity Controls
+
+- ✅ **Step 3.1 allocation method selector + clearer branching**
+  - Added **Standard** vs **Balanced (take turns, one slot at a time)** selection.
+  - Standard keeps the Step 3.2 / 3.3 pathway; Balanced runs directly from Step 3.1 (no misleading “continue to 3.2”).
+
+- ✅ **Step 3.1 preview (auto-updating, debounced)**
+  - Shows a dry-run preview for both methods:
+    - Standard: “Teams with 0 floating PCA (if run now)”
+    - Balanced: “Teams still short after allocation (if run now)”
+  - Replaces the hard-coded “≥3 teams / ≥0.75” hint with **situational guidance** driven by the preview and tie group shape.
+
+- ✅ **Scarcity trigger + admin-configurable behavior**
+  - Added global setting: trigger when **at least N teams** have **pending ≥ X FTE**.
+  - Behavior can be configured: **auto pre-select Balanced**, **remind only**, or **off**.
+  - Step 3.1 shows a more obvious **inline callout** (no toast) when scarcity triggers.
+
+- ✅ **Floating PCA algorithm correctness + tracking**
+  - Step 3.4 now respects PCA `availableSlots` and no longer blocks allocation when a team has **no floor preference**.
+  - Suppresses “preferred slot unassigned” errors if that slot was already fulfilled in Step 3.2.
+  - Preserves the existing **invalid-slot pairing display** behavior (invalid slots appear next to adjacent valid slots on PCA blocks) without affecting FTE correctness.
+  - Allocation tracker now records which method was used (**Standard** vs **Balanced**) and displays it in the PCA tracking tooltip.
+
+- ✅ **DB / access control wiring for scarcity settings**
+  - Added migrations + RPCs to store and update the scarcity threshold/behavior in `config_global_head`.
+  - Added a new access-controlled dashboard section for admins/developers to edit scarcity settings.
+
+## Phase 33: Animations, Bed Relieving UX & Global Config Display
+
+- ✅ **Popover entrance/exit animation**
+  - Replaced transition-based open/close with CSS keyframes (`popover-in`, `popover-out`) in `app/globals.css` and `components/ui/popover.tsx` so the "Saved setup" popover visibly slides/scale-expands from the trigger and retracts on close; direction-aware via `--popover-in-x/y`, `--popover-out-x/y`.
+
+- ✅ **Staff context menu expand-from-icon animation**
+  - `StaffContextMenu`: menu now slides/expands **from** the pencil icon and retracts **to** it on close using keyframes `context-menu-in` / `context-menu-out` and anchor-point CSS vars (`--ctx-from-x/y`). Close animation runs before unmount via brief `closing` state. Schedule page passes `anchor` (icon center) with `position` for both grid and staff-pool menus.
+
+- ✅ **Bed Relieving (Block 3) UX refinements**
+  - **Takes display**: When some releasing teams have bed numbers entered and others do not, display now shows saved inputs first, a thin horizontal divider, then pending "X beds from TEAM" lines (muted) so pending teams remain visible out of edit mode.
+  - **Auto-scroll on exit edit**: When leaving Takes edit mode, the Bed Relieving card scrolls into view with `scrollIntoView({ block: 'center' })` so the block is re-aligned to center/top-center of the viewport.
+  - **Bed-number textarea wrapping**: Applied `whitespace-pre-wrap break-keep [overflow-wrap:normal]` so double-digit numbers (e.g. 49) are not broken across lines; wrapping remains responsive to viewport width.
+  - **Outside-click auto-save**: Clicking outside the taking-team card while in edit mode now calls the same save logic as the checkmark button (writes to schedule state via `onSaveBedRelievingNotesForToTeam`) and exits edit mode; clicks inside Radix Select (ward dropdown) are ignored so choosing a ward does not close/save.
+  - **Completed releases checkmark**: Releasing rows that are fully assigned (greyed out) now show a small grey checkmark icon (`Check`) on the right for clearer visual feedback.
+
+- ✅ **Dashboard expandable card scroll alignment**
+  - `useDashboardExpandableCard`: scroll-to-expanded now runs in an effect after React commits the expanded card (fixes "half-way" scroll). Uses nearest scrollable ancestor and aligns expanded card top to container top (with small offset); retries for a few frames and re-runs after animation to handle late layout; Floor PCA Mapping card benefits.
+
+- ✅ **Global config display (Option A: timestamp primary, ID in tooltip)**
+  - **ConfigSyncPanel**: "Published configuration (Global)" now shows "Global config: \<Updated timestamp\>" as primary; numeric Config ID appears as a small dotted-underlined token with tooltip "Internal Config ID: v\<id\>". Snapshot section shows "Based on Global config: \<timestamp at creation\>" with snapshot ID in tooltip; "unknown (older snapshot)" when no head.
+  - **DashboardConfigMetaBanner**: Same pattern—timestamp as main label, Config ID in tooltip on hover over "v\<id\>".
 
 ### Phase 21: Account Management, Access Roles, Step Clear & Step Validation Enhancements
 - ✅ **Account Management Dashboard**

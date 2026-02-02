@@ -6,6 +6,7 @@ export type FeatureId =
   | 'dashboard.category.special-programs'
   | 'dashboard.category.spt-allocations'
   | 'dashboard.category.pca-preferences'
+  | 'dashboard.pca-preferences.scarcity-threshold'
   | 'dashboard.category.staff-profile'
   | 'dashboard.category.ward-config'
   | 'dashboard.category.team-configuration'

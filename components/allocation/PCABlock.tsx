@@ -1329,6 +1329,12 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                         <div className="font-semibold border-b border-gray-700 pb-1">
                           Allocation Tracking - {team}
                         </div>
+
+                        {hasAllocationAssignments && allocationLog?.summary?.allocationMode && (
+                          <div className="text-[10px] text-gray-300">
+                            Mode: {allocationLog.summary.allocationMode === 'balanced' ? 'Balanced (take turns)' : 'Standard'}
+                          </div>
+                        )}
                         
                         {/* Allocation Order by Cycle - show before total slots */}
                         {/* Cycle 1 order is always shown (all teams processed in cycle 1, order from step 3.1 teamOrder) */}

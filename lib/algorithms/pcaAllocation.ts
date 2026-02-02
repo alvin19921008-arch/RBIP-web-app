@@ -3275,6 +3275,8 @@ import {
   TeamPreferenceInfo,
 } from '@/lib/utils/floatingPCAHelpers'
 
+export type FloatingPCAAllocationMode = 'standard' | 'balanced'
+
 /**
  * Context for the revised floating PCA allocation algorithm v2.
  */
@@ -3285,6 +3287,7 @@ export interface FloatingPCAAllocationContextV2 {
   pcaPool: PCAData[]  // All floating PCAs
   pcaPreferences: PCAPreference[]  // Team preferences
   specialPrograms: SpecialProgram[]  // Special programs (for context only)
+  mode?: FloatingPCAAllocationMode // Step 3.4 allocation mode
 }
 
 /**
@@ -3311,6 +3314,7 @@ export async function allocateFloatingPCA_v2(
   context: FloatingPCAAllocationContextV2
 ): Promise<FloatingPCAAllocationResultV2> {
   const {
+    mode = 'standard',
     teamOrder,
     currentPendingFTE: initialPendingFTE,
     existingAllocations,
@@ -3324,6 +3328,10 @@ export async function allocateFloatingPCA_v2(
   
   // Initialize tracker
   const tracker = createEmptyTracker()
+  // Stamp mode for UI display (even if a team gets 0 slots in Step 3).
+  for (const team of TEAMS) {
+    tracker[team].summary.allocationMode = mode
+  }
   
   // Track allocation order (1st, 2nd, etc.) - based on team order from Step 3.1, not chronological assignment
   // Build a map from team to its position in teamOrder (1-based)
@@ -3371,6 +3379,34 @@ export async function allocateFloatingPCA_v2(
     })
     
     return !anyPCAHasSlots
+  }
+
+  // ========================================================================
+  // MODE: Balanced (take-turns, one slot per team per pass)
+  // ========================================================================
+  if (mode === 'balanced') {
+    await allocateFloatingPCA_balanced({
+      teamOrder,
+      allocations,
+      pendingFTE,
+      pcaPool,
+      pcaPreferences,
+      teamPrefs,
+      preferredPCAMap,
+      tracker,
+      recordAssignmentWithOrder,
+      isAllocationComplete,
+    })
+
+    applyInvalidSlotPairingForDisplay(allocations, pcaPool)
+    finalizeTrackerSummary(tracker)
+
+    return {
+      allocations,
+      pendingPCAFTEPerTeam: pendingFTE,
+      tracker,
+      errors: undefined,
+    }
   }
 
   // ========================================================================
@@ -3448,6 +3484,9 @@ export async function allocateFloatingPCA_v2(
     await processCycle3Cleanup(allocations, pendingFTE, pcaPool, pcaPreferences, teamPrefs, tracker, recordAssignmentWithOrder)
   }
   
+  // Ensure invalid slots are paired for display (does NOT consume FTE / pending).
+  applyInvalidSlotPairingForDisplay(allocations, pcaPool)
+
   // Finalize tracker summary
   finalizeTrackerSummary(tracker)
 
@@ -3456,6 +3495,175 @@ export async function allocateFloatingPCA_v2(
     pendingPCAFTEPerTeam: pendingFTE,
     tracker,
     errors: Object.keys(errors).length > 0 ? errors : undefined,
+  }
+}
+
+function isTeamSlotAlreadyAssigned(team: Team, slot: number, allocations: PCAAllocation[]): boolean {
+  for (const alloc of allocations) {
+    if (slot === 1 && alloc.slot1 === team) return true
+    if (slot === 2 && alloc.slot2 === team) return true
+    if (slot === 3 && alloc.slot3 === team) return true
+    if (slot === 4 && alloc.slot4 === team) return true
+  }
+  return false
+}
+
+function applyInvalidSlotPairingForDisplay(allocations: PCAAllocation[], pcaPool: PCAData[]): void {
+  const getSlotTeam = (alloc: PCAAllocation, slot: number): Team | null => {
+    if (slot === 1) return alloc.slot1
+    if (slot === 2) return alloc.slot2
+    if (slot === 3) return alloc.slot3
+    if (slot === 4) return alloc.slot4
+    return null
+  }
+
+  const setSlotTeam = (alloc: PCAAllocation, slot: number, team: Team): void => {
+    if (slot === 1) alloc.slot1 = team
+    if (slot === 2) alloc.slot2 = team
+    if (slot === 3) alloc.slot3 = team
+    if (slot === 4) alloc.slot4 = team
+  }
+
+  for (const pca of pcaPool) {
+    const invalidSlot = (pca as any)?.invalidSlot as number | null | undefined
+    if (invalidSlot == null) continue
+    if (![1, 2, 3, 4].includes(invalidSlot)) continue
+
+    const alloc = allocations.find((a) => a.staff_id === pca.id)
+    if (!alloc) continue
+
+    const pairedSlot = invalidSlot === 1 ? 2 : invalidSlot === 2 ? 1 : invalidSlot === 3 ? 4 : 3
+    const pairedTeam = getSlotTeam(alloc, pairedSlot)
+    if (!pairedTeam) continue
+
+    // Display-only: show invalid slot under its paired half-day team.
+    // This must NOT consume pending/FTE (algorithm already excluded invalid slot from availableSlots).
+    setSlotTeam(alloc, invalidSlot, pairedTeam)
+    ;(alloc as any).invalid_slot = invalidSlot
+  }
+}
+
+type BalancedAllocatorParams = {
+  teamOrder: Team[]
+  allocations: PCAAllocation[]
+  pendingFTE: Record<Team, number>
+  pcaPool: PCAData[]
+  pcaPreferences: PCAPreference[]
+  teamPrefs: Record<Team, TeamPreferenceInfo>
+  preferredPCAMap: Map<string, Team[]>
+  tracker: AllocationTracker
+  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void
+  isAllocationComplete: () => boolean
+}
+
+/**
+ * Balanced allocation mode: give teams turns (one slot at a time) to reduce the chance
+ * a high-need team ends with near-zero floating PCA when manpower is tight.
+ *
+ * - Gym avoidance remains a hard constraint.
+ * - Floor matching and “reserved preferred PCA” are treated as soft constraints via staged relaxation.
+ */
+async function allocateFloatingPCA_balanced(params: BalancedAllocatorParams): Promise<void> {
+  const {
+    teamOrder,
+    allocations,
+    pendingFTE,
+    pcaPool,
+    pcaPreferences,
+    teamPrefs,
+    tracker,
+    recordAssignmentWithOrder,
+    isAllocationComplete,
+  } = params
+
+  const tryAssignOneForTeam = (team: Team, stage: 1 | 2): boolean => {
+    if ((pendingFTE[team] ?? 0) < 0.25) return false
+
+    const pref = teamPrefs[team]
+    const { teamFloor, gymSlot, avoidGym } = pref
+
+    const preferredPCAMapLive = buildPreferredPCAMap(pcaPreferences, pendingFTE)
+
+    const floorMatch: 'same' | 'any' = stage === 1 && teamFloor ? 'same' : 'any'
+    const excludePreferred = stage === 1
+
+    const candidates = findAvailablePCAs({
+      pcaPool,
+      team,
+      teamFloor,
+      floorMatch,
+      excludePreferredOfOtherTeams: excludePreferred,
+      preferredPCAIdsOfOtherTeams: preferredPCAMapLive,
+      pendingFTEPerTeam: pendingFTE,
+      existingAllocations: allocations,
+      gymSlot,
+      avoidGym,
+    })
+
+    for (const pca of candidates) {
+      const allocation = getOrCreateAllocation(pca.id, pca.name, pca.fte_pca, pca.leave_type, team, allocations)
+      if (allocation.fte_remaining <= 0) continue
+
+      const existingSlots = getTeamExistingSlots(team, allocations)
+      const result = assignOneSlotAndUpdatePending({
+        pca,
+        allocation,
+        team,
+        teamExistingSlots: existingSlots,
+        gymSlot,
+        avoidGym,
+        pendingFTEByTeam: pendingFTE,
+        context: 'Cleanup pass → one slot at a time',
+      })
+
+      if (result.slotsAssigned.length === 0) continue
+
+      const wasExcludedInCycle1 = stage === 2 && preferredPCAMapLive.has(pca.id)
+      for (const slot of result.slotsAssigned) {
+        recordAssignmentWithOrder(team, {
+          slot,
+          pcaId: pca.id,
+          pcaName: pca.name,
+          assignedIn: 'step34',
+          cycle: stage,
+          wasPreferredSlot: false,
+          wasPreferredPCA: pref.preferredPCAIds.includes(pca.id),
+          wasFloorPCA: teamFloor ? isFloorPCAForTeam(pca, teamFloor) : undefined,
+          wasExcludedInCycle1,
+          amPmBalanceAchieved: result.amPmBalanced,
+          gymSlotAvoided: gymSlot !== null && slot !== gymSlot,
+        })
+      }
+
+      return true
+    }
+
+    return false
+  }
+
+  const runStage = async (stage: 1 | 2) => {
+    while (!isAllocationComplete()) {
+      let progressed = false
+      for (const team of teamOrder) {
+        if ((pendingFTE[team] ?? 0) < 0.25) continue
+        if (isAllocationComplete()) break
+        const ok = tryAssignOneForTeam(team, stage)
+        if (ok) progressed = true
+      }
+      if (!progressed) break
+    }
+  }
+
+  // Stage 1: stricter (tries to avoid borrowing other teams' preferred PCAs; prefers floor-matched).
+  await runStage(1)
+  // Stage 2: relaxed (borrowing allowed; floor softened).
+  if (!isAllocationComplete()) {
+    await runStage(2)
+  }
+
+  // Stage 3: reuse existing cleanup behavior (PCA-centric one-slot assignment).
+  if (!isAllocationComplete()) {
+    await processCycle3Cleanup(allocations, pendingFTE, pcaPool, pcaPreferences, teamPrefs, tracker, recordAssignmentWithOrder)
   }
 }
 
@@ -3480,6 +3688,7 @@ async function processConditionA(
   if (!preferredSlot) return
   
   let preferredSlotAssigned = false
+  const preferredSlotAlreadyFilled = isTeamSlotAlreadyAssigned(team, preferredSlot, allocations)
   
   // Step 1: Try preferred PCA(s) for preferred slot
   for (const pcaId of preferredPCAIds) {
@@ -3646,7 +3855,8 @@ async function processConditionA(
   }
   
   // Record error if preferred slot could not be assigned
-  if (!preferredSlotAssigned) {
+  // Suppress noise if Step 3.2 (or earlier) already filled the preferred slot.
+  if (!preferredSlotAssigned && !preferredSlotAlreadyFilled) {
     if (!errors.preferredSlotUnassigned) errors.preferredSlotUnassigned = []
     errors.preferredSlotUnassigned.push(`${team}: Could not assign preferred slot ${preferredSlot}`)
   }
@@ -3764,6 +3974,7 @@ async function processConditionB(
   if (!preferredSlot) return
   
   let preferredSlotAssigned = false
+  const preferredSlotAlreadyFilled = isTeamSlotAlreadyAssigned(team, preferredSlot, allocations)
   let lastUsedPCA: PCAData | null = null
   
   // Step 1: Try floor PCA for preferred slot
@@ -3941,7 +4152,8 @@ async function processConditionB(
   }
   
   // Record error if preferred slot could not be assigned
-  if (!preferredSlotAssigned) {
+  // Suppress noise if Step 3.2 (or earlier) already filled the preferred slot.
+  if (!preferredSlotAssigned && !preferredSlotAlreadyFilled) {
     if (!errors.preferredSlotUnassigned) errors.preferredSlotUnassigned = []
     errors.preferredSlotUnassigned.push(`${team}: Could not assign preferred slot ${preferredSlot}`)
   }

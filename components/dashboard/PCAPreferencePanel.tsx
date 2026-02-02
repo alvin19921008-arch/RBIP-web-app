@@ -11,6 +11,9 @@ import { FloorPCAMappingPanel } from '@/components/dashboard/FloorPCAMappingPane
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
 import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { useAccessControl } from '@/lib/access/useAccessControl'
 
 export function PCAPreferencePanel() {
   const [preferences, setPreferences] = useState<PCAPreference[]>([])
@@ -18,10 +21,16 @@ export function PCAPreferencePanel() {
   const [loading, setLoading] = useState(false)
   const [editingPreference, setEditingPreference] = useState<PCAPreference | null>(null)
   const [editingFloorMapping, setEditingFloorMapping] = useState(false)
+  const [globalHead, setGlobalHead] = useState<any>(null)
+  const [scarcityPendingFte, setScarcityPendingFte] = useState<string>('0.75')
+  const [scarcityMinTeams, setScarcityMinTeams] = useState<string>('3')
+  const [scarcityBehavior, setScarcityBehavior] = useState<'auto_select' | 'remind_only' | 'off'>('auto_select')
+  const [savingScarcity, setSavingScarcity] = useState(false)
   const expand = useDashboardExpandableCard<string>({ animationMs: 220 })
   const expandFloor = useDashboardExpandableCard<string>({ animationMs: 220 })
   const supabase = createClientComponentClient()
   const toast = useToast()
+  const access = useAccessControl()
 
   useEffect(() => {
     loadData()
@@ -37,10 +46,79 @@ export function PCAPreferencePanel() {
 
       if (preferencesRes.data) setPreferences(preferencesRes.data as any)
       if (staffRes.data) setStaff(staffRes.data)
+
+      // Load global head for scarcity threshold
+      const headRes = await supabase.rpc('get_config_global_head_v1')
+      if (!headRes.error) {
+        const head = headRes.data
+        setGlobalHead(head)
+        const raw = (head as any)?.floating_pca_scarcity_threshold
+        const pending = typeof raw?.pending_fte === 'number' ? raw.pending_fte : Number(raw?.pending_fte ?? 0.75)
+        const minTeams = typeof raw?.min_teams === 'number' ? raw.min_teams : Number(raw?.min_teams ?? 3)
+        const behaviorRaw = String(raw?.behavior ?? 'auto_select')
+        const pendingSafe = Number.isFinite(pending) && pending >= 0 ? pending : 0.75
+        const minTeamsSafe = Number.isFinite(minTeams) ? Math.max(1, Math.min(8, Math.round(minTeams))) : 3
+        const behaviorSafe =
+          behaviorRaw === 'remind_only' || behaviorRaw === 'off' || behaviorRaw === 'auto_select'
+            ? (behaviorRaw as any)
+            : 'auto_select'
+        setScarcityPendingFte(pendingSafe.toFixed(2))
+        setScarcityMinTeams(String(minTeamsSafe))
+        setScarcityBehavior(behaviorSafe)
+      }
     } catch (err) {
       console.error('Error loading data:', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const canEditScarcityThreshold =
+    (access.role === 'admin' || access.role === 'developer') &&
+    access.can('dashboard.pca-preferences.scarcity-threshold')
+
+  const handleSaveScarcityThreshold = async () => {
+    const pending = Number(scarcityPendingFte)
+    const minTeams = Number(scarcityMinTeams)
+    if (!Number.isFinite(pending) || pending < 0) {
+      toast.error('Invalid pending threshold', 'Enter a number ≥ 0 (FTE).')
+      return
+    }
+    if (!Number.isFinite(minTeams) || minTeams < 1) {
+      toast.error('Invalid team count', 'Enter a number ≥ 1.')
+      return
+    }
+
+    setSavingScarcity(true)
+    try {
+      const res = await supabase.rpc('set_floating_pca_scarcity_threshold_v3', {
+        p_pending_fte: pending,
+        p_min_teams: Math.round(minTeams),
+        p_behavior: scarcityBehavior,
+      })
+      if (res.error) {
+        toast.error('Failed to save threshold', res.error.message)
+        return
+      }
+      setGlobalHead(res.data)
+      const raw = (res.data as any)?.floating_pca_scarcity_threshold
+      const pendingSaved = typeof raw?.pending_fte === 'number' ? raw.pending_fte : Number(raw?.pending_fte ?? pending)
+      const minTeamsSaved = typeof raw?.min_teams === 'number' ? raw.min_teams : Number(raw?.min_teams ?? minTeams)
+      const behaviorSaved = String(raw?.behavior ?? scarcityBehavior)
+      const pendingSafe = Number.isFinite(pendingSaved) && pendingSaved >= 0 ? pendingSaved : pending
+      const minTeamsSafe = Number.isFinite(minTeamsSaved) ? Math.max(1, Math.min(8, Math.round(minTeamsSaved))) : Math.round(minTeams)
+      const behaviorSafe =
+        behaviorSaved === 'remind_only' || behaviorSaved === 'off' || behaviorSaved === 'auto_select'
+          ? (behaviorSaved as any)
+          : scarcityBehavior
+      setScarcityPendingFte(pendingSafe.toFixed(2))
+      setScarcityMinTeams(String(minTeamsSafe))
+      setScarcityBehavior(behaviorSafe)
+      toast.success('Scarcity threshold saved.')
+    } catch (e) {
+      toast.error('Failed to save threshold', (e as any)?.message || undefined)
+    } finally {
+      setSavingScarcity(false)
     }
   }
 
@@ -250,6 +328,85 @@ export function PCAPreferencePanel() {
             </Card>
           )}
         </div>
+
+        {canEditScarcityThreshold ? (
+          <div className="mt-6">
+            <Card className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h4 className="font-semibold text-lg">Balanced mode trigger (Scarcity)</h4>
+                  <p className="text-sm text-muted-foreground">
+                    Controls when Step 3.1 auto-selects Balanced mode.
+                    Trigger rule: Balanced is recommended when at least <span className="font-medium text-foreground">N</span> teams have pending ≥ <span className="font-medium text-foreground">X</span>.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-3 max-w-sm">
+                <div className="grid gap-2">
+                  <Label htmlFor="scarcity-behavior">When threshold is met</Label>
+                  <select
+                    id="scarcity-behavior"
+                    value={scarcityBehavior}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      if (v === 'auto_select' || v === 'remind_only' || v === 'off') {
+                        setScarcityBehavior(v)
+                      }
+                    }}
+                    className="px-3 py-2 border rounded bg-background text-sm"
+                  >
+                    <option value="auto_select">Auto pre-select Balanced in Step 3.1</option>
+                    <option value="remind_only">Remind only (no auto switch)</option>
+                    <option value="off">Off</option>
+                  </select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="scarcity-pending-fte">Pending threshold X (FTE)</Label>
+                <Input
+                    id="scarcity-pending-fte"
+                  inputMode="decimal"
+                    value={scarcityPendingFte}
+                    onChange={(e) => setScarcityPendingFte(e.target.value)}
+                    placeholder="0.75"
+                />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="scarcity-min-teams">Minimum teams N</Label>
+                  <Input
+                    id="scarcity-min-teams"
+                    inputMode="numeric"
+                    value={scarcityMinTeams}
+                    onChange={(e) => setScarcityMinTeams(e.target.value)}
+                    placeholder="3"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={handleSaveScarcityThreshold}
+                    disabled={savingScarcity || loading}
+                  >
+                    Save
+                  </Button>
+                  <div className="text-xs text-muted-foreground">
+                    Current: {(() => {
+                      const raw = (globalHead as any)?.floating_pca_scarcity_threshold
+                      const pending = typeof raw?.pending_fte === 'number' ? raw.pending_fte : Number(raw?.pending_fte ?? 0.75)
+                      const minTeams = typeof raw?.min_teams === 'number' ? raw.min_teams : Number(raw?.min_teams ?? 3)
+                      const behavior = String(raw?.behavior ?? 'auto_select')
+                      const pendingSafe = Number.isFinite(pending) ? pending : 0.75
+                      const minTeamsSafe = Number.isFinite(minTeams) ? Math.max(1, Math.min(8, Math.round(minTeams))) : 3
+                      const behaviorLabel =
+                        behavior === 'remind_only' ? 'Remind only' : behavior === 'off' ? 'Off' : 'Auto pre-select'
+                      return `${pendingSafe.toFixed(2)} FTE, ${minTeamsSafe} teams • ${behaviorLabel}`
+                    })()}
+                  </div>
+                </div>
+              </div>
+            </Card>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   )

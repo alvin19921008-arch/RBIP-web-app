@@ -176,6 +176,7 @@ export interface TeamAllocationLog {
     amPmBalanced: boolean
     gymSlotUsed: boolean  // true if gym slot was assigned despite avoidance
     fulfilledByBuffer?: boolean     // true if team's pending was wholly fulfilled by buffer assignments
+    allocationMode?: 'standard' | 'balanced' // Which Step 3.4 mode produced this tracker
   }
 }
 

@@ -19,6 +19,14 @@ const WEEKDAY_NAMES: Record<Weekday, string> = {
   fri: 'Friday',
 }
 
+function formatDateKeyDDMMYYYY(dateKey: string): string {
+  // dateKey is expected to be local schedule key: YYYY-MM-DD.
+  // Format it without constructing a Date to avoid SSR/CSR timezone hydration mismatches.
+  const [y, m, d] = dateKey.split('-')
+  if (!y || !m || !d) return dateKey
+  return `${d}/${m}/${y}`
+}
+
 export function ScheduleHeaderBar(props: {
   // Back button
   showBackButton: boolean
@@ -56,6 +64,7 @@ export function ScheduleHeaderBar(props: {
   const nextW = WEEKDAY_NAMES[getWeekday(nextWorkingDay)]
   const prevLabel = `${formatDateDDMMYYYY(prevWorkingDay)} (${prevW})`
   const nextLabel = `${formatDateDDMMYYYY(nextWorkingDay)} (${nextW})`
+  const displayDate = props.selectedDateKey ? formatDateKeyDDMMYYYY(props.selectedDateKey) : formatDateDDMMYYYY(props.selectedDate)
 
   return (
     <>
@@ -119,11 +128,12 @@ export function ScheduleHeaderBar(props: {
 
             <div className="inline-flex items-center gap-1">
               <span
+                suppressHydrationWarning
                 className={`text-lg font-semibold rounded px-2 py-1 transition-shadow transition-colors ${
                   props.isDateHighlighted ? 'bg-amber-50 ring-2 ring-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.55)]' : ''
                 }`}
               >
-                {formatDateDDMMYYYY(props.selectedDate)} ({props.weekdayName})
+                {displayDate} ({props.weekdayName})
               </span>
 
               <button

@@ -19,6 +19,15 @@ export const AM_SLOTS = [1, 2]
 export const PM_SLOTS = [3, 4]
 export const ALL_SLOTS = [1, 2, 3, 4]
 
+function getNormalizedPcaAvailableSlots(pca: { availableSlots?: number[] } | null | undefined): number[] | null {
+  const slots = pca?.availableSlots
+  if (!Array.isArray(slots)) return null
+  // Treat empty array as "no availability" (not "all slots").
+  if (slots.length === 0) return []
+  // Defensive: only accept valid slot numbers 1-4.
+  return slots.filter((s) => s === 1 || s === 2 || s === 3 || s === 4)
+}
+
 // ============================================================================
 // Floor PCA Matching
 // ============================================================================
@@ -174,10 +183,13 @@ export function findAvailablePCAs(options: FindAvailablePCAsOptions): (PCAData &
       if (pca.fte_pca <= 0) return false
       
       // 2. Check floor matching
-      if (floorMatch === 'same') {
-        if (!isFloorPCAForTeam(pca, teamFloor)) return false
-      } else if (floorMatch === 'different') {
-        if (isFloorPCAForTeam(pca, teamFloor)) return false
+      // If teamFloor is not declared, do NOT filter by floor.
+      if (teamFloor) {
+        if (floorMatch === 'same') {
+          if (!isFloorPCAForTeam(pca, teamFloor)) return false
+        } else if (floorMatch === 'different') {
+          if (isFloorPCAForTeam(pca, teamFloor)) return false
+        }
       }
       // 'any' = no floor filtering
       
@@ -191,11 +203,15 @@ export function findAvailablePCAs(options: FindAvailablePCAsOptions): (PCAData &
         if (teamsStillNeedingSlots.length > 0) return false
       }
       
+      const pcaAvail = getNormalizedPcaAvailableSlots(pca)
+
       // 4. Get or create allocation for this PCA
       const allocation = existingAllocations.find(a => a.staff_id === pca.id)
       
       // 5. Check if required slot is available (if specified)
       if (requiredSlot !== undefined) {
+        // Respect PCA slot availability (if present)
+        if (pcaAvail && !pcaAvail.includes(requiredSlot)) return false
         if (!allocation) {
           // No allocation yet, slot is available (unless it's gym slot)
           if (avoidGym && gymSlot === requiredSlot) return false
@@ -206,9 +222,18 @@ export function findAvailablePCAs(options: FindAvailablePCAsOptions): (PCAData &
         }
       } else {
         // Check if PCA has any available slots
+        // If PCA has explicit availableSlots and none are valid, treat as unavailable.
+        if (pcaAvail && pcaAvail.length === 0) return false
         if (allocation) {
-          const availableSlots = getAvailableSlotsForTeam(allocation, gymSlot ?? null, avoidGym ?? false)
-          if (availableSlots.length === 0) return false
+          const freeSlots = getAvailableSlotsForTeam(allocation, gymSlot ?? null, avoidGym ?? false)
+          const usableSlots = pcaAvail ? freeSlots.filter((s) => pcaAvail.includes(s)) : freeSlots
+          if (usableSlots.length === 0) return false
+        } else if (pcaAvail) {
+          // No allocation yet: the PCA can only work its declared availableSlots.
+          const usableSlots = (avoidGym && typeof gymSlot === 'number')
+            ? pcaAvail.filter((s) => s !== gymSlot)
+            : pcaAvail
+          if (usableSlots.length === 0) return false
         }
       }
       
@@ -376,6 +401,7 @@ export function assignUpToPendingAndUpdatePending(
  */
 export function assignSlotsToTeam(options: AssignSlotsOptions): AssignSlotsResult {
   const {
+    pca,
     allocation,
     team,
     pendingFTE,
@@ -389,7 +415,13 @@ export function assignSlotsToTeam(options: AssignSlotsOptions): AssignSlotsResul
   let remainingPendingFTE = pendingFTE
   
   // Get available slots for this allocation
-  const availableSlots = getAvailableSlotsForTeam(allocation, gymSlot, avoidGym)
+  const pcaAvail = getNormalizedPcaAvailableSlots(pca)
+  if (pcaAvail && pcaAvail.length === 0) {
+    return { slotsAssigned: [], newPendingFTE: pendingFTE, amPmBalanced: false }
+  }
+
+  const availableSlotsRaw = getAvailableSlotsForTeam(allocation, gymSlot, avoidGym)
+  const availableSlots = pcaAvail ? availableSlotsRaw.filter((s) => pcaAvail.includes(s)) : availableSlotsRaw
   if (availableSlots.length === 0) {
     return { slotsAssigned: [], newPendingFTE: pendingFTE, amPmBalanced: false }
   }
@@ -520,6 +552,7 @@ export function createEmptyTracker(): AllocationTracker {
         amPmBalanced: false,
         gymSlotUsed: false,
         fulfilledByBuffer: false,
+        allocationMode: undefined,
       },
     }
   }
