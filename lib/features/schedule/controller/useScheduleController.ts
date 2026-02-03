@@ -3090,6 +3090,10 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
 
       return pcaByTeam
     } catch (error) {
+      // User cancelled Step 2.1 substitution wizard: let UI decide how to handle rollback.
+      if ((error as any)?.code === 'user_cancelled' || String((error as any)?.message ?? '').includes('user_cancelled')) {
+        throw error
+      }
       console.error('Error in Step 2:', error)
       return createEmptyTeamRecord<Array<PCAAllocation & { staff: Staff }>>([])
     } finally {

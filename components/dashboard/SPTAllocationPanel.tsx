@@ -15,6 +15,7 @@ import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
 import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
 import { Input } from '@/components/ui/input'
+import { Tooltip } from '@/components/ui/tooltip'
 
 export function SPTAllocationPanel() {
   const [allocations, setAllocations] = useState<SPTAllocation[]>([])
@@ -95,6 +96,7 @@ export function SPTAllocationPanel() {
 
   const configuredStaffIds = new Set(allocations.map((a) => a.staff_id))
   const availableStaffForNew = staff.filter((s) => !configuredStaffIds.has(s.id))
+  const addDisabled = availableStaffForNew.length === 0
 
   return (
     <Card>
@@ -104,15 +106,27 @@ export function SPTAllocationPanel() {
           <p>Loading...</p>
         ) : (
           <div className="space-y-4">
-            <Button
-              disabled={availableStaffForNew.length === 0}
-              onClick={() => {
-                setEditingAllocation({} as SPTAllocation)
-                expand.open('new')
-              }}
-            >
-              Add New SPT Allocation
-            </Button>
+            {addDisabled ? (
+              <Tooltip
+                side="bottom"
+                className="whitespace-normal max-w-[320px]"
+                content="No SPT staff left without an allocation. If you want to add a new SPT allocation, first update/add an SPT staff in Staff Profile."
+              >
+                <div className="inline-block">
+                  <Button disabled>Add New SPT Allocation</Button>
+                </div>
+              </Tooltip>
+            ) : (
+              <Button
+                disabled={addDisabled}
+                onClick={() => {
+                  setEditingAllocation({} as SPTAllocation)
+                  expand.open('new')
+                }}
+              >
+                Add New SPT Allocation
+              </Button>
+            )}
             
             {allocations.map((alloc) => {
               const isEditing = editingAllocation?.id === alloc.id

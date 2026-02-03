@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useOnClickOutside } from '@/lib/hooks/useOnClickOutside'
+import { cn } from '@/lib/utils'
 import {
   Select,
   SelectContent,
@@ -29,6 +30,8 @@ interface BedBlockProps {
     toTeam: Team,
     notes: Partial<Record<Team, BedRelievingNoteRow[]>>
   ) => void
+  activeEditingTransfer?: { fromTeam: Team; toTeam: Team } | null
+  onActiveEditingTransferChange?: (next: { fromTeam: Team; toTeam: Team } | null) => void
   currentStep?: string
   onInvalidEditAttempt?: (position: { x: number; y: number }) => void
 }
@@ -59,6 +62,8 @@ export function BedBlock({
   wards,
   bedRelievingNotesByToTeam,
   onSaveBedRelievingNotesForToTeam,
+  activeEditingTransfer,
+  onActiveEditingTransferChange,
   currentStep,
   onInvalidEditAttempt,
 }: BedBlockProps) {
@@ -322,6 +327,7 @@ export function BedBlock({
     setIsEditingTakes(false)
     setEditingFromTeam(null)
     setDraftByFromTeam({})
+    onActiveEditingTransferChange?.(null)
   }
 
   // UX: click outside the taking-team card → auto "save" (into schedule state) + exit edit mode.
@@ -346,6 +352,7 @@ export function BedBlock({
     setIsEditingTakes(false)
     setDraftByFromTeam({})
     setEditingFromTeam(null)
+    onActiveEditingTransferChange?.(null)
   }
 
   const handleClear = () => {
@@ -355,6 +362,7 @@ export function BedBlock({
     setIsEditingTakes(false)
     setDraftByFromTeam({})
     setEditingFromTeam(null)
+    onActiveEditingTransferChange?.(null)
   }
 
   const renderTakesDisplay = () => {
@@ -643,6 +651,9 @@ export function BedBlock({
                     }
                     placeholder="Bed numbers to take (e.g. 19, 20)"
                     value={row.bedNumbersText || ''}
+                    onFocus={() => {
+                      onActiveEditingTransferChange?.({ fromTeam, toTeam: team })
+                    }}
                     ref={(el) => {
                       const key = `${fromTeam}:${idx}`
                       const entry = rowRefs.current.get(key) || {}
@@ -825,13 +836,26 @@ export function BedBlock({
               </div>
               {releasing.map((allocation) => {
                 const done = outgoingDoneByToTeam[allocation.to_team] === true
+                const isActiveHighlight =
+                  !!activeEditingTransfer &&
+                  activeEditingTransfer.fromTeam === team &&
+                  activeEditingTransfer.toTeam === allocation.to_team
                 return (
                   <div
                     key={allocation.id}
                     className={done ? 'text-xs text-muted-foreground' : 'text-xs'}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span>
+                      <span
+                        className={cn(
+                          'transition-[box-shadow,background-color] duration-200 rounded-sm px-1 -mx-1',
+                          isActiveHighlight && isEditingTakes
+                            ? 'bg-amber-100/70 shadow-[0_0_0_2px_rgba(251,191,36,0.55),0_0_16px_rgba(251,191,36,0.35)]'
+                            : isActiveHighlight
+                              ? 'bg-amber-100/70 shadow-[0_0_0_2px_rgba(251,191,36,0.55),0_0_16px_rgba(251,191,36,0.35)]'
+                              : ''
+                        )}
+                      >
                         {allocation.num_beds} beds to {allocation.to_team}
                       </span>
                       {done ? <Check className="h-3.5 w-3.5 text-muted-foreground" /> : null}

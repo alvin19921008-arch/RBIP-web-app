@@ -254,6 +254,10 @@ function SchedulePageContent() {
     setTieBreakDecisions,
   } = _unsafe
   const [activeDragStaffForOverlay, setActiveDragStaffForOverlay] = useState<Staff | null>(null)
+  const [activeBedRelievingTransfer, setActiveBedRelievingTransfer] = useState<{
+    fromTeam: Team
+    toTeam: Team
+  } | null>(null)
   
   const LAST_OPEN_SCHEDULE_DATE_KEY = 'rbip_last_open_schedule_date'
   const [initialDateResolved, setInitialDateResolved] = useState(false)
@@ -271,6 +275,11 @@ function SchedulePageContent() {
     if (!Array.isArray(completed)) return false
     return completed.includes('bed-relieving') || completed.includes('review')
   }, [])
+
+  // Bed-relieving highlight is only meaningful while editing that step.
+  useEffect(() => {
+    if (currentStep !== 'bed-relieving') setActiveBedRelievingTransfer(null)
+  }, [currentStep])
 
   // Initial navigation behavior:
   // - If URL has ?date=..., respect it.
@@ -614,8 +623,14 @@ function SchedulePageContent() {
   
   // Step 2.0: Special Program Override Dialog state
   const [showSpecialProgramOverrideDialog, setShowSpecialProgramOverrideDialog] = useState(false)
-  const [specialProgramOverrideResolver, setSpecialProgramOverrideResolver] = useState<((overrides: Record<string, { specialProgramOverrides?: SpecialProgramOverrideEntry[] }>) => void) | null>(null)
-  const specialProgramOverrideResolverRef = useRef<((overrides: Record<string, { specialProgramOverrides?: SpecialProgramOverrideEntry[] }>) => void) | null>(null)
+  const [specialProgramOverrideResolver, setSpecialProgramOverrideResolver] = useState<
+    ((
+      overrides: Record<string, { specialProgramOverrides?: SpecialProgramOverrideEntry[] }> | null
+    ) => void) | null
+  >(null)
+  const specialProgramOverrideResolverRef = useRef<
+    ((overrides: Record<string, { specialProgramOverrides?: SpecialProgramOverrideEntry[] }> | null) => void) | null
+  >(null)
   
   // Keep ref in sync with state
   useEffect(() => {
@@ -3543,7 +3558,7 @@ function SchedulePageContent() {
       }) => {
         if (teams.length === 0) return {}
 
-        return await new Promise((resolve) => {
+        return await new Promise((resolve, reject) => {
           setSubstitutionWizardData({
             teams,
             substitutionsByTeam: substitutionsByTeam as any,
@@ -3552,13 +3567,22 @@ function SchedulePageContent() {
           })
           setSubstitutionWizardOpen(true)
 
-          const resolver = (selections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>) => {
+          const resolver = (
+            selections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>,
+            opts?: { cancelled?: boolean }
+          ) => {
             setSubstitutionWizardOpen(false)
             setSubstitutionWizardData(null)
+            if (opts?.cancelled) {
+              const err: any = new Error('user_cancelled')
+              err.code = 'user_cancelled'
+              reject(err)
+              return
+            }
             resolve(selections)
           }
 
-          substitutionWizardResolverRef.current = resolver
+          substitutionWizardResolverRef.current = resolver as any
         })
       },
     })
@@ -3656,7 +3680,27 @@ function SchedulePageContent() {
                 pcaFTESubtraction?: number
                 drmAddOn?: number
               }>
-            }>) => {
+            }> | null) => {
+              // Cancel: abort Step 2 initialization (do not run algorithm, no success toast).
+              if (overrides === null) {
+                setShowSpecialProgramOverrideDialog(false)
+                setSpecialProgramOverrideResolver(null)
+                specialProgramOverrideResolverRef.current = null
+                resolve()
+                return
+              }
+
+              // Snapshot current Step 2-related state so we can restore if Step 2.1 is cancelled.
+              const snapshot = {
+                therapistAllocations,
+                pcaAllocations,
+                staffOverrides,
+                pendingPCAFTEPerTeam,
+                step2Result,
+                stepStatus,
+                initializedSteps,
+                pcaAllocationErrors,
+              }
               // If any selected substitute staff is currently in the inactive pool, promote them to 'buffer'
               // so they are included in the schedule page (active/buffer staff pool) and algorithms.
               const inactiveSelectedIds = Object.keys(overrides).filter((id) =>
@@ -3742,9 +3786,28 @@ function SchedulePageContent() {
               
               
               // Run Step 2 algorithm with cleaned overrides - it will pause for substitution dialog if needed
-              generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides).then(() => {
+              ;(async () => {
+                try {
+                  await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides)
+                } catch (e: any) {
+                  // User cancelled Step 2.1 substitution wizard → restore and abort without toast.
+                  if (e?.code === 'user_cancelled' || String(e?.message ?? '').includes('user_cancelled')) {
+                    setTherapistAllocations(snapshot.therapistAllocations as any)
+                    setPcaAllocations(snapshot.pcaAllocations as any)
+                    setStaffOverrides(snapshot.staffOverrides as any)
+                    setPendingPCAFTEPerTeam(snapshot.pendingPCAFTEPerTeam as any)
+                    setStep2Result(snapshot.step2Result as any)
+                    setStepStatus(snapshot.stepStatus as any)
+                    setInitializedSteps(snapshot.initializedSteps as any)
+                    setPcaAllocationErrors(snapshot.pcaAllocationErrors as any)
+                    resolve()
+                    return
+                  }
+                  // Other errors: keep existing behavior (log + proceed).
+                  console.error('Error running Step 2:', e)
+                }
                 resolve()
-              })
+              })()
             }
             
             setSpecialProgramOverrideResolver(() => resolver)
@@ -4223,7 +4286,7 @@ function SchedulePageContent() {
    */
   const handleSubstitutionWizardCancel = () => {
     if (substitutionWizardResolverRef.current) {
-      substitutionWizardResolverRef.current({})
+      ;(substitutionWizardResolverRef.current as any)({}, { cancelled: true })
       substitutionWizardResolverRef.current = null
     }
     setSubstitutionWizardOpen(false)
@@ -7501,7 +7564,7 @@ function SchedulePageContent() {
 
                       <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600 flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <Tooltip content="Previous" side="top">
+                          <Tooltip content="Previous" side="top" zIndex={120000}>
                             <button
                               type="button"
                               className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
@@ -7516,7 +7579,7 @@ function SchedulePageContent() {
                           <div className="text-sm text-slate-400 dark:text-slate-500 leading-none select-none">
                             • •
                           </div>
-                          <Tooltip content="Next" side="top">
+                          <Tooltip content="Next" side="top" zIndex={120000}>
                             <button
                               type="button"
                               className="p-1 rounded opacity-40 cursor-not-allowed text-slate-600 dark:text-slate-300"
@@ -7527,7 +7590,7 @@ function SchedulePageContent() {
                           </Tooltip>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <Tooltip content="Cancel" side="top">
+                          <Tooltip content="Cancel" side="top" zIndex={120000}>
                             <button
                               type="button"
                               className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
@@ -7539,7 +7602,7 @@ function SchedulePageContent() {
                               <X className="w-4 h-4" />
                             </button>
                           </Tooltip>
-                          <Tooltip content="Confirm" side="top">
+                          <Tooltip content="Confirm" side="top" zIndex={120000}>
                             <button
                               type="button"
                               className={cn(
@@ -7743,7 +7806,7 @@ function SchedulePageContent() {
                       )}
 
                       <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600 flex items-center justify-end gap-1.5">
-                        <Tooltip content="Cancel" side="top">
+                        <Tooltip content="Cancel" side="top" zIndex={120000}>
                           <button
                             type="button"
                             className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
@@ -7755,7 +7818,7 @@ function SchedulePageContent() {
                             <X className="w-4 h-4" />
                           </button>
                         </Tooltip>
-                        <Tooltip content="Confirm" side="top">
+                        <Tooltip content="Confirm" side="top" zIndex={120000}>
                           <button
                             type="button"
                             className={cn(
@@ -7877,7 +7940,7 @@ function SchedulePageContent() {
                     {swatches.map((s) => {
                       const isSelected = (s.className ?? null) === (selected ?? null)
                       return (
-                        <Tooltip key={s.label} content={s.label} side="top">
+                        <Tooltip key={s.label} content={s.label} side="top" zIndex={120000}>
                           <button
                             type="button"
                             className={cn(
@@ -7899,7 +7962,7 @@ function SchedulePageContent() {
                   </div>
 
                   <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600 flex items-center justify-end gap-1.5">
-                    <Tooltip content="Cancel" side="top">
+                    <Tooltip content="Cancel" side="top" zIndex={120000}>
                       <button
                         type="button"
                         className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
@@ -7911,7 +7974,7 @@ function SchedulePageContent() {
                         <X className="w-4 h-4" />
                       </button>
                     </Tooltip>
-                    <Tooltip content="Confirm" side="top">
+                    <Tooltip content="Confirm" side="top" zIndex={120000}>
                       <button
                         type="button"
                         className="p-1 rounded text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
@@ -9284,6 +9347,8 @@ function SchedulePageContent() {
                           wards={wards}
                           bedRelievingNotesByToTeam={bedRelievingNotesByToTeam}
                           onSaveBedRelievingNotesForToTeam={saveBedRelievingNotesForToTeam}
+                          activeEditingTransfer={activeBedRelievingTransfer}
+                          onActiveEditingTransferChange={setActiveBedRelievingTransfer}
                           currentStep={currentStep}
                           onInvalidEditAttempt={(position) => {
                             // Position is client coords (cursor). Render as fixed tooltip near cursor.
@@ -9721,7 +9786,7 @@ function SchedulePageContent() {
             if (!open) {
               const resolver = specialProgramOverrideResolverRef.current
               if (resolver) {
-                resolver({})
+                resolver(null)
                 setSpecialProgramOverrideResolver(null)
                 specialProgramOverrideResolverRef.current = null
               }

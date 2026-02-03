@@ -22,7 +22,7 @@ export function PCAPreferencePanel() {
   const [editingPreference, setEditingPreference] = useState<PCAPreference | null>(null)
   const [editingFloorMapping, setEditingFloorMapping] = useState(false)
   const [globalHead, setGlobalHead] = useState<any>(null)
-  const [scarcityPendingFte, setScarcityPendingFte] = useState<string>('0.75')
+  const [scarcitySlackSlots, setScarcitySlackSlots] = useState<string>('2')
   const [scarcityMinTeams, setScarcityMinTeams] = useState<string>('3')
   const [scarcityBehavior, setScarcityBehavior] = useState<'auto_select' | 'remind_only' | 'off'>('auto_select')
   const [savingScarcity, setSavingScarcity] = useState(false)
@@ -53,16 +53,19 @@ export function PCAPreferencePanel() {
         const head = headRes.data
         setGlobalHead(head)
         const raw = (head as any)?.floating_pca_scarcity_threshold
-        const pending = typeof raw?.pending_fte === 'number' ? raw.pending_fte : Number(raw?.pending_fte ?? 0.75)
+        const slackSlots =
+          typeof raw?.slack_slots === 'number'
+            ? raw.slack_slots
+            : Number(raw?.slack_slots ?? raw?.slackSlots ?? 2)
         const minTeams = typeof raw?.min_teams === 'number' ? raw.min_teams : Number(raw?.min_teams ?? 3)
         const behaviorRaw = String(raw?.behavior ?? 'auto_select')
-        const pendingSafe = Number.isFinite(pending) && pending >= 0 ? pending : 0.75
+        const slackSafe = Number.isFinite(slackSlots) && slackSlots >= 0 ? Math.round(slackSlots) : 2
         const minTeamsSafe = Number.isFinite(minTeams) ? Math.max(1, Math.min(8, Math.round(minTeams))) : 3
         const behaviorSafe =
           behaviorRaw === 'remind_only' || behaviorRaw === 'off' || behaviorRaw === 'auto_select'
             ? (behaviorRaw as any)
             : 'auto_select'
-        setScarcityPendingFte(pendingSafe.toFixed(2))
+        setScarcitySlackSlots(String(slackSafe))
         setScarcityMinTeams(String(minTeamsSafe))
         setScarcityBehavior(behaviorSafe)
       }
@@ -78,10 +81,10 @@ export function PCAPreferencePanel() {
     access.can('dashboard.pca-preferences.scarcity-threshold')
 
   const handleSaveScarcityThreshold = async () => {
-    const pending = Number(scarcityPendingFte)
+    const slackSlots = Number(scarcitySlackSlots)
     const minTeams = Number(scarcityMinTeams)
-    if (!Number.isFinite(pending) || pending < 0) {
-      toast.error('Invalid pending threshold', 'Enter a number ≥ 0 (FTE).')
+    if (!Number.isFinite(slackSlots) || slackSlots < 0) {
+      toast.error('Invalid slack slots', 'Enter an integer ≥ 0 (slots of 0.25 FTE each).')
       return
     }
     if (!Number.isFinite(minTeams) || minTeams < 1) {
@@ -91,27 +94,38 @@ export function PCAPreferencePanel() {
 
     setSavingScarcity(true)
     try {
-      const res = await supabase.rpc('set_floating_pca_scarcity_threshold_v3', {
-        p_pending_fte: pending,
+      const res = await supabase.rpc('set_floating_pca_scarcity_threshold_v4', {
+        p_slack_slots: Math.round(slackSlots),
         p_min_teams: Math.round(minTeams),
         p_behavior: scarcityBehavior,
       })
       if (res.error) {
-        toast.error('Failed to save threshold', res.error.message)
+        const msg = res.error.message || ''
+        if (msg.includes('set_floating_pca_scarcity_threshold_v4')) {
+          toast.error(
+            'Missing database function',
+            'Please apply the latest Supabase migration: `supabase/migrations/update_floating_pca_scarcity_threshold_v4.sql`.'
+          )
+        } else {
+          toast.error('Failed to save threshold', msg)
+        }
         return
       }
       setGlobalHead(res.data)
       const raw = (res.data as any)?.floating_pca_scarcity_threshold
-      const pendingSaved = typeof raw?.pending_fte === 'number' ? raw.pending_fte : Number(raw?.pending_fte ?? pending)
+      const slackSaved =
+        typeof raw?.slack_slots === 'number'
+          ? raw.slack_slots
+          : Number(raw?.slack_slots ?? raw?.slackSlots ?? slackSlots)
       const minTeamsSaved = typeof raw?.min_teams === 'number' ? raw.min_teams : Number(raw?.min_teams ?? minTeams)
       const behaviorSaved = String(raw?.behavior ?? scarcityBehavior)
-      const pendingSafe = Number.isFinite(pendingSaved) && pendingSaved >= 0 ? pendingSaved : pending
+      const slackSafe = Number.isFinite(slackSaved) && slackSaved >= 0 ? Math.round(slackSaved) : Math.round(slackSlots)
       const minTeamsSafe = Number.isFinite(minTeamsSaved) ? Math.max(1, Math.min(8, Math.round(minTeamsSaved))) : Math.round(minTeams)
       const behaviorSafe =
         behaviorSaved === 'remind_only' || behaviorSaved === 'off' || behaviorSaved === 'auto_select'
           ? (behaviorSaved as any)
           : scarcityBehavior
-      setScarcityPendingFte(pendingSafe.toFixed(2))
+      setScarcitySlackSlots(String(slackSafe))
       setScarcityMinTeams(String(minTeamsSafe))
       setScarcityBehavior(behaviorSafe)
       toast.success('Scarcity threshold saved.')
@@ -337,7 +351,7 @@ export function PCAPreferencePanel() {
                   <h4 className="font-semibold text-lg">Balanced mode trigger (Scarcity)</h4>
                   <p className="text-sm text-muted-foreground">
                     Controls when Step 3.1 auto-selects Balanced mode.
-                    Trigger rule: Balanced is recommended when at least <span className="font-medium text-foreground">N</span> teams have pending ≥ <span className="font-medium text-foreground">X</span>.
+                    Trigger rule: Balanced is recommended when at least <span className="font-medium text-foreground">N</span> teams need floating PCA and slack is ≤ <span className="font-medium text-foreground">S</span> slot(s).
                   </p>
                 </div>
               </div>
@@ -362,13 +376,13 @@ export function PCAPreferencePanel() {
                   </select>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="scarcity-pending-fte">Pending threshold X (FTE)</Label>
+                  <Label htmlFor="scarcity-slack-slots">Slack threshold S (slots)</Label>
                 <Input
-                    id="scarcity-pending-fte"
-                  inputMode="decimal"
-                    value={scarcityPendingFte}
-                    onChange={(e) => setScarcityPendingFte(e.target.value)}
-                    placeholder="0.75"
+                    id="scarcity-slack-slots"
+                  inputMode="numeric"
+                    value={scarcitySlackSlots}
+                    onChange={(e) => setScarcitySlackSlots(e.target.value)}
+                    placeholder="2"
                 />
                 </div>
                 <div className="grid gap-2">
@@ -392,14 +406,17 @@ export function PCAPreferencePanel() {
                   <div className="text-xs text-muted-foreground">
                     Current: {(() => {
                       const raw = (globalHead as any)?.floating_pca_scarcity_threshold
-                      const pending = typeof raw?.pending_fte === 'number' ? raw.pending_fte : Number(raw?.pending_fte ?? 0.75)
+                      const slackSlots =
+                        typeof raw?.slack_slots === 'number'
+                          ? raw.slack_slots
+                          : Number(raw?.slack_slots ?? raw?.slackSlots ?? 2)
                       const minTeams = typeof raw?.min_teams === 'number' ? raw.min_teams : Number(raw?.min_teams ?? 3)
                       const behavior = String(raw?.behavior ?? 'auto_select')
-                      const pendingSafe = Number.isFinite(pending) ? pending : 0.75
+                      const slackSafe = Number.isFinite(slackSlots) ? Math.round(slackSlots) : 2
                       const minTeamsSafe = Number.isFinite(minTeams) ? Math.max(1, Math.min(8, Math.round(minTeams))) : 3
                       const behaviorLabel =
                         behavior === 'remind_only' ? 'Remind only' : behavior === 'off' ? 'Off' : 'Auto pre-select'
-                      return `${pendingSafe.toFixed(2)} FTE, ${minTeamsSafe} teams • ${behaviorLabel}`
+                      return `${slackSafe} slot(s) slack, ${minTeamsSafe} teams • ${behaviorLabel}`
                     })()}
                   </div>
                 </div>

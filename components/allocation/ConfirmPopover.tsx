@@ -74,7 +74,7 @@ export function ConfirmPopover({
         )}
 
         <div className="flex items-center gap-1.5">
-          <Tooltip content="Cancel" side="top">
+          <Tooltip content="Cancel" side="top" zIndex={120000}>
             <button
               type="button"
               className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
@@ -87,7 +87,7 @@ export function ConfirmPopover({
             </button>
           </Tooltip>
 
-          <Tooltip content="Confirm" side="top">
+          <Tooltip content="Confirm" side="top" zIndex={120000}>
             <button
               type="button"
               className={cn(

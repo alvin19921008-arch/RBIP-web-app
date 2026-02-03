@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive historical changelog and reference for the RBIP Duty List web application. It captures detailed project history, data architecture, code rules, and key patterns. For essential patterns that are auto-loaded, see `.cursor/rules/`. For quick context, see `CONTEXT.md`.
 
-**Last Updated**: 2026-02-02
-**Latest Phase**: Phase 34 - Floating PCA Step 3 Preview, Balanced Mode & Scarcity Controls
+**Last Updated**: 2026-02-03
+**Latest Phase**: Phase 35 - Wizard UX Compaction, Robust Cancellation, Tooltip Layering Fix, Slack-Slots Scarcity
 **Note**: Legacy development phases (1-20) have been moved to `Journal_legacy.md` for reference.
 **Optimization Note**: Essential patterns have been extracted to `.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc` for automatic loading. This changelog is read on-demand for historical context.  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
@@ -164,10 +164,11 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
     - Balanced: “Teams still short after allocation (if run now)”
   - Replaces the hard-coded “≥3 teams / ≥0.75” hint with **situational guidance** driven by the preview and tie group shape.
 
-- ✅ **Scarcity trigger + admin-configurable behavior**
-  - Added global setting: trigger when **at least N teams** have **pending ≥ X FTE**.
+- ✅ **Scarcity trigger (v4: slack-slots) + admin-configurable behavior**
+  - Added global setting: trigger when **at least N teams** have pending \(> 0\) and **slack slots** \(availableSlots − neededSlots\) ≤ **S**.
+  - Keeps a “sanity guard” (`min_teams`) so Balanced isn’t suggested when only 1–2 teams have small residual pending.
   - Behavior can be configured: **auto pre-select Balanced**, **remind only**, or **off**.
-  - Step 3.1 shows a more obvious **inline callout** (no toast) when scarcity triggers.
+  - Step 3.1 shows a clear **inline callout** (no toast) when scarcity triggers, and removes redundant bottom-of-section text that previously overlapped the modal callout.
 
 - ✅ **Floating PCA algorithm correctness + tracking**
   - Step 3.4 now respects PCA `availableSlots` and no longer blocks allocation when a team has **no floor preference**.
@@ -178,6 +179,33 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
 - ✅ **DB / access control wiring for scarcity settings**
   - Added migrations + RPCs to store and update the scarcity threshold/behavior in `config_global_head`.
   - Added a new access-controlled dashboard section for admins/developers to edit scarcity settings.
+
+## Phase 35: Wizard UX Compaction, Robust Cancellation, Tooltip Layering Fix, Slack-Slots Scarcity
+
+- ✅ **Step 3.1 dialog UX compaction + scroll safety**
+  - Allocation method selection is now **2 compact clickable cards** (no “Selected” badge; full card is clickable) with preview + pros/cons integrated.
+  - Dialog now scrolls internally when it would exceed the viewport (`max-h` + `overflow-y-auto`) to prevent truncation.
+
+- ✅ **Step 2 robustness: Cancel really cancels**
+  - Step 2.0 (Special Program Overrides) cancel now resolves with `null` to abort downstream algorithm work.
+  - Step 2.1 (Non-floating substitution) cancel now rejects with `user_cancelled`; Step 2 runner rethrows, and the schedule page restores from a snapshot without success toast.
+
+- ✅ **Step 2.0 carousel UX**
+  - Left/right scroll buttons and dot indicators render **only when content is actually overflowing** (ResizeObserver-based).
+  - Trimmed side bezel padding so overflow detection reflects real card truncation.
+
+- ✅ **Summary info box readability**
+  - Replaced hover-only tooltips with **inline retract/expand** sections for detailed breakdown items (e.g., After SHS/students, Total PT, Total PCA).
+
+- ✅ **SPT allocation dashboard: disabled button tooltip**
+  - When “Add New SPT Allocation” is disabled due to no available SPT staff, show a tooltip explaining why and pointing users to Staff Profile.
+
+- ✅ **Bed relieving: cross-column edit highlight**
+  - While editing a “Takes” entry, the corresponding “Releases” line on the source team glows to reduce mis-entry risk.
+
+- ✅ **Tooltip layering fix for non-modal popovers**
+  - Added `zIndex?: number` support to `components/ui/tooltip.tsx` (applies via inline style for reliability).
+  - Applied `zIndex={120000}` to tooltips inside high-z non-modal popovers (slot selection, confirm, team picker, merge slot, fill color) so tooltips always render above.
 
 ## Phase 33: Animations, Bed Relieving UX & Global Config Display
 

@@ -213,7 +213,7 @@ export function SlotSelectionPopover({
 
       {mode === 'confirm' && (
         <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600 flex items-center justify-end gap-1.5">
-          <Tooltip content="Cancel" side="top">
+          <Tooltip content="Cancel" side="top" zIndex={120000}>
             <button
               type="button"
               className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
@@ -225,7 +225,7 @@ export function SlotSelectionPopover({
               <X className="w-4 h-4" />
             </button>
           </Tooltip>
-          <Tooltip content="Confirm" side="top">
+          <Tooltip content="Confirm" side="top" zIndex={120000}>
             <button
               type="button"
               className={cn(

@@ -11,9 +11,10 @@ interface TooltipProps {
   side?: 'top' | 'right' | 'bottom' | 'left'
   className?: string
   wrapperClassName?: string
+  zIndex?: number
 }
 
-export function Tooltip({ children, content, side = 'right', className, wrapperClassName }: TooltipProps) {
+export function Tooltip({ children, content, side = 'right', className, wrapperClassName, zIndex }: TooltipProps) {
   const [isVisible, setIsVisible] = React.useState(false)
   const anchorRef = React.useRef<HTMLDivElement>(null)
   const tooltipRef = React.useRef<HTMLDivElement>(null)
@@ -113,6 +114,7 @@ export function Tooltip({ children, content, side = 'right', className, wrapperC
             style={{
               left: portalPos?.left ?? 0,
               top: portalPos?.top ?? 0,
+              zIndex: typeof zIndex === 'number' ? zIndex : undefined,
             }}
           >
             {content}

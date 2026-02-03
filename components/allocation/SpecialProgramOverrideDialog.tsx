@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useLayoutEffect } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -123,6 +123,14 @@ export function SpecialProgramOverrideDialog({
   // State for carousel navigation
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [currentCardIndex, setCurrentCardIndex] = useState(0)
+  const [carouselOverflowing, setCarouselOverflowing] = useState(false)
+
+  const recomputeCarouselOverflow = () => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    // Small tolerance to avoid flicker on fractional pixels.
+    setCarouselOverflowing(el.scrollWidth > el.clientWidth + 4)
+  }
 
   // Filter active programs for current weekday
   const activePrograms = useMemo(() => {
@@ -945,6 +953,23 @@ export function SpecialProgramOverrideDialog({
     return () => container.removeEventListener('scroll', handleScroll)
   }, [activePrograms.length])
 
+  // Only show arrows/markers when the carousel actually overflows.
+  useLayoutEffect(() => {
+    recomputeCarouselOverflow()
+    const el = scrollContainerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => recomputeCarouselOverflow())
+    ro.observe(el)
+    return () => {
+      try {
+        ro.disconnect()
+      } catch {
+        // ignore
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePrograms.length, open])
+
   const handleConfirm = () => {
     // Convert programOverrides to staffOverrides format
     const overrides: Record<string, {
@@ -1037,11 +1062,11 @@ export function SpecialProgramOverrideDialog({
             ) : (
               <div className="relative flex-1 min-h-0">
                 {/* Left Arrow */}
-                {activePrograms.length > 1 && currentCardIndex > 0 && (
+                {carouselOverflowing && activePrograms.length > 1 && currentCardIndex > 0 && (
                   <Button
                     variant="outline"
                     size="icon"
-                    className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-white shadow-lg"
+                    className="absolute left-1 top-1/2 -translate-y-1/2 z-10 bg-white/95 shadow-lg h-8 w-8"
                     onClick={scrollLeft}
                   >
                     <ChevronLeft className="h-4 w-4" />
@@ -1051,7 +1076,7 @@ export function SpecialProgramOverrideDialog({
                 {/* Horizontal Scroll Container */}
                 <div
                   ref={scrollContainerRef}
-                  className="flex overflow-x-auto scroll-smooth gap-4 px-12 h-full items-start"
+                  className="flex overflow-x-auto scroll-smooth gap-4 px-6 h-full items-start"
                   style={{
                     scrollSnapType: 'x mandatory',
                     scrollBehavior: 'smooth',
@@ -1479,11 +1504,11 @@ export function SpecialProgramOverrideDialog({
                 </div>
 
                 {/* Right Arrow */}
-                {activePrograms.length > 1 && currentCardIndex < activePrograms.length - 1 && (
+                {carouselOverflowing && activePrograms.length > 1 && currentCardIndex < activePrograms.length - 1 && (
                   <Button
                     variant="outline"
                     size="icon"
-                    className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white shadow-lg"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 z-10 bg-white/95 shadow-lg h-8 w-8"
                     onClick={scrollRight}
                   >
                     <ChevronRight className="h-4 w-4" />
@@ -1491,7 +1516,7 @@ export function SpecialProgramOverrideDialog({
                 )}
 
                 {/* Dot Indicators */}
-                {activePrograms.length > 1 && (
+                {carouselOverflowing && activePrograms.length > 1 && (
                   <div className="flex justify-center gap-2 mt-4">
                     {activePrograms.map((_, index) => (
                       <button

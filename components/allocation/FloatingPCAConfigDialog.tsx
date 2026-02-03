@@ -12,7 +12,7 @@ import { TeamReservationCard } from './TeamReservationCard'
 import { TeamAdjacentSlotCard } from './TeamAdjacentSlotCard'
 import { ChevronRight, ArrowLeft, ArrowRight, Lightbulb, GripVertical, Check, Circle, AlertTriangle } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
+import { roundDownToQuarter, roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { 
   computeReservations, 
   executeSlotAssignments,
@@ -183,9 +183,8 @@ export function FloatingPCAConfigDialog({
 
   // Step 3.4: allocation mode (Standard vs Balanced)
   const [allocationMode, setAllocationMode] = useState<'standard' | 'balanced'>('standard')
-  const [scarcityPendingThresholdFte, setScarcityPendingThresholdFte] = useState<number>(0.75)
+  const [scarcitySlackSlotsThreshold, setScarcitySlackSlotsThreshold] = useState<number>(2)
   const [scarcityMinTeams, setScarcityMinTeams] = useState<number>(3)
-  const [scarcityTeamsCount, setScarcityTeamsCount] = useState<number>(0)
   const [scarcityTriggered, setScarcityTriggered] = useState(false)
   const [scarcityAutoSelected, setScarcityAutoSelected] = useState(false)
   const [scarcityBehavior, setScarcityBehavior] = useState<'auto_select' | 'remind_only' | 'off'>('auto_select')
@@ -215,16 +214,19 @@ export function FloatingPCAConfigDialog({
       if (cancelled) return
       if (res.error) return
       const raw = (res.data as any)?.floating_pca_scarcity_threshold
-      const pending = typeof raw?.pending_fte === 'number' ? raw.pending_fte : Number(raw?.pending_fte ?? 0.75)
+      const slackSlots =
+        typeof raw?.slack_slots === 'number'
+          ? raw.slack_slots
+          : Number(raw?.slack_slots ?? raw?.slackSlots ?? 2)
       const minTeams = typeof raw?.min_teams === 'number' ? raw.min_teams : Number(raw?.min_teams ?? 3)
       const behaviorRaw = String(raw?.behavior ?? 'auto_select')
-      const pendingSafe = Number.isFinite(pending) && pending >= 0 ? pending : 0.75
+      const slackSafe = Number.isFinite(slackSlots) && slackSlots >= 0 ? Math.round(slackSlots) : 2
       const minTeamsSafe = Number.isFinite(minTeams) ? Math.max(1, Math.min(8, Math.round(minTeams))) : 3
       const behaviorSafe =
         behaviorRaw === 'remind_only' || behaviorRaw === 'off' || behaviorRaw === 'auto_select'
           ? (behaviorRaw as any)
           : 'auto_select'
-      setScarcityPendingThresholdFte(pendingSafe)
+      setScarcitySlackSlotsThreshold(slackSafe)
       setScarcityMinTeams(minTeamsSafe)
       setScarcityBehavior(behaviorSafe)
     })().catch(() => {})
@@ -233,14 +235,78 @@ export function FloatingPCAConfigDialog({
     }
   }, [open, supabase])
 
-  // Scarcity trigger: count how many teams have pending >= X
+  const roundedPendingByTeam = useMemo(() => {
+    const out: Record<Team, number> = {} as any
+    TEAMS.forEach((t) => {
+      out[t] = roundToNearestQuarterWithMidpoint(adjustedFTE[t] || 0)
+    })
+    return out
+  }, [adjustedFTE])
+
+  const maxRoundedPending = useMemo(() => {
+    return Math.max(0, ...TEAMS.map((t) => roundedPendingByTeam[t] || 0))
+  }, [roundedPendingByTeam])
+
+  const scarcityMetrics = useMemo(() => {
+    const teamsNeeding = TEAMS.filter((t) => (roundedPendingByTeam[t] || 0) > 0)
+    const teamsNeedingCount = teamsNeeding.length
+    const neededSlots = teamsNeeding.reduce((sum, t) => sum + Math.round((roundedPendingByTeam[t] || 0) / 0.25), 0)
+
+    const floatingIds = new Set(floatingPCAs.map((p) => p.id))
+    const usedSlotsByPcaId = new Map<string, Set<1 | 2 | 3 | 4>>()
+    const markUsed = (id: string, slot: 1 | 2 | 3 | 4) => {
+      const s = usedSlotsByPcaId.get(id) ?? new Set<1 | 2 | 3 | 4>()
+      s.add(slot)
+      usedSlotsByPcaId.set(id, s)
+    }
+
+    // Used slots from allocations (already assigned in Step 2 / special programs / prior work)
+    for (const alloc of existingAllocations) {
+      if (!floatingIds.has(alloc.staff_id)) continue
+      if (alloc.slot1) markUsed(alloc.staff_id, 1)
+      if (alloc.slot2) markUsed(alloc.staff_id, 2)
+      if (alloc.slot3) markUsed(alloc.staff_id, 3)
+      if (alloc.slot4) markUsed(alloc.staff_id, 4)
+      const inv = (alloc as any)?.invalid_slot as 1 | 2 | 3 | 4 | null | undefined
+      if (inv === 1 || inv === 2 || inv === 3 || inv === 4) markUsed(alloc.staff_id, inv)
+    }
+
+    // Used slots from overrides (may exist even if allocations weren't rebuilt yet)
+    floatingIds.forEach((pcaId) => {
+      const o: any = (staffOverrides as any)?.[pcaId]
+      const manual = o?.bufferManualSlotOverrides ?? o?.slotOverrides
+      if (!manual) return
+      if (manual.slot1) markUsed(pcaId, 1)
+      if (manual.slot2) markUsed(pcaId, 2)
+      if (manual.slot3) markUsed(pcaId, 3)
+      if (manual.slot4) markUsed(pcaId, 4)
+    })
+
+    let availableSlots = 0
+    for (const p of floatingPCAs) {
+      const fteSlots = Math.max(0, Math.round(roundDownToQuarter(p.fte_pca ?? 0) / 0.25))
+      let candidateSlots: number[] = Array.isArray(p.availableSlots) && p.availableSlots.length > 0 ? p.availableSlots : [1, 2, 3, 4]
+      const inv = (p as any)?.invalidSlot as number | null | undefined
+      if (inv === 1 || inv === 2 || inv === 3 || inv === 4) {
+        candidateSlots = candidateSlots.filter((s) => s !== inv)
+      }
+      const used = usedSlotsByPcaId.get(p.id)
+      const remainingSlotCapacity = used ? candidateSlots.filter((s) => !used.has(s as any)).length : candidateSlots.length
+      availableSlots += Math.min(fteSlots, remainingSlotCapacity)
+    }
+
+    const slackSlots = availableSlots - neededSlots
+    return { teamsNeedingCount, neededSlots, availableSlots, slackSlots }
+  }, [roundedPendingByTeam, floatingPCAs, existingAllocations, staffOverrides])
+
+  // Scarcity trigger (hybrid): slack-slots + sanity guard
   useEffect(() => {
-    const count = TEAMS.reduce((sum, t) => {
-      const v = roundToNearestQuarterWithMidpoint(adjustedFTE[t] || 0)
-      return sum + (v >= scarcityPendingThresholdFte ? 1 : 0)
-    }, 0)
-    setScarcityTeamsCount(count)
-    const triggered = scarcityBehavior !== 'off' && scarcityPendingThresholdFte > 0 && count >= scarcityMinTeams
+    const triggered =
+      scarcityBehavior !== 'off' &&
+      scarcityMetrics.teamsNeedingCount >= scarcityMinTeams &&
+      scarcityMetrics.neededSlots > 0 &&
+      scarcitySlackSlotsThreshold >= 0 &&
+      scarcityMetrics.slackSlots <= scarcitySlackSlotsThreshold
     setScarcityTriggered(triggered)
     // Auto-select Balanced once when entering Step 3.1 (do not fight user toggles afterwards).
     if (
@@ -254,26 +320,14 @@ export function FloatingPCAConfigDialog({
       setScarcityAutoSelected(true)
     }
   }, [
-    adjustedFTE,
-    scarcityPendingThresholdFte,
+    scarcityMetrics,
+    scarcitySlackSlotsThreshold,
     scarcityMinTeams,
     scarcityBehavior,
     currentMiniStep,
     allocationMode,
     scarcityAutoSelected,
   ])
-
-  const roundedPendingByTeam = useMemo(() => {
-    const out: Record<Team, number> = {} as any
-    TEAMS.forEach((t) => {
-      out[t] = roundToNearestQuarterWithMidpoint(adjustedFTE[t] || 0)
-    })
-    return out
-  }, [adjustedFTE])
-
-  const maxRoundedPending = useMemo(() => {
-    return Math.max(0, ...TEAMS.map((t) => roundedPendingByTeam[t] || 0))
-  }, [roundedPendingByTeam])
 
   // Step 3.1 preview: run BOTH standard + balanced (dry-run) and summarize risks.
   useEffect(() => {
@@ -1124,8 +1178,8 @@ export function FloatingPCAConfigDialog({
                   : 'Scarcity detected — Balanced recommended'}
               </div>
               <div className="text-amber-900/80 text-xs">
-                Rule: trigger when at least {scarcityMinTeams} team(s) have pending ≥ {scarcityPendingThresholdFte.toFixed(2)} FTE.
-                Today: {scarcityTeamsCount} team(s).
+                Rule: trigger when at least {scarcityMinTeams} team(s) need floating PCA and slack ≤ {scarcitySlackSlotsThreshold} slot(s).
+                Today: {scarcityMetrics.teamsNeedingCount} team(s) needing, need {scarcityMetrics.neededSlots} slot(s), available {scarcityMetrics.availableSlots} slot(s), slack {scarcityMetrics.slackSlots} slot(s).
                 {scarcityBehavior === 'remind_only'
                   ? ' You can keep Standard to use Step 3.2/3.3, but Balanced may reduce “0-slot” outcomes.'
                   : ' You can switch back to Standard if you want to use Step 3.2/3.3.'}
@@ -1185,53 +1239,6 @@ export function FloatingPCAConfigDialog({
         )}
       </div>
 
-      {/* Step 3.1 preview (auto-updating) */}
-      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="rounded-md border bg-background p-3">
-          <div className="text-sm font-semibold text-foreground">Standard preview</div>
-          <div className="text-xs text-muted-foreground">If you run now from Step 3.1</div>
-          <div className="mt-2 text-sm text-foreground">
-            {step31Preview.status === 'loading' || step31Preview.status === 'idle' ? (
-              <span className="text-muted-foreground">Calculating…</span>
-            ) : step31Preview.status === 'error' ? (
-              <span className="text-muted-foreground">Preview unavailable</span>
-            ) : (
-              <>
-                Teams with 0 floating PCA: <span className="font-semibold">{step31Preview.standardZeroTeams.length}</span>
-              </>
-            )}
-          </div>
-          {step31Preview.status === 'ready' && step31Preview.standardZeroTeams.length > 0 ? (
-            <div className="mt-1 text-xs text-muted-foreground">
-              {step31Preview.standardZeroTeams.slice(0, 4).join(', ')}
-              {step31Preview.standardZeroTeams.length > 4 ? ` +${step31Preview.standardZeroTeams.length - 4}` : ''}
-            </div>
-          ) : null}
-        </div>
-
-        <div className="rounded-md border bg-background p-3">
-          <div className="text-sm font-semibold text-foreground">Balanced preview</div>
-          <div className="text-xs text-muted-foreground">If you run now from Step 3.1</div>
-          <div className="mt-2 text-sm text-foreground">
-            {step31Preview.status === 'loading' || step31Preview.status === 'idle' ? (
-              <span className="text-muted-foreground">Calculating…</span>
-            ) : step31Preview.status === 'error' ? (
-              <span className="text-muted-foreground">Preview unavailable</span>
-            ) : (
-              <>
-                Teams still short after allocation: <span className="font-semibold">{step31Preview.balancedShortTeams.length}</span>
-              </>
-            )}
-          </div>
-          {step31Preview.status === 'ready' && step31Preview.balancedShortTeams.length > 0 ? (
-            <div className="mt-1 text-xs text-muted-foreground">
-              {step31Preview.balancedShortTeams.slice(0, 4).join(', ')}
-              {step31Preview.balancedShortTeams.length > 4 ? ` +${step31Preview.balancedShortTeams.length - 4}` : ''}
-            </div>
-          ) : null}
-        </div>
-      </div>
-      
       <div className="py-4">
         <DndContext
           sensors={sensors}
@@ -1271,57 +1278,133 @@ export function FloatingPCAConfigDialog({
 
       <div className="rounded-md border bg-muted/30 p-3">
         <div className="text-sm font-medium text-foreground">Allocation method (Step 3.4)</div>
-        <div className="mt-2 flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant={allocationMode === 'standard' ? 'default' : 'outline'}
-            size="sm"
+        <div
+          className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2"
+          role="radiogroup"
+          aria-label="Allocation method"
+        >
+          <div
+            role="radio"
+            aria-checked={allocationMode === 'standard'}
+            tabIndex={0}
             onClick={() => setAllocationMode('standard')}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                setAllocationMode('standard')
+              }
+            }}
+            className={cn(
+              'rounded-md border bg-background p-3 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+              allocationMode === 'standard' ? 'border-primary ring-1 ring-primary/30' : 'hover:bg-muted/40'
+            )}
           >
-            Standard
-          </Button>
-          <Button
-            type="button"
-            variant={allocationMode === 'balanced' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setAllocationMode('balanced')}
-          >
-            Balanced (take turns)
-          </Button>
-        </div>
-        <div className="mt-2 text-xs text-muted-foreground space-y-2">
-          {allocationMode === 'standard' ? (
-            <>
-              <div className="font-medium text-foreground">Standard (manual-friendly)</div>
-              <ul className="list-disc pl-5 space-y-1">
-                <li><span className="font-medium text-foreground">Pros</span>: continues to Step 3.2/3.3 so user can pick preferred/adjacent slots.</li>
-                <li><span className="font-medium text-foreground">Cons</span>: under tight manpower, a high-need team can end up with near-zero floating slots.</li>
-                <li><span className="font-medium text-foreground">Always enforced</span>: avoid the team’s gym slot.</li>
-              </ul>
-            </>
-          ) : (
-            <>
-              <div className="font-medium text-foreground">Balanced (fairness-first)</div>
-              <ul className="list-disc pl-5 space-y-1">
-                <li><span className="font-medium text-foreground">Pros</span>: gives teams turns (1 slot at a time) to reduce “0-slot” outcomes.</li>
-                <li><span className="font-medium text-foreground">Cons</span>: skips Step 3.2/3.3 (no preferred/adjacent manual picking).</li>
-                <li><span className="font-medium text-foreground">Always enforced</span>: avoid the team’s gym slot.</li>
-                <li><span className="font-medium text-foreground">May relax</span>: floor matching and “reserved preferred PCA of other teams” if needed.</li>
-              </ul>
-            </>
-          )}
-
-          {scarcityBehavior !== 'off' ? (
-            <div>
-              <span className="font-medium text-foreground">Scarcity check</span>: trigger when at least {scarcityMinTeams} team(s) have pending ≥ {scarcityPendingThresholdFte.toFixed(2)} FTE.
-              Currently: {scarcityTeamsCount} team(s).
-              {scarcityTriggered
-                ? scarcityBehavior === 'auto_select'
-                  ? ' Balanced was auto-selected.'
-                  : ' Balanced is recommended (no auto switch).'
-                : ''}
+            <div className="flex items-start gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-foreground">Standard</div>
+                <div className="text-xs text-muted-foreground">Manual-friendly (keeps Step 3.2/3.3)</div>
+              </div>
             </div>
-          ) : null}
+
+            <div className="mt-2 text-sm text-foreground">
+              {step31Preview.status === 'loading' || step31Preview.status === 'idle' ? (
+                <span className="text-muted-foreground">Preview: calculating…</span>
+              ) : step31Preview.status === 'error' ? (
+                <span className="text-muted-foreground">Preview: unavailable</span>
+              ) : (
+                <>
+                  Teams with 0 floating PCA (if run now):{' '}
+                  <span className="font-semibold">{step31Preview.standardZeroTeams.length}</span>
+                </>
+              )}
+            </div>
+            {step31Preview.status === 'ready' && step31Preview.standardZeroTeams.length > 0 ? (
+              <div className="mt-1 text-xs text-muted-foreground">
+                {step31Preview.standardZeroTeams.slice(0, 4).join(', ')}
+                {step31Preview.standardZeroTeams.length > 4 ? ` +${step31Preview.standardZeroTeams.length - 4}` : ''}
+              </div>
+            ) : null}
+
+            <details className="mt-2 text-xs text-muted-foreground">
+              <summary className="cursor-pointer select-none font-medium text-foreground/90">
+                Pros & cons
+              </summary>
+              <ul className="mt-2 list-disc pl-5 space-y-1">
+                <li>
+                  <span className="font-medium text-foreground">Pros</span>: continue to Step 3.2/3.3 so you can pick preferred/adjacent slots.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Cons</span>: under tight manpower, a high-need team can end up with near-zero floating slots.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Always enforced</span>: avoid the team’s gym slot.
+                </li>
+              </ul>
+            </details>
+          </div>
+
+          <div
+            role="radio"
+            aria-checked={allocationMode === 'balanced'}
+            tabIndex={0}
+            onClick={() => setAllocationMode('balanced')}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                setAllocationMode('balanced')
+              }
+            }}
+            className={cn(
+              'rounded-md border bg-background p-3 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+              allocationMode === 'balanced' ? 'border-primary ring-1 ring-primary/30' : 'hover:bg-muted/40'
+            )}
+          >
+            <div className="flex items-start gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-foreground">Balanced (take turns)</div>
+                <div className="text-xs text-muted-foreground">Fairness-first (skips Step 3.2/3.3)</div>
+              </div>
+            </div>
+
+            <div className="mt-2 text-sm text-foreground">
+              {step31Preview.status === 'loading' || step31Preview.status === 'idle' ? (
+                <span className="text-muted-foreground">Preview: calculating…</span>
+              ) : step31Preview.status === 'error' ? (
+                <span className="text-muted-foreground">Preview: unavailable</span>
+              ) : (
+                <>
+                  Teams still short after allocation (if run now):{' '}
+                  <span className="font-semibold">{step31Preview.balancedShortTeams.length}</span>
+                </>
+              )}
+            </div>
+            {step31Preview.status === 'ready' && step31Preview.balancedShortTeams.length > 0 ? (
+              <div className="mt-1 text-xs text-muted-foreground">
+                {step31Preview.balancedShortTeams.slice(0, 4).join(', ')}
+                {step31Preview.balancedShortTeams.length > 4 ? ` +${step31Preview.balancedShortTeams.length - 4}` : ''}
+              </div>
+            ) : null}
+
+            <details className="mt-2 text-xs text-muted-foreground">
+              <summary className="cursor-pointer select-none font-medium text-foreground/90">
+                Pros & cons
+              </summary>
+              <ul className="mt-2 list-disc pl-5 space-y-1">
+                <li>
+                  <span className="font-medium text-foreground">Pros</span>: gives teams turns (1 slot at a time) to reduce “0-slot” outcomes.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Cons</span>: skips Step 3.2/3.3 (no preferred/adjacent manual picking).
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Always enforced</span>: avoid the team’s gym slot.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">May relax</span>: floor matching and “reserved preferred PCA of other teams” if needed.
+                </li>
+              </ul>
+            </details>
+          </div>
         </div>
       </div>
       
@@ -1475,7 +1558,7 @@ export function FloatingPCAConfigDialog({
   
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onCancel()}>
-      <DialogContent className="max-w-4xl">
+      <DialogContent className="max-w-4xl max-h-[calc(100vh-96px)] overflow-y-auto overscroll-contain">
         <DialogHeader>
           <DialogTitle>
             Configure Floating PCA Allocation – Step {currentMiniStep}

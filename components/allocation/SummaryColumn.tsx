@@ -1,7 +1,8 @@
 'use client'
 
+import * as React from 'react'
 import { Card, CardContent } from '@/components/ui/card'
-import { Tooltip } from '@/components/ui/tooltip'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 
 interface SummaryColumnProps {
   totalBeds: number
@@ -34,6 +35,16 @@ export function SummaryColumn({
   totalPCASickLeaveFteCost,
   bedsPerPT,
 }: SummaryColumnProps) {
+  const [expanded, setExpanded] = React.useState<{
+    afterDeductions: boolean
+    pt: boolean
+    pca: boolean
+  }>({
+    afterDeductions: false,
+    pt: false,
+    pca: false,
+  })
+
   const pcaRegular = totalPCAOnDuty
   const pcaBuffer = typeof totalPCABufferOnDuty === 'number' ? totalPCABufferOnDuty : 0
   const hasPCABuffer = pcaBuffer > 0.0001
@@ -58,60 +69,80 @@ export function SummaryColumn({
           <span className="font-semibold">Total bed counts:</span> {totalBeds}
         </div>
         {typeof totalBedsAfterDeductions === 'number' && (
-          <div className="flex items-center gap-1">
-            <span className="font-semibold">After SHS/students:</span>
-            {hasShsOrStudentsBreakdown ? (
-              <Tooltip
-                side="top"
-                content={
-                  <div className="text-xs whitespace-pre-line">
-                    {`SHS: ${shsBeds}\nStudent: ${studentBeds}`}
-                  </div>
-                }
-              >
-                <span className="cursor-default">{totalBedsAfterDeductions}</span>
-              </Tooltip>
-            ) : (
-              <span>{totalBedsAfterDeductions}</span>
-            )}
-          </div>
-        )}
-        <div className="flex items-center gap-1">
-          <span className="font-semibold">Total PT:</span>
-          <Tooltip
-            side="top"
-            content={
-              <div className="text-xs whitespace-pre-line">
-                {`Regular PT: ${ptRegular.toFixed(2)}\nBuffer PT: ${ptBuffer.toFixed(2)}\nLeave: ${ptLeaveFte.toFixed(2)}\nSick leave: ${ptSickLeaveFte.toFixed(2)}`}
+          <>
+            <div className="flex items-center gap-1">
+              <span className="font-semibold">After SHS/students:</span>
+              {hasShsOrStudentsBreakdown ? (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-0.5 cursor-pointer hover:underline"
+                  onClick={() => setExpanded((p) => ({ ...p, afterDeductions: !p.afterDeductions }))}
+                >
+                  <span>{totalBedsAfterDeductions}</span>
+                  {expanded.afterDeductions ? (
+                    <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                  )}
+                </button>
+              ) : (
+                <span>{totalBedsAfterDeductions}</span>
+              )}
+            </div>
+            {hasShsOrStudentsBreakdown && expanded.afterDeductions ? (
+              <div className="text-[11px] text-muted-foreground whitespace-pre-line pl-2">
+                {`SHS: ${shsBeds}\nStudent: ${studentBeds}`}
               </div>
-            }
-          >
-            <span className="cursor-default">
-              {hasPTBuffer ? `${ptRegular.toFixed(2)} + ${ptBuffer.toFixed(2)}` : ptRegular.toFixed(2)}
-            </span>
-          </Tooltip>
-        </div>
-        {hasPCABuffer ? (
+            ) : null}
+          </>
+        )}
+        <>
+          <div className="flex items-center gap-1">
+            <span className="font-semibold">Total PT:</span>
+            <button
+              type="button"
+              className="inline-flex items-center gap-0.5 cursor-pointer hover:underline"
+              onClick={() => setExpanded((p) => ({ ...p, pt: !p.pt }))}
+            >
+              <span>
+                {hasPTBuffer ? `${ptRegular.toFixed(2)} + ${ptBuffer.toFixed(2)}` : ptRegular.toFixed(2)}
+              </span>
+              {expanded.pt ? (
+                <ChevronDown className="h-3 w-3 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-3 w-3 text-muted-foreground" />
+              )}
+            </button>
+          </div>
+          {expanded.pt ? (
+            <div className="text-[11px] text-muted-foreground whitespace-pre-line pl-2">
+              {`Regular PT: ${ptRegular.toFixed(2)}\nBuffer PT: ${ptBuffer.toFixed(2)}\nLeave: ${ptLeaveFte.toFixed(2)}\nSick leave: ${ptSickLeaveFte.toFixed(2)}`}
+            </div>
+          ) : null}
+        </>
+
+        <>
           <div className="flex items-center gap-1">
             <span className="font-semibold">Total PCA:</span>
-            <Tooltip
-              side="top"
-              content={
-                <div className="text-xs whitespace-pre-line">
-                {`Regular PCA: ${pcaRegular.toFixed(2)}\nBuffer PCA: ${pcaBuffer.toFixed(2)}\nLeave: ${pcaLeaveFte.toFixed(2)}\nSick leave: ${pcaSickLeaveFte.toFixed(2)}`}
-                </div>
-              }
+            <button
+              type="button"
+              className="inline-flex items-center gap-0.5 cursor-pointer hover:underline"
+              onClick={() => setExpanded((p) => ({ ...p, pca: !p.pca }))}
             >
-              <span className="cursor-default">
-                {pcaRegular.toFixed(2)} + {pcaBuffer.toFixed(2)}
-              </span>
-            </Tooltip>
+              <span>{hasPCABuffer ? `${pcaRegular.toFixed(2)} + ${pcaBuffer.toFixed(2)}` : pcaRegular.toFixed(2)}</span>
+              {expanded.pca ? (
+                <ChevronDown className="h-3 w-3 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-3 w-3 text-muted-foreground" />
+              )}
+            </button>
           </div>
-        ) : (
-          <div>
-            <span className="font-semibold">Total PCA:</span> {pcaRegular.toFixed(2)}
-          </div>
-        )}
+          {expanded.pca ? (
+            <div className="text-[11px] text-muted-foreground whitespace-pre-line pl-2">
+              {`Regular PCA: ${pcaRegular.toFixed(2)}\nBuffer PCA: ${pcaBuffer.toFixed(2)}\nLeave: ${pcaLeaveFte.toFixed(2)}\nSick leave: ${pcaSickLeaveFte.toFixed(2)}`}
+            </div>
+          ) : null}
+        </>
         <div>
           <span className="font-semibold">Beds/PT:</span> {bedsPerPT.toFixed(2)}
         </div>
