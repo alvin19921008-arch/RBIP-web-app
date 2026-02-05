@@ -99,6 +99,10 @@ const SpecialProgramOverrideDialog = dynamic(
   () => import('@/components/allocation/SpecialProgramOverrideDialog').then(m => m.SpecialProgramOverrideDialog),
   { ssr: false }
 )
+const SptFinalEditDialog = dynamic(
+  () => import('@/components/allocation/SptFinalEditDialog').then(m => m.SptFinalEditDialog),
+  { ssr: false }
+)
 const BufferStaffCreateDialog = dynamic(
   () => import('@/components/allocation/BufferStaffCreateDialog').then(m => m.BufferStaffCreateDialog),
   { ssr: false }
@@ -112,6 +116,7 @@ const prefetchScheduleCopyWizard = () => import('@/components/allocation/Schedul
 const prefetchStaffEditDialog = () => import('@/components/allocation/StaffEditDialog')
 const prefetchFloatingPCAConfigDialog = () => import('@/components/allocation/FloatingPCAConfigDialog')
 const prefetchSpecialProgramOverrideDialog = () => import('@/components/allocation/SpecialProgramOverrideDialog')
+const prefetchSptFinalEditDialog = () => import('@/components/allocation/SptFinalEditDialog')
 const prefetchNonFloatingSubstitutionDialog = () => import('@/components/allocation/NonFloatingSubstitutionDialog')
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -131,6 +136,7 @@ import { useActionToast } from '@/lib/hooks/useActionToast'
 import { useResizeObservedHeight } from '@/lib/hooks/useResizeObservedHeight'
 import { useScheduleDateParam } from '@/lib/hooks/useScheduleDateParam'
 import { resetStep2OverridesForAlgoEntry } from '@/lib/features/schedule/stepReset'
+import { applySptFinalEditToTherapistAllocations } from '@/lib/features/schedule/sptFinalEdit'
 import type { SnapshotDiffResult } from '@/lib/features/schedule/snapshotDiff'
 import { useAnchoredPopoverPosition } from '@/lib/hooks/useAnchoredPopoverPosition'
 import { useOnClickOutside } from '@/lib/hooks/useOnClickOutside'
@@ -538,6 +544,21 @@ function SchedulePageContent() {
     drmAddOn?: number
   }
 
+  type SptFinalEditUpdate = {
+    leaveType: LeaveType | null
+    fteSubtraction: number
+    fteRemaining: number
+    team?: Team
+    sptOnDayOverride: {
+      enabled: boolean
+      contributesFte: boolean
+      slots: number[]
+      slotModes: { am: 'AND' | 'OR'; pm: 'AND' | 'OR' }
+      displayText?: string | null
+      assignedTeam?: Team | null
+    }
+  }
+
   // Domain state moved into useScheduleController() (Stage 2 / Option A).
   const [editingBedTeam, setEditingBedTeam] = useState<Team | null>(null)
   const saveBedRelievingNotesForToTeam = useCallback(
@@ -545,6 +566,32 @@ function SchedulePageContent() {
       scheduleActions.updateBedRelievingNotes({ toTeam, notes: notes as any })
     },
     []
+  )
+
+  const bufferStep2SuccessToastRef = useRef(false)
+  const bufferedStep2SuccessToastPayloadRef = useRef<{ title: string; variant: any; description?: string } | null>(null)
+
+  const clearBufferedStep2Toast = useCallback(() => {
+    bufferedStep2SuccessToastPayloadRef.current = null
+  }, [])
+
+  const flushBufferedStep2Toast = useCallback(() => {
+    const payload = bufferedStep2SuccessToastPayloadRef.current
+    bufferedStep2SuccessToastPayloadRef.current = null
+    if (!payload) return
+    showActionToast(payload.title, payload.variant, payload.description)
+  }, [showActionToast])
+
+  const step2ToastProxy = useCallback(
+    (title: string, variant?: any, description?: string) => {
+      const isStep2Success = title === 'Step 2 allocation completed.' && (variant ?? 'success') === 'success'
+      if (bufferStep2SuccessToastRef.current && isStep2Success) {
+        bufferedStep2SuccessToastPayloadRef.current = { title, variant: variant ?? 'success', description }
+        return
+      }
+      showActionToast(title, variant ?? 'success', description)
+    },
+    [showActionToast]
   )
 
   const saveAllocationNotes = useCallback(
@@ -637,6 +684,17 @@ function SchedulePageContent() {
     specialProgramOverrideResolverRef.current = specialProgramOverrideResolver
   }, [specialProgramOverrideResolver])
 
+  // Step 2.2: SPT Final Edit Dialog state
+  const [showSptFinalEditDialog, setShowSptFinalEditDialog] = useState(false)
+  const [sptFinalEditResolver, setSptFinalEditResolver] = useState<((updates: Record<string, SptFinalEditUpdate> | null) => void) | null>(
+    null
+  )
+  const sptFinalEditResolverRef = useRef<((updates: Record<string, SptFinalEditUpdate> | null) => void) | null>(null)
+
+  useEffect(() => {
+    sptFinalEditResolverRef.current = sptFinalEditResolver
+  }, [sptFinalEditResolver])
+
   // Step 2.0: If the user selects staff from the inactive pool as a special-program substitute,
   // promote them to status='buffer' so they appear on the schedule page (active/buffer pool)
   // and are included in Step 2/3 algorithms.
@@ -659,6 +717,8 @@ function SchedulePageContent() {
 
     ;(async () => {
       try {
+        bufferStep2SuccessToastRef.current = true
+        clearBufferedStep2Toast()
         // Merge special program overrides into staffOverrides (same logic as in resolver)
         const mergedOverrides = { ...staffOverrides }
         Object.entries(overridesFromDialog).forEach(([staffId, override]) => {
@@ -704,10 +764,28 @@ function SchedulePageContent() {
         })
         setStaffOverrides(cleanedOverrides)
 
-        await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides)
+        while (true) {
+          await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides)
+
+          const step22 = await showStep2Point2_SptFinalEdit()
+          if (step22 === null) {
+            // User cancelled Step 2.2 → do not show Step 2 success toast.
+            clearBufferedStep2Toast()
+            break
+          }
+          if (step22 && (step22 as any).__nav === 'back') {
+            continue
+          }
+          if (step22 && Object.keys(step22).length > 0) {
+            applyStep2Point2_SptFinalEdits(step22)
+          }
+          flushBufferedStep2Toast()
+          break
+        }
       } catch (e) {
         console.error('Error running Step 2 after inactive->buffer promotion:', e)
       } finally {
+        bufferStep2SuccessToastRef.current = false
         pendingStep2OverridesFromDialogRef.current = null
         pendingStep2ResolveAfterPromotionRef.current = null
         pendingPromotedInactiveStaffIdsRef.current = null
@@ -738,7 +816,9 @@ function SchedulePageContent() {
     }>>
     isWizardMode: boolean // true if multiple teams, false if single team
     initialSelections?: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>
+    allowBackToSpecialPrograms?: boolean
   } | null>(null)
+  const step2WizardAllowBackToSpecialProgramsRef = useRef(false)
   const substitutionWizardResolverRef = useRef<
     ((selections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>) => void) | null
   >(null)
@@ -2690,6 +2770,7 @@ function SchedulePageContent() {
     specialPrograms,
     sptAllocations,
     selectedDate,
+    step2Initialized: initializedSteps.has('therapist-pca'),
     setTherapistAllocations,
     recalculateScheduleCalculations,
     isHydrating: isHydratingSchedule,
@@ -3549,7 +3630,7 @@ function SchedulePageContent() {
   ): Promise<Record<Team, (PCAAllocation & { staff: Staff })[]>> => {
     return await scheduleActions.runStep2TherapistAndNonFloatingPCA({
       cleanedOverrides: cleanedOverrides as any,
-      toast: showActionToast,
+      toast: step2ToastProxy,
       onNonFloatingSubstitutionWizard: async ({
         teams,
         substitutionsByTeam,
@@ -3564,18 +3645,25 @@ function SchedulePageContent() {
             substitutionsByTeam: substitutionsByTeam as any,
             isWizardMode,
             initialSelections,
+            allowBackToSpecialPrograms: step2WizardAllowBackToSpecialProgramsRef.current,
           })
           setSubstitutionWizardOpen(true)
 
           const resolver = (
             selections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>,
-            opts?: { cancelled?: boolean }
+            opts?: { cancelled?: boolean; back?: boolean }
           ) => {
             setSubstitutionWizardOpen(false)
             setSubstitutionWizardData(null)
             if (opts?.cancelled) {
               const err: any = new Error('user_cancelled')
               err.code = 'user_cancelled'
+              reject(err)
+              return
+            }
+            if (opts?.back) {
+              const err: any = new Error('wizard_back')
+              err.code = 'wizard_back'
               reject(err)
               return
             }
@@ -3637,6 +3725,98 @@ function SchedulePageContent() {
     // Only navigate, don't run algorithms
     goToNextStep()
   }
+
+  const showStep2Point2_SptFinalEdit = useCallback(async (): Promise<Record<string, SptFinalEditUpdate> | null> => {
+    const hasAnySPT = [...staff, ...bufferStaff].some((s) => s.rank === 'SPT')
+    if (!hasAnySPT) return {}
+
+    prefetchSptFinalEditDialog().catch(() => {})
+    return await new Promise((resolve) => {
+      const resolver = (updates: Record<string, SptFinalEditUpdate> | null) => {
+        resolve(updates)
+      }
+      setSptFinalEditResolver(() => resolver)
+      sptFinalEditResolverRef.current = resolver
+      setShowSptFinalEditDialog(true)
+    })
+  }, [staff, bufferStaff])
+
+  const applyStep2Point2_SptFinalEdits = useCallback(
+    (updates: Record<string, SptFinalEditUpdate>) => {
+      const allStaffForMap = [...staff, ...bufferStaff]
+      const staffById = buildStaffByIdMap(allStaffForMap)
+
+      const sanitized: Record<string, { leaveType: LeaveType | null; fteRemaining: number; team?: Team; sptOnDayOverride: any }> = {}
+      Object.entries(updates || {}).forEach(([staffId, u]) => {
+        const cfg: any = u?.sptOnDayOverride ?? {}
+        const enabled = !!cfg.enabled
+        const slots = Array.isArray(cfg.slots) ? cfg.slots : []
+        const shouldAllocate = enabled && slots.length > 0
+        const team = shouldAllocate ? ((u.team ?? cfg.assignedTeam) as Team | undefined) : undefined
+        sanitized[staffId] = {
+          leaveType: u.leaveType ?? null,
+          fteRemaining: typeof u.fteRemaining === 'number' ? u.fteRemaining : 0,
+          team,
+          sptOnDayOverride: {
+            ...cfg,
+            assignedTeam: shouldAllocate ? (team ?? null) : null,
+          },
+        }
+      })
+
+      // IMPORTANT: Use functional updates to avoid overwriting newer overrides (e.g. Step 2.1 substitutionFor)
+      // with a stale `staffOverrides` snapshot captured by this callback.
+      setStaffOverrides((prev: any) => {
+        const next: any = { ...(prev ?? {}) }
+        Object.entries(updates || {}).forEach(([staffId, u]) => {
+          const existing = next[staffId]
+          const base: any =
+            existing ??
+            ({
+              leaveType: u.leaveType ?? null,
+              fteRemaining: typeof u.fteRemaining === 'number' ? u.fteRemaining : 0,
+            } as any)
+
+          const cfg: any = u?.sptOnDayOverride ?? {}
+          const enabled = !!cfg.enabled
+          const slots = Array.isArray(cfg.slots) ? cfg.slots : []
+          const shouldAllocate = enabled && slots.length > 0
+          const team = shouldAllocate ? ((u.team ?? cfg.assignedTeam) as Team | undefined) : undefined
+
+          const merged: any = {
+            ...base,
+            ...existing,
+            leaveType: u.leaveType ?? base.leaveType ?? null,
+            fteSubtraction: typeof u.fteSubtraction === 'number' ? u.fteSubtraction : existing?.fteSubtraction,
+            fteRemaining: typeof u.fteRemaining === 'number' ? u.fteRemaining : base.fteRemaining,
+            sptOnDayOverride: {
+              ...cfg,
+              assignedTeam: shouldAllocate ? (team ?? null) : null,
+            },
+          }
+          if (team) merged.team = team
+          else {
+            delete (merged as any).team
+          }
+          next[staffId] = merged
+        })
+        return next
+      })
+
+      // IMPORTANT: Also use functional update for allocations to avoid stale overwrites.
+      setTherapistAllocations((prev: any) =>
+        applySptFinalEditToTherapistAllocations({
+          therapistAllocations: prev as any,
+          updatesByStaffId: sanitized as any,
+          staffById,
+          date: selectedDate,
+        }) as any
+      )
+      // Recompute calculations after state updates land.
+      setTimeout(() => recalculateScheduleCalculations(), 0)
+    },
+    [staff, bufferStaff, selectedDate, recalculateScheduleCalculations]
+  )
 
   /**
    * Handle initializing algorithm for current step
@@ -3788,10 +3968,35 @@ function SchedulePageContent() {
               // Run Step 2 algorithm with cleaned overrides - it will pause for substitution dialog if needed
               ;(async () => {
                 try {
-                  await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides)
+                  bufferStep2SuccessToastRef.current = true
+                  clearBufferedStep2Toast()
+                  // Allow Step 2.1 "Back" to return to Step 2.0 only when special programs are active.
+                  step2WizardAllowBackToSpecialProgramsRef.current = true
+
+                  while (true) {
+                    await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides)
+
+                    const step22 = await showStep2Point2_SptFinalEdit()
+                    if (step22 === null) {
+                      // User cancelled Step 2.2 → do not show Step 2 success toast.
+                      clearBufferedStep2Toast()
+                      break
+                    }
+                    if (step22 && (step22 as any).__nav === 'back') {
+                      // Back from Step 2.2 → rerun Step 2 (will re-open Step 2.1 if needed)
+                      continue
+                    }
+                    if (step22 && Object.keys(step22).length > 0) {
+                      applyStep2Point2_SptFinalEdits(step22)
+                    }
+                    flushBufferedStep2Toast()
+                    break
+                  }
                 } catch (e: any) {
                   // User cancelled Step 2.1 substitution wizard → restore and abort without toast.
                   if (e?.code === 'user_cancelled' || String(e?.message ?? '').includes('user_cancelled')) {
+                    clearBufferedStep2Toast()
+                    bufferStep2SuccessToastRef.current = false
                     setTherapistAllocations(snapshot.therapistAllocations as any)
                     setPcaAllocations(snapshot.pcaAllocations as any)
                     setStaffOverrides(snapshot.staffOverrides as any)
@@ -3803,9 +4008,29 @@ function SchedulePageContent() {
                     resolve()
                     return
                   }
+                  // User hit Back in Step 2.1 substitution wizard → restore and re-open Step 2.0.
+                  if (e?.code === 'wizard_back' || String(e?.message ?? '').includes('wizard_back')) {
+                    clearBufferedStep2Toast()
+                    bufferStep2SuccessToastRef.current = false
+                    setTherapistAllocations(snapshot.therapistAllocations as any)
+                    setPcaAllocations(snapshot.pcaAllocations as any)
+                    setStaffOverrides(snapshot.staffOverrides as any)
+                    setPendingPCAFTEPerTeam(snapshot.pendingPCAFTEPerTeam as any)
+                    setStep2Result(snapshot.step2Result as any)
+                    setStepStatus(snapshot.stepStatus as any)
+                    setInitializedSteps(snapshot.initializedSteps as any)
+                    setPcaAllocationErrors(snapshot.pcaAllocationErrors as any)
+
+                    // Re-arm resolver and re-open the special program dialog.
+                    setSpecialProgramOverrideResolver(() => resolver)
+                    specialProgramOverrideResolverRef.current = resolver
+                    setShowSpecialProgramOverrideDialog(true)
+                    return
+                  }
                   // Other errors: keep existing behavior (log + proceed).
                   console.error('Error running Step 2:', e)
                 }
+                bufferStep2SuccessToastRef.current = false
                 resolve()
               })()
             }
@@ -3828,7 +4053,42 @@ function SchedulePageContent() {
         setStaffOverrides(cleanedOverrides)
         
         // Run Step 2 algorithm with cleaned overrides - it will pause for substitution dialog if needed
-        await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides)
+        bufferStep2SuccessToastRef.current = true
+        clearBufferedStep2Toast()
+        // No Step 2.0 in this path.
+        step2WizardAllowBackToSpecialProgramsRef.current = false
+        let cancelled = false
+        try {
+          while (true) {
+            await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides)
+
+            // Step 2.2: Final SPT edit (per-day overrides)
+            const step22 = await showStep2Point2_SptFinalEdit()
+            if (step22 === null) {
+              // User cancelled Step 2.2 → do not show Step 2 success toast.
+              clearBufferedStep2Toast()
+              cancelled = true
+              break
+            }
+            if (step22 && (step22 as any).__nav === 'back') {
+              continue
+            }
+            if (step22 && Object.keys(step22).length > 0) {
+              applyStep2Point2_SptFinalEdits(step22)
+            }
+            break
+          }
+          if (!cancelled) flushBufferedStep2Toast()
+        } catch (e: any) {
+          if (e?.code === 'user_cancelled' || String(e?.message ?? '').includes('user_cancelled')) {
+            clearBufferedStep2Toast()
+            bufferStep2SuccessToastRef.current = false
+            break
+          }
+          console.error('Error running Step 2:', e)
+        } finally {
+          bufferStep2SuccessToastRef.current = false
+        }
         break
       case 'floating-pca':
         // Step 3.1: Recalculate pending FTE with proper rounding timing
@@ -3991,6 +4251,9 @@ function SchedulePageContent() {
     setShowSpecialProgramOverrideDialog(false)
     setSpecialProgramOverrideResolver(null)
     specialProgramOverrideResolverRef.current = null
+    setShowSptFinalEditDialog(false)
+    setSptFinalEditResolver(null)
+    sptFinalEditResolverRef.current = null
     setSubstitutionWizardOpen(false)
     setSubstitutionWizardData(null)
     substitutionWizardResolverRef.current = null
@@ -4009,6 +4272,9 @@ function SchedulePageContent() {
     setShowSpecialProgramOverrideDialog(false)
     setSpecialProgramOverrideResolver(null)
     specialProgramOverrideResolverRef.current = null
+    setShowSptFinalEditDialog(false)
+    setSptFinalEditResolver(null)
+    sptFinalEditResolverRef.current = null
     setSubstitutionWizardOpen(false)
     setSubstitutionWizardData(null)
     substitutionWizardResolverRef.current = null
@@ -4977,6 +5243,55 @@ function SchedulePageContent() {
     })
     return next
   }, [sptWeekdayByStaffId])
+
+  const sptTeamsByStaffIdForStep22 = useMemo(() => {
+    // Pick canonical row per staff_id: prefer active, then most recently updated.
+    const byStaff = new Map<string, SPTAllocation[]>()
+    for (const a of sptAllocations ?? []) {
+      if (!a?.staff_id) continue
+      const list = byStaff.get(a.staff_id) ?? []
+      list.push(a)
+      byStaff.set(a.staff_id, list)
+    }
+    const out: Record<string, Team[]> = {}
+    for (const [staffId, rows] of byStaff.entries()) {
+      const sorted = [...rows].sort((a, b) => {
+        const aActive = a.active !== false
+        const bActive = b.active !== false
+        if (aActive !== bActive) return aActive ? -1 : 1
+        const aT = a.updated_at ? Date.parse(a.updated_at) : 0
+        const bT = b.updated_at ? Date.parse(b.updated_at) : 0
+        return bT - aT
+      })
+      const row = sorted[0]
+      const teams = Array.isArray(row?.teams) ? (row.teams as Team[]) : []
+      out[staffId] = teams.filter((t) => TEAMS.includes(t))
+    }
+    return out
+  }, [sptAllocations])
+
+  const sptStaffForStep22 = useMemo(() => {
+    return [...staff, ...bufferStaff].filter((s) => s.rank === 'SPT')
+  }, [staff, bufferStaff])
+
+  const currentSptAllocationByStaffIdForStep22 = useMemo(() => {
+    const out: Record<string, { team: Team; fte: number } | null> = {}
+    for (const team of TEAMS) {
+      for (const alloc of therapistAllocations[team] ?? []) {
+        if (alloc.staff?.rank !== 'SPT') continue
+        out[alloc.staff_id] = { team, fte: alloc.fte_therapist ?? 0 }
+      }
+    }
+    return out
+  }, [therapistAllocations])
+
+  const ptPerTeamByTeamForStep22 = useMemo(() => {
+    const out: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
+    for (const t of TEAMS) {
+      out[t] = calculations[t]?.pt_per_team ?? 0
+    }
+    return out
+  }, [calculations])
 
   // SPT leave edit enhancement:
   // Nullify legacy auto-filled "FTE Cost due to Leave" for SPT where it was derived from (1.0 - remaining),
@@ -9827,6 +10142,56 @@ function SchedulePageContent() {
           }}
         />
           }
+          sptFinalEditDialog={
+        <SptFinalEditDialog
+          open={showSptFinalEditDialog}
+          onOpenChange={(open) => {
+            setShowSptFinalEditDialog(open)
+            if (!open) {
+              const resolver = sptFinalEditResolverRef.current
+              if (resolver) {
+                resolver(null)
+                setSptFinalEditResolver(null)
+                sptFinalEditResolverRef.current = null
+              }
+            }
+          }}
+          weekday={getWeekday(selectedDate)}
+          sptStaff={sptStaffForStep22}
+          sptWeekdayByStaffId={sptWeekdayByStaffId}
+          sptTeamsByStaffId={sptTeamsByStaffIdForStep22}
+          staffOverrides={staffOverrides as any}
+          currentAllocationByStaffId={currentSptAllocationByStaffIdForStep22}
+          ptPerTeamByTeam={ptPerTeamByTeamForStep22}
+          onConfirm={(updates) => {
+            const resolver = sptFinalEditResolverRef.current
+            if (resolver) {
+              resolver(updates as any)
+              setSptFinalEditResolver(null)
+              sptFinalEditResolverRef.current = null
+            }
+            setShowSptFinalEditDialog(false)
+          }}
+          onSkip={() => {
+            const resolver = sptFinalEditResolverRef.current
+            if (resolver) {
+              resolver({})
+              setSptFinalEditResolver(null)
+              sptFinalEditResolverRef.current = null
+            }
+            setShowSptFinalEditDialog(false)
+          }}
+          onBack={() => {
+            const resolver = sptFinalEditResolverRef.current
+            if (resolver) {
+              resolver({ __nav: 'back' } as any)
+              setSptFinalEditResolver(null)
+              sptFinalEditResolverRef.current = null
+            }
+            setShowSptFinalEditDialog(false)
+          }}
+        />
+          }
           nonFloatingSubstitutionDialog={
             substitutionWizardData ? (
           <NonFloatingSubstitutionDialog
@@ -9844,6 +10209,18 @@ function SchedulePageContent() {
             onConfirm={handleSubstitutionWizardConfirm}
             onCancel={handleSubstitutionWizardCancel}
             onSkip={handleSubstitutionWizardSkip}
+            onBack={
+              substitutionWizardData.allowBackToSpecialPrograms
+                ? () => {
+                    if (substitutionWizardResolverRef.current) {
+                      ;(substitutionWizardResolverRef.current as any)({}, { back: true })
+                      substitutionWizardResolverRef.current = null
+                    }
+                    setSubstitutionWizardOpen(false)
+                    setSubstitutionWizardData(null)
+                  }
+                : undefined
+            }
           />
             ) : null
           }

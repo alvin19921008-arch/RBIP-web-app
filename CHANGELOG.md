@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive historical changelog and reference for the RBIP Duty List web application. It captures detailed project history, data architecture, code rules, and key patterns. For essential patterns that are auto-loaded, see `.cursor/rules/`. For quick context, see `CONTEXT.md`.
 
-**Last Updated**: 2026-02-03
-**Latest Phase**: Phase 35 - Wizard UX Compaction, Robust Cancellation, Tooltip Layering Fix, Slack-Slots Scarcity
+**Last Updated**: 2026-02-04
+**Latest Phase**: Phase 36 - Step 2.2 SPT Final Edit + Step 2 Clear/Override Reliability
 **Note**: Legacy development phases (1-20) have been moved to `Journal_legacy.md` for reference.
 **Optimization Note**: Essential patterns have been extracted to `.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc` for automatic loading. This changelog is read on-demand for historical context.  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
@@ -40,6 +40,7 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Step 2: Therapist & Non-Floating PCA allocation
     - **Step 2.0**: Special Program Overrides Dialog (ad-hoc/urgent changes to special program allocations)
     - **Step 2.1**: Non-Floating PCA Substitution Dialog (when non-floating PCAs need substitution)
+    - **Step 2.2**: SPT Final Edit (per-date SPT config + leave/team/slot overrides, includes ad-hoc SPT add)
   - Step 3: Floating PCA allocation with interactive wizard (3.0 → 3.1 → 3.2 → 3.3 → 3.4)
   - Step 4: Bed relieving calculation
   - Step 5: Review and finalization
@@ -206,6 +207,21 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
 - ✅ **Tooltip layering fix for non-modal popovers**
   - Added `zIndex?: number` support to `components/ui/tooltip.tsx` (applies via inline style for reliability).
   - Applied `zIndex={120000}` to tooltips inside high-z non-modal popovers (slot selection, confirm, team picker, merge slot, fill color) so tooltips always render above.
+
+## Phase 36: Step 2.2 SPT Final Edit + Step 2 Clear/Override Reliability
+
+- ✅ **Step 2.2: SPT Final Edit (new wizard step)**
+  - New Step 2.2 dialog to review/edit **on-the-day SPT setup** per weekday, with per-date overrides (enabled, contributes FTE, slots + slot modes).
+  - Carries forward Step 1 leave type + leave cost where available; computes base FTE and remaining on-duty FTE on the card.
+  - Supports **ad-hoc SPT add** (pick an SPT not configured on that weekday, choose slots/modes + team).
+
+- ✅ **Step 2 wizard UX: back/cancel/toast reliability**
+  - Step 2 now behaves like a proper wizard (2.0 ↔ 2.1 ↔ 2.2) with back navigation and “cancel really cancels”.
+  - Success toast is buffered so it only shows **after Step 2.2 completes** (not immediately after 2.1).
+
+- ✅ **Critical fixes: Step 2 clear + Step 2.2 team overrides**
+  - Clearing Step 2 now removes SPT allocations deterministically (no “click twice” behavior).
+  - Step 2.2 “Assign to team” overrides now reliably win during sync/recalc (prevents algorithm reverting to old team).
 
 ## Phase 33: Animations, Bed Relieving UX & Global Config Display
 

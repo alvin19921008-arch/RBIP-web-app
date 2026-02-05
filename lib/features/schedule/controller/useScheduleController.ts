@@ -84,6 +84,16 @@ export type SpecialProgramOverrideEntry = {
   drmAddOn?: number
 }
 
+export type SptOnDayOverrideState = {
+  enabled: boolean
+  contributesFte: boolean
+  slots: number[]
+  slotModes: { am: 'AND' | 'OR'; pm: 'AND' | 'OR' }
+  displayText?: string | null
+  /** Optional per-day team override for SPT. */
+  assignedTeam?: Team | null
+}
+
 export type StaffOverrideState = {
   leaveType: LeaveType | null
   fteRemaining: number
@@ -103,6 +113,8 @@ export type StaffOverrideState = {
   specialProgramAvailable?: boolean
   // Step 2.0: special program overrides
   specialProgramOverrides?: SpecialProgramOverrideEntry[]
+  // Step 2.2: per-day SPT config override (derived from dashboard config, editable on-the-day).
+  sptOnDayOverride?: SptOnDayOverrideState
   slotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null }
   // Step 3: Manual buffer floating PCA assignments (persist across Step 3 resets)
   bufferManualSlotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null }
@@ -1577,10 +1589,19 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
 
       delete o.specialProgramOverrides
       delete o.substitutionFor
+      // Step 2.2 SPT final edit overrides (per-date)
+      delete o.sptOnDayOverride
 
       const staffMember = staff.find((s) => s.id === staffId)
       if (staffMember && ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)) {
+        // Therapist team assignments in Step 2 are derived and should be cleared
+        // when clearing Step 2 ("Therapist & Non-Floating PCA").
         delete o.team
+        // Therapist-specific split / suppression overrides live in Step 2 only.
+        delete o.therapistTeamFTEByTeam
+        delete o.therapistTeamHalfDayByTeam
+        delete o.therapistTeamHalfDayUiByTeam
+        delete o.therapistNoAllocation
       }
 
       if (Object.keys(o).length > 0) cleaned[staffId] = o
@@ -3092,6 +3113,10 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
     } catch (error) {
       // User cancelled Step 2.1 substitution wizard: let UI decide how to handle rollback.
       if ((error as any)?.code === 'user_cancelled' || String((error as any)?.message ?? '').includes('user_cancelled')) {
+        throw error
+      }
+      // User navigated back from Step 2.1 wizard: let UI return to Step 2.0.
+      if ((error as any)?.code === 'wizard_back' || String((error as any)?.message ?? '').includes('wizard_back')) {
         throw error
       }
       console.error('Error in Step 2:', error)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useRef, useLayoutEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,11 +9,12 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Staff, StaffRank, Team, Weekday, SpecialProgram as StaffSpecialProgram } from '@/types/staff'
 import { SpecialProgram } from '@/types/allocation'
-import { AlertCircle, Edit2, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
+import { AlertCircle, Edit2, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { BufferStaffCreateDialog } from './BufferStaffCreateDialog'
 import { SpecialProgramSubstitutionDialog } from '@/components/allocation/SpecialProgramSubstitutionDialog'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
+import { HorizontalCardCarousel } from '@/components/ui/horizontal-card-carousel'
 
 interface SpecialProgramOverrideDialogProps {
   open: boolean
@@ -119,18 +120,6 @@ export function SpecialProgramOverrideDialog({
   
   // Buffer staff meta captured at creation time (needed to preserve availability for Step 3)
   const [createdBufferMetaByStaffId, setCreatedBufferMetaByStaffId] = useState<Record<string, { availableSlots?: number[]; fteRemaining?: number }>>({})
-
-  // State for carousel navigation
-  const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const [currentCardIndex, setCurrentCardIndex] = useState(0)
-  const [carouselOverflowing, setCarouselOverflowing] = useState(false)
-
-  const recomputeCarouselOverflow = () => {
-    const el = scrollContainerRef.current
-    if (!el) return
-    // Small tolerance to avoid flicker on fractional pixels.
-    setCarouselOverflowing(el.scrollWidth > el.clientWidth + 4)
-  }
 
   // Filter active programs for current weekday
   const activePrograms = useMemo(() => {
@@ -898,78 +887,6 @@ export function SpecialProgramOverrideDialog({
     })
   }
 
-  // Carousel navigation functions
-  const scrollToCard = (index: number) => {
-    const container = scrollContainerRef.current
-    if (container) {
-      const cards = container.children
-      if (cards[index]) {
-        const card = cards[index] as HTMLElement
-        card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' })
-        setCurrentCardIndex(index)
-      }
-    }
-  }
-
-  const scrollLeft = () => {
-    if (currentCardIndex > 0) {
-      scrollToCard(currentCardIndex - 1)
-    }
-  }
-
-  const scrollRight = () => {
-    if (currentCardIndex < activePrograms.length - 1) {
-      scrollToCard(currentCardIndex + 1)
-    }
-  }
-
-  // Track scroll position for carousel
-  useEffect(() => {
-    const container = scrollContainerRef.current
-    if (!container) return
-
-    const handleScroll = () => {
-      const cards = container.children
-      if (cards.length === 0) return
-
-      const containerRect = container.getBoundingClientRect()
-      let closestIndex = 0
-      let closestDistance = Infinity
-
-      for (let i = 0; i < cards.length; i++) {
-        const card = cards[i] as HTMLElement
-        const cardRect = card.getBoundingClientRect()
-        const distance = Math.abs(cardRect.left - containerRect.left)
-        if (distance < closestDistance) {
-          closestDistance = distance
-          closestIndex = i
-        }
-      }
-
-      setCurrentCardIndex(closestIndex)
-    }
-
-    container.addEventListener('scroll', handleScroll)
-    return () => container.removeEventListener('scroll', handleScroll)
-  }, [activePrograms.length])
-
-  // Only show arrows/markers when the carousel actually overflows.
-  useLayoutEffect(() => {
-    recomputeCarouselOverflow()
-    const el = scrollContainerRef.current
-    if (!el) return
-    const ro = new ResizeObserver(() => recomputeCarouselOverflow())
-    ro.observe(el)
-    return () => {
-      try {
-        ro.disconnect()
-      } catch {
-        // ignore
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePrograms.length, open])
-
   const handleConfirm = () => {
     // Convert programOverrides to staffOverrides format
     const overrides: Record<string, {
@@ -1060,29 +977,8 @@ export function SpecialProgramOverrideDialog({
                 No special programs active on this weekday.
               </div>
             ) : (
-              <div className="relative flex-1 min-h-0">
-                {/* Left Arrow */}
-                {carouselOverflowing && activePrograms.length > 1 && currentCardIndex > 0 && (
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="absolute left-1 top-1/2 -translate-y-1/2 z-10 bg-white/95 shadow-lg h-8 w-8"
-                    onClick={scrollLeft}
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                )}
-
-                {/* Horizontal Scroll Container */}
-                <div
-                  ref={scrollContainerRef}
-                  className="flex overflow-x-auto scroll-smooth gap-4 px-6 h-full items-start"
-                  style={{
-                    scrollSnapType: 'x mandatory',
-                    scrollBehavior: 'smooth',
-                  }}
-                >
-                  {activePrograms.map((program, index) => {
+              <HorizontalCardCarousel recomputeKey={open}>
+                {activePrograms.map((program) => {
                     const override = programOverrides[program.id] || {}
                     const therapist = override.therapistId ? allStaff.find(s => s.id === override.therapistId) : null
                     const pca = override.pcaId ? allStaff.find(s => s.id === override.pcaId) : null
@@ -1133,7 +1029,6 @@ export function SpecialProgramOverrideDialog({
                       <Card
                         key={program.id}
                         className="min-w-[360px] max-w-[420px] w-[min(420px,calc(100vw-120px))] flex-shrink-0 max-h-[80vh] overflow-y-auto"
-                        style={{ scrollSnapAlign: 'start' }}
                       >
                         <CardHeader>
                           <CardTitle>{program.name}</CardTitle>
@@ -1501,39 +1396,7 @@ export function SpecialProgramOverrideDialog({
                   </Card>
                   )
                   })}
-                </div>
-
-                {/* Right Arrow */}
-                {carouselOverflowing && activePrograms.length > 1 && currentCardIndex < activePrograms.length - 1 && (
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="absolute right-1 top-1/2 -translate-y-1/2 z-10 bg-white/95 shadow-lg h-8 w-8"
-                    onClick={scrollRight}
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                )}
-
-                {/* Dot Indicators */}
-                {carouselOverflowing && activePrograms.length > 1 && (
-                  <div className="flex justify-center gap-2 mt-4">
-                    {activePrograms.map((_, index) => (
-                      <button
-                        key={index}
-                        onClick={() => scrollToCard(index)}
-                        className={cn(
-                          'w-2 h-2 rounded-full transition-all',
-                          index === currentCardIndex
-                            ? 'bg-blue-600 w-6'
-                            : 'bg-gray-300 hover:bg-gray-400'
-                        )}
-                        aria-label={`Go to card ${index + 1}`}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
+              </HorizontalCardCarousel>
             )}
           </div>
 

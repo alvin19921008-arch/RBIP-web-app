@@ -29,7 +29,19 @@ export interface StaffOverride {
   fteSubtraction?: number
   availableSlots?: number[]
   invalidSlot?: number
+  // Step 2.2 (SPT final edit): per-day SPT config override (UI + persistence).
+  // This hook does not interpret it directly, but it must tolerate it structurally.
+  sptOnDayOverride?: {
+    enabled: boolean
+    contributesFte: boolean
+    slots: number[]
+    slotModes: { am: 'AND' | 'OR'; pm: 'AND' | 'OR' }
+    displayText?: string | null
+    assignedTeam?: Team | null
+  }
   therapistTeamFTEByTeam?: Partial<Record<Team, number>>
+  therapistTeamHalfDayByTeam?: Partial<Record<Team, 'AM' | 'PM'>>
+  therapistTeamHalfDayUiByTeam?: Partial<Record<Team, 'AUTO' | 'AM' | 'PM' | 'UNSPECIFIED'>>
   therapistNoAllocation?: boolean
 }
 
@@ -56,6 +68,13 @@ export interface AllocationSyncDeps {
   specialPrograms: SpecialProgram[]
   sptAllocations: SPTAllocation[]
   selectedDate: Date
+  /**
+   * When true, Step 2 ("Therapist & Non-Floating PCA") has been initialized for this date.
+   *
+   * We use this to decide whether to preserve existing SPT allocations. SPT allocations are
+   * only created by Step 2 and should NOT be "re-preserved" after Step 2 is cleared.
+   */
+  step2Initialized?: boolean
   
   // State setters
   setTherapistAllocations: React.Dispatch<React.SetStateAction<Record<Team, (TherapistAllocation & { staff: Staff })[]>>>
@@ -152,6 +171,7 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
     specialPrograms,
     sptAllocations,
     selectedDate,
+    step2Initialized = false,
     setTherapistAllocations,
     recalculateScheduleCalculations,
     isHydrating = false,
@@ -249,9 +269,7 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
       }
     })
 
-    // CRITICAL: Preserve existing SPT allocations since includeSPTAllocation is false
-    // SPT allocations are only created in Step 2 "Initialize Algo" and must persist
-    // BUT: Check across ALL teams to avoid duplicates when SPT is moved to a different team
+    // Collect existing SPT allocations across ALL teams (used for preservation and display inference).
     const allExistingSPTAllocations: (TherapistAllocation & { staff: Staff })[] = []
     TEAMS.forEach(team => {
       const existingSPTAllocations = therapistAllocations[team].filter(
@@ -260,34 +278,43 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
       allExistingSPTAllocations.push(...existingSPTAllocations)
     })
     
-    // Check if each existing SPT is already in the new result (across all teams)
-    // If not, preserve it but update team/FTE from staffOverrides
-    allExistingSPTAllocations.forEach(sptAlloc => {
-      // If this staff is explicitly split/merged or has no allocation, do not preserve.
-      if (therapistSplitIds.has(sptAlloc.staff_id) || therapistNoAllocationIds.has(sptAlloc.staff_id)) {
-        return
-      }
-      // Check if SPT exists in ANY team in the new result
-      const alreadyExists = TEAMS.some(team => 
-        therapistByTeam[team].some(a => a.staff_id === sptAlloc.staff_id)
-      )
-      
-      if (!alreadyExists) {
-        // Update team and FTE from staffOverrides if available
-        const override = staffOverrides[sptAlloc.staff_id]
-        const targetTeam = override?.team ?? sptAlloc.team
-        
-        // Create updated allocation with new team
-        const updatedAlloc = {
-          ...sptAlloc,
-          team: targetTeam,
-          fte_therapist: override?.fteRemaining ?? sptAlloc.fte_therapist,
-          leave_type: override?.leaveType ?? sptAlloc.leave_type,
+    // CRITICAL: Preserve existing SPT allocations since includeSPTAllocation is false.
+    // SPT allocations are only created in Step 2 "Initialize Algo" and must persist.
+    //
+    // IMPORTANT: When Step 2 has been cleared, we must NOT re-preserve stale SPT allocations,
+    // otherwise the user needs multiple clears and Step 2.2 overrides can appear "ignored".
+    if (step2Initialized) {
+      // Check if each existing SPT is already in the new result (across all teams).
+      // If not, preserve it but update team/FTE from staffOverrides.
+      allExistingSPTAllocations.forEach((sptAlloc) => {
+        // If this staff is explicitly split/merged or has no allocation, do not preserve.
+        if (therapistSplitIds.has(sptAlloc.staff_id) || therapistNoAllocationIds.has(sptAlloc.staff_id)) {
+          return
         }
-        
-        therapistByTeam[targetTeam].push(updatedAlloc)
-      }
-    })
+
+        // Check if SPT exists in ANY team in the new result.
+        const alreadyExists = TEAMS.some((team) => therapistByTeam[team].some((a) => a.staff_id === sptAlloc.staff_id))
+
+        if (!alreadyExists) {
+          // Update team and FTE from staffOverrides if available.
+          // NOTE: Step 2.2 can store assigned team either as top-level `team` or nested
+          // `sptOnDayOverride.assignedTeam` (older data / partial merges). Prefer top-level.
+          const override = staffOverrides[sptAlloc.staff_id]
+          const targetTeam =
+            override?.team ?? override?.sptOnDayOverride?.assignedTeam ?? sptAlloc.team
+
+          // Create updated allocation with new team.
+          const updatedAlloc = {
+            ...sptAlloc,
+            team: targetTeam,
+            fte_therapist: override?.fteRemaining ?? sptAlloc.fte_therapist,
+            leave_type: override?.leaveType ?? sptAlloc.leave_type,
+          }
+
+          therapistByTeam[targetTeam].push(updatedAlloc)
+        }
+      })
+    }
 
     // Apply therapist split/merge overrides (per-team allocations)
     for (const staffId of therapistSplitIds) {
@@ -297,10 +324,40 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
       const byTeam = o?.therapistTeamFTEByTeam
       if (!byTeam) continue
 
+      // For split-generated SPT allocations: preserve / infer weekday slot display so UI can show "0.25 AM" etc.
+      const existingSptSlotDisplay =
+        staffMember.rank === 'SPT'
+          ? (allExistingSPTAllocations.find((a) => a.staff_id === staffId)?.spt_slot_display ?? null)
+          : null
+      const inferFromWeekdayConfig = (() => {
+        const cfg: any = (sptWeekdayByStaffId as any)?.[staffId]
+        const slots: number[] = Array.isArray(cfg?.slots) ? cfg.slots : []
+        const hasAM = slots.some((s) => s === 1 || s === 2)
+        const hasPM = slots.some((s) => s === 3 || s === 4)
+        if (hasAM && !hasPM) return 'AM'
+        if (!hasAM && hasPM) return 'PM'
+        if (hasAM && hasPM) return 'AM+PM'
+        return null
+      })()
+
       for (const [teamKey, fte] of Object.entries(byTeam)) {
         const t = teamKey as Team
         if (!TEAMS.includes(t)) continue
         if (typeof fte !== 'number' || fte <= 0) continue
+
+        const halfDayUi = (o as any)?.therapistTeamHalfDayUiByTeam?.[t] as
+          | 'AUTO'
+          | 'AM'
+          | 'PM'
+          | 'UNSPECIFIED'
+          | undefined
+        const halfDayResolved = (o as any)?.therapistTeamHalfDayByTeam?.[t] as 'AM' | 'PM' | undefined
+        const sptSlotDisplayForThisAlloc =
+          staffMember.rank === 'SPT'
+            ? (halfDayResolved && halfDayUi !== 'UNSPECIFIED'
+                ? halfDayResolved
+                : existingSptSlotDisplay ?? inferFromWeekdayConfig)
+            : null
 
         const alloc: TherapistAllocation & { staff: Staff } = {
           id: `override-therapist:${selectedDate.toISOString().slice(0, 10)}:${staffId}:${t}`,
@@ -317,7 +374,7 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
           leave_type: o?.leaveType ?? null,
           special_program_ids: null,
           is_substitute_team_head: false,
-          spt_slot_display: null,
+          spt_slot_display: sptSlotDisplayForThisAlloc as any,
           is_manual_override: true,
           manual_override_note: null,
           staff: staffMember,

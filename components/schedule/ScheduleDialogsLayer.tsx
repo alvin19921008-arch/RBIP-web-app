@@ -9,6 +9,7 @@ export function ScheduleDialogsLayer(props: {
   copyWizardDialog: ReactNode
   floatingPcaDialog: ReactNode
   specialProgramOverrideDialog: ReactNode
+  sptFinalEditDialog: ReactNode
   nonFloatingSubstitutionDialog: ReactNode
   calendarPopover: ReactNode
 }) {
@@ -20,6 +21,7 @@ export function ScheduleDialogsLayer(props: {
       {props.copyWizardDialog}
       {props.floatingPcaDialog}
       {props.specialProgramOverrideDialog}
+      {props.sptFinalEditDialog}
       {props.nonFloatingSubstitutionDialog}
       {props.calendarPopover}
     </>

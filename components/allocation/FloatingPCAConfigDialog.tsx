@@ -183,11 +183,12 @@ export function FloatingPCAConfigDialog({
 
   // Step 3.4: allocation mode (Standard vs Balanced)
   const [allocationMode, setAllocationMode] = useState<'standard' | 'balanced'>('standard')
-  const [scarcitySlackSlotsThreshold, setScarcitySlackSlotsThreshold] = useState<number>(2)
-  const [scarcityMinTeams, setScarcityMinTeams] = useState<number>(3)
-  const [scarcityTriggered, setScarcityTriggered] = useState(false)
+  // Scarcity config (global head): treat threshold as "shortage slots" (0.25 FTE per slot)
+  const [scarcityShortageSlotsThreshold, setScarcityShortageSlotsThreshold] = useState<number>(2)
   const [scarcityAutoSelected, setScarcityAutoSelected] = useState(false)
-  const [scarcityBehavior, setScarcityBehavior] = useState<'auto_select' | 'remind_only' | 'off'>('auto_select')
+  // IMPORTANT: default to 'off' until config is loaded, to avoid auto-select firing before RPC returns.
+  const [scarcityBehavior, setScarcityBehavior] = useState<'auto_select' | 'remind_only' | 'off'>('off')
+  const [scarcityConfigLoaded, setScarcityConfigLoaded] = useState(false)
 
   type Step31PreviewState =
     | { status: 'idle' }
@@ -208,27 +209,33 @@ export function FloatingPCAConfigDialog({
   // Load scarcity threshold from global config head (once per open)
   useEffect(() => {
     if (!open) return
+    setScarcityConfigLoaded(false)
     let cancelled = false
     ;(async () => {
       const res = await supabase.rpc('get_config_global_head_v1')
       if (cancelled) return
-      if (res.error) return
+      if (res.error) {
+        setScarcityConfigLoaded(true)
+        return
+      }
       const raw = (res.data as any)?.floating_pca_scarcity_threshold
-      const slackSlots =
-        typeof raw?.slack_slots === 'number'
-          ? raw.slack_slots
-          : Number(raw?.slack_slots ?? raw?.slackSlots ?? 2)
-      const minTeams = typeof raw?.min_teams === 'number' ? raw.min_teams : Number(raw?.min_teams ?? 3)
+      // Backward compatible read: historical key is slack_slots; we now interpret as shortage-slots threshold.
+      const shortageSlots =
+        typeof raw?.shortage_slots === 'number'
+          ? raw.shortage_slots
+          : typeof raw?.slack_slots === 'number'
+            ? raw.slack_slots
+            : Number(raw?.shortage_slots ?? raw?.shortageSlots ?? raw?.slack_slots ?? raw?.slackSlots ?? 2)
       const behaviorRaw = String(raw?.behavior ?? 'auto_select')
-      const slackSafe = Number.isFinite(slackSlots) && slackSlots >= 0 ? Math.round(slackSlots) : 2
-      const minTeamsSafe = Number.isFinite(minTeams) ? Math.max(1, Math.min(8, Math.round(minTeams))) : 3
+      const shortageSafe = Number.isFinite(shortageSlots) && shortageSlots >= 0 ? Math.round(shortageSlots) : 2
       const behaviorSafe =
         behaviorRaw === 'remind_only' || behaviorRaw === 'off' || behaviorRaw === 'auto_select'
           ? (behaviorRaw as any)
           : 'auto_select'
-      setScarcitySlackSlotsThreshold(slackSafe)
-      setScarcityMinTeams(minTeamsSafe)
+      setScarcityShortageSlotsThreshold(shortageSafe)
       setScarcityBehavior(behaviorSafe)
+      setScarcityAutoSelected(false)
+      setScarcityConfigLoaded(true)
     })().catch(() => {})
     return () => {
       cancelled = true
@@ -299,18 +306,19 @@ export function FloatingPCAConfigDialog({
     return { teamsNeedingCount, neededSlots, availableSlots, slackSlots }
   }, [roundedPendingByTeam, floatingPCAs, existingAllocations, staffOverrides])
 
-  // Scarcity trigger (hybrid): slack-slots + sanity guard
+  const shortageSlots = Math.max(0, scarcityMetrics.neededSlots - scarcityMetrics.availableSlots)
+
+  const scarcityTriggered =
+    scarcityBehavior !== 'off' &&
+    scarcityMetrics.neededSlots > 0 &&
+    scarcityShortageSlotsThreshold >= 0 &&
+    shortageSlots >= scarcityShortageSlotsThreshold
+
+  // Auto-select Balanced once when entering Step 3.1 (do not fight user toggles afterwards).
   useEffect(() => {
-    const triggered =
-      scarcityBehavior !== 'off' &&
-      scarcityMetrics.teamsNeedingCount >= scarcityMinTeams &&
-      scarcityMetrics.neededSlots > 0 &&
-      scarcitySlackSlotsThreshold >= 0 &&
-      scarcityMetrics.slackSlots <= scarcitySlackSlotsThreshold
-    setScarcityTriggered(triggered)
-    // Auto-select Balanced once when entering Step 3.1 (do not fight user toggles afterwards).
     if (
-      triggered &&
+      scarcityConfigLoaded &&
+      scarcityTriggered &&
       scarcityBehavior === 'auto_select' &&
       currentMiniStep === '3.1' &&
       allocationMode !== 'balanced' &&
@@ -321,9 +329,10 @@ export function FloatingPCAConfigDialog({
     }
   }, [
     scarcityMetrics,
-    scarcitySlackSlotsThreshold,
-    scarcityMinTeams,
+    scarcityShortageSlotsThreshold,
     scarcityBehavior,
+    scarcityTriggered,
+    scarcityConfigLoaded,
     currentMiniStep,
     allocationMode,
     scarcityAutoSelected,
@@ -1178,8 +1187,9 @@ export function FloatingPCAConfigDialog({
                   : 'Scarcity detected — Balanced recommended'}
               </div>
               <div className="text-amber-900/80 text-xs">
-                Rule: trigger when at least {scarcityMinTeams} team(s) need floating PCA and slack ≤ {scarcitySlackSlotsThreshold} slot(s).
-                Today: {scarcityMetrics.teamsNeedingCount} team(s) needing, need {scarcityMetrics.neededSlots} slot(s), available {scarcityMetrics.availableSlots} slot(s), slack {scarcityMetrics.slackSlots} slot(s).
+                Rule: trigger when global shortage ≥ {scarcityShortageSlotsThreshold} slot(s).
+                Today: need {scarcityMetrics.neededSlots} slot(s), available {scarcityMetrics.availableSlots} slot(s), shortage {shortageSlots} slot(s) (slack{' '}
+                {scarcityMetrics.slackSlots}).
                 {scarcityBehavior === 'remind_only'
                   ? ' You can keep Standard to use Step 3.2/3.3, but Balanced may reduce “0-slot” outcomes.'
                   : ' You can switch back to Standard if you want to use Step 3.2/3.3.'}

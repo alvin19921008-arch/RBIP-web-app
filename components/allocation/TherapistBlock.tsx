@@ -120,15 +120,9 @@ export const TherapistBlock = memo(function TherapistBlock({ team, allocations, 
             const supervisoryRightText = sptMeta?.displayText ?? null
 
             // For supervisory "No Duty" SPT, hide weekday slot display (AM/PM) and show only "No Duty".
-            const sptDisplay = isSupervisoryNoDuty
-              ? undefined
-              : allocation.spt_slot_display
-                ? (allocation.staff.rank === 'SPT' && fte === 0
-                    ? allocation.spt_slot_display
-                    : allocation.staff.rank === 'SPT' && fte === 0.75
-                      ? '0.75'
-                      : `${fte} ${allocation.spt_slot_display}`)
-                : undefined
+            // UX change: keep SPT name clean (no "0.25 AM" suffix next to the name).
+            // We will render "FTE + AM/PM" on the right side instead.
+            const sptDisplay = undefined
             
             // Calculate FTE for display
             // For buffer staff, use buffer_fte if available, otherwise default to 1.0
@@ -195,10 +189,30 @@ export const TherapistBlock = memo(function TherapistBlock({ team, allocations, 
 
               if (fte === 0.75) {
                 displayFTE = '0.75'
-              } else if ((fte === 0.5 || fte === 0.25) && halfDay && halfDayUi !== 'UNSPECIFIED') {
+              } else if (
+                (fte === 0.5 || fte === 0.25) &&
+                halfDay &&
+                halfDayUi !== 'UNSPECIFIED'
+              ) {
                 displayFTE = `${fte} ${halfDay}`
               } else {
                 displayFTE = fte
+              }
+            }
+
+            // For SPT: show "FTE + AM/PM" on the right side based on spt_slot_display.
+            // (Split-generated SPT allocations now preserve/infer spt_slot_display.)
+            if (!isSupervisoryNoDuty && allocation.staff.rank === 'SPT') {
+              const fteNum =
+                typeof displayFTE === 'number'
+                  ? displayFTE
+                  : typeof allocationFTE === 'number'
+                    ? allocationFTE
+                    : undefined
+              if (fteNum === 0.75) {
+                displayFTE = '0.75'
+              } else if ((fteNum === 0.5 || fteNum === 0.25) && allocation.spt_slot_display) {
+                displayFTE = `${fteNum} ${allocation.spt_slot_display}`
               }
             }
             

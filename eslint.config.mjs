@@ -35,6 +35,8 @@ const eslintConfig = [
       "react-hooks/set-state-in-effect": "off",
       // React Compiler-specific warning; not required for correctness and too noisy during upgrade.
       "react-hooks/preserve-manual-memoization": "off",
+      // Too strict for this codebase: flags legitimate patterns like passing refs via props.
+      "react-hooks/refs": "off",
       // Style-only rules (avoid blocking upgrades on non-functional changes).
       "prefer-const": "off",
       "react/no-unescaped-entities": "off",

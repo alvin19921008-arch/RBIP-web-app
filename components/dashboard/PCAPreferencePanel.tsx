@@ -22,8 +22,7 @@ export function PCAPreferencePanel() {
   const [editingPreference, setEditingPreference] = useState<PCAPreference | null>(null)
   const [editingFloorMapping, setEditingFloorMapping] = useState(false)
   const [globalHead, setGlobalHead] = useState<any>(null)
-  const [scarcitySlackSlots, setScarcitySlackSlots] = useState<string>('2')
-  const [scarcityMinTeams, setScarcityMinTeams] = useState<string>('3')
+  const [scarcityShortageSlots, setScarcityShortageSlots] = useState<string>('2')
   const [scarcityBehavior, setScarcityBehavior] = useState<'auto_select' | 'remind_only' | 'off'>('auto_select')
   const [savingScarcity, setSavingScarcity] = useState(false)
   const expand = useDashboardExpandableCard<string>({ animationMs: 220 })
@@ -53,20 +52,20 @@ export function PCAPreferencePanel() {
         const head = headRes.data
         setGlobalHead(head)
         const raw = (head as any)?.floating_pca_scarcity_threshold
-        const slackSlots =
-          typeof raw?.slack_slots === 'number'
-            ? raw.slack_slots
-            : Number(raw?.slack_slots ?? raw?.slackSlots ?? 2)
-        const minTeams = typeof raw?.min_teams === 'number' ? raw.min_teams : Number(raw?.min_teams ?? 3)
+        // Backward compatible read: DB stores slack_slots; UI interprets it as shortage-slots threshold.
+        const shortageSlots =
+          typeof raw?.shortage_slots === 'number'
+            ? raw.shortage_slots
+            : typeof raw?.slack_slots === 'number'
+              ? raw.slack_slots
+              : Number(raw?.shortage_slots ?? raw?.shortageSlots ?? raw?.slack_slots ?? raw?.slackSlots ?? 2)
         const behaviorRaw = String(raw?.behavior ?? 'auto_select')
-        const slackSafe = Number.isFinite(slackSlots) && slackSlots >= 0 ? Math.round(slackSlots) : 2
-        const minTeamsSafe = Number.isFinite(minTeams) ? Math.max(1, Math.min(8, Math.round(minTeams))) : 3
+        const shortageSafe = Number.isFinite(shortageSlots) && shortageSlots >= 0 ? Math.round(shortageSlots) : 2
         const behaviorSafe =
           behaviorRaw === 'remind_only' || behaviorRaw === 'off' || behaviorRaw === 'auto_select'
             ? (behaviorRaw as any)
             : 'auto_select'
-        setScarcitySlackSlots(String(slackSafe))
-        setScarcityMinTeams(String(minTeamsSafe))
+        setScarcityShortageSlots(String(shortageSafe))
         setScarcityBehavior(behaviorSafe)
       }
     } catch (err) {
@@ -81,22 +80,19 @@ export function PCAPreferencePanel() {
     access.can('dashboard.pca-preferences.scarcity-threshold')
 
   const handleSaveScarcityThreshold = async () => {
-    const slackSlots = Number(scarcitySlackSlots)
-    const minTeams = Number(scarcityMinTeams)
-    if (!Number.isFinite(slackSlots) || slackSlots < 0) {
-      toast.error('Invalid slack slots', 'Enter an integer ≥ 0 (slots of 0.25 FTE each).')
-      return
-    }
-    if (!Number.isFinite(minTeams) || minTeams < 1) {
-      toast.error('Invalid team count', 'Enter a number ≥ 1.')
+    const shortageSlots = Number(scarcityShortageSlots)
+    if (!Number.isFinite(shortageSlots) || shortageSlots < 0) {
+      toast.error('Invalid shortage slots', 'Enter an integer ≥ 0 (slots of 0.25 FTE each).')
       return
     }
 
     setSavingScarcity(true)
     try {
       const res = await supabase.rpc('set_floating_pca_scarcity_threshold_v4', {
-        p_slack_slots: Math.round(slackSlots),
-        p_min_teams: Math.round(minTeams),
+        // RPC still stores this as slack_slots; UI interprets as shortage-slots threshold.
+        p_slack_slots: Math.round(shortageSlots),
+        // Legacy field retained for backward compatibility; Step 3.1 no longer uses it.
+        p_min_teams: 1,
         p_behavior: scarcityBehavior,
       })
       if (res.error) {
@@ -113,20 +109,19 @@ export function PCAPreferencePanel() {
       }
       setGlobalHead(res.data)
       const raw = (res.data as any)?.floating_pca_scarcity_threshold
-      const slackSaved =
-        typeof raw?.slack_slots === 'number'
-          ? raw.slack_slots
-          : Number(raw?.slack_slots ?? raw?.slackSlots ?? slackSlots)
-      const minTeamsSaved = typeof raw?.min_teams === 'number' ? raw.min_teams : Number(raw?.min_teams ?? minTeams)
+      const shortageSaved =
+        typeof raw?.shortage_slots === 'number'
+          ? raw.shortage_slots
+          : typeof raw?.slack_slots === 'number'
+            ? raw.slack_slots
+            : Number(raw?.shortage_slots ?? raw?.shortageSlots ?? raw?.slack_slots ?? raw?.slackSlots ?? shortageSlots)
       const behaviorSaved = String(raw?.behavior ?? scarcityBehavior)
-      const slackSafe = Number.isFinite(slackSaved) && slackSaved >= 0 ? Math.round(slackSaved) : Math.round(slackSlots)
-      const minTeamsSafe = Number.isFinite(minTeamsSaved) ? Math.max(1, Math.min(8, Math.round(minTeamsSaved))) : Math.round(minTeams)
+      const shortageSafe = Number.isFinite(shortageSaved) && shortageSaved >= 0 ? Math.round(shortageSaved) : Math.round(shortageSlots)
       const behaviorSafe =
         behaviorSaved === 'remind_only' || behaviorSaved === 'off' || behaviorSaved === 'auto_select'
           ? (behaviorSaved as any)
           : scarcityBehavior
-      setScarcitySlackSlots(String(slackSafe))
-      setScarcityMinTeams(String(minTeamsSafe))
+      setScarcityShortageSlots(String(shortageSafe))
       setScarcityBehavior(behaviorSafe)
       toast.success('Scarcity threshold saved.')
     } catch (e) {
@@ -351,7 +346,7 @@ export function PCAPreferencePanel() {
                   <h4 className="font-semibold text-lg">Balanced mode trigger (Scarcity)</h4>
                   <p className="text-sm text-muted-foreground">
                     Controls when Step 3.1 auto-selects Balanced mode.
-                    Trigger rule: Balanced is recommended when at least <span className="font-medium text-foreground">N</span> teams need floating PCA and slack is ≤ <span className="font-medium text-foreground">S</span> slot(s).
+                    Trigger rule: Balanced is recommended when <span className="font-medium text-foreground">global shortage</span> is ≥ <span className="font-medium text-foreground">S</span> slot(s).
                   </p>
                 </div>
               </div>
@@ -376,24 +371,14 @@ export function PCAPreferencePanel() {
                   </select>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="scarcity-slack-slots">Slack threshold S (slots)</Label>
+                  <Label htmlFor="scarcity-shortage-slots">Shortage threshold S (slots)</Label>
                 <Input
-                    id="scarcity-slack-slots"
+                    id="scarcity-shortage-slots"
                   inputMode="numeric"
-                    value={scarcitySlackSlots}
-                    onChange={(e) => setScarcitySlackSlots(e.target.value)}
+                    value={scarcityShortageSlots}
+                    onChange={(e) => setScarcityShortageSlots(e.target.value)}
                     placeholder="2"
                 />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="scarcity-min-teams">Minimum teams N</Label>
-                  <Input
-                    id="scarcity-min-teams"
-                    inputMode="numeric"
-                    value={scarcityMinTeams}
-                    onChange={(e) => setScarcityMinTeams(e.target.value)}
-                    placeholder="3"
-                  />
                 </div>
                 <div className="flex items-center gap-2">
                   <Button
@@ -406,17 +391,17 @@ export function PCAPreferencePanel() {
                   <div className="text-xs text-muted-foreground">
                     Current: {(() => {
                       const raw = (globalHead as any)?.floating_pca_scarcity_threshold
-                      const slackSlots =
-                        typeof raw?.slack_slots === 'number'
-                          ? raw.slack_slots
-                          : Number(raw?.slack_slots ?? raw?.slackSlots ?? 2)
-                      const minTeams = typeof raw?.min_teams === 'number' ? raw.min_teams : Number(raw?.min_teams ?? 3)
+                      const shortageSlots =
+                        typeof raw?.shortage_slots === 'number'
+                          ? raw.shortage_slots
+                          : typeof raw?.slack_slots === 'number'
+                            ? raw.slack_slots
+                            : Number(raw?.shortage_slots ?? raw?.shortageSlots ?? raw?.slack_slots ?? raw?.slackSlots ?? 2)
                       const behavior = String(raw?.behavior ?? 'auto_select')
-                      const slackSafe = Number.isFinite(slackSlots) ? Math.round(slackSlots) : 2
-                      const minTeamsSafe = Number.isFinite(minTeams) ? Math.max(1, Math.min(8, Math.round(minTeams))) : 3
+                      const shortageSafe = Number.isFinite(shortageSlots) ? Math.round(shortageSlots) : 2
                       const behaviorLabel =
                         behavior === 'remind_only' ? 'Remind only' : behavior === 'off' ? 'Off' : 'Auto pre-select'
-                      return `${slackSafe} slot(s) slack, ${minTeamsSafe} teams • ${behaviorLabel}`
+                      return `shortage ≥ ${shortageSafe} slot(s) • ${behaviorLabel}`
                     })()}
                   </div>
                 </div>

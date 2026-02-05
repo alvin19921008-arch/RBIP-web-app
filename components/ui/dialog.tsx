@@ -1,3 +1,5 @@
+"use client"
+
 import * as React from "react"
 import { cn } from "@/lib/utils"
 
@@ -8,6 +10,42 @@ interface DialogProps {
 }
 
 const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
+  // Prevent background (underlay) page scroll while dialog is open.
+  // Also reduces scroll-chaining when dialog scroll reaches edges.
+  React.useEffect(() => {
+    if (!open) return
+
+    const LOCK_KEY = "__rbip_dialog_scroll_lock_count__"
+    const PREV_KEY = "__rbip_dialog_scroll_lock_prev__"
+    const g = globalThis as any
+    const nextCount = (g[LOCK_KEY] ?? 0) + 1
+    g[LOCK_KEY] = nextCount
+
+    // Only apply styles for the first active dialog.
+    if (nextCount === 1) {
+      const { body, documentElement } = document
+      g[PREV_KEY] = {
+        bodyOverflow: body.style.overflow,
+        htmlOverflow: documentElement.style.overflow,
+      }
+      body.style.overflow = "hidden"
+      documentElement.style.overflow = "hidden"
+    }
+
+    return () => {
+      const curr = (g[LOCK_KEY] ?? 1) - 1
+      g[LOCK_KEY] = Math.max(0, curr)
+
+      if (g[LOCK_KEY] === 0) {
+        const { body, documentElement } = document
+        const prev = g[PREV_KEY] ?? {}
+        body.style.overflow = prev.bodyOverflow ?? ""
+        documentElement.style.overflow = prev.htmlOverflow ?? ""
+        delete g[PREV_KEY]
+      }
+    }
+  }, [open])
+
   if (!open) return null
 
   return (
