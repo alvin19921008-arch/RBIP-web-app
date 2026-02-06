@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
+import { useState, useEffect, useMemo, useRef, Fragment, useCallback } from 'react'
 import { Team } from '@/types/staff'
 import { PCAAllocation } from '@/types/schedule'
 import { PCAPreference, SpecialProgram } from '@/types/allocation'
@@ -204,7 +204,32 @@ export function FloatingPCAConfigDialog({
   const [step31Preview, setStep31Preview] = useState<Step31PreviewState>({ status: 'idle' })
   const previewRunIdRef = useRef(0)
   const previewDebounceRef = useRef<number | null>(null)
+  const previewIdleHandleRef = useRef<number | null>(null)
   const previewLastHashRef = useRef<string>('')
+  const step31InitializedForOpenRef = useRef(false)
+
+  const cancelPreviewWork = useCallback(() => {
+    if (previewDebounceRef.current != null) {
+      window.clearTimeout(previewDebounceRef.current)
+      previewDebounceRef.current = null
+    }
+    const w = window as any
+    if (previewIdleHandleRef.current != null) {
+      if (typeof w.cancelIdleCallback === 'function') {
+        w.cancelIdleCallback(previewIdleHandleRef.current)
+      }
+      previewIdleHandleRef.current = null
+    }
+  }, [])
+
+  // Reset per-open state on close to avoid stale preview hash.
+  useEffect(() => {
+    if (open) return
+    step31InitializedForOpenRef.current = false
+    previewLastHashRef.current = ''
+    cancelPreviewWork()
+    setStep31Preview({ status: 'idle' })
+  }, [open, cancelPreviewWork])
 
   // Load scarcity threshold from global config head (once per open)
   useEffect(() => {
@@ -344,11 +369,11 @@ export function FloatingPCAConfigDialog({
       open &&
       bufferPCAConfirmed &&
       currentMiniStep === '3.1' &&
-      floatingPCAs.length > 0
+      floatingPCAs.length > 0 &&
+      teamOrder.length > 0
 
     if (!canRun) {
-      if (previewDebounceRef.current) window.clearTimeout(previewDebounceRef.current)
-      previewDebounceRef.current = null
+      cancelPreviewWork()
       setStep31Preview({ status: 'idle' })
       return
     }
@@ -356,13 +381,15 @@ export function FloatingPCAConfigDialog({
     const hash = (() => {
       const orderKey = teamOrder.join(',')
       const pendingKey = TEAMS.map((t) => `${t}:${roundedPendingByTeam[t].toFixed(2)}`).join('|')
-      const allocKey = existingAllocations
+      const allocKey = [...existingAllocations]
+        .sort((a, b) => String(a.staff_id ?? '').localeCompare(String(b.staff_id ?? '')))
         .map((a) => {
           const inv = (a as any)?.invalid_slot ?? ''
           return `${a.staff_id}:${a.slot1 ?? ''}${a.slot2 ?? ''}${a.slot3 ?? ''}${a.slot4 ?? ''}:${inv}`
         })
         .join('|')
-      const poolKey = floatingPCAs
+      const poolKey = [...floatingPCAs]
+        .sort((a, b) => String(a.id ?? '').localeCompare(String(b.id ?? '')))
         .map((p) => `${p.id}:${(p.fte_pca ?? 0).toFixed(2)}:${Array.isArray(p.availableSlots) ? p.availableSlots.join('') : ''}`)
         .join('|')
       return `${orderKey}__${pendingKey}__${allocKey}__${poolKey}`
@@ -371,66 +398,86 @@ export function FloatingPCAConfigDialog({
     if (hash === previewLastHashRef.current) return
     previewLastHashRef.current = hash
 
-    if (previewDebounceRef.current) window.clearTimeout(previewDebounceRef.current)
-    previewDebounceRef.current = window.setTimeout(() => {
-      const runId = ++previewRunIdRef.current
-      setStep31Preview({ status: 'loading' })
+    cancelPreviewWork()
 
-      ;(async () => {
-        const basePending = { ...roundedPendingByTeam }
-        const baseAllocations = existingAllocations.map((a) => ({ ...a }))
+    const runId = ++previewRunIdRef.current
+    setStep31Preview({ status: 'loading' })
 
-        const [standardRes, balancedRes] = await Promise.all([
-          allocateFloatingPCA_v2({
-            mode: 'standard',
-            teamOrder,
-            currentPendingFTE: basePending,
-            existingAllocations: baseAllocations,
-            pcaPool: floatingPCAs,
-            pcaPreferences,
-            specialPrograms,
-          }),
-          allocateFloatingPCA_v2({
-            mode: 'balanced',
-            teamOrder,
-            currentPendingFTE: basePending,
-            existingAllocations: baseAllocations,
-            pcaPool: floatingPCAs,
-            pcaPreferences,
-            specialPrograms,
-          }),
-        ])
+    const runPreview = async () => {
+      const standardPending = { ...roundedPendingByTeam }
+      const balancedPending = { ...roundedPendingByTeam }
+      const standardAllocations = existingAllocations.map((a) => ({ ...a }))
+      const balancedAllocations = existingAllocations.map((a) => ({ ...a }))
 
-        if (runId !== previewRunIdRef.current) return
+      const [standardRes, balancedRes] = await Promise.all([
+        allocateFloatingPCA_v2({
+          mode: 'standard',
+          teamOrder,
+          currentPendingFTE: standardPending,
+          existingAllocations: standardAllocations,
+          pcaPool: floatingPCAs,
+          pcaPreferences,
+          specialPrograms,
+        }),
+        allocateFloatingPCA_v2({
+          mode: 'balanced',
+          teamOrder,
+          currentPendingFTE: balancedPending,
+          existingAllocations: balancedAllocations,
+          pcaPool: floatingPCAs,
+          pcaPreferences,
+          specialPrograms,
+        }),
+      ])
 
-        const teamsNeeding = TEAMS.filter((t) => (roundedPendingByTeam[t] || 0) > 0)
+      if (runId !== previewRunIdRef.current) return
 
-        const standardZeroTeams = teamsNeeding.filter((t) => {
-          const count = (standardRes.tracker?.[t]?.assignments || []).filter((a) => a.assignedIn === 'step34').length
-          return count === 0
-        })
+      const teamsNeeding = TEAMS.filter((t) => (roundedPendingByTeam[t] || 0) > 0)
 
-        const balancedShortTeams = teamsNeeding.filter((t) => {
-          const left = roundToNearestQuarterWithMidpoint((balancedRes.pendingPCAFTEPerTeam as any)?.[t] || 0)
-          return left >= 0.25
-        })
-
-        setStep31Preview({
-          status: 'ready',
-          computedAt: Date.now(),
-          standardZeroTeams,
-          balancedShortTeams,
-        })
-      })().catch((e) => {
-        if (runId !== previewRunIdRef.current) return
-        const msg = e instanceof Error ? e.message : String(e)
-        setStep31Preview({ status: 'error', message: msg })
+      const standardZeroTeams = teamsNeeding.filter((t) => {
+        const count = (standardRes.tracker?.[t]?.assignments || []).filter((a) => a.assignedIn === 'step34').length
+        return count === 0
       })
-    }, 420)
+
+      const balancedShortTeams = teamsNeeding.filter((t) => {
+        const left = roundToNearestQuarterWithMidpoint((balancedRes.pendingPCAFTEPerTeam as any)?.[t] || 0)
+        return left >= 0.25
+      })
+
+      setStep31Preview({
+        status: 'ready',
+        computedAt: Date.now(),
+        standardZeroTeams,
+        balancedShortTeams,
+      })
+    }
+
+    const w = window as any
+    if (typeof w.requestIdleCallback === 'function') {
+      previewIdleHandleRef.current = w.requestIdleCallback(
+        () => {
+          previewIdleHandleRef.current = null
+          runPreview().catch((e) => {
+            if (runId !== previewRunIdRef.current) return
+            const msg = e instanceof Error ? e.message : String(e)
+            setStep31Preview({ status: 'error', message: msg })
+          })
+        },
+        { timeout: 650 }
+      )
+    } else {
+      previewDebounceRef.current = window.setTimeout(() => {
+        previewDebounceRef.current = null
+        runPreview().catch((e) => {
+          if (runId !== previewRunIdRef.current) return
+          const msg = e instanceof Error ? e.message : String(e)
+          setStep31Preview({ status: 'error', message: msg })
+        })
+      }, 0)
+    }
 
     return () => {
-      if (previewDebounceRef.current) window.clearTimeout(previewDebounceRef.current)
-      previewDebounceRef.current = null
+      cancelPreviewWork()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -443,6 +490,7 @@ export function FloatingPCAConfigDialog({
     floatingPCAs,
     pcaPreferences,
     specialPrograms,
+    cancelPreviewWork,
   ])
   
   // Step 3.2: reservations computed from Step 3.1 output
@@ -623,7 +671,8 @@ export function FloatingPCAConfigDialog({
   
   // Initialize state when dialog opens
   useEffect(() => {
-    if (open && bufferPCAConfirmed) {
+    if (open && bufferPCAConfirmed && !step31InitializedForOpenRef.current) {
+      step31InitializedForOpenRef.current = true
       // Reset to step 3.1 (after Step 3.0 is confirmed)
       setSlotSelections([])
       setTeamReservations(null)
@@ -653,7 +702,9 @@ export function FloatingPCAConfigDialog({
       const sorted = sortTeamsByPendingFTE(TEAMS, rounded, TEAMS)
       setTeamOrder(sorted)
     }
-  }, [open, initialPendingFTE, existingAllocations, bufferPCAConfirmed])
+    // We intentionally initialize once per open session to avoid starving Step 3.1 preview.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, bufferPCAConfirmed])
   
   // Compute tie groups from current adjusted FTE
   const tieGroups = useMemo(() => identifyTieGroups(adjustedFTE), [adjustedFTE])
@@ -1163,7 +1214,9 @@ export function FloatingPCAConfigDialog({
             <span>
               {step31Preview.status === 'loading'
                 ? 'Preview is calculating…'
-                : step31Preview.status === 'error'
+                : step31Preview.status === 'idle'
+                  ? 'Preview is preparing…'
+                  : step31Preview.status === 'error'
                   ? 'Preview unavailable today (you can still continue).'
                   : step31Preview.status === 'ready' && step31Preview.standardZeroTeams.length >= 1
                     ? `Risk detected: running Standard now may leave ${step31Preview.standardZeroTeams.length} team(s) with 0 floating PCA. Consider switching to Balanced, or reorder tie groups.`
@@ -1317,8 +1370,10 @@ export function FloatingPCAConfigDialog({
             </div>
 
             <div className="mt-2 text-sm text-foreground">
-              {step31Preview.status === 'loading' || step31Preview.status === 'idle' ? (
+              {step31Preview.status === 'loading' ? (
                 <span className="text-muted-foreground">Preview: calculating…</span>
+              ) : step31Preview.status === 'idle' ? (
+                <span className="text-muted-foreground">Preview: preparing…</span>
               ) : step31Preview.status === 'error' ? (
                 <span className="text-muted-foreground">Preview: unavailable</span>
               ) : (
@@ -1377,8 +1432,10 @@ export function FloatingPCAConfigDialog({
             </div>
 
             <div className="mt-2 text-sm text-foreground">
-              {step31Preview.status === 'loading' || step31Preview.status === 'idle' ? (
+              {step31Preview.status === 'loading' ? (
                 <span className="text-muted-foreground">Preview: calculating…</span>
+              ) : step31Preview.status === 'idle' ? (
+                <span className="text-muted-foreground">Preview: preparing…</span>
               ) : step31Preview.status === 'error' ? (
                 <span className="text-muted-foreground">Preview: unavailable</span>
               ) : (

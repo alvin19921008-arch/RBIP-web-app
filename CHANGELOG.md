@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive historical changelog and reference for the RBIP Duty List web application. It captures detailed project history, data architecture, code rules, and key patterns. For essential patterns that are auto-loaded, see `.cursor/rules/`. For quick context, see `CONTEXT.md`.
 
-**Last Updated**: 2026-02-04
-**Latest Phase**: Phase 36 - Step 2.2 SPT Final Edit + Step 2 Clear/Override Reliability
+**Last Updated**: 2026-02-05
+**Latest Phase**: Phase 37 - Schedule Performance Optimizations (Stage 3D + Step 3.1 Preview)
 **Note**: Legacy development phases (1-20) have been moved to `Journal_legacy.md` for reference.
 **Optimization Note**: Essential patterns have been extracted to `.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc` for automatic loading. This changelog is read on-demand for historical context.  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
@@ -207,6 +207,19 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
 - ✅ **Tooltip layering fix for non-modal popovers**
   - Added `zIndex?: number` support to `components/ui/tooltip.tsx` (applies via inline style for reliability).
   - Applied `zIndex={120000}` to tooltips inside high-z non-modal popovers (slot selection, confirm, team picker, merge slot, fill color) so tooltips always render above.
+
+## Phase 37: Schedule Performance Optimizations (Stage 3D + Step 3.1 Preview)
+
+- ✅ **Step 3.1 preview stability (idle scheduling)**
+  - Preview now runs via `requestIdleCallback` with cancellation on input changes or close; stable inputs avoid churn and "stuck calculating".
+- ✅ **Staff Pool rendering efficiency**
+  - PCA list uses `react-window` when long; `StaffPool` and `TeamColumn` are memoized to reduce rerenders.
+- ✅ **Defer non-essential schedule UI**
+  - Snapshot diff popover, calendar popover, and dev leave-sim panel are dynamically loaded and only mounted when open.
+- ✅ **Idle-time prefetch for key dialogs**
+  - Prefetches calendar, Step 2.0/2.1/2.2, Step 3.1, snapshot diff (when needed), and dev leave sim (developer-only) to keep first-open latency low.
+- ✅ **Load diagnostics clarity**
+  - Non-RPC fallback now records `batchedQueriesUsed` for load diagnostics; RPC remains preferred when available.
 
 ## Phase 36: Step 2.2 SPT Final Edit + Step 2 Clear/Override Reliability
 

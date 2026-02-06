@@ -1,8 +1,8 @@
 # Work In Progress - Schedule Page Refactor & Performance Roadmap
 
-**Last Updated**: 2026-01-22  
+**Last Updated**: 2026-02-05  
 **Status**: In progress  
-**Current Stage**: Stage 2 (Controller Hook + State Consolidation)
+**Current Stage**: Stage 3–4 (Data Load + Render Smoothness)
 
 ---
 
@@ -163,9 +163,10 @@ This document tracks a **step-by-step refactor + loading speed optimization plan
 - [x] **3.1b Persist cache across refresh (sessionStorage)**
   - Size-limited sessionStorage persistence so “first load after refresh” can be a cache hit.
 
-- [ ] **3.2 Fetch concurrency + minimal selects**
-  - Ensure schedule load fetches independent tables concurrently (Promise.all)
-  - Only select fields needed for first paint; defer “nice-to-have”
+- [x] **3.2 Fetch concurrency + minimal selects**
+  - Schedule load uses minimal selects with fallback to `*` when legacy columns are missing
+  - `loadAllData()` now loads staff with a single `status IN (...)` query
+  - Snapshot diff/drift queries use narrower selects when possible
 
 ### 3B. Reduce main bundle / first JS cost
 
@@ -193,16 +194,39 @@ This document tracks a **step-by-step refactor + loading speed optimization plan
 
 **Exit criteria**: faster first paint and faster date switch under cache.
 
+### 3D. Additional load wins (optional)
+- [x] **3.6 Defer more non-essential UI**
+  - Snapshot diff popover and dev-only leave-sim panel are now dynamic and only mounted when open
+  - Rarely used dialogs are conditionally mounted (`TieBreakDialog`, `FloatingPCAConfigDialog`, `SpecialProgramOverrideDialog`, `SptFinalEditDialog`, `NonFloatingSubstitutionDialog`, `ScheduleCalendarPopover`)
+- [x] **3.7 Prefer RPC for load when available**
+  - `loadScheduleForDate` already prefers `load_schedule_v1`; non-RPC fallback now records `batchedQueriesUsed` for diagnostics
+- [x] **3.8 Idle-time background prefetch**
+  - Idle prefetch now includes calendar popover, Step 2.0/2.1/2.2 dialogs, Step 3.1 dialog, snapshot diff popover (when drift UI is active), and dev leave-sim panel (developer only)
+
 ---
 
 ## Stage 4 — Reduce CPU work and rerenders (smoothness)
 
+- [x] **4.0 Step 3.1 preview stability**
+  - Run preview on `requestIdleCallback` (timeout 650ms) and cancel when inputs change or dialog closes
+  - Stabilize preview inputs: parent passes memoized `existingAllocationsForStep3` / `floatingPCAsForStep3`; dialog uses sorted hashes for alloc/pool to avoid churn
+  - Reset preview hash/state on close so next open runs preview once per open; one-time init guard per open session
+  - UX: “Preview is preparing…” when idle; “calculating…” only while algorithm is running
+
 - [ ] **4.1 Remove expensive deep compares (avoid `JSON.stringify` in render paths)**
   - Use explicit “dirty version” counters or structured compare only on save attempt
 
-- [ ] **4.2 Memoization at the edges**
+- [x] **4.2 Memoization at the edges**
   - `React.memo` for heavy leaf components when props are stable (Team columns, staff lists)
+  - **Done**: `StaffPool` and `TeamColumn` wrapped with `memo`; schedule page passes memoized `floatingPCAsForStep3` / `existingAllocationsForStep3` into Step 3.1 dialog
   - Ensure callbacks are stable (`useCallback`) and props are not recreated unnecessarily
+
+- [x] **4.4 Virtualize long lists (StaffPool PCA list)**
+  - Use `react-window` `List` for the PCA list in StaffPool when list is long and filter is “PCA only”
+  - **Condition**: virtualize only when `rankFilter === 'pca'` and `visiblePCAsSorted.length * PCA_ROW_HEIGHT > PCA_LIST_MAX_HEIGHT` (320px); when “Show all”, render full list so outer StaffPool scroll works
+  - Constants: `PCA_ROW_HEIGHT` 48px, `PCA_LIST_MAX_HEIGHT` 320px; `PcaRow` renders one row
+  - `List` uses `onWheel` with `stopPropagation` so inner scroll is isolated from outer `useIsolatedWheelScroll`
+  - **Build**: use `react-window` v2 API (`List` + `RowComponentProps`), not legacy `FixedSizeList`
 
 - [ ] **4.3 Optional: move heavy Step 2/3 algorithms off the main thread**
   - Web Worker for `allocatePCA` / `allocateTherapists` if UI jank is noticeable

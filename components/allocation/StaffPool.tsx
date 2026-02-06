@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { List, type RowComponentProps } from 'react-window'
 import { Staff } from '@/types/staff'
 import { StaffCard } from './StaffCard'
 import { DragValidationTooltip } from './DragValidationTooltip'
@@ -35,7 +36,10 @@ interface StaffPoolProps {
   snapshotNotice?: string
 }
 
-export function StaffPool({
+const PCA_ROW_HEIGHT = 48
+const PCA_LIST_MAX_HEIGHT = 320
+
+function StaffPoolComponent({
   therapists,
   pcas,
   inactiveStaff = [],
@@ -329,6 +333,10 @@ export function StaffPool({
     return sortStaffByRank(filterStaffByFTE(visiblePCAs))
   }, [visiblePCAs, showFTEFilter, staffOverrides])
 
+  const shouldVirtualizePCAs =
+    rankFilter === 'pca' && visiblePCAsSorted.length * PCA_ROW_HEIGHT > PCA_LIST_MAX_HEIGHT
+  const pcaListHeight = Math.min(visiblePCAsSorted.length * PCA_ROW_HEIGHT, PCA_LIST_MAX_HEIGHT)
+
   const visibleBufferStaff = useMemo(() => {
     return rankFilter === 'therapist'
       ? bufferStaff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
@@ -405,6 +413,76 @@ export function StaffPool({
       [rank]: !prev[rank]
     }))
   }
+
+  const renderPcaCard = (pca: Staff) => {
+    const baseFTE = getBaseFTERemaining(pca.id, pca)
+    const trueFTE = getTrueFTERemaining(pca.id, pca)
+    const showFTE = (baseFTE > 0 && baseFTE < 1) || baseFTE === 0
+    // For buffer PCA, always show FTE if buffer_fte is set
+    const shouldShowFTE =
+      showFTE ||
+      (pca.status === 'buffer' && pca.buffer_fte !== undefined && pca.buffer_fte !== 1.0)
+    const isFloatingPCA = pca.floating === true
+    const isBufferStaff = pca.status === 'buffer'
+
+    // Enable drag for floating PCA (slot transfer will be validated in handleDragStart)
+    // Apply border-green-700 to non-floating PCA (same as schedule page)
+    // For buffer floating PCA, also show green border
+    const borderColor = !isFloatingPCA
+      ? 'border-green-700'
+      : pca.status === 'buffer'
+        ? 'border-green-700'
+        : undefined
+    const isInCorrectStep = currentStep === 'floating-pca'
+
+    const staffCard = (
+      <StaffCard
+        key={pca.id}
+        staff={pca}
+        useDragOverlay={true}
+        onEdit={(e) => onOpenStaffContextMenu?.(pca.id, e)}
+        onOpenContextMenu={(e) => onOpenStaffContextMenu?.(pca.id, e)}
+        fteRemaining={shouldShowFTE ? (isFloatingPCA ? trueFTE : baseFTE) : undefined}
+        showFTE={shouldShowFTE}
+        baseFTE={isFloatingPCA ? Math.max(0, Math.min(baseFTE, 1.0)) : undefined}
+        trueFTE={isFloatingPCA ? trueFTE : undefined}
+        isFloatingPCA={isFloatingPCA}
+        currentStep={currentStep}
+        initializedSteps={initializedSteps}
+        draggable={!disableDragging} // Disable drag when context menu is open
+        borderColor={borderColor}
+      />
+    )
+
+    // Add tooltip for regular floating PCA when not in correct step (buffer staff handled in BufferStaffPool)
+    if (!isBufferStaff && isFloatingPCA && !isInCorrectStep) {
+      return (
+        <DragValidationTooltip
+          key={pca.id}
+          staffId={pca.id}
+          content="Floating PCA slot dragging-&-allocating is only available in Step 3 only."
+        >
+          {staffCard}
+        </DragValidationTooltip>
+      )
+    }
+
+    return staffCard
+  }
+
+  type PcaRowProps = {
+    items: Staff[]
+    renderPcaCard: (pca: Staff) => ReactNode
+  }
+
+  const PcaRow = useCallback(
+    ({ index, style, items, renderPcaCard }: RowComponentProps<PcaRowProps>) => {
+      const pca = items[index]
+      if (!pca) return null
+      return <div style={style}>{renderPcaCard(pca)}</div>
+    },
+    []
+  )
 
   // If collapsed, show only a button to expand
   if (!isExpanded) {
@@ -662,61 +740,23 @@ export function StaffPool({
               <CardContent className="space-y-1 p-1">
                 {expandedRanks.PCA && (
                   <div className="space-y-1 ml-4">
-                    {visiblePCAsSorted.map((pca) => {
-                      const baseFTE = getBaseFTERemaining(pca.id, pca)
-                      const trueFTE = getTrueFTERemaining(pca.id, pca)
-                      const showFTE = (baseFTE > 0 && baseFTE < 1) || baseFTE === 0
-                      // For buffer PCA, always show FTE if buffer_fte is set
-                      const shouldShowFTE =
-                        showFTE ||
-                        (pca.status === 'buffer' && pca.buffer_fte !== undefined && pca.buffer_fte !== 1.0)
-                      const isFloatingPCA = pca.floating === true
-                      const isBufferStaff = pca.status === 'buffer'
-
-                      // Enable drag for floating PCA (slot transfer will be validated in handleDragStart)
-                      // Apply border-green-700 to non-floating PCA (same as schedule page)
-                      // For buffer floating PCA, also show green border
-                      const borderColor = !isFloatingPCA
-                        ? 'border-green-700'
-                        : pca.status === 'buffer'
-                          ? 'border-green-700'
-                          : undefined
-                      const isInCorrectStep = currentStep === 'floating-pca'
-
-                      const staffCard = (
-                        <StaffCard
-                          key={pca.id}
-                          staff={pca}
-                          useDragOverlay={true}
-                          onEdit={(e) => onOpenStaffContextMenu?.(pca.id, e)}
-                          onOpenContextMenu={(e) => onOpenStaffContextMenu?.(pca.id, e)}
-                          fteRemaining={shouldShowFTE ? (isFloatingPCA ? trueFTE : baseFTE) : undefined}
-                          showFTE={shouldShowFTE}
-                          baseFTE={isFloatingPCA ? Math.max(0, Math.min(baseFTE, 1.0)) : undefined}
-                          trueFTE={isFloatingPCA ? trueFTE : undefined}
-                          isFloatingPCA={isFloatingPCA}
-                          currentStep={currentStep}
-                          initializedSteps={initializedSteps}
-                          draggable={!disableDragging} // Disable drag when context menu is open
-                          borderColor={borderColor}
-                        />
-                      )
-
-                      // Add tooltip for regular floating PCA when not in correct step (buffer staff handled in BufferStaffPool)
-                      if (!isBufferStaff && isFloatingPCA && !isInCorrectStep) {
-                        return (
-                          <DragValidationTooltip
-                            key={pca.id}
-                            staffId={pca.id}
-                            content="Floating PCA slot dragging-&-allocating is only available in Step 3 only."
-                          >
-                            {staffCard}
-                          </DragValidationTooltip>
-                        )
-                      }
-
-                      return staffCard
-                    })}
+                    {shouldVirtualizePCAs ? (
+                      <List<PcaRowProps>
+                        defaultHeight={pcaListHeight}
+                        rowCount={visiblePCAsSorted.length}
+                        rowHeight={PCA_ROW_HEIGHT}
+                        rowComponent={PcaRow}
+                        rowProps={{ items: visiblePCAsSorted, renderPcaCard }}
+                        overscanCount={2}
+                        style={{ height: pcaListHeight, width: '100%' }}
+                        onWheel={(event) => {
+                          // Allow the virtualized list to handle its own scroll.
+                          event.stopPropagation()
+                        }}
+                      />
+                    ) : (
+                      visiblePCAsSorted.map((pca) => renderPcaCard(pca))
+                    )}
                   </div>
                 )}
               </CardContent>
@@ -787,4 +827,6 @@ export function StaffPool({
     </div>
   )
 }
+
+export const StaffPool = memo(StaffPoolComponent)
 

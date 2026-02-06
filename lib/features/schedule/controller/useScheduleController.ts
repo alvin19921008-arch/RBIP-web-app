@@ -1,6 +1,6 @@
 'use client'
 
-import { useReducer, useRef, type SetStateAction } from 'react'
+import { useMemo, useReducer, useRef, type SetStateAction } from 'react'
 import type { Team, LeaveType, Staff } from '@/types/staff'
 import type { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation'
 import type { Weekday } from '@/types/staff'
@@ -602,6 +602,69 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
     }
   }
 
+  const seedAllocationNotesForNewSchedule = async (args: {
+    supabase: any
+    date: Date
+    dateStr: string
+  }): Promise<Record<string, any>> => {
+    const { supabase, date, dateStr } = args
+    const seededStaffOverrides: Record<string, any> = {}
+
+    try {
+      const takeAllocationNotes = (raw: any) => {
+        const candidate = raw?.__allocationNotes
+        if (!candidate || typeof candidate !== 'object') return null
+        // If doc is missing/null, treat as "no notes"
+        if ((candidate as any)?.doc == null) return null
+        return candidate
+      }
+
+      // 1) Latest earlier schedule with notes (limit keeps it cheap)
+      const latestRes = await supabase
+        .from('daily_schedules')
+        .select('date, staff_overrides')
+        .lt('date', dateStr)
+        .order('date', { ascending: false })
+        .limit(60)
+
+      const latestRows = (latestRes.data || []) as any[]
+      for (const row of latestRows) {
+        const overrides = row?.staff_overrides
+        const allocationNotes = takeAllocationNotes(overrides)
+        if (allocationNotes) {
+          seededStaffOverrides.__allocationNotes = allocationNotes
+          break
+        }
+      }
+
+      // 2) If still missing, try previous calendar day (legacy behavior)
+      if (!seededStaffOverrides.__allocationNotes) {
+        const prevDate = new Date(date.getTime())
+        prevDate.setDate(prevDate.getDate() - 1)
+        const py = prevDate.getFullYear()
+        const pm = String(prevDate.getMonth() + 1).padStart(2, '0')
+        const pd = String(prevDate.getDate()).padStart(2, '0')
+        const prevDateStr = `${py}-${pm}-${pd}`
+
+        const prevRes = await supabase
+          .from('daily_schedules')
+          .select('staff_overrides')
+          .eq('date', prevDateStr)
+          .maybeSingle()
+
+        const prevOverrides = (prevRes.data as any)?.staff_overrides
+        const allocationNotes = takeAllocationNotes(prevOverrides)
+        if (allocationNotes) {
+          seededStaffOverrides.__allocationNotes = allocationNotes
+        }
+      }
+    } catch {
+      return {}
+    }
+
+    return seededStaffOverrides
+  }
+
   const loadScheduleForDate = async (
     date: Date,
     opts?: { prefetchOnly?: boolean }
@@ -736,7 +799,10 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
     let effectiveWorkflowState: WorkflowState | null = null
     if (!scheduleData) {
       const baselineSnapshotToSave = buildBaselineSnapshotFromCurrentState()
-      const globalHeadAtCreation = await fetchGlobalHeadAtCreation(supabase)
+      const [globalHeadAtCreation, seededStaffOverrides] = await Promise.all([
+        fetchGlobalHeadAtCreation(supabase),
+        seedAllocationNotesForNewSchedule({ supabase, date, dateStr }),
+      ])
       const baselineEnvelopeToSave = buildBaselineSnapshotEnvelope({
         data: baselineSnapshotToSave,
         source: 'save',
@@ -745,64 +811,6 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
       const initialWorkflowState: WorkflowState = { currentStep: 'leave-fte', completedSteps: [] }
       effectiveWorkflowState = initialWorkflowState
 
-      // Seed schedule-level allocation notes for brand-new schedules:
-      // - Prefer the most recent earlier schedule that has allocation notes (latest snapshot),
-      //   because users expect the notes board to carry over when jumping to a new date.
-      // - As a secondary fallback, try the previous calendar day.
-      let seededStaffOverrides: Record<string, any> = {}
-      try {
-        const takeAllocationNotes = (raw: any) => {
-          const candidate = raw?.__allocationNotes
-          if (!candidate || typeof candidate !== 'object') return null
-          // If doc is missing/null, treat as "no notes"
-          if ((candidate as any)?.doc == null) return null
-          return candidate
-        }
-
-        // 1) Latest earlier schedule with notes (limit keeps it cheap)
-        const latestRes = await supabase
-          .from('daily_schedules')
-          .select('date, staff_overrides')
-          .lt('date', dateStr)
-          .order('date', { ascending: false })
-          .limit(60)
-        innerTimer.stage('select:seed_notes_latest')
-
-        const latestRows = (latestRes.data || []) as any[]
-        for (const row of latestRows) {
-          const overrides = row?.staff_overrides
-          const allocationNotes = takeAllocationNotes(overrides)
-          if (allocationNotes) {
-            seededStaffOverrides.__allocationNotes = allocationNotes
-            break
-          }
-        }
-
-        // 2) If still missing, try previous calendar day (legacy behavior)
-        if (!seededStaffOverrides.__allocationNotes) {
-          const prevDate = new Date(date.getTime())
-          prevDate.setDate(prevDate.getDate() - 1)
-          const py = prevDate.getFullYear()
-          const pm = String(prevDate.getMonth() + 1).padStart(2, '0')
-          const pd = String(prevDate.getDate()).padStart(2, '0')
-          const prevDateStr = `${py}-${pm}-${pd}`
-
-          const prevRes = await supabase
-            .from('daily_schedules')
-            .select('staff_overrides')
-            .eq('date', prevDateStr)
-            .maybeSingle()
-          innerTimer.stage('select:seed_notes_prev_day')
-
-          const prevOverrides = (prevRes.data as any)?.staff_overrides
-          const allocationNotes = takeAllocationNotes(prevOverrides)
-          if (allocationNotes) {
-            seededStaffOverrides.__allocationNotes = allocationNotes
-          }
-        }
-      } catch {
-        // ignore
-      }
       createdSeededStaffOverrides = seededStaffOverrides
 
       const insertAttempt = await supabase
@@ -869,13 +877,41 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
     let scheduleCalcsRows: any[] = rpcUsed ? ((rpcBundle as any).calculations as any[]) : []
 
     if (!rpcUsed) {
-      // Non-RPC fallback: separate queries
-      const [tRes, pRes, bRes, cRes] = await Promise.all([
-        supabase.from('schedule_therapist_allocations').select('*').eq('schedule_id', scheduleId),
-        supabase.from('schedule_pca_allocations').select('*').eq('schedule_id', scheduleId),
-        supabase.from('schedule_bed_allocations').select('*').eq('schedule_id', scheduleId),
-        supabase.from('schedule_calculations').select('*').eq('schedule_id', scheduleId),
+      // Non-RPC fallback: separate queries (minimal selects with safe fallback)
+      batchedQueriesUsed = true
+      const therapistSelect =
+        'id,schedule_id,staff_id,team,fte_therapist,fte_remaining,slot_whole,slot1,slot2,slot3,slot4,leave_type,special_program_ids,is_substitute_team_head,spt_slot_display,is_manual_override,manual_override_note'
+      const pcaSelect =
+        'id,schedule_id,staff_id,team,fte_pca,fte_remaining,slot_assigned,slot_whole,slot1,slot2,slot3,slot4,leave_type,special_program_ids,invalid_slot'
+      const bedSelect = 'id,schedule_id,from_team,to_team,ward,num_beds,slot'
+      const calcSelect =
+        'id,schedule_id,team,designated_wards,total_beds_designated,total_beds,total_pt_on_duty,beds_per_pt,pt_per_team,beds_for_relieving,pca_on_duty,total_pt_per_pca,total_pt_per_team,average_pca_per_team,base_average_pca_per_team,expected_beds_per_team,required_pca_per_team'
+
+      const [tAttempt, pAttempt, bAttempt, cAttempt] = await Promise.all([
+        supabase.from('schedule_therapist_allocations').select(therapistSelect).eq('schedule_id', scheduleId),
+        supabase.from('schedule_pca_allocations').select(pcaSelect).eq('schedule_id', scheduleId),
+        supabase.from('schedule_bed_allocations').select(bedSelect).eq('schedule_id', scheduleId),
+        supabase.from('schedule_calculations').select(calcSelect).eq('schedule_id', scheduleId),
       ])
+
+      const needsColumnFallback = (error?: any) =>
+        !!error && (error.message?.includes('column') || error.code === '42703')
+
+      const [tRes, pRes, bRes, cRes] = await Promise.all([
+        needsColumnFallback((tAttempt as any)?.error)
+          ? supabase.from('schedule_therapist_allocations').select('*').eq('schedule_id', scheduleId)
+          : Promise.resolve(tAttempt),
+        needsColumnFallback((pAttempt as any)?.error)
+          ? supabase.from('schedule_pca_allocations').select('*').eq('schedule_id', scheduleId)
+          : Promise.resolve(pAttempt),
+        needsColumnFallback((bAttempt as any)?.error)
+          ? supabase.from('schedule_bed_allocations').select('*').eq('schedule_id', scheduleId)
+          : Promise.resolve(bAttempt),
+        needsColumnFallback((cAttempt as any)?.error)
+          ? supabase.from('schedule_calculations').select('*').eq('schedule_id', scheduleId)
+          : Promise.resolve(cAttempt),
+      ])
+
       innerTimer.stage('select:allocations')
       therapistAllocs = (tRes.data as any[]) || []
       pcaAllocs = (pRes.data as any[]) || []
@@ -1051,6 +1087,7 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
   }
 
   const state = domainState
+  const staffByIdMemo = useMemo(() => buildStaffByIdMap(staff || []), [staff])
 
   // Use saved allocations directly from database without regenerating.
   // IMPORTANT: This path should be cheap (no recalculation, no bed algorithm).
@@ -1061,7 +1098,7 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
   }) => {
     setLoading(true)
 
-    const staffById = buildStaffByIdMap(args.staffForLookup || staff || [])
+    const staffById = args.staffForLookup ? buildStaffByIdMap(args.staffForLookup || []) : staffByIdMemo
 
     const therapistByTeam = groupTherapistAllocationsByTeam({
       teams: TEAMS,
@@ -3287,7 +3324,7 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
         }
       })
 
-      const staffById = buildStaffByIdMap(staff || [])
+      const staffById = staffByIdMemo
       const pcaByTeam = groupPcaAllocationsByTeamWithSlotTeams({
         teams: TEAMS,
         allocations: (pcaResult as any).allocations || [],

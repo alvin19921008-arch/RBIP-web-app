@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import { Team } from '@/types/staff'
 import { TherapistAllocation, PCAAllocation, BedAllocation, ScheduleCalculations } from '@/types/schedule'
 import { Staff } from '@/types/staff'
@@ -22,7 +23,7 @@ interface TeamColumnProps {
   onEditStaff?: (staffId: string) => void
 }
 
-export function TeamColumn({
+function TeamColumnComponent({
   team,
   therapistAllocations,
   pcaAllocations,
@@ -59,4 +60,6 @@ export function TeamColumn({
     </div>
   )
 }
+
+export const TeamColumn = memo(TeamColumnComponent)
 

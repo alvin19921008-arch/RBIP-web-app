@@ -47,12 +47,9 @@ import { StaffContextMenu } from '@/components/allocation/StaffContextMenu'
 import { TeamPickerPopover } from '@/components/allocation/TeamPickerPopover'
 import { ConfirmPopover } from '@/components/allocation/ConfirmPopover'
 import { ScheduleOverlays } from '@/components/schedule/ScheduleOverlays'
-import { ScheduleCalendarPopover } from '@/components/schedule/ScheduleCalendarPopover'
-import { SnapshotDiffPopover } from '@/components/schedule/SnapshotDiffPopover'
 import { ScheduleHeaderBar } from '@/components/schedule/ScheduleHeaderBar'
 import { ScheduleDialogsLayer } from '@/components/schedule/ScheduleDialogsLayer'
 import { ScheduleMainLayout } from '@/components/schedule/ScheduleMainLayout'
-import { DevLeaveSimPanel } from '@/components/schedule/DevLeaveSimPanel'
 import { Save, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -107,6 +104,18 @@ const BufferStaffCreateDialog = dynamic(
   () => import('@/components/allocation/BufferStaffCreateDialog').then(m => m.BufferStaffCreateDialog),
   { ssr: false }
 )
+const ScheduleCalendarPopover = dynamic(
+  () => import('@/components/schedule/ScheduleCalendarPopover').then(m => m.ScheduleCalendarPopover),
+  { ssr: false }
+)
+const SnapshotDiffPopover = dynamic(
+  () => import('@/components/schedule/SnapshotDiffPopover').then(m => m.SnapshotDiffPopover),
+  { ssr: false }
+)
+const DevLeaveSimPanel = dynamic(
+  () => import('@/components/schedule/DevLeaveSimPanel').then(m => m.DevLeaveSimPanel),
+  { ssr: false }
+)
 const PCADedicatedScheduleTable = dynamic(
   () => import('@/components/allocation/PCADedicatedScheduleTable').then(m => m.PCADedicatedScheduleTable),
   { ssr: false }
@@ -118,6 +127,20 @@ const prefetchFloatingPCAConfigDialog = () => import('@/components/allocation/Fl
 const prefetchSpecialProgramOverrideDialog = () => import('@/components/allocation/SpecialProgramOverrideDialog')
 const prefetchSptFinalEditDialog = () => import('@/components/allocation/SptFinalEditDialog')
 const prefetchNonFloatingSubstitutionDialog = () => import('@/components/allocation/NonFloatingSubstitutionDialog')
+const prefetchScheduleCalendarPopover = () => import('@/components/schedule/ScheduleCalendarPopover')
+const prefetchSnapshotDiffPopover = () => import('@/components/schedule/SnapshotDiffPopover')
+const prefetchDevLeaveSimPanel = () => import('@/components/schedule/DevLeaveSimPanel')
+
+const STAFF_SELECT_FIELDS =
+  'id,name,rank,special_program,team,floating,floor_pca,status,buffer_fte,active'
+const WARDS_SELECT_FIELDS =
+  'id,name,total_beds,team_assignments,team_assignment_portions'
+const PCA_PREFS_SELECT_FIELDS =
+  'id,team,preferred_pca_ids,preferred_slots,avoid_gym_schedule,gym_schedule,floor_pca_selection'
+const SPECIAL_PROGRAM_SELECT_FIELDS =
+  'id,name,staff_ids,weekdays,slots,fte_subtraction,pca_required,therapist_preference_order,pca_preference_order'
+const SPT_ALLOC_SELECT_FIELDS =
+  'id,staff_id,specialty,teams,weekdays,slots,slot_modes,fte_addon,config_by_weekday,substitute_team_head,is_rbip_supervisor,active'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import {
@@ -1726,32 +1749,6 @@ function SchedulePageContent() {
     }
   }, [scheduleLoadedForDate])
 
-  // Code-split dialog prefetch: keep initial bundle smaller, but hide first-open latency.
-  useEffect(() => {
-    if (!scheduleLoadedForDate) return
-    let cancelled = false
-    const run = () => {
-      if (cancelled) return
-      prefetchStaffEditDialog().catch(() => {})
-      prefetchScheduleCopyWizard().catch(() => {})
-    }
-
-    const w = window as any
-    if (typeof w?.requestIdleCallback === 'function') {
-      const id = w.requestIdleCallback(run, { timeout: 2500 })
-      return () => {
-        cancelled = true
-        if (typeof w?.cancelIdleCallback === 'function') w.cancelIdleCallback(id)
-      }
-    }
-
-    const t = window.setTimeout(run, 800)
-    return () => {
-      cancelled = true
-      window.clearTimeout(t)
-    }
-  }, [scheduleLoadedForDate])
-
   // Background prefetch: warm cache for previous/next working day schedules (only if meaningful),
   // while avoiding accidental creation of new schedule rows.
   useEffect(() => {
@@ -1962,129 +1959,131 @@ function SchedulePageContent() {
   }
 
   const loadStaff = async () => {
-    const [activeRes, inactiveRes, bufferRes] = await Promise.all([
-      supabase
-        .from('staff')
-        .select('id,name,rank,special_program,team,floating,floor_pca,status,buffer_fte')
-        .eq('status', 'active')  // Load active staff for allocations
-        .order('rank', { ascending: true })
-        .order('name', { ascending: true }),
-      supabase
-        .from('staff')
-        .select('id,name,rank,special_program,team,floating,floor_pca,status,buffer_fte')
-        .eq('status', 'inactive')  // Load inactive staff for inactive pool
-        .order('rank', { ascending: true })
-        .order('name', { ascending: true }),
-      supabase
-        .from('staff')
-        .select('id,name,rank,special_program,team,floating,floor_pca,status,buffer_fte')
-        .eq('status', 'buffer')  // Load buffer staff
-        .order('rank', { ascending: true })
-        .order('name', { ascending: true })
-    ])
+    const attempt = await supabase
+      .from('staff')
+      .select(STAFF_SELECT_FIELDS)
+      .in('status', ['active', 'inactive', 'buffer'])
+      .order('rank', { ascending: true })
+      .order('name', { ascending: true })
 
-    if (activeRes.error) {
-      console.error('Error loading active staff:', activeRes.error)
-      
+    if (attempt.error) {
+      console.error('Error loading staff:', attempt.error)
+
       // Fallback: try loading with old 'active' column if status column doesn't exist
-      if (activeRes.error.message?.includes('column') || activeRes.error.code === 'PGRST116') {
-        const fallbackRes = await supabase
-          .from('staff')
-          .select('*')
-          .eq('active', true)
-          .order('rank', { ascending: true })
-          .order('name', { ascending: true })
-        
-        if (fallbackRes.data) {
-          // Map active boolean to status
-          const mappedData = fallbackRes.data.map(s => ({
+      if (attempt.error.message?.includes('column') || attempt.error.code === 'PGRST116' || attempt.error.code === '42703') {
+        const [activeRes, inactiveRes] = await Promise.all([
+          supabase
+            .from('staff')
+            .select('*')
+            .eq('active', true)
+            .order('rank', { ascending: true })
+            .order('name', { ascending: true }),
+          supabase
+            .from('staff')
+            .select('*')
+            .eq('active', false)
+            .order('rank', { ascending: true })
+            .order('name', { ascending: true }),
+        ])
+
+        if (activeRes.data) {
+          const mappedActive = activeRes.data.map(s => ({
             ...s,
-            status: s.active ? 'active' : 'inactive'
+            status: s.active ? 'active' : 'inactive',
           }))
-          setStaff(mappedData)
+          setStaff(mappedActive)
+        } else {
+          setStaff([])
         }
-      }
-    } else if (activeRes.data) {
-      setStaff(activeRes.data)
-    }
-    
-    if (inactiveRes.error) {
-      console.error('Error loading inactive staff:', inactiveRes.error)
-      
-      // Fallback for inactive
-      if (inactiveRes.error.message?.includes('column') || inactiveRes.error.code === 'PGRST116') {
-        const fallbackRes = await supabase
-          .from('staff')
-          .select('*')
-          .eq('active', false)
-          .order('rank', { ascending: true })
-          .order('name', { ascending: true })
-        
-        if (fallbackRes.data) {
-          const mappedData = fallbackRes.data.map(s => ({
+
+        if (inactiveRes.data) {
+          const mappedInactive = inactiveRes.data.map(s => ({
             ...s,
-            status: 'inactive'
+            status: 'inactive',
           }))
-          setInactiveStaff(mappedData)
+          setInactiveStaff(mappedInactive)
+        } else {
+          setInactiveStaff([])
         }
+
+        setBufferStaff([])
       }
-    } else if (inactiveRes.data) {
-      setInactiveStaff(inactiveRes.data)
+      return
     }
 
-    if (bufferRes.error) {
-      console.error('Error loading buffer staff:', bufferRes.error)
-      // Buffer staff is new, so no fallback needed
-      setBufferStaff([])
-    } else if (bufferRes.data) {
-      setBufferStaff(bufferRes.data)
-      // Include buffer staff in main staff array for allocation algorithms
-      setStaff(prev => [...(activeRes.data || []), ...(bufferRes.data || [])])
+    const allRows = (attempt.data || []) as Staff[]
+    const activeRows = allRows.filter((s) => s.status === 'active' || s.status == null)
+    const inactiveRows = allRows.filter((s) => s.status === 'inactive')
+    const bufferRows = allRows.filter((s) => s.status === 'buffer')
+
+    setInactiveStaff(inactiveRows)
+    setBufferStaff(bufferRows)
+
+    // Include buffer staff in main staff array for allocation algorithms
+    if (bufferRows.length > 0) {
+      setStaff([...activeRows, ...bufferRows])
     } else {
-      // If no buffer staff, just set active staff
-      if (activeRes.data) {
-        setStaff(activeRes.data)
-      }
+      setStaff(activeRows)
     }
   }
 
   const loadSpecialPrograms = async () => {
-    const { data } = await supabase
+    const attempt = await supabase
       .from('special_programs')
-      .select('id,name,staff_ids,weekdays,slots,fte_subtraction,pca_required,therapist_preference_order,pca_preference_order')
-    if (data) {
-      setSpecialPrograms(data as SpecialProgram[])
+      .select(SPECIAL_PROGRAM_SELECT_FIELDS)
+    let res = attempt
+    if (attempt.error && (attempt.error.message?.includes('column') || attempt.error.code === '42703')) {
+      res = await supabase.from('special_programs').select('*')
+    }
+    if (res.data) {
+      setSpecialPrograms(res.data as SpecialProgram[])
     }
   }
 
   const loadSPTAllocations = async () => {
     // Load all SPT allocations (active and inactive), filter in code
-    const { data, error } = await supabase.from('spt_allocations').select('*')
-    if (data) {
+    const attempt = await supabase.from('spt_allocations').select(SPT_ALLOC_SELECT_FIELDS)
+    let res = attempt
+    if (attempt.error && (attempt.error.message?.includes('column') || attempt.error.code === '42703')) {
+      res = await supabase.from('spt_allocations').select('*')
+    }
+    if (res.data) {
       // Filter for active allocations (active !== false, handles null as active)
-      const activeAllocations = data.filter(a => a.active !== false) as SPTAllocation[]
+      const activeAllocations = res.data.filter(a => (a as any).active !== false) as SPTAllocation[]
       setSptAllocations(activeAllocations)
     }
   }
 
 
   const loadWards = async () => {
-    const { data } = await supabase.from('wards').select('*')
-    if (data) {
-      setWards(data.map((ward: any) => ({
-        name: ward.name,
-        total_beds: ward.total_beds,
-        team_assignments: ward.team_assignments || {},
-        team_assignment_portions: ward.team_assignment_portions || {},
-      })))
+    const attempt = await supabase.from('wards').select(WARDS_SELECT_FIELDS)
+    let res = attempt
+    if (attempt.error?.message?.includes('team_assignment_portions')) {
+      res = await supabase.from('wards').select('id,name,total_beds,team_assignments')
+    } else if (attempt.error && (attempt.error.message?.includes('column') || attempt.error.code === '42703')) {
+      res = await supabase.from('wards').select('*')
+    }
+    if (res.data) {
+      setWards(
+        res.data.map((ward: any) => ({
+          name: ward.name,
+          total_beds: ward.total_beds,
+          team_assignments: ward.team_assignments || {},
+          team_assignment_portions: ward.team_assignment_portions || {},
+        }))
+      )
     }
   }
 
 
   const loadPCAPreferences = async () => {
-    const { data } = await supabase.from('pca_preferences').select('*')
-    if (data) {
-      setPcaPreferences(data as PCAPreference[])
+    const attempt = await supabase.from('pca_preferences').select(PCA_PREFS_SELECT_FIELDS)
+    let res = attempt
+    if (attempt.error && (attempt.error.message?.includes('column') || attempt.error.code === '42703')) {
+      res = await supabase.from('pca_preferences').select('*')
+    }
+    if (res.data) {
+      setPcaPreferences(res.data as PCAPreference[])
     }
   }
 
@@ -2407,31 +2406,65 @@ function SchedulePageContent() {
     })
   }
 
+  const therapistAllocationIndex = useMemo(() => {
+    const fteByStaffId = new Map<string, Partial<Record<Team, number>>>()
+    const leaveTypeByStaffId = new Map<string, LeaveType | null>()
+
+    for (const team of TEAMS) {
+      for (const alloc of therapistAllocations[team] || []) {
+        const staffId = alloc.staff_id
+        if (!staffId) continue
+        const entry = fteByStaffId.get(staffId) || {}
+        entry[team] = (entry[team] ?? 0) + (alloc.fte_therapist ?? 0)
+        fteByStaffId.set(staffId, entry)
+
+        if (!leaveTypeByStaffId.has(staffId)) {
+          const lt = (alloc.leave_type as any) ?? null
+          leaveTypeByStaffId.set(staffId, lt)
+        }
+      }
+    }
+
+    return { fteByStaffId, leaveTypeByStaffId }
+  }, [therapistAllocations])
+
   const getTherapistFteByTeam = (staffId: string): Partial<Record<Team, number>> => {
     const o = staffOverrides[staffId]
     if (o?.therapistTeamFTEByTeam && Object.keys(o.therapistTeamFTEByTeam).length > 0) {
       return { ...(o.therapistTeamFTEByTeam as any) }
     }
 
-    const byTeam: Partial<Record<Team, number>> = {}
-    for (const team of TEAMS) {
-      for (const alloc of therapistAllocations[team] || []) {
-        if (alloc.staff_id !== staffId) continue
-        byTeam[team] = (byTeam[team] ?? 0) + (alloc.fte_therapist ?? 0)
-      }
-    }
-    return byTeam
+    const fromAlloc = therapistAllocationIndex.fteByStaffId.get(staffId)
+    return fromAlloc ? { ...(fromAlloc as any) } : {}
   }
 
   const getTherapistLeaveType = (staffId: string): LeaveType | null => {
     const o = staffOverrides[staffId]
     if (o && 'leaveType' in o) return o.leaveType ?? null
-    for (const team of TEAMS) {
-      const alloc = therapistAllocations[team]?.find(a => a.staff_id === staffId)
-      if (alloc) return (alloc.leave_type as any) ?? null
-    }
-    return null
+    return therapistAllocationIndex.leaveTypeByStaffId.get(staffId) ?? null
   }
+
+  const wardsByTeam = useMemo(() => {
+    const byTeam = createEmptyTeamRecordFactory<any[]>(() => [])
+    for (const ward of wards || []) {
+      for (const team of TEAMS) {
+        if ((ward as any)?.team_assignments?.[team] > 0) {
+          byTeam[team].push(ward)
+        }
+      }
+    }
+    return byTeam
+  }, [wards])
+
+  const designatedWardsByTeam = useMemo(() => {
+    const byTeam = createEmptyTeamRecordFactory<string[]>(() => [])
+    for (const team of TEAMS) {
+      byTeam[team] = (wardsByTeam[team] || []).map((ward: any) => formatWardLabel(ward as any, team))
+    }
+    return byTeam
+  }, [wardsByTeam])
+
+  const totalBedsAllTeams = useMemo(() => wards.reduce((sum, ward) => sum + ward.total_beds, 0), [wards])
 
   const closeColorContextAction = () => {
     setColorContextAction({
@@ -2504,7 +2537,6 @@ function SchedulePageContent() {
     
     // Reuse the calculation logic from applySavedAllocations
     // CRITICAL: Use staffOverrides for current FTE values (not stale alloc.fte_therapist)
-    const totalBedsAllTeams = wards.reduce((sum, ward) => sum + ward.total_beds, 0)
     const totalPTOnDutyAllTeams = TEAMS.reduce((sum, team) => {
       return sum + therapistByTeam[team].reduce((teamSum, alloc) => {
         const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
@@ -2577,9 +2609,9 @@ function SchedulePageContent() {
     }
     
     TEAMS.forEach(team => {
-      const teamWards = wards.filter(w => w.team_assignments[team] && w.team_assignments[team] > 0)
+      const teamWards = wardsByTeam[team] || []
       const totalBedsDesignated = bedsDesignatedByTeam[team] ?? 0
-      const designatedWards = teamWards.map(w => formatWardLabel(w as any, team))
+      const designatedWards = designatedWardsByTeam[team] || []
       
       const teamTherapists = therapistByTeam[team]
       const ptPerTeam = teamTherapists.reduce((sum, alloc) => {
@@ -2646,7 +2678,20 @@ function SchedulePageContent() {
     })
     
     setCalculations(scheduleCalcs)
-  }, [pcaAllocations, therapistAllocations, staffOverrides, wards, bedCountsOverridesByTeam, selectedDate, specialPrograms, staff, currentStep])
+  }, [
+    pcaAllocations,
+    therapistAllocations,
+    staffOverrides,
+    wards,
+    wardsByTeam,
+    designatedWardsByTeam,
+    totalBedsAllTeams,
+    bedCountsOverridesByTeam,
+    selectedDate,
+    specialPrograms,
+    staff,
+    currentStep,
+  ])
 
   // Auto-recalculate when allocations change (e.g., after Step 2 algo)
   useEffect(() => {
@@ -3459,6 +3504,11 @@ function SchedulePageContent() {
     return { teamPCAAssigned, existingAllocations }
   }, [pcaAllocations, staffOverrides, staff])
 
+  const existingAllocationsForStep3 = useMemo(
+    () => recalculateFromCurrentState().existingAllocations,
+    [recalculateFromCurrentState]
+  )
+
   /**
    * Builds PCA data array from current staff and staffOverrides.
    * This ensures the algorithm uses the latest FTE values from user edits.
@@ -3526,6 +3576,11 @@ function SchedulePageContent() {
         }
       })
   }, [staff, staffOverrides])
+
+  const floatingPCAsForStep3 = useMemo(
+    () => buildPCADataFromCurrentState().filter((p) => p.floating),
+    [buildPCADataFromCurrentState]
+  )
 
   // ============================================================================
   // STEP-WISE ALLOCATION FUNCTIONS
@@ -4692,11 +4747,34 @@ function SchedulePageContent() {
   }
 
 
+  const staffOverridesKey = useMemo(() => JSON.stringify(staffOverrides), [staffOverrides])
+  const savedOverridesKey = useMemo(() => JSON.stringify(savedOverrides), [savedOverrides])
+  const bedCountsOverridesKey = useMemo(() => JSON.stringify(bedCountsOverridesByTeam), [bedCountsOverridesByTeam])
+  const savedBedCountsOverridesKey = useMemo(
+    () => JSON.stringify(savedBedCountsOverridesByTeam),
+    [savedBedCountsOverridesByTeam]
+  )
+  const bedRelievingNotesKey = useMemo(() => JSON.stringify(bedRelievingNotesByToTeam), [bedRelievingNotesByToTeam])
+  const savedBedRelievingNotesKey = useMemo(
+    () => JSON.stringify(savedBedRelievingNotesByToTeam),
+    [savedBedRelievingNotesByToTeam]
+  )
+
   // Check if there are unsaved changes (staff overrides or bed edits)
-  const hasUnsavedChanges =
-    JSON.stringify(staffOverrides) !== JSON.stringify(savedOverrides) ||
-    JSON.stringify(bedCountsOverridesByTeam) !== JSON.stringify(savedBedCountsOverridesByTeam) ||
-    JSON.stringify(bedRelievingNotesByToTeam) !== JSON.stringify(savedBedRelievingNotesByToTeam)
+  const hasUnsavedChanges = useMemo(
+    () =>
+      staffOverridesKey !== savedOverridesKey ||
+      bedCountsOverridesKey !== savedBedCountsOverridesKey ||
+      bedRelievingNotesKey !== savedBedRelievingNotesKey,
+    [
+      staffOverridesKey,
+      savedOverridesKey,
+      bedCountsOverridesKey,
+      savedBedCountsOverridesKey,
+      bedRelievingNotesKey,
+      savedBedRelievingNotesKey,
+    ]
+  )
 
   const beginDateTransition = (nextDate: Date, options?: { resetLoadedForDate?: boolean; useLocalTopBar?: boolean }) => {
     const useLocalTopBar = options?.useLocalTopBar ?? true
@@ -4916,6 +4994,43 @@ function SchedulePageContent() {
   // Header reminder icon should only show when snapshot settings differ from Global.
   const showSnapshotUiReminder = !!baselineSnapshot && snapshotDiffersFromGlobalHead
 
+  // Code-split dialog prefetch: keep initial bundle smaller, but hide first-open latency.
+  useEffect(() => {
+    if (!scheduleLoadedForDate) return
+    let cancelled = false
+    const run = () => {
+      if (cancelled) return
+      prefetchStaffEditDialog().catch(() => {})
+      prefetchScheduleCopyWizard().catch(() => {})
+      prefetchScheduleCalendarPopover().catch(() => {})
+      prefetchFloatingPCAConfigDialog().catch(() => {})
+      prefetchSpecialProgramOverrideDialog().catch(() => {})
+      prefetchSptFinalEditDialog().catch(() => {})
+      prefetchNonFloatingSubstitutionDialog().catch(() => {})
+      if (showSnapshotUiReminder) {
+        prefetchSnapshotDiffPopover().catch(() => {})
+      }
+      if (userRole === 'developer') {
+        prefetchDevLeaveSimPanel().catch(() => {})
+      }
+    }
+
+    const w = window as any
+    if (typeof w?.requestIdleCallback === 'function') {
+      const id = w.requestIdleCallback(run, { timeout: 2500 })
+      return () => {
+        cancelled = true
+        if (typeof w?.cancelIdleCallback === 'function') w.cancelIdleCallback(id)
+      }
+    }
+
+    const t = window.setTimeout(run, 800)
+    return () => {
+      cancelled = true
+      window.clearTimeout(t)
+    }
+  }, [scheduleLoadedForDate, showSnapshotUiReminder, userRole])
+
   // Drift notification (post-load; admin/developer only)
   const lastDriftToastKeyRef = useRef<string | null>(null)
   useEffect(() => {
@@ -5000,10 +5115,10 @@ function SchedulePageContent() {
               .from('staff')
               .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program'),
             supabase.from('team_settings').select('team,display_name'),
-            supabase.from('wards').select('id,name,total_beds,team_assignments,team_assignment_portions'),
-            supabase.from('pca_preferences').select('*'),
-            supabase.from('special_programs').select('*'),
-            supabase.from('spt_allocations').select('*'),
+            supabase.from('wards').select(WARDS_SELECT_FIELDS),
+            supabase.from('pca_preferences').select(PCA_PREFS_SELECT_FIELDS),
+            supabase.from('special_programs').select(SPECIAL_PROGRAM_SELECT_FIELDS),
+            supabase.from('spt_allocations').select(SPT_ALLOC_SELECT_FIELDS),
           ])
           if (cancelled) return
 
@@ -5014,13 +5129,31 @@ function SchedulePageContent() {
             if (cancelled) return
           }
 
+          let effectivePrefsRes: typeof prefsRes = prefsRes
+          if ((prefsRes as any)?.error?.message?.includes('column') || (prefsRes as any)?.error?.code === '42703') {
+            effectivePrefsRes = await supabase.from('pca_preferences').select('*')
+            if (cancelled) return
+          }
+
+          let effectiveProgramsRes: typeof programsRes = programsRes
+          if ((programsRes as any)?.error?.message?.includes('column') || (programsRes as any)?.error?.code === '42703') {
+            effectiveProgramsRes = await supabase.from('special_programs').select('*')
+            if (cancelled) return
+          }
+
+          let effectiveSptRes: typeof sptRes = sptRes
+          if ((sptRes as any)?.error?.message?.includes('column') || (sptRes as any)?.error?.code === '42703') {
+            effectiveSptRes = await supabase.from('spt_allocations').select('*')
+            if (cancelled) return
+          }
+
           const firstError =
             (staffRes as any).error ||
             (teamSettingsRes as any).error ||
             (effectiveWardsRes as any).error ||
-            (prefsRes as any).error ||
-            (programsRes as any).error ||
-            (sptRes as any).error
+            (effectivePrefsRes as any).error ||
+            (effectiveProgramsRes as any).error ||
+            (effectiveSptRes as any).error
           if (firstError) return
 
           const { diffBaselineSnapshot } = await import('@/lib/features/schedule/snapshotDiff')
@@ -5030,9 +5163,9 @@ function SchedulePageContent() {
               staff: (staffRes as any).data || [],
               teamSettings: (teamSettingsRes as any).data || [],
               wards: (effectiveWardsRes as any).data || [],
-              pcaPreferences: (prefsRes as any).data || [],
-              specialPrograms: (programsRes as any).data || [],
-              sptAllocations: (sptRes as any).data || [],
+              pcaPreferences: (effectivePrefsRes as any).data || [],
+              specialPrograms: (effectiveProgramsRes as any).data || [],
+              sptAllocations: (effectiveSptRes as any).data || [],
             },
           })
 
@@ -5125,10 +5258,10 @@ function SchedulePageContent() {
         supabase
           .from('staff')
           .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program'),
-        supabase.from('wards').select('id,name,total_beds,team_assignments,team_assignment_portions'),
-        supabase.from('pca_preferences').select('*'),
-        supabase.from('special_programs').select('*'),
-        supabase.from('spt_allocations').select('*'),
+        supabase.from('wards').select(WARDS_SELECT_FIELDS),
+        supabase.from('pca_preferences').select(PCA_PREFS_SELECT_FIELDS),
+        supabase.from('special_programs').select(SPECIAL_PROGRAM_SELECT_FIELDS),
+        supabase.from('spt_allocations').select(SPT_ALLOC_SELECT_FIELDS),
       ])
 
       // Back-compat: some DBs do not have wards.team_assignment_portions
@@ -5137,12 +5270,27 @@ function SchedulePageContent() {
         effectiveWardsRes = await supabase.from('wards').select('id,name,total_beds,team_assignments')
       }
 
+      let effectivePrefsRes: typeof prefsRes = prefsRes
+      if ((prefsRes as any)?.error?.message?.includes('column') || (prefsRes as any)?.error?.code === '42703') {
+        effectivePrefsRes = await supabase.from('pca_preferences').select('*')
+      }
+
+      let effectiveProgramsRes: typeof programsRes = programsRes
+      if ((programsRes as any)?.error?.message?.includes('column') || (programsRes as any)?.error?.code === '42703') {
+        effectiveProgramsRes = await supabase.from('special_programs').select('*')
+      }
+
+      let effectiveSptRes: typeof sptRes = sptRes
+      if ((sptRes as any)?.error?.message?.includes('column') || (sptRes as any)?.error?.code === '42703') {
+        effectiveSptRes = await supabase.from('spt_allocations').select('*')
+      }
+
       const firstError =
         (staffRes as any).error ||
         (effectiveWardsRes as any).error ||
-        (prefsRes as any).error ||
-        (programsRes as any).error ||
-        (sptRes as any).error
+        (effectivePrefsRes as any).error ||
+        (effectiveProgramsRes as any).error ||
+        (effectiveSptRes as any).error
 
       if (firstError) {
         if (cancelled) return
@@ -5157,9 +5305,9 @@ function SchedulePageContent() {
         live: {
           staff: (staffRes as any).data || [],
           wards: (effectiveWardsRes as any).data || [],
-          pcaPreferences: (prefsRes as any).data || [],
-          specialPrograms: (programsRes as any).data || [],
-          sptAllocations: (sptRes as any).data || [],
+          pcaPreferences: (effectivePrefsRes as any).data || [],
+          specialPrograms: (effectiveProgramsRes as any).data || [],
+          sptAllocations: (effectiveSptRes as any).data || [],
         },
       })
 
@@ -8777,18 +8925,20 @@ function SchedulePageContent() {
             </>
           }
         />
-        <SnapshotDiffPopover
-          open={showSnapshotUiReminder && snapshotDiffOpen}
-          panelRef={snapshotDiffPanelRef}
-          position={snapshotDiffPos}
-          selectedDate={selectedDate}
-          loading={snapshotDiffLoading}
-          error={snapshotDiffError}
-          result={snapshotDiffResult}
-          onClose={() => setSnapshotDiffOpen(false)}
-        />
+        {showSnapshotUiReminder && snapshotDiffOpen ? (
+          <SnapshotDiffPopover
+            open={snapshotDiffOpen}
+            panelRef={snapshotDiffPanelRef}
+            position={snapshotDiffPos}
+            selectedDate={selectedDate}
+            loading={snapshotDiffLoading}
+            error={snapshotDiffError}
+            result={snapshotDiffResult}
+            onClose={() => setSnapshotDiffOpen(false)}
+          />
+        ) : null}
 
-        {userRole === 'developer' ? (
+        {userRole === 'developer' && devLeaveSimOpen ? (
           <DevLeaveSimPanel
             open={devLeaveSimOpen}
             onOpenChange={setDevLeaveSimOpen}
@@ -10042,20 +10192,22 @@ function SchedulePageContent() {
           )
         })()}
           tieBreakDialog={
-        <TieBreakDialog
-          open={tieBreakDialogOpen}
-          teams={tieBreakTeams}
-          pendingFTE={tieBreakPendingFTE}
-          onSelect={(team) => {
-            const resolver = tieBreakResolverRef.current
-            if (resolver) {
-              resolver(team)
-              setTieBreakResolver(null)
-              tieBreakResolverRef.current = null
-            }
-            setTieBreakDialogOpen(false)
-          }}
-        />
+            tieBreakDialogOpen ? (
+              <TieBreakDialog
+                open={tieBreakDialogOpen}
+                teams={tieBreakTeams}
+                pendingFTE={tieBreakPendingFTE}
+                onSelect={(team) => {
+                  const resolver = tieBreakResolverRef.current
+                  if (resolver) {
+                    resolver(team)
+                    setTieBreakResolver(null)
+                    tieBreakResolverRef.current = null
+                  }
+                  setTieBreakDialogOpen(false)
+                }}
+              />
+            ) : null
           }
           copyWizardDialog={
             copyWizardConfig ? (
@@ -10080,164 +10232,172 @@ function SchedulePageContent() {
             ) : null
           }
           floatingPcaDialog={
-        <FloatingPCAConfigDialog
-          open={floatingPCAConfigOpen}
-          initialPendingFTE={pendingPCAFTEPerTeam}
-          pcaPreferences={pcaPreferences}
-          floatingPCAs={buildPCADataFromCurrentState().filter(p => p.floating)}
-          existingAllocations={recalculateFromCurrentState().existingAllocations}
-          specialPrograms={specialPrograms}
-          bufferStaff={bufferStaff}
-          staffOverrides={staffOverrides}
-          onSave={handleFloatingPCAConfigSave}
-          onCancel={handleFloatingPCAConfigCancel}
-        />
+            floatingPCAConfigOpen ? (
+              <FloatingPCAConfigDialog
+                open={floatingPCAConfigOpen}
+                initialPendingFTE={pendingPCAFTEPerTeam}
+                pcaPreferences={pcaPreferences}
+                floatingPCAs={floatingPCAsForStep3}
+                existingAllocations={existingAllocationsForStep3}
+                specialPrograms={specialPrograms}
+                bufferStaff={bufferStaff}
+                staffOverrides={staffOverrides}
+                onSave={handleFloatingPCAConfigSave}
+                onCancel={handleFloatingPCAConfigCancel}
+              />
+            ) : null
           }
           specialProgramOverrideDialog={
-        <SpecialProgramOverrideDialog
-          open={showSpecialProgramOverrideDialog}
-          onOpenChange={(open) => {
-            setShowSpecialProgramOverrideDialog(open)
-            if (!open) {
-              const resolver = specialProgramOverrideResolverRef.current
-              if (resolver) {
-                resolver(null)
-                setSpecialProgramOverrideResolver(null)
-                specialProgramOverrideResolverRef.current = null
-              }
-            }
-          }}
-          specialPrograms={specialPrograms}
-          allStaff={Array.from(new Map([...staff, ...inactiveStaff].map(s => [s.id, s])).values())}
-          sptBaseFteByStaffId={sptBaseFteByStaffId}
-          staffOverrides={staffOverrides}
-          weekday={getWeekday(selectedDate)}
-          onConfirm={(overrides) => {
-            const resolver = specialProgramOverrideResolverRef.current
-            if (resolver) {
-              resolver(overrides)
-              setSpecialProgramOverrideResolver(null)
-              specialProgramOverrideResolverRef.current = null
-            }
-            setShowSpecialProgramOverrideDialog(false)
-          }}
-          onSkip={() => {
-            const resolver = specialProgramOverrideResolverRef.current
-            if (resolver) {
-              resolver({})
-              setSpecialProgramOverrideResolver(null)
-              specialProgramOverrideResolverRef.current = null
-            }
-            setShowSpecialProgramOverrideDialog(false)
-          }}
-          onStaffRefresh={() => {
-            return (async () => {
-              try {
-                await loadStaff()
-                await loadSPTAllocations()
-              } catch (e) {
-                console.error('Error refreshing staff after buffer creation:', e)
-              }
-            })()
-          }}
-        />
+            showSpecialProgramOverrideDialog ? (
+              <SpecialProgramOverrideDialog
+                open={showSpecialProgramOverrideDialog}
+                onOpenChange={(open) => {
+                  setShowSpecialProgramOverrideDialog(open)
+                  if (!open) {
+                    const resolver = specialProgramOverrideResolverRef.current
+                    if (resolver) {
+                      resolver(null)
+                      setSpecialProgramOverrideResolver(null)
+                      specialProgramOverrideResolverRef.current = null
+                    }
+                  }
+                }}
+                specialPrograms={specialPrograms}
+                allStaff={Array.from(new Map([...staff, ...inactiveStaff].map(s => [s.id, s])).values())}
+                sptBaseFteByStaffId={sptBaseFteByStaffId}
+                staffOverrides={staffOverrides}
+                weekday={getWeekday(selectedDate)}
+                onConfirm={(overrides) => {
+                  const resolver = specialProgramOverrideResolverRef.current
+                  if (resolver) {
+                    resolver(overrides)
+                    setSpecialProgramOverrideResolver(null)
+                    specialProgramOverrideResolverRef.current = null
+                  }
+                  setShowSpecialProgramOverrideDialog(false)
+                }}
+                onSkip={() => {
+                  const resolver = specialProgramOverrideResolverRef.current
+                  if (resolver) {
+                    resolver({})
+                    setSpecialProgramOverrideResolver(null)
+                    specialProgramOverrideResolverRef.current = null
+                  }
+                  setShowSpecialProgramOverrideDialog(false)
+                }}
+                onStaffRefresh={() => {
+                  return (async () => {
+                    try {
+                      await loadStaff()
+                      await loadSPTAllocations()
+                    } catch (e) {
+                      console.error('Error refreshing staff after buffer creation:', e)
+                    }
+                  })()
+                }}
+              />
+            ) : null
           }
           sptFinalEditDialog={
-        <SptFinalEditDialog
-          open={showSptFinalEditDialog}
-          onOpenChange={(open) => {
-            setShowSptFinalEditDialog(open)
-            if (!open) {
-              const resolver = sptFinalEditResolverRef.current
-              if (resolver) {
-                resolver(null)
-                setSptFinalEditResolver(null)
-                sptFinalEditResolverRef.current = null
-              }
-            }
-          }}
-          weekday={getWeekday(selectedDate)}
-          sptStaff={sptStaffForStep22}
-          sptWeekdayByStaffId={sptWeekdayByStaffId}
-          sptTeamsByStaffId={sptTeamsByStaffIdForStep22}
-          staffOverrides={staffOverrides as any}
-          currentAllocationByStaffId={currentSptAllocationByStaffIdForStep22}
-          ptPerTeamByTeam={ptPerTeamByTeamForStep22}
-          onConfirm={(updates) => {
-            const resolver = sptFinalEditResolverRef.current
-            if (resolver) {
-              resolver(updates as any)
-              setSptFinalEditResolver(null)
-              sptFinalEditResolverRef.current = null
-            }
-            setShowSptFinalEditDialog(false)
-          }}
-          onSkip={() => {
-            const resolver = sptFinalEditResolverRef.current
-            if (resolver) {
-              resolver({})
-              setSptFinalEditResolver(null)
-              sptFinalEditResolverRef.current = null
-            }
-            setShowSptFinalEditDialog(false)
-          }}
-          onBack={() => {
-            const resolver = sptFinalEditResolverRef.current
-            if (resolver) {
-              resolver({ __nav: 'back' } as any)
-              setSptFinalEditResolver(null)
-              sptFinalEditResolverRef.current = null
-            }
-            setShowSptFinalEditDialog(false)
-          }}
-        />
+            showSptFinalEditDialog ? (
+              <SptFinalEditDialog
+                open={showSptFinalEditDialog}
+                onOpenChange={(open) => {
+                  setShowSptFinalEditDialog(open)
+                  if (!open) {
+                    const resolver = sptFinalEditResolverRef.current
+                    if (resolver) {
+                      resolver(null)
+                      setSptFinalEditResolver(null)
+                      sptFinalEditResolverRef.current = null
+                    }
+                  }
+                }}
+                weekday={getWeekday(selectedDate)}
+                sptStaff={sptStaffForStep22}
+                sptWeekdayByStaffId={sptWeekdayByStaffId}
+                sptTeamsByStaffId={sptTeamsByStaffIdForStep22}
+                staffOverrides={staffOverrides as any}
+                currentAllocationByStaffId={currentSptAllocationByStaffIdForStep22}
+                ptPerTeamByTeam={ptPerTeamByTeamForStep22}
+                onConfirm={(updates) => {
+                  const resolver = sptFinalEditResolverRef.current
+                  if (resolver) {
+                    resolver(updates as any)
+                    setSptFinalEditResolver(null)
+                    sptFinalEditResolverRef.current = null
+                  }
+                  setShowSptFinalEditDialog(false)
+                }}
+                onSkip={() => {
+                  const resolver = sptFinalEditResolverRef.current
+                  if (resolver) {
+                    resolver({})
+                    setSptFinalEditResolver(null)
+                    sptFinalEditResolverRef.current = null
+                  }
+                  setShowSptFinalEditDialog(false)
+                }}
+                onBack={() => {
+                  const resolver = sptFinalEditResolverRef.current
+                  if (resolver) {
+                    resolver({ __nav: 'back' } as any)
+                    setSptFinalEditResolver(null)
+                    sptFinalEditResolverRef.current = null
+                  }
+                  setShowSptFinalEditDialog(false)
+                }}
+              />
+            ) : null
           }
           nonFloatingSubstitutionDialog={
-            substitutionWizardData ? (
-          <NonFloatingSubstitutionDialog
-            open={substitutionWizardOpen}
-            teams={substitutionWizardData.teams}
-            substitutionsByTeam={substitutionWizardData.substitutionsByTeam}
-            isWizardMode={substitutionWizardData.isWizardMode}
-            initialSelections={substitutionWizardData.initialSelections}
-            allStaff={staff}
-            pcaPreferences={pcaPreferences}
-            specialPrograms={specialPrograms}
-            weekday={getWeekday(selectedDate)}
+            substitutionWizardData && substitutionWizardOpen ? (
+              <NonFloatingSubstitutionDialog
+                open={substitutionWizardOpen}
+                teams={substitutionWizardData.teams}
+                substitutionsByTeam={substitutionWizardData.substitutionsByTeam}
+                isWizardMode={substitutionWizardData.isWizardMode}
+                initialSelections={substitutionWizardData.initialSelections}
+                allStaff={staff}
+                pcaPreferences={pcaPreferences}
+                specialPrograms={specialPrograms}
+                weekday={getWeekday(selectedDate)}
                 currentAllocations={[]}
-            staffOverrides={staffOverrides}
-            onConfirm={handleSubstitutionWizardConfirm}
-            onCancel={handleSubstitutionWizardCancel}
-            onSkip={handleSubstitutionWizardSkip}
-            onBack={
-              substitutionWizardData.allowBackToSpecialPrograms
-                ? () => {
-                    if (substitutionWizardResolverRef.current) {
-                      ;(substitutionWizardResolverRef.current as any)({}, { back: true })
-                      substitutionWizardResolverRef.current = null
-                    }
-                    setSubstitutionWizardOpen(false)
-                    setSubstitutionWizardData(null)
-                  }
-                : undefined
-            }
-          />
+                staffOverrides={staffOverrides}
+                onConfirm={handleSubstitutionWizardConfirm}
+                onCancel={handleSubstitutionWizardCancel}
+                onSkip={handleSubstitutionWizardSkip}
+                onBack={
+                  substitutionWizardData.allowBackToSpecialPrograms
+                    ? () => {
+                        if (substitutionWizardResolverRef.current) {
+                          ;(substitutionWizardResolverRef.current as any)({}, { back: true })
+                          substitutionWizardResolverRef.current = null
+                        }
+                        setSubstitutionWizardOpen(false)
+                        setSubstitutionWizardData(null)
+                      }
+                    : undefined
+                }
+              />
             ) : null
           }
           calendarPopover={
-        <ScheduleCalendarPopover
-          open={calendarOpen}
-          selectedDate={selectedDate}
-          datesWithData={datesWithData}
-          holidays={holidays}
-          onClose={() => setCalendarOpen(false)}
-          onDateSelect={(date) => {
-            beginDateTransition(date)
-            setCalendarOpen(false)
-          }}
-          anchorRef={calendarButtonRef}
-          popoverRef={calendarPopoverRef}
-            />
+            calendarOpen ? (
+              <ScheduleCalendarPopover
+                open={calendarOpen}
+                selectedDate={selectedDate}
+                datesWithData={datesWithData}
+                holidays={holidays}
+                onClose={() => setCalendarOpen(false)}
+                onDateSelect={(date) => {
+                  beginDateTransition(date)
+                  setCalendarOpen(false)
+                }}
+                anchorRef={calendarButtonRef}
+                popoverRef={calendarPopoverRef}
+              />
+            ) : null
           }
         />
       </div>
