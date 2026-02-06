@@ -43,9 +43,36 @@ interface PCABlockProps {
   pendingPcaFte?: number
   /** Total remaining floating PCA capacity (fte_remaining sum) across the pool, if known. */
   floatingPoolRemainingFte?: number
+
+  /** When true, disables drag/drop and edit affordances (for reference panes). */
+  readOnly?: boolean
+  /** Optional prefix to avoid droppable id collisions across panes. */
+  droppableIdPrefix?: string
 }
 
-export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averagePCAPerTeam, baseAveragePCAPerTeam, specialPrograms = [], allPCAAllocations = [], staffOverrides = {}, allPCAStaff = [], currentStep = 'leave-fte', step2Initialized = false, initializedSteps, weekday, externalHover = false, allocationLog, step3OrderPosition, pendingPcaFte, floatingPoolRemainingFte }: PCABlockProps) {
+export function PCABlock({
+  team,
+  allocations,
+  onEditStaff,
+  requiredPCA,
+  averagePCAPerTeam,
+  baseAveragePCAPerTeam,
+  specialPrograms = [],
+  allPCAAllocations = [],
+  staffOverrides = {},
+  allPCAStaff = [],
+  currentStep = 'leave-fte',
+  step2Initialized = false,
+  initializedSteps,
+  weekday,
+  externalHover = false,
+  allocationLog,
+  step3OrderPosition,
+  pendingPcaFte,
+  floatingPoolRemainingFte,
+  readOnly = false,
+  droppableIdPrefix,
+}: PCABlockProps) {
   // Only show substitution styling AFTER Step 2 algorithm has run (not just when navigating to Step 2)
   const showSubstitutionStyling = currentStep !== 'leave-fte' && step2Initialized
   
@@ -56,21 +83,22 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
   }, [specialPrograms])
   
   const { setNodeRef, isOver } = useDroppable({
-    id: `pca-${team}`,
+    id: `${droppableIdPrefix ?? ''}pca-${team}`,
     data: { type: 'pca', team },
+    disabled: readOnly,
   })
   
   const { active } = useDndContext()
   
   // Only show drag zone border if a PCA is being dragged
-  const isPCADragging = active?.data?.current?.staff 
+  const isPCADragging = !readOnly && active?.data?.current?.staff 
     ? active.data.current.staff.rank === 'PCA'
     : false
   
   // Combine dnd-kit hover and external hover.
   // - dnd-kit hover should only apply when a PCA is being dragged via dnd-kit
   // - externalHover is used for "drag from slot picker" mode (not dnd-kit), so allow it directly
-  const showHoverEffect = (isOver && isPCADragging) || externalHover
+  const showHoverEffect = !readOnly && ((isOver && isPCADragging) || externalHover)
 
   // Filter out staff with FTE = 0 (they should only appear in leave block)
   // Check both allocation FTE and current override FTE (in case allocations haven't been regenerated)
@@ -1077,16 +1105,18 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                 allocation={allocation as any}
                 fteRemaining={undefined}
                 slotDisplay={slotDisplayNode}
-                onEdit={(e) => onEditStaff?.(allocation.staff_id, e)}
-                onOpenContextMenu={(e) => onEditStaff?.(allocation.staff_id, e)}
+                onEdit={readOnly ? undefined : (e) => onEditStaff?.(allocation.staff_id, e)}
+                onOpenContextMenu={readOnly ? undefined : (e) => onEditStaff?.(allocation.staff_id, e)}
                 fillColorClassName={(staffOverrides as any)?.[allocation.staff_id]?.cardColorByTeam?.[team]}
                 borderColor={borderColor}
                 nameColor={nameStyle}
                 dragTeam={team}
-                draggable={true} // Always allow dragging (will snap back if not in correct step)
+                draggable={!readOnly} // Reference panes should never initiate drags
               />
             )
             
+            if (readOnly) return staffCard
+
             // Add tooltip for regular floating PCA when not in correct step
             // Use composite ID (staffId::team) to match the draggable ID
             if (isFloatingPCA && !isInCorrectStep) {
@@ -1160,8 +1190,8 @@ export function PCABlock({ team, allocations, onEditStaff, requiredPCA, averageP
                     <span className="text-red-600 whitespace-nowrap">{specialProgramLabel}</span>
                   ) : null
                 }
-                onEdit={(e) => onEditStaff?.(allocation.staff_id, e)}
-                onOpenContextMenu={(e) => onEditStaff?.(allocation.staff_id, e)}
+                onEdit={readOnly ? undefined : (e) => onEditStaff?.(allocation.staff_id, e)}
+                onOpenContextMenu={readOnly ? undefined : (e) => onEditStaff?.(allocation.staff_id, e)}
                 fillColorClassName={(staffOverrides as any)?.[allocation.staff_id]?.cardColorByTeam?.[team]}
                 nameColor={nameColor}
                 borderColor={borderColor}

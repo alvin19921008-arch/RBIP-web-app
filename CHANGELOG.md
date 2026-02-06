@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive historical changelog and reference for the RBIP Duty List web application. It captures detailed project history, data architecture, code rules, and key patterns. For essential patterns that are auto-loaded, see `.cursor/rules/`. For quick context, see `CONTEXT.md`.
 
-**Last Updated**: 2026-02-05
-**Latest Phase**: Phase 37 - Schedule Performance Optimizations (Stage 3D + Step 3.1 Preview)
+**Last Updated**: 2026-02-06
+**Latest Phase**: Phase 38 - Schedule Split Screen Viewing & Viewing Mode
 **Note**: Legacy development phases (1-20) have been moved to `Journal_legacy.md` for reference.
 **Optimization Note**: Essential patterns have been extracted to `.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc` for automatic loading. This changelog is read on-demand for historical context.  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
@@ -220,6 +220,20 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
   - Prefetches calendar, Step 2.0/2.1/2.2, Step 3.1, snapshot diff (when needed), and dev leave sim (developer-only) to keep first-open latency low.
 - ✅ **Load diagnostics clarity**
   - Non-RPC fallback now records `batchedQueriesUsed` for load diagnostics; RPC remains preferred when available.
+
+## Phase 38: Schedule Split Screen Viewing & Viewing Mode
+
+- ✅ **Schedule viewing mode**
+  - Added a View toggle to hide workflow-heavy UI and enforce read-only behavior with smooth transitions.
+- ✅ **In-page split screen (reference vs main)**
+  - Added a Split toggle to show a read-only reference schedule (Blocks 1–6) alongside the editable main schedule.
+  - Resizable divider with side-by-side and top-bottom layouts; persists last-used settings (direction, ratio, reference date, collapsed state) in session storage.
+  - Reference pane supports date selection and retracting to a thin strip to maximize editing space.
+- ✅ **Split UX refinements**
+  - Auto-collapse step flow in split mode (with an expand toggle), improved scrolling behavior, and clearer visual distinction between panes.
+- ✅ **Bug fixes**
+  - Fixed reference pane stuck loading (hydration state not finalizing).
+  - Fixed split mode exit/re-entry and retraction behavior.
 
 ## Phase 36: Step 2.2 SPT Final Edit + Step 2 Clear/Override Reliability
 

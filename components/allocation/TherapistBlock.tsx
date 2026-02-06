@@ -29,18 +29,34 @@ interface TherapistBlockProps {
     amPmSelection?: 'AM' | 'PM'
     // ... other fields
   }>
+  /** When true, disables drag/drop and edit affordances (for reference panes). */
+  readOnly?: boolean
+  /** Optional prefix to avoid droppable id collisions across panes. */
+  droppableIdPrefix?: string
 }
 
-export const TherapistBlock = memo(function TherapistBlock({ team, allocations, specialPrograms = [], weekday, onEditStaff, currentStep, staffOverrides, sptWeekdayByStaffId }: TherapistBlockProps) {
+export const TherapistBlock = memo(function TherapistBlock({
+  team,
+  allocations,
+  specialPrograms = [],
+  weekday,
+  onEditStaff,
+  currentStep,
+  staffOverrides,
+  sptWeekdayByStaffId,
+  readOnly = false,
+  droppableIdPrefix,
+}: TherapistBlockProps) {
   const { setNodeRef, isOver } = useDroppable({
-    id: `therapist-${team}`,
+    id: `${droppableIdPrefix ?? ''}therapist-${team}`,
     data: { type: 'therapist', team },
+    disabled: readOnly,
   })
   
   const { active } = useDndContext()
   
   // Only show drag zone border if a therapist is being dragged
-  const isTherapistDragging = active?.data?.current?.staff 
+  const isTherapistDragging = !readOnly && active?.data?.current?.staff 
     ? ['SPT', 'APPT', 'RPT'].includes(active.data.current.staff.rank)
     : false
   
@@ -243,17 +259,19 @@ export const TherapistBlock = memo(function TherapistBlock({ team, allocations, 
                     </span>
                   ) : undefined
                 }
-                onEdit={(e) => onEditStaff?.(allocation.staff_id, e)}
-                onOpenContextMenu={(e) => onEditStaff?.(allocation.staff_id, e)}
+                onEdit={readOnly ? undefined : (e) => onEditStaff?.(allocation.staff_id, e)}
+                onOpenContextMenu={readOnly ? undefined : (e) => onEditStaff?.(allocation.staff_id, e)}
                 fillColorClassName={cn(
                   (staffOverrides as any)?.[allocation.staff_id]?.cardColorByTeam?.[team],
                   isSupervisoryNoDuty && 'bg-muted/70 hover:bg-muted/70'
                 )}
-                draggable={true} // Always allow dragging (will snap back if not in correct step)
+                draggable={!readOnly} // Reference panes should never initiate drags
                 dragTeam={team}
               />
             )
             
+            if (readOnly) return staffCard
+
             // For fixed-team staff (APPT, RPT), show warning tooltip when dragging (if in correct step)
             // Use composite ID (staffId::team) to match the draggable ID
             if (isFixedTeamStaff && isInCorrectStep) {

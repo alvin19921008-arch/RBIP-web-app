@@ -50,7 +50,10 @@ import { ScheduleOverlays } from '@/components/schedule/ScheduleOverlays'
 import { ScheduleHeaderBar } from '@/components/schedule/ScheduleHeaderBar'
 import { ScheduleDialogsLayer } from '@/components/schedule/ScheduleDialogsLayer'
 import { ScheduleMainLayout } from '@/components/schedule/ScheduleMainLayout'
-import { Save, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX } from 'lucide-react'
+import { SplitPane } from '@/components/ui/SplitPane'
+import { ReferenceSchedulePane } from '@/components/schedule/ReferenceSchedulePane'
+import { ScheduleBlocks1To6 } from '@/components/schedule/ScheduleBlocks1To6'
+import { Save, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -108,10 +111,6 @@ const ScheduleCalendarPopover = dynamic(
   () => import('@/components/schedule/ScheduleCalendarPopover').then(m => m.ScheduleCalendarPopover),
   { ssr: false }
 )
-const SnapshotDiffPopover = dynamic(
-  () => import('@/components/schedule/SnapshotDiffPopover').then(m => m.SnapshotDiffPopover),
-  { ssr: false }
-)
 const DevLeaveSimPanel = dynamic(
   () => import('@/components/schedule/DevLeaveSimPanel').then(m => m.DevLeaveSimPanel),
   { ssr: false }
@@ -128,7 +127,6 @@ const prefetchSpecialProgramOverrideDialog = () => import('@/components/allocati
 const prefetchSptFinalEditDialog = () => import('@/components/allocation/SptFinalEditDialog')
 const prefetchNonFloatingSubstitutionDialog = () => import('@/components/allocation/NonFloatingSubstitutionDialog')
 const prefetchScheduleCalendarPopover = () => import('@/components/schedule/ScheduleCalendarPopover')
-const prefetchSnapshotDiffPopover = () => import('@/components/schedule/SnapshotDiffPopover')
 const prefetchDevLeaveSimPanel = () => import('@/components/schedule/DevLeaveSimPanel')
 
 const STAFF_SELECT_FIELDS =
@@ -161,8 +159,6 @@ import { useScheduleDateParam } from '@/lib/hooks/useScheduleDateParam'
 import { resetStep2OverridesForAlgoEntry } from '@/lib/features/schedule/stepReset'
 import { applySptFinalEditToTherapistAllocations } from '@/lib/features/schedule/sptFinalEdit'
 import type { SnapshotDiffResult } from '@/lib/features/schedule/snapshotDiff'
-import { useAnchoredPopoverPosition } from '@/lib/hooks/useAnchoredPopoverPosition'
-import { useOnClickOutside } from '@/lib/hooks/useOnClickOutside'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
@@ -178,6 +174,18 @@ import type { PCAAllocationErrors } from '@/lib/features/schedule/controller/use
 function SchedulePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const isViewingMode = searchParams.get('view') === '1'
+  const isSplitMode = searchParams.get('split') === '1'
+  const refDateParam = searchParams.get('refDate')
+  const refHiddenParam = searchParams.get('refHidden')
+  const splitDirParam = searchParams.get('splitDir') === 'row' ? 'row' : 'col'
+  const splitRatioParamRaw = searchParams.get('splitRatio')
+  const splitRatioParam = (() => {
+    const n = splitRatioParamRaw != null ? Number(splitRatioParamRaw) : NaN
+    if (!Number.isFinite(n)) return 0.5
+    return Math.max(0.15, Math.min(0.85, n))
+  })()
+  const isRefHidden = (refHiddenParam || '') === '1'
   const supabase = createClientComponentClient()
   const navLoading = useNavigationLoading()
   const access = useAccessControl()
@@ -191,6 +199,162 @@ function SchedulePageContent() {
   const initialDefaultDate = useMemo(() => new Date(), [])
   const schedule = useScheduleController({ defaultDate: initialDefaultDate, supabase })
   const { state: scheduleState, actions: scheduleActions } = schedule
+
+  const refInitialDefaultDate = useMemo(() => new Date(), [])
+  const refSchedule = useScheduleController({ defaultDate: refInitialDefaultDate, supabase })
+  const { state: refScheduleState, actions: refScheduleActions } = refSchedule
+  const {
+    beginDateTransition: refControllerBeginDateTransition,
+    loadAndHydrateDate: refLoadAndHydrateDate,
+    _unsafe: refUnsafe,
+  } = refScheduleActions
+  const { setGridLoading: setRefGridLoading, setIsHydratingSchedule: setRefIsHydratingSchedule } = refUnsafe
+
+  const [splitDirection, setSplitDirection] = useState<'col' | 'row'>(splitDirParam)
+  const [splitRatio, setSplitRatio] = useState<number>(splitRatioParam)
+  const [stepIndicatorCollapsed, setStepIndicatorCollapsed] = useState(false)
+
+  // Keep local split UI state in sync with URL (e.g. back/forward).
+  useEffect(() => {
+    setSplitDirection(splitDirParam)
+  }, [splitDirParam])
+  useEffect(() => {
+    setSplitRatio(splitRatioParam)
+  }, [splitRatioParam])
+  // Auto-collapse step indicator when entering split mode
+  useEffect(() => {
+    setStepIndicatorCollapsed(isSplitMode)
+  }, [isSplitMode])
+
+  const replaceScheduleQuery = useCallback(
+    (mutate: (params: URLSearchParams) => void) => {
+      const params = new URLSearchParams(searchParams.toString())
+      mutate(params)
+      const qs = params.toString()
+      const href = qs ? `/schedule?${qs}` : '/schedule'
+
+      // Keep scroll stable for in-page query updates.
+      let y = 0
+      try {
+        y = typeof window !== 'undefined' ? window.scrollY : 0
+      } catch {
+        y = 0
+      }
+      router.replace(href)
+      try {
+        window.requestAnimationFrame(() => {
+          try {
+            window.scrollTo({ top: y, left: 0, behavior: 'instant' as any })
+          } catch {
+            window.scrollTo(0, y)
+          }
+        })
+      } catch {
+        // ignore
+      }
+    },
+    [router, searchParams]
+  )
+
+  // Split mode: ensure we always have a refDate param (seed from session storage or previous working day).
+  useEffect(() => {
+    if (!isSplitMode) return
+    if (refDateParam) return
+
+    let seeded: string | null = null
+    try {
+      seeded = window.sessionStorage.getItem('rbip_split_ref_date')
+    } catch {
+      seeded = null
+    }
+    if (!seeded) {
+      try {
+        seeded = formatDateForInput(getPreviousWorkingDay(selectedDate))
+      } catch {
+        seeded = formatDateForInput(new Date())
+      }
+    }
+
+    replaceScheduleQuery((p) => {
+      p.set('refDate', seeded!)
+      p.set('split', '1')
+      if (!p.get('splitDir')) p.set('splitDir', splitDirection)
+      if (!p.get('splitRatio')) p.set('splitRatio', String(splitRatio))
+      if (!p.get('refHidden')) p.set('refHidden', '0')
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSplitMode, refDateParam])
+
+  // Split mode: hydrate reference schedule when refDate changes.
+  useEffect(() => {
+    if (!isSplitMode) return
+    if (!refDateParam) return
+
+    try {
+      window.sessionStorage.setItem('rbip_split_ref_date', refDateParam)
+    } catch {
+      // ignore
+    }
+
+    if (refScheduleState.scheduleLoadedForDate === refDateParam && !refScheduleState.loading) {
+      return
+    }
+
+    let parsed: Date
+    try {
+      parsed = parseDateFromInput(refDateParam)
+    } catch {
+      return
+    }
+
+    const ac = new AbortController()
+    refControllerBeginDateTransition(parsed, { resetLoadedForDate: true })
+    void (async () => {
+      try {
+        await refLoadAndHydrateDate({ date: parsed, signal: ac.signal })
+      } finally {
+        if (!ac.signal.aborted) {
+          // Unlike the main schedule page, the reference pane doesn't have the page-level
+          // gridLoading finalizer effect; ensure this doesn't get stuck true.
+          setRefGridLoading(false)
+        }
+      }
+    })()
+    return () => ac.abort()
+  }, [
+    isSplitMode,
+    refDateParam,
+    refControllerBeginDateTransition,
+    refLoadAndHydrateDate,
+    refScheduleState.loading,
+    refScheduleState.scheduleLoadedForDate,
+    setRefGridLoading,
+  ])
+
+  // Split mode: the reference controller doesn't include the page-level hydration finalizer
+  // effect used by the main schedule page. Without this, the reference pane can remain
+  // stuck showing its skeleton forever.
+  useEffect(() => {
+    if (!isSplitMode) return
+    if (!refDateParam) return
+    if (!refScheduleState.isHydratingSchedule) return
+    if (refScheduleState.loading) return
+    if (refScheduleState.scheduleLoadedForDate !== refDateParam) return
+
+    // End hydration on next frame to ensure load-driven state updates have flushed.
+    try {
+      window.requestAnimationFrame(() => setRefIsHydratingSchedule(false))
+    } catch {
+      setRefIsHydratingSchedule(false)
+    }
+  }, [
+    isSplitMode,
+    refDateParam,
+    refScheduleState.isHydratingSchedule,
+    refScheduleState.loading,
+    refScheduleState.scheduleLoadedForDate,
+    setRefIsHydratingSchedule,
+  ])
   const {
     selectedDate,
     therapistAllocations,
@@ -688,6 +852,50 @@ function SchedulePageContent() {
   // Step-wise allocation workflow domain state moved into useScheduleController().
   // Track which steps have been initialized (domain; moved into useScheduleController()).
   
+  // Viewing mode should behave like "read-only": close transient UI affordances that would otherwise linger.
+  useEffect(() => {
+    if (!isViewingMode) return
+    setCalendarOpen(false)
+    setCopyMenuOpen(false)
+    setCopyWizardOpen(false)
+    setDevLeaveSimOpen(false)
+    setSavedSetupPopoverOpen(false)
+    setEditingStaffId(null)
+    setEditingBedTeam(null)
+    setFloatingPCAConfigOpen(false)
+    setShowSpecialProgramOverrideDialog(false)
+    setShowSptFinalEditDialog(false)
+    setStaffContextMenu({
+      show: false,
+      position: null,
+      anchor: null,
+      staffId: null,
+      team: null,
+      kind: null,
+    })
+    setStaffPoolContextMenu({
+      show: false,
+      position: null,
+      anchor: null,
+      staffId: null,
+    })
+    setPcaPoolAssignAction((prev) => ({
+      ...prev,
+      show: false,
+      phase: 'team',
+      position: null,
+      staffId: null,
+      staffName: null,
+      targetTeam: null,
+      availableSlots: [],
+      selectedSlots: [],
+    }))
+    setLeaveEditWarningPopover({
+      show: false,
+      position: null,
+    })
+  }, [isViewingMode])
+
   // Step 3.1: Floating PCA Configuration Dialog state
   const [floatingPCAConfigOpen, setFloatingPCAConfigOpen] = useState(false)
   
@@ -5007,9 +5215,6 @@ function SchedulePageContent() {
       prefetchSpecialProgramOverrideDialog().catch(() => {})
       prefetchSptFinalEditDialog().catch(() => {})
       prefetchNonFloatingSubstitutionDialog().catch(() => {})
-      if (showSnapshotUiReminder) {
-        prefetchSnapshotDiffPopover().catch(() => {})
-      }
       if (userRole === 'developer') {
         prefetchDevLeaveSimPanel().catch(() => {})
       }
@@ -5057,7 +5262,10 @@ function SchedulePageContent() {
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => setSnapshotDiffOpen(true)}
+                onClick={() => {
+                  setSavedSetupPopoverOpen(true)
+                  setSnapshotDiffExpanded(true)
+                }}
               >
                 Show differences
               </Button>
@@ -5223,30 +5431,18 @@ function SchedulePageContent() {
     }
   }, [userRole, currentScheduleId, selectedDateStr, loading, gridLoading, baselineSnapshot, supabase, showActionToast])
 
-  // Snapshot differences (non-modal, on-demand)
+  // Snapshot differences (inline inside Saved-setup popover)
   const snapshotDiffButtonRef = useRef<HTMLButtonElement | null>(null)
-  const snapshotDiffPanelRef = useRef<HTMLDivElement | null>(null)
-  const [snapshotDiffOpen, setSnapshotDiffOpen] = useState(false)
+  const [savedSetupPopoverOpen, setSavedSetupPopoverOpen] = useState(false)
+  const [snapshotDiffExpanded, setSnapshotDiffExpanded] = useState(false)
   const [snapshotDiffLoading, setSnapshotDiffLoading] = useState(false)
   const [snapshotDiffError, setSnapshotDiffError] = useState<string | null>(null)
   const [snapshotDiffResult, setSnapshotDiffResult] = useState<SnapshotDiffResult | null>(null)
-
-  const snapshotDiffPos = useAnchoredPopoverPosition({
-    open: snapshotDiffOpen,
-    anchorRef: snapshotDiffButtonRef,
-    popoverRef: snapshotDiffPanelRef,
-    placement: 'bottom-end',
-    offset: 8,
-    pad: 8,
-  })
-
-  useOnClickOutside([snapshotDiffButtonRef, snapshotDiffPanelRef], () => setSnapshotDiffOpen(false), {
-    enabled: snapshotDiffOpen,
-    event: 'pointerdown',
-  })
+  const lastSnapshotDiffKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!snapshotDiffOpen) return
+    if (!savedSetupPopoverOpen) return
+    if (!snapshotDiffExpanded) return
     if (!baselineSnapshot) return
 
     let cancelled = false
@@ -5254,6 +5450,12 @@ function SchedulePageContent() {
     setSnapshotDiffError(null)
 
     ;(async () => {
+      const diffKey = `${selectedDateStr}|${currentScheduleId || ''}`
+      if (lastSnapshotDiffKeyRef.current === diffKey && snapshotDiffResult && !snapshotDiffError) {
+        setSnapshotDiffLoading(false)
+        return
+      }
+
       const [staffRes, wardsRes, prefsRes, programsRes, sptRes] = await Promise.all([
         supabase
           .from('staff')
@@ -5312,6 +5514,7 @@ function SchedulePageContent() {
       })
 
       if (cancelled) return
+      lastSnapshotDiffKeyRef.current = diffKey
       setSnapshotDiffResult(diff)
     })()
       .catch((e) => {
@@ -5327,13 +5530,14 @@ function SchedulePageContent() {
     return () => {
       cancelled = true
     }
-  }, [snapshotDiffOpen, baselineSnapshot, supabase])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedSetupPopoverOpen, snapshotDiffExpanded, baselineSnapshot, supabase])
 
   useEffect(() => {
-    if (!showSnapshotUiReminder && snapshotDiffOpen) {
-      setSnapshotDiffOpen(false)
+    if (!savedSetupPopoverOpen && snapshotDiffExpanded) {
+      setSnapshotDiffExpanded(false)
     }
-  }, [showSnapshotUiReminder, snapshotDiffOpen])
+  }, [savedSetupPopoverOpen, snapshotDiffExpanded])
 
   let nextWorkingLabel = 'Copy to next working day'
   let nextWorkingEnabled = false
@@ -8592,7 +8796,14 @@ function SchedulePageContent() {
         ) : null}
       </DragOverlay>
       
-      <div className="w-full px-8 py-4 min-w-[1440px] bg-background">
+      <div
+        className={cn(
+          'w-full px-8 py-4 min-w-[1440px] bg-background',
+          // In split mode, behave like a full-viewport workspace (Arena/NotebookLM style):
+          // panes scroll independently; the page itself shouldn't require scrolling to reach pane B.
+          isSplitMode && 'h-[calc(100vh-64px)] flex flex-col min-h-0 overflow-hidden'
+        )}
+      >
         {actionToast && (
           <div ref={actionToastContainerRef} className="fixed right-4 top-4 z-[9999]">
             <ActionToast
@@ -8609,6 +8820,7 @@ function SchedulePageContent() {
             />
           </div>
         )}
+        {!isSplitMode && (
         <ScheduleHeaderBar
           showBackButton={showBackButton}
           onBack={() => {
@@ -8638,11 +8850,18 @@ function SchedulePageContent() {
                             setCalendarOpen(false)
             beginDateTransition(date)
           }}
-          showSnapshotUiReminder={showSnapshotUiReminder}
+          showSnapshotUiReminder={showSnapshotUiReminder && !isViewingMode}
+          savedSetupPopoverOpen={savedSetupPopoverOpen}
+          onSavedSetupPopoverOpenChange={setSavedSetupPopoverOpen}
           snapshotDiffButtonRef={snapshotDiffButtonRef}
-          onToggleSnapshotDiff={() => setSnapshotDiffOpen((v) => !v)}
+          snapshotDiffExpanded={snapshotDiffExpanded}
+          onToggleSnapshotDiffExpanded={() => setSnapshotDiffExpanded((v) => !v)}
+          snapshotDiffLoading={snapshotDiffLoading}
+          snapshotDiffError={snapshotDiffError}
+          snapshotDiffResult={snapshotDiffResult}
           rightActions={
-            <>
+            isViewingMode ? null : (
+              <>
               {userRole === 'developer' ? (
                 <Tooltip
                   side="bottom"
@@ -8922,22 +9141,11 @@ function SchedulePageContent() {
                   {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
                 </Button>
               )}
-            </>
+              </>
+            )
           }
         />
-        {showSnapshotUiReminder && snapshotDiffOpen ? (
-          <SnapshotDiffPopover
-            open={snapshotDiffOpen}
-            panelRef={snapshotDiffPanelRef}
-            position={snapshotDiffPos}
-            selectedDate={selectedDate}
-            loading={snapshotDiffLoading}
-            error={snapshotDiffError}
-            result={snapshotDiffResult}
-            onClose={() => setSnapshotDiffOpen(false)}
-          />
-        ) : null}
-
+        )}
         {userRole === 'developer' && devLeaveSimOpen ? (
           <DevLeaveSimPanel
             open={devLeaveSimOpen}
@@ -9310,7 +9518,30 @@ function SchedulePageContent() {
         ) : null}
 
         {/* Step Indicator with Navigation */}
-        <div className="mb-4">
+        <div className={cn(
+            'vt-mode-anim mb-1 flex justify-end',
+            isViewingMode ? 'opacity-0 pointer-events-none h-0 overflow-hidden' : 'opacity-100'
+        )}>
+            <Button variant="ghost" size="sm" onClick={() => setStepIndicatorCollapsed(v => !v)} className="h-6 text-xs text-muted-foreground hover:text-foreground">
+                {stepIndicatorCollapsed ? (
+                    <>Show Steps <ChevronDown className="ml-1 h-3 w-3" /></>
+                ) : (
+                    <>Hide Steps <ChevronUp className="ml-1 h-3 w-3" /></>
+                )}
+            </Button>
+        </div>
+        <div
+          className={cn(
+            'vt-mode-anim',
+            'overflow-hidden transition-[max-height,opacity,transform,margin] duration-300 ease-in-out',
+            isViewingMode
+              ? 'max-h-0 opacity-0 -translate-y-2 mb-0 pointer-events-none'
+              : stepIndicatorCollapsed
+                ? 'max-h-0 opacity-0 mb-0 overflow-hidden'
+                : 'max-h-[9999px] opacity-100 translate-y-0 mb-4'
+          )}
+          aria-hidden={isViewingMode || stepIndicatorCollapsed}
+        >
           <StepIndicator
             steps={ALLOCATION_STEPS}
             currentStep={currentStep}
@@ -9373,7 +9604,10 @@ function SchedulePageContent() {
           />
         </div>
 
-        <ScheduleMainLayout>
+        <div className={cn(isSplitMode && 'flex-1 min-h-0 overflow-hidden')}>
+          {(() => {
+          const mainLayout = (
+            <ScheduleMainLayout>
           <div
             className="shrink-0 flex flex-col gap-4 self-start min-h-0"
             style={typeof rightContentHeight === 'number' && rightContentHeight > 0 ? { height: rightContentHeight } : undefined}
@@ -9627,7 +9861,14 @@ function SchedulePageContent() {
               )
             })()}
 
-            <div className="w-40 flex-1 min-h-0 flex flex-col min-w-0">
+            <div
+              className={cn(
+                'vt-mode-anim',
+                'flex-1 min-h-0 flex flex-col min-w-0 overflow-hidden transition-[width,max-height,opacity,margin] duration-300 ease-in-out',
+                isViewingMode ? 'w-0 max-h-0 opacity-0 -mt-2 pointer-events-none' : 'w-40 max-h-[9999px] opacity-100 mt-0'
+              )}
+              aria-hidden={isViewingMode}
+            >
               <div className="flex-1 min-h-0">
                 <MaybeProfiler id="StaffPool">
                 <StaffPool
@@ -9693,6 +9934,13 @@ function SchedulePageContent() {
           </div>
 
           <div className="flex-1 min-w-0 bg-background relative">
+            {/* Viewing mode: block editing interactions over the grid (drag/edit/click). */}
+            {isViewingMode ? (
+              <div
+                className="absolute inset-0 z-[60] pointer-events-auto cursor-not-allowed bg-transparent"
+                aria-hidden={true}
+              />
+            ) : null}
             {/* Team grid loading: prefer native skeleton (no dimming overlay) */}
             {gridLoading && (
               <div className="absolute inset-0 z-50 pointer-events-auto bg-background">
@@ -9975,21 +10223,860 @@ function SchedulePageContent() {
                   )}
                 </div>
 
-                  {!deferBelowFold ? (
-                    <MaybeProfiler id="AllocationNotesBoard">
-                <AllocationNotesBoard doc={allocationNotesDoc} onSave={saveAllocationNotes} />
-                    </MaybeProfiler>
-                  ) : (
-                    <div className="mt-3 rounded-lg border border-border bg-card p-3">
-                      <div className="h-4 w-40 rounded-md bg-muted animate-pulse" />
-                      <div className="mt-2 h-20 rounded-md bg-muted/70 animate-pulse" />
-              </div>
-                  )}
+                  <div
+                    className={cn(
+                      'vt-mode-anim',
+                      'overflow-hidden transition-[max-height,opacity,transform,margin] duration-300 ease-in-out',
+                      isViewingMode
+                        ? 'max-h-0 opacity-0 -translate-y-2 mt-0 pointer-events-none'
+                        : 'max-h-[9999px] opacity-100 translate-y-0 mt-0'
+                    )}
+                    aria-hidden={isViewingMode}
+                  >
+                    {!deferBelowFold ? (
+                      <MaybeProfiler id="AllocationNotesBoard">
+                        <AllocationNotesBoard doc={allocationNotesDoc} onSave={saveAllocationNotes} />
+                      </MaybeProfiler>
+                    ) : (
+                      <div className="mt-3 rounded-lg border border-border bg-card p-3">
+                        <div className="h-4 w-40 rounded-md bg-muted animate-pulse" />
+                        <div className="mt-2 h-20 rounded-md bg-muted/70 animate-pulse" />
+                      </div>
+                    )}
+                  </div>
             </div>
           </div>
             </MaybeProfiler>
         </div>
-        </ScheduleMainLayout>
+            </ScheduleMainLayout>
+          )
+
+          if (!isSplitMode) return mainLayout
+
+          const showReference = !isRefHidden
+
+          const mainHeader = (
+            <div className="shrink-0 bg-blue-50/60 dark:bg-blue-950/25 backdrop-blur border-b border-border">
+              <div className="px-3 py-2 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-blue-800 dark:text-blue-200">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500" />
+                    Main (Editable)
+                  </div>
+                  {isRefHidden ? (
+                    <div className="text-[11px] text-muted-foreground truncate">Reference is retracted</div>
+                  ) : null}
+                </div>
+                {/* Retract button moved to collapsed pane */}
+              </div>
+            </div>
+          )
+
+          if (!showReference) {
+            const refCollapsedDateLabel = formatDateDDMMYYYY(refScheduleState.selectedDate)
+            return (
+               <div className={cn('h-full min-h-0 flex overflow-hidden', splitDirection === 'col' ? 'flex-row' : 'flex-col')}>
+                  <div className="flex-1 min-w-0 flex flex-col min-h-0">
+                    {/* Fixed header for Main Pane in retracted mode */}
+                    {mainHeader}
+                    
+                    <div className="flex-1 min-w-0 overflow-auto">
+                        <div className="shrink-0">
+            <ScheduleHeaderBar
+          showBackButton={showBackButton}
+          onBack={() => {
+              const returnPath = sessionStorage.getItem('scheduleReturnPath')
+              if (returnPath) {
+                sessionStorage.removeItem('scheduleReturnPath')
+                navLoading.start(returnPath)
+                router.push(returnPath)
+              } else {
+                navLoading.start('/history')
+                router.push('/history')
+              }
+            }}
+          userRole={userRole}
+          showLoadDiagnostics={access.can('schedule.diagnostics.load')}
+          lastLoadTiming={lastLoadTiming}
+          navToScheduleTiming={navToScheduleTiming}
+          perfTick={perfTick}
+          perfStats={perfStatsRef.current}
+          selectedDate={selectedDate}
+          selectedDateKey={toDateKey(selectedDate)}
+          weekdayName={weekdayName}
+          isDateHighlighted={isDateHighlighted}
+          calendarButtonRef={calendarButtonRef}
+          onToggleCalendar={() => setCalendarOpen(!calendarOpen)}
+          onSelectDate={(date) => {
+                            setCalendarOpen(false)
+            beginDateTransition(date)
+          }}
+          showSnapshotUiReminder={showSnapshotUiReminder && !isViewingMode}
+          savedSetupPopoverOpen={savedSetupPopoverOpen}
+          onSavedSetupPopoverOpenChange={setSavedSetupPopoverOpen}
+          snapshotDiffButtonRef={snapshotDiffButtonRef}
+          snapshotDiffExpanded={snapshotDiffExpanded}
+          onToggleSnapshotDiffExpanded={() => setSnapshotDiffExpanded((v) => !v)}
+          snapshotDiffLoading={snapshotDiffLoading}
+          snapshotDiffError={snapshotDiffError}
+          snapshotDiffResult={snapshotDiffResult}
+          rightActions={
+            isViewingMode ? null : (
+              <>
+              {userRole === 'developer' ? (
+                <Tooltip
+                  side="bottom"
+                  content="Developer-only: seeded leave simulation harness (generate/apply/replay + invariants)."
+                >
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => setDevLeaveSimOpen(true)}
+                    disabled={saving || copying}
+                  >
+                    Leave Sim
+                  </Button>
+                </Tooltip>
+              ) : null}
+
+              {/* Copy dropdown button */}
+              <div className="relative">
+                {access.can('schedule.diagnostics.copy') || access.can('schedule.diagnostics.snapshot-health') ? (
+                  <Tooltip
+                    side="bottom"
+                    className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
+                    content={
+                      <div className="w-56 bg-slate-800 border border-slate-700 rounded-md shadow-lg">
+                        <div className="border-b border-slate-700 px-3 py-2 text-xs text-slate-500">
+                          Diagnostics
+                        </div>
+
+                        {access.can('schedule.diagnostics.snapshot-health') ? (
+                          snapshotHealthReport ? (
+                            <div className="px-3 pt-2 text-xs text-slate-200 space-y-1">
+                              <div>
+                                <span className="text-slate-400">snapshotHealth:</span> {snapshotHealthReport.status}
+                              </div>
+                              {snapshotHealthReport.issues?.length > 0 && (
+                                <div>
+                                  <span className="text-slate-400">issues:</span> {snapshotHealthReport.issues.join(', ')}
+                                </div>
+                              )}
+                              <div>
+                                <span className="text-slate-400">staff:</span> {snapshotHealthReport.snapshotStaffCount} (missing
+                                referenced: {snapshotHealthReport.missingReferencedStaffCount})
+                              </div>
+                              {(snapshotHealthReport.schemaVersion || snapshotHealthReport.source) && (
+                                <div>
+                                  <span className="text-slate-400">meta:</span>{' '}
+                                  {snapshotHealthReport.schemaVersion ? `v${snapshotHealthReport.schemaVersion}` : 'v?'}
+                                  {snapshotHealthReport.source ? `, ${snapshotHealthReport.source}` : ''}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="px-3 pt-2 text-xs text-slate-500">snapshotHealth: (none)</div>
+                          )
+                        ) : null}
+
+                        {access.can('schedule.diagnostics.copy') ? (
+                          <>
+                            <div className="border-t border-slate-700 mt-2 px-3 py-2 text-[11px] text-slate-500">
+                              Copy timing
+                            </div>
+                            <div className="px-3 pb-3 text-xs text-slate-200 space-y-1">
+                              {lastCopyTiming ? (
+                                <>
+                                  <div>
+                                    <span className="text-slate-400">client total:</span> {Math.round(lastCopyTiming.totalMs)}ms
+                                  </div>
+                                  {lastCopyTiming.stages.length > 0 && (
+                                    <div className="text-[11px] text-slate-300 space-y-0.5">
+                                      {lastCopyTiming.stages.map((s) => (
+                                        <div key={`copy-client-${s.name}`}>
+                                          <span className="text-slate-400">{s.name}:</span> {Math.round(s.ms)}ms
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {(() => {
+                                    const server = (lastCopyTiming.meta as any)?.server
+                                    if (!server) return null
+                                    return (
+                                      <div className="pt-1">
+                                        <div>
+                                          <span className="text-slate-400">server total:</span> {Math.round(server.totalMs ?? 0)}ms{' '}
+                                          {typeof server?.meta?.rpcUsed === 'boolean'
+                                            ? `(rpc:${server.meta.rpcUsed ? 'yes' : 'no'})`
+                                            : null}
+                                          {typeof server?.meta?.baselineBytes === 'number' ? (
+                                            <span className="text-slate-400"> baseline:{Math.round(server.meta.baselineBytes / 1024)}KB</span>
+                                          ) : null}
+                                          {typeof server?.meta?.specialProgramsBytes === 'number' ? (
+                                            <span className="text-slate-400"> sp:{Math.round(server.meta.specialProgramsBytes / 1024)}KB</span>
+                                          ) : null}
+                                        </div>
+                                        {Array.isArray(server.stages) && server.stages.length > 0 && (
+                                          <div className="text-[11px] text-slate-300 space-y-0.5">
+                                            {server.stages.map((s: any) => (
+                                              <div key={`copy-server-${s.name}`}>
+                                                <span className="text-slate-400">{s.name}:</span> {Math.round(s.ms ?? 0)}ms
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )
+                                  })()}
+                                </>
+                              ) : (
+                                <div className="text-slate-500">No copy timing captured yet.</div>
+                              )}
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    }
+                  >
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        const next = !copyMenuOpen
+                        setCopyMenuOpen(next)
+                        if (next) loadDatesWithData()
+                      }}
+                      onMouseEnter={() => {
+                        prefetchScheduleCopyWizard().catch(() => {})
+                      }}
+                      onFocus={() => {
+                        prefetchScheduleCopyWizard().catch(() => {})
+                      }}
+                      type="button"
+                      className="flex items-center"
+                      disabled={copying || saving}
+                    >
+                      <Copy className="h-4 w-4 mr-2" />
+                      {copying ? 'Copying...' : 'Copy'}
+                    </Button>
+                  </Tooltip>
+                ) : (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      const next = !copyMenuOpen
+                      setCopyMenuOpen(next)
+                      if (next) loadDatesWithData()
+                    }}
+                    onMouseEnter={() => {
+                      prefetchScheduleCopyWizard().catch(() => {})
+                    }}
+                    onFocus={() => {
+                      prefetchScheduleCopyWizard().catch(() => {})
+                    }}
+                    type="button"
+                    className="flex items-center"
+                    disabled={copying || saving}
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    {copying ? 'Copying...' : 'Copy'}
+                  </Button>
+                )}
+                {copyMenuOpen && (
+                  <div className="absolute right-0 top-full mt-1 w-64 bg-background border border-border rounded-md shadow-lg z-50">
+                    {!datesWithDataLoadedAtRef.current && datesWithDataLoading ? (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">Loading schedule dates…</div>
+                    ) : (
+                      <div className="p-1">
+                        <button
+                          type="button"
+                          className="w-full flex items-center px-3 py-2 text-xs text-left hover:bg-muted rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                          disabled={!nextWorkingEnabled}
+                          onClick={() => {
+                            setCopyMenuOpen(false)
+                            if (!nextWorkingEnabled || !nextWorkingSourceDate || !nextWorkingTargetDate) {
+                              return
+                            }
+                            setCopyWizardConfig({
+                              sourceDate: nextWorkingSourceDate,
+                              targetDate: nextWorkingTargetDate,
+                              flowType: nextWorkingDirection === 'from' ? 'last-working-day' : 'next-working-day',
+                              direction: nextWorkingDirection,
+                            })
+                            setCopyWizardOpen(true)
+                          }}
+                        >
+                          {nextWorkingLabel}
+                        </button>
+                        <button
+                          type="button"
+                          className="w-full flex items-center px-3 py-2 text-xs text-left hover:bg-muted rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                          disabled={!specificEnabled}
+                          onClick={() => {
+                            setCopyMenuOpen(false)
+                            setCopyWizardConfig({
+                              sourceDate: selectedDate,
+                              targetDate: null,
+                              flowType: 'specific-date',
+                              direction: specificDirection,
+                              })
+                            setCopyWizardOpen(true)
+                          }}
+                        >
+                          {specificLabel}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              {access.can('schedule.diagnostics.save') ? (
+                <Tooltip
+                  side="bottom"
+                  className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
+                  content={
+                    <div className="w-56 bg-slate-800 border border-slate-700 rounded-md shadow-lg">
+                      <div className="border-b border-slate-700 px-3 py-2 text-xs text-slate-500">
+                        Save timing
+                      </div>
+                      <div className="px-3 py-2 text-xs text-slate-200 space-y-1">
+                        {lastSaveTiming ? (
+                          <>
+                            <div>
+                              <span className="text-slate-400">total:</span>{' '}
+                              {Math.round(lastSaveTiming.totalMs)}ms
+                            </div>
+                            {(() => {
+                              const meta = lastSaveTiming.meta as any
+                              if (!meta) return null
+                              return (
+                                <div className="text-[11px] text-slate-400">
+                                  rpc:{meta.rpcUsed ? 'yes' : 'no'}
+                                  {typeof meta.snapshotWritten === 'boolean'
+                                    ? `, snapshotWrite:${meta.snapshotWritten ? 'yes' : 'no'}`
+                                    : null}
+                                  {typeof meta.snapshotBytes === 'number'
+                                    ? `, baseline:${Math.round(meta.snapshotBytes / 1024)}KB`
+                                    : null}
+                                  {typeof meta.specialProgramsBytes === 'number'
+                                    ? `, sp:${Math.round(meta.specialProgramsBytes / 1024)}KB`
+                                    : null}
+                                </div>
+                              )
+                            })()}
+                            {lastSaveTiming.stages.length > 0 && (
+                              <div className="pt-1 text-[11px] text-slate-300 space-y-0.5">
+                                {lastSaveTiming.stages.map(s => (
+                                  <div key={`save-${s.name}`}>
+                                    <span className="text-slate-400">{s.name}:</span>{' '}
+                                    {Math.round(s.ms)}ms
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="text-slate-500">No save timing captured yet.</div>
+                        )}
+                      </div>
+                    </div>
+                  }
+                >
+                  <Button 
+                    onClick={saveScheduleToDatabase} 
+                    disabled={saving || !hasUnsavedChanges}
+                    variant={hasUnsavedChanges ? "default" : "outline"}
+                    className={hasUnsavedChanges ? "bg-green-600 hover:bg-green-700" : ""}
+                  >
+                    <Save className="h-4 w-4 mr-2" />
+                    {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
+                  </Button>
+                </Tooltip>
+              ) : (
+                <Button 
+                  onClick={saveScheduleToDatabase} 
+                  disabled={saving || !hasUnsavedChanges}
+                  variant={hasUnsavedChanges ? "default" : "outline"}
+                  className={hasUnsavedChanges ? "bg-green-600 hover:bg-green-700" : ""}
+                >
+                  <Save className="h-4 w-4 mr-2" />
+                  {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
+                </Button>
+              )}
+              </>
+            )
+          }
+        />
+                    </div>
+                    {mainLayout}
+                  </div>
+                </div>
+                <ReferenceSchedulePane
+                    collapsed={true}
+                    direction={splitDirection}
+                    refHidden={true}
+                    refDateLabel={refCollapsedDateLabel}
+                    selectedDate={refScheduleState.selectedDate}
+                    datesWithData={new Set()}
+                    holidays={new Map()}
+                    onSelectDate={() => {}}
+                    onToggleDirection={() => {}}
+                    onRetract={() => {}}
+                    onExpand={() => {
+                      try {
+                        window.sessionStorage.setItem('rbip_split_ref_hidden', '0')
+                      } catch {}
+                      replaceScheduleQuery((p) => {
+                        p.set('split', '1')
+                        p.set('refHidden', '0')
+                      })
+                    }}
+                  />
+               </div>
+            )
+          }
+
+          const refSelectedDate = refScheduleState.selectedDate
+          const refWeekday = getWeekday(refSelectedDate)
+          const refDateLabel = formatDateDDMMYYYY(refSelectedDate)
+
+          const referencePane = (
+            <ReferenceSchedulePane
+              direction={splitDirection}
+              refHidden={false}
+              refDateLabel={refDateLabel}
+              selectedDate={refSelectedDate}
+              datesWithData={datesWithData}
+              holidays={holidays}
+              onSelectDate={(d) => {
+                const key = formatDateForInput(d)
+                try {
+                  window.sessionStorage.setItem('rbip_split_ref_date', key)
+                } catch {
+                  // ignore
+                }
+                replaceScheduleQuery((p) => {
+                  p.set('split', '1')
+                  p.set('refDate', key)
+                  p.set('refHidden', '0')
+                })
+              }}
+              onToggleDirection={() => {
+                const next = splitDirection === 'col' ? 'row' : 'col'
+                setSplitDirection(next)
+                try {
+                  window.sessionStorage.setItem('rbip_split_dir', next)
+                } catch {
+                  // ignore
+                }
+                replaceScheduleQuery((p) => {
+                  p.set('split', '1')
+                  p.set('splitDir', next)
+                  p.set('refHidden', '0')
+                })
+              }}
+              onRetract={() => {
+                try {
+                  window.sessionStorage.setItem('rbip_split_ref_hidden', '1')
+                } catch {
+                  // ignore
+                }
+                replaceScheduleQuery((p) => {
+                  p.set('split', '1')
+                  p.set('refHidden', '1')
+                })
+              }}
+            >
+              {refScheduleState.isHydratingSchedule ? (
+                <div className="rounded-lg border border-border bg-card p-3">
+                  <div className="h-4 w-48 rounded-md bg-muted animate-pulse" />
+                  <div className="mt-2 h-28 rounded-md bg-muted/70 animate-pulse" />
+                </div>
+              ) : (
+                <ScheduleBlocks1To6
+                  mode="reference"
+                  weekday={refWeekday}
+                  sptAllocations={refScheduleState.sptAllocations as any}
+                  specialPrograms={refScheduleState.specialPrograms as any}
+                  therapistAllocationsByTeam={refScheduleState.therapistAllocations as any}
+                  pcaAllocationsByTeam={refScheduleState.pcaAllocations as any}
+                  bedAllocations={refScheduleState.bedAllocations as any}
+                  wards={refScheduleState.wards as any}
+                  calculationsByTeam={refScheduleState.calculations as any}
+                  staff={refScheduleState.staff as any}
+                  staffOverrides={refScheduleState.staffOverrides as any}
+                  bedCountsOverridesByTeam={refScheduleState.bedCountsOverridesByTeam as any}
+                  bedRelievingNotesByToTeam={refScheduleState.bedRelievingNotesByToTeam as any}
+                  stepStatus={refScheduleState.stepStatus as any}
+                  initializedSteps={refScheduleState.initializedSteps as any}
+                />
+              )}
+            </ReferenceSchedulePane>
+          )
+
+          return (
+            <SplitPane
+              direction={splitDirection}
+              ratio={splitRatio}
+              onRatioChange={(r) => setSplitRatio(r)}
+              onRatioCommit={(r) => {
+                setSplitRatio(r)
+                try {
+                  window.sessionStorage.setItem('rbip_split_ratio', String(r))
+                } catch {
+                  // ignore
+                }
+                replaceScheduleQuery((p) => {
+                  p.set('split', '1')
+                  p.set('splitRatio', r.toFixed(3))
+                  p.set('refHidden', '0')
+                })
+              }}
+              minPx={420}
+              className="h-full"
+              paneAClassName="bg-blue-50/20 dark:bg-blue-950/10"
+              paneBClassName="bg-amber-50/20 dark:bg-amber-950/10"
+              paneA={
+                <div className="h-full min-h-0 flex flex-col">
+                  {/* Fixed header for Main Pane */}
+                  {mainHeader}
+
+                  {/* Scrollable Main content (includes schedule header bar + full layout) */}
+                  <div className="flex-1 min-w-0 overflow-auto">
+                    <div className="shrink-0">
+                      <ScheduleHeaderBar
+          showBackButton={showBackButton}
+          onBack={() => {
+              const returnPath = sessionStorage.getItem('scheduleReturnPath')
+              if (returnPath) {
+                sessionStorage.removeItem('scheduleReturnPath')
+                navLoading.start(returnPath)
+                router.push(returnPath)
+              } else {
+                navLoading.start('/history')
+                router.push('/history')
+              }
+            }}
+          userRole={userRole}
+          showLoadDiagnostics={access.can('schedule.diagnostics.load')}
+          lastLoadTiming={lastLoadTiming}
+          navToScheduleTiming={navToScheduleTiming}
+          perfTick={perfTick}
+          perfStats={perfStatsRef.current}
+          selectedDate={selectedDate}
+          selectedDateKey={toDateKey(selectedDate)}
+          weekdayName={weekdayName}
+          isDateHighlighted={isDateHighlighted}
+          calendarButtonRef={calendarButtonRef}
+          onToggleCalendar={() => setCalendarOpen(!calendarOpen)}
+          onSelectDate={(date) => {
+                            setCalendarOpen(false)
+            beginDateTransition(date)
+          }}
+          showSnapshotUiReminder={showSnapshotUiReminder && !isViewingMode}
+          savedSetupPopoverOpen={savedSetupPopoverOpen}
+          onSavedSetupPopoverOpenChange={setSavedSetupPopoverOpen}
+          snapshotDiffButtonRef={snapshotDiffButtonRef}
+          snapshotDiffExpanded={snapshotDiffExpanded}
+          onToggleSnapshotDiffExpanded={() => setSnapshotDiffExpanded((v) => !v)}
+          snapshotDiffLoading={snapshotDiffLoading}
+          snapshotDiffError={snapshotDiffError}
+          snapshotDiffResult={snapshotDiffResult}
+          rightActions={
+            isViewingMode ? null : (
+              <>
+              {userRole === 'developer' ? (
+                <Tooltip
+                  side="bottom"
+                  content="Developer-only: seeded leave simulation harness (generate/apply/replay + invariants)."
+                >
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => setDevLeaveSimOpen(true)}
+                    disabled={saving || copying}
+                  >
+                    Leave Sim
+                  </Button>
+                </Tooltip>
+              ) : null}
+
+              {/* Copy dropdown button */}
+              <div className="relative">
+                {access.can('schedule.diagnostics.copy') || access.can('schedule.diagnostics.snapshot-health') ? (
+                  <Tooltip
+                    side="bottom"
+                    className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
+                    content={
+                      <div className="w-56 bg-slate-800 border border-slate-700 rounded-md shadow-lg">
+                        <div className="border-b border-slate-700 px-3 py-2 text-xs text-slate-500">
+                          Diagnostics
+                        </div>
+
+                        {access.can('schedule.diagnostics.snapshot-health') ? (
+                          snapshotHealthReport ? (
+                            <div className="px-3 pt-2 text-xs text-slate-200 space-y-1">
+                              <div>
+                                <span className="text-slate-400">snapshotHealth:</span> {snapshotHealthReport.status}
+                              </div>
+                              {snapshotHealthReport.issues?.length > 0 && (
+                                <div>
+                                  <span className="text-slate-400">issues:</span> {snapshotHealthReport.issues.join(', ')}
+                                </div>
+                              )}
+                              <div>
+                                <span className="text-slate-400">staff:</span> {snapshotHealthReport.snapshotStaffCount} (missing
+                                referenced: {snapshotHealthReport.missingReferencedStaffCount})
+                              </div>
+                              {(snapshotHealthReport.schemaVersion || snapshotHealthReport.source) && (
+                                <div>
+                                  <span className="text-slate-400">meta:</span>{' '}
+                                  {snapshotHealthReport.schemaVersion ? `v${snapshotHealthReport.schemaVersion}` : 'v?'}
+                                  {snapshotHealthReport.source ? `, ${snapshotHealthReport.source}` : ''}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="px-3 pt-2 text-xs text-slate-500">snapshotHealth: (none)</div>
+                          )
+                        ) : null}
+
+                        {access.can('schedule.diagnostics.copy') ? (
+                          <>
+                            <div className="border-t border-slate-700 mt-2 px-3 py-2 text-[11px] text-slate-500">
+                              Copy timing
+                            </div>
+                            <div className="px-3 pb-3 text-xs text-slate-200 space-y-1">
+                              {lastCopyTiming ? (
+                                <>
+                                  <div>
+                                    <span className="text-slate-400">client total:</span> {Math.round(lastCopyTiming.totalMs)}ms
+                                  </div>
+                                  {lastCopyTiming.stages.length > 0 && (
+                                    <div className="text-[11px] text-slate-300 space-y-0.5">
+                                      {lastCopyTiming.stages.map((s) => (
+                                        <div key={`copy-client-${s.name}`}>
+                                          <span className="text-slate-400">{s.name}:</span> {Math.round(s.ms)}ms
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {(() => {
+                                    const server = (lastCopyTiming.meta as any)?.server
+                                    if (!server) return null
+                                    return (
+                                      <div className="pt-1">
+                                        <div>
+                                          <span className="text-slate-400">server total:</span> {Math.round(server.totalMs ?? 0)}ms{' '}
+                                          {typeof server?.meta?.rpcUsed === 'boolean'
+                                            ? `(rpc:${server.meta.rpcUsed ? 'yes' : 'no'})`
+                                            : null}
+                                          {typeof server?.meta?.baselineBytes === 'number' ? (
+                                            <span className="text-slate-400"> baseline:{Math.round(server.meta.baselineBytes / 1024)}KB</span>
+                                          ) : null}
+                                          {typeof server?.meta?.specialProgramsBytes === 'number' ? (
+                                            <span className="text-slate-400"> sp:{Math.round(server.meta.specialProgramsBytes / 1024)}KB</span>
+                                          ) : null}
+                                        </div>
+                                        {Array.isArray(server.stages) && server.stages.length > 0 && (
+                                          <div className="text-[11px] text-slate-300 space-y-0.5">
+                                            {server.stages.map((s: any) => (
+                                              <div key={`copy-server-${s.name}`}>
+                                                <span className="text-slate-400">{s.name}:</span> {Math.round(s.ms ?? 0)}ms
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )
+                                  })()}
+                                </>
+                              ) : (
+                                <div className="text-slate-500">No copy timing captured yet.</div>
+                              )}
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    }
+                  >
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        const next = !copyMenuOpen
+                        setCopyMenuOpen(next)
+                        if (next) loadDatesWithData()
+                      }}
+                      onMouseEnter={() => {
+                        prefetchScheduleCopyWizard().catch(() => {})
+                      }}
+                      onFocus={() => {
+                        prefetchScheduleCopyWizard().catch(() => {})
+                      }}
+                      type="button"
+                      className="flex items-center"
+                      disabled={copying || saving}
+                    >
+                      <Copy className="h-4 w-4 mr-2" />
+                      {copying ? 'Copying...' : 'Copy'}
+                    </Button>
+                  </Tooltip>
+                ) : (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      const next = !copyMenuOpen
+                      setCopyMenuOpen(next)
+                      if (next) loadDatesWithData()
+                    }}
+                    onMouseEnter={() => {
+                      prefetchScheduleCopyWizard().catch(() => {})
+                    }}
+                    onFocus={() => {
+                      prefetchScheduleCopyWizard().catch(() => {})
+                    }}
+                    type="button"
+                    className="flex items-center"
+                    disabled={copying || saving}
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    {copying ? 'Copying...' : 'Copy'}
+                  </Button>
+                )}
+                {copyMenuOpen && (
+                  <div className="absolute right-0 top-full mt-1 w-64 bg-background border border-border rounded-md shadow-lg z-50">
+                    {!datesWithDataLoadedAtRef.current && datesWithDataLoading ? (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">Loading schedule dates…</div>
+                    ) : (
+                      <div className="p-1">
+                        <button
+                          type="button"
+                          className="w-full flex items-center px-3 py-2 text-xs text-left hover:bg-muted rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                          disabled={!nextWorkingEnabled}
+                          onClick={() => {
+                            setCopyMenuOpen(false)
+                            if (!nextWorkingEnabled || !nextWorkingSourceDate || !nextWorkingTargetDate) {
+                              return
+                            }
+                            setCopyWizardConfig({
+                              sourceDate: nextWorkingSourceDate,
+                              targetDate: nextWorkingTargetDate,
+                              flowType: nextWorkingDirection === 'from' ? 'last-working-day' : 'next-working-day',
+                              direction: nextWorkingDirection,
+                            })
+                            setCopyWizardOpen(true)
+                          }}
+                        >
+                          {nextWorkingLabel}
+                        </button>
+                        <button
+                          type="button"
+                          className="w-full flex items-center px-3 py-2 text-xs text-left hover:bg-muted rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                          disabled={!specificEnabled}
+                          onClick={() => {
+                            setCopyMenuOpen(false)
+                            setCopyWizardConfig({
+                              sourceDate: selectedDate,
+                              targetDate: null,
+                              flowType: 'specific-date',
+                              direction: specificDirection,
+                              })
+                            setCopyWizardOpen(true)
+                          }}
+                        >
+                          {specificLabel}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              {access.can('schedule.diagnostics.save') ? (
+                <Tooltip
+                  side="bottom"
+                  className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
+                  content={
+                    <div className="w-56 bg-slate-800 border border-slate-700 rounded-md shadow-lg">
+                      <div className="border-b border-slate-700 px-3 py-2 text-xs text-slate-500">
+                        Save timing
+                      </div>
+                      <div className="px-3 py-2 text-xs text-slate-200 space-y-1">
+                        {lastSaveTiming ? (
+                          <>
+                            <div>
+                              <span className="text-slate-400">total:</span>{' '}
+                              {Math.round(lastSaveTiming.totalMs)}ms
+                            </div>
+                            {(() => {
+                              const meta = lastSaveTiming.meta as any
+                              if (!meta) return null
+                              return (
+                                <div className="text-[11px] text-slate-400">
+                                  rpc:{meta.rpcUsed ? 'yes' : 'no'}
+                                  {typeof meta.snapshotWritten === 'boolean'
+                                    ? `, snapshotWrite:${meta.snapshotWritten ? 'yes' : 'no'}`
+                                    : null}
+                                  {typeof meta.snapshotBytes === 'number'
+                                    ? `, baseline:${Math.round(meta.snapshotBytes / 1024)}KB`
+                                    : null}
+                                  {typeof meta.specialProgramsBytes === 'number'
+                                    ? `, sp:${Math.round(meta.specialProgramsBytes / 1024)}KB`
+                                    : null}
+                                </div>
+                              )
+                            })()}
+                            {lastSaveTiming.stages.length > 0 && (
+                              <div className="pt-1 text-[11px] text-slate-300 space-y-0.5">
+                                {lastSaveTiming.stages.map(s => (
+                                  <div key={`save-${s.name}`}>
+                                    <span className="text-slate-400">{s.name}:</span>{' '}
+                                    {Math.round(s.ms)}ms
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="text-slate-500">No save timing captured yet.</div>
+                        )}
+                      </div>
+                    </div>
+                  }
+                >
+                  <Button 
+                    onClick={saveScheduleToDatabase} 
+                    disabled={saving || !hasUnsavedChanges}
+                    variant={hasUnsavedChanges ? "default" : "outline"}
+                    className={hasUnsavedChanges ? "bg-green-600 hover:bg-green-700" : ""}
+                  >
+                    <Save className="h-4 w-4 mr-2" />
+                    {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
+                  </Button>
+                </Tooltip>
+              ) : (
+                <Button 
+                  onClick={saveScheduleToDatabase} 
+                  disabled={saving || !hasUnsavedChanges}
+                  variant={hasUnsavedChanges ? "default" : "outline"}
+                  className={hasUnsavedChanges ? "bg-green-600 hover:bg-green-700" : ""}
+                >
+                  <Save className="h-4 w-4 mr-2" />
+                  {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
+                </Button>
+              )}
+              </>
+            )
+          }
+        />
+                    </div>
+                    {mainLayout}
+                  </div>
+                </div>
+              }
+              paneB={referencePane}
+            />
+          )
+        })()}
+        </div>
 
         <ScheduleDialogsLayer
           bedCountsDialog={editingBedTeam && (() => {
