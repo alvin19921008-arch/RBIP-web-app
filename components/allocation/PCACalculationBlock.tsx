@@ -1,6 +1,7 @@
 'use client'
 
 import { Team } from '@/types/staff'
+import { memo } from 'react'
 import { ScheduleCalculations } from '@/types/schedule'
 import { Card, CardContent } from '@/components/ui/card'
 
@@ -9,7 +10,7 @@ interface PCACalculationBlockProps {
   calculations: ScheduleCalculations | null
 }
 
-export function PCACalculationBlock({ team, calculations }: PCACalculationBlockProps) {
+export const PCACalculationBlock = memo(function PCACalculationBlock({ team, calculations }: PCACalculationBlockProps) {
   if (!calculations) {
     return (
       <Card>
@@ -35,5 +36,5 @@ export function PCACalculationBlock({ team, calculations }: PCACalculationBlockP
       </CardContent>
     </Card>
   )
-}
+})
 

@@ -1,9 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { Check, Circle, ChevronRight, ChevronLeft, AlertCircle } from 'lucide-react'
+import { Check, Circle, ChevronRight, ChevronLeft, AlertCircle, HelpCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverArrow, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 interface Step {
   id: string
@@ -33,8 +34,6 @@ interface StepIndicatorProps {
   showClear?: boolean
   isInitialized?: boolean
   isLoading?: boolean
-  errorMessage?: string // Optional error message to display in center area
-  bufferTherapistStatus?: string // Optional buffer therapist status message (for step 2)
 }
 
 export function StepIndicator({
@@ -57,10 +56,9 @@ export function StepIndicator({
   showClear = true,
   isInitialized = false,
   isLoading = false,
-  errorMessage,
-  bufferTherapistStatus,
 }: StepIndicatorProps) {
   const currentStepIndex = steps.findIndex(s => s.id === currentStep)
+  const currentStepData = steps[currentStepIndex]
   const canClear = ['leave-fte', 'therapist-pca', 'floating-pca', 'bed-relieving'].includes(currentStep)
   const canInitialize = !!onInitialize && ['therapist-pca', 'floating-pca', 'bed-relieving'].includes(currentStep)
   const canResetBaseline =
@@ -70,228 +68,258 @@ export function StepIndicator({
   const [showClearMenu, setShowClearMenu] = useState(false)
 
   return (
-    <div className={cn("bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 shadow-xs", className)}>
-      {/* Step Progress Bar with Titles */}
-      <div className="relative mb-4">
-        {/* Connector Lines (behind circles) - positioned at center of w-14 circles (28px) for alignment */}
-        <div className="absolute top-7 left-0 right-0 flex items-center">
-          {steps.map((step, index) => {
-            if (index >= steps.length - 1) return null
-            const isPast = index < currentStepIndex
-            return (
-              <div
-                key={`connector-${index}`}
-                className={cn(
-                  "flex-1 h-0.5 mx-2",
-                  isPast ? "bg-emerald-500 dark:bg-emerald-500/70" : "bg-slate-300 dark:bg-slate-600"
-                )}
-              />
-            )
-          })}
-        </div>
+    <div
+      className={cn(
+        "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 shadow-xs",
+        className
+      )}
+    >
+      <div className="flex flex-col gap-2">
+        {/* Row 1: step flow */}
+        <div className="flex items-center gap-2 py-0.5">
+          {/* Left control */}
+          <div className="shrink-0">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onPrevious}
+              disabled={!canGoPrevious}
+              className={cn("h-7 w-7", !canGoPrevious && "opacity-50 cursor-not-allowed")}
+              aria-label="Previous step"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+          </div>
 
-        {/* Step Circles and Titles - align by centering all circles at the same vertical position */}
-        <div className="relative flex items-start justify-between">
-          {steps.map((step, index) => {
-            const status = stepStatus[step.id]
-            const isCurrent = step.id === currentStep
-            const isPast = index < currentStepIndex
-            const canNavigate = canNavigateToStep ? canNavigateToStep(step.id) : true
+          {/* Centered step flow (scrolls if needed) */}
+          <div className="flex-1 min-w-0 overflow-x-auto">
+            <div className="w-fit mx-auto flex items-center flex-nowrap">
+              {steps.map((step, index) => {
+                const status = stepStatus[step.id]
+                const isCurrent = step.id === currentStep
+                const isPast = index < currentStepIndex
+                const canNavigate = canNavigateToStep ? canNavigateToStep(step.id) : true
 
-            return (
-              <div key={step.id} className={cn("flex flex-col items-center flex-1 last:flex-none relative z-10", !isCurrent && "mt-1.5")}>
-                {/* Step Circle */}
-                <button
-                  onClick={() => onStepClick?.(step.id)}
-                  disabled={!canNavigate}
-                  className={cn(
-                    "relative flex items-center justify-center rounded-full transition-all mb-2",
-                    "focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-slate-900 focus:ring-amber-500",
-                    // Size: current step is moderately larger for visual distinction, others are normal
-                    isCurrent && "w-14 h-14 border-2 shadow-lg ring-4 ring-amber-500/20 dark:ring-amber-500/30",
-                    !isCurrent && "w-10 h-10 border-2",
-                    // Status-based colors (independent of current step)
-                    status === 'completed' && "border-emerald-500 bg-emerald-50 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400",
-                    status === 'modified' && "border-yellow-500 bg-yellow-50 dark:bg-yellow-500/20 text-yellow-600 dark:text-yellow-400",
-                    status === 'pending' && "border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700/20 text-slate-500 dark:text-slate-400",
-                    // Hover: enlarge (only if not current)
-                    canNavigate && !isCurrent && "cursor-pointer hover:scale-110",
-                    // Click: push effect
-                    canNavigate && "active:scale-95",
-                    !canNavigate && "cursor-not-allowed opacity-50"
-                  )}
-                >
-                  {status === 'completed' ? (
-                    <Check className={cn(
-                      "transition-all",
-                      isCurrent ? "w-7 h-7" : "w-5 h-5"
-                    )} />
-                  ) : (
-                    // Modified and Pending both show number - larger for current step
-                    <span className={cn(
-                      "font-semibold transition-all",
-                      isCurrent ? "text-lg" : "text-sm"
-                    )}>{step.number}</span>
-                  )}
-                </button>
+                const showCheck = status === 'completed'
+                const circleBase =
+                  "inline-flex items-center justify-center rounded-full border transition-colors flex-shrink-0"
+                const circleSize = isCurrent ? "w-7 h-7 text-xs" : "w-6 h-6 text-[11px]"
+                const circleStyle = showCheck
+                  ? "bg-emerald-500 border-emerald-500 text-white"
+                  : status === 'modified'
+                    ? "bg-yellow-50 dark:bg-yellow-950/30 border-yellow-400 text-yellow-700 dark:text-yellow-300"
+                    : isCurrent
+                      ? "bg-amber-500 border-amber-500 text-white ring-4 ring-amber-500/20 dark:ring-amber-500/25 shadow-sm"
+                      : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200"
 
-                {/* Step Title under Circle */}
-                <div className="text-center px-1 max-w-[120px]">
-                  <p className={cn(
-                    "font-medium leading-tight break-words",
-                    // Title size: current step gets larger text
-                    isCurrent && "text-lg",
-                    !isCurrent && "text-xs",
-                    status === 'completed' && "text-emerald-600 dark:text-emerald-400",
-                    status === 'modified' && "text-yellow-600 dark:text-yellow-400",
-                    status === 'pending' && "text-slate-500 dark:text-slate-400"
-                  )}>
-                    {step.title}
-                  </p>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
+                const labelStyle = isCurrent
+                  ? "text-slate-900 dark:text-slate-50 font-semibold"
+                  : isPast
+                    ? "text-emerald-700 dark:text-emerald-400"
+                    : status === 'modified'
+                      ? "text-yellow-700 dark:text-yellow-300"
+                      : "text-slate-600 dark:text-slate-300"
 
-      {/* Current Step Description and Navigation */}
-      <div className="bg-slate-50 dark:bg-slate-800/50 rounded-md px-3 py-2 mb-2">
-        <div className="flex items-center justify-between mb-2">
-          {/* Previous Button */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onPrevious}
-            disabled={!canGoPrevious}
-            className={cn(
-              "text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white",
-              !canGoPrevious && "opacity-50 cursor-not-allowed"
-            )}
-          >
-            <ChevronLeft className="w-4 h-4 mr-1" />
-            Previous
-          </Button>
+                return (
+                  <div key={step.id} className="flex items-center flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => onStepClick?.(step.id)}
+                      disabled={!canNavigate}
+                      aria-current={isCurrent ? 'step' : undefined}
+                      title={step.description}
+                      className={cn(
+                        "group inline-flex items-center gap-2 rounded-md px-2 py-1 transition-colors",
+                        "focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-slate-900",
+                        isCurrent ? "bg-amber-50 dark:bg-amber-950/20" : "hover:bg-slate-50 dark:hover:bg-slate-800/40",
+                        !canNavigate && "opacity-50 cursor-not-allowed hover:bg-transparent dark:hover:bg-transparent"
+                      )}
+                    >
+                      <span className={cn(circleBase, circleSize, circleStyle)}>
+                        {showCheck ? <Check className="h-4 w-4" /> : <span>{step.number}</span>}
+                      </span>
+                      <span className={cn("text-xs whitespace-nowrap", labelStyle)}>{step.title}</span>
+                      {isCurrent ? (
+                        <span className="sr-only">
+                          Current step {currentStepIndex + 1} of {steps.length}
+                        </span>
+                      ) : null}
+                    </button>
 
-          {/* Current Step Description or Error Message */}
-          <div className="text-center flex-1 px-4">
-            {errorMessage ? (
-              <div className="flex items-center justify-center gap-2">
-                <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
-                <p className="text-sm font-medium text-red-600 dark:text-red-400">
-                  {errorMessage}
-                </p>
-              </div>
-            ) : (
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                {steps[currentStepIndex]?.description}
-              </p>
-              {bufferTherapistStatus && (
-                <p className="text-xs text-slate-600 dark:text-slate-400">
-                  {bufferTherapistStatus}
-                </p>
-              )}
+                    {index < steps.length - 1 ? (
+                      <div className="mx-1 flex items-center gap-1" aria-hidden>
+                        <div
+                          className={cn(
+                            "h-0.5 w-4 md:w-6 rounded-full",
+                            isPast ? "bg-emerald-500/70" : "bg-slate-300 dark:bg-slate-700"
+                          )}
+                        />
+                        <ChevronRight
+                          className={cn(
+                            "h-3 w-3",
+                            isPast ? "text-emerald-600/70 dark:text-emerald-400/60" : "text-slate-400 dark:text-slate-600"
+                          )}
+                        />
+                        <div
+                          className={cn(
+                            "h-0.5 w-4 md:w-6 rounded-full",
+                            isPast ? "bg-emerald-500/70" : "bg-slate-300 dark:bg-slate-700"
+                          )}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
             </div>
-            )}
           </div>
 
-          {/* Next Button */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onNext}
-            disabled={!canGoNext}
-            className={cn(
-              "text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white",
-              !canGoNext && "opacity-50 cursor-not-allowed"
-            )}
-          >
-            Next
-            <ChevronRight className="w-4 h-4 ml-1" />
-          </Button>
-        </div>
+          {/* Right controls */}
+          <div className="shrink-0 flex items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onNext}
+              disabled={!canGoNext}
+              className={cn("h-7 w-7", !canGoNext && "opacity-50 cursor-not-allowed")}
+              aria-label="Next step"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
 
-        {/* Initialize Algorithm Button */}
-        {(canClear || canInitialize) && (
-          <div className="flex justify-center gap-2">
-            {canClear && showClear && onClearStep ? (
-              canResetBaseline ? (
-                <div className="relative inline-flex">
-                  <Button
-                    type="button"
-                    onClick={() => onClearStep(currentStep)}
-                    disabled={isLoading}
-                    variant="outline"
-                    className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40 rounded-r-none"
-                  >
-                    Clear
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={() => setShowClearMenu((v) => !v)}
-                    disabled={isLoading}
-                    variant="outline"
-                    className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40 rounded-l-none border-l-0 px-2"
-                    aria-label="More clear actions"
-                  >
-                    <ChevronRight className={cn("w-4 h-4 transition-transform", showClearMenu ? "rotate-90" : "")} />
-                  </Button>
-                  {showClearMenu ? (
-                    <div className="absolute left-0 top-full mt-1 w-56 rounded-md border border-slate-200 bg-white shadow-lg z-50 dark:border-slate-700 dark:bg-slate-900">
-                      <button
-                        className="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
-                        onClick={() => {
-                          setShowClearMenu(false)
-                          onResetToBaseline?.()
-                        }}
-                        type="button"
-                      >
-                        <span className="text-red-600 dark:text-red-300">Reset to baseline</span>
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ) : (
+            <Popover>
+              <PopoverTrigger asChild>
                 <Button
-                  onClick={() => onClearStep(currentStep)}
-                  disabled={isLoading}
-                  variant="outline"
-                  className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40"
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-slate-500 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-50"
+                  aria-label="Step status legend"
                 >
-                  Clear
+                  <HelpCircle className="h-4 w-4" />
                 </Button>
-              )
-            ) : null}
-            {canInitialize ? (
-              <Button
-                onClick={onInitialize}
-                onMouseEnter={onInitializePrefetch}
-                onFocus={onInitializePrefetch}
-                disabled={isLoading}
-                variant="default"
-                className="bg-blue-600 hover:bg-blue-700 text-white"
+              </PopoverTrigger>
+              <PopoverContent
+                align="end"
+                side="bottom"
+                className="w-48 rounded-md border border-amber-200 bg-amber-50/95 p-2 text-xs text-slate-800 shadow-md dark:border-amber-900/40 dark:bg-slate-900"
               >
-                {isLoading ? 'Running...' : isInitialized ? 'Re-run Algorithm' : 'Initialize Algorithm'}
-              </Button>
+                <PopoverArrow />
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <Circle className="h-3 w-3 text-slate-600 dark:text-slate-300" fill="currentColor" />
+                    <span>Pending</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="h-3 w-3 text-yellow-600 dark:text-yellow-400" />
+                    <span>Modified</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                    <span>Completed</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex h-3 w-3 rounded-full bg-amber-500" aria-hidden />
+                    <span>Current</span>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
+
+        {/* Row 2: centered description + centered actions */}
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+          <div aria-hidden />
+          <div className="min-w-0 justify-self-center text-center flex flex-col items-center gap-2">
+            <div className="text-xs text-slate-600 dark:text-slate-300">
+              <span className="font-medium text-slate-800 dark:text-slate-100">
+                Step {currentStepIndex + 1}/{steps.length}
+              </span>
+              <span className="mx-2 text-slate-300 dark:text-slate-700" aria-hidden>
+                |
+              </span>
+              <span className="truncate">
+                {currentStepData?.description ?? currentStepData?.title ?? ''}
+              </span>
+            </div>
+
+            {(canClear || canInitialize) ? (
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                {canClear && showClear && onClearStep ? (
+                  canResetBaseline ? (
+                    <div className="relative inline-flex">
+                      <Button
+                        type="button"
+                        onClick={() => onClearStep(currentStep)}
+                        disabled={isLoading}
+                        size="sm"
+                        variant="outline"
+                        className="h-8 border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40 rounded-r-none"
+                      >
+                        Clear
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => setShowClearMenu((v) => !v)}
+                        disabled={isLoading}
+                        size="sm"
+                        variant="outline"
+                        className="h-8 border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40 rounded-l-none border-l-0 px-2"
+                        aria-label="More clear actions"
+                      >
+                        <ChevronRight
+                          className={cn("w-4 h-4 transition-transform", showClearMenu ? "rotate-90" : "")}
+                        />
+                      </Button>
+                      {showClearMenu ? (
+                        <div className="absolute right-0 top-full mt-1 w-56 rounded-md border border-slate-200 bg-white shadow-lg z-50 dark:border-slate-700 dark:bg-slate-900">
+                          <button
+                            className="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
+                            onClick={() => {
+                              setShowClearMenu(false)
+                              onResetToBaseline?.()
+                            }}
+                            type="button"
+                          >
+                            <span className="text-red-600 dark:text-red-300">Reset to baseline</span>
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      onClick={() => onClearStep(currentStep)}
+                      disabled={isLoading}
+                      size="sm"
+                      variant="outline"
+                      className="h-8 border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40"
+                    >
+                      Clear
+                    </Button>
+                  )
+                ) : null}
+                {canInitialize ? (
+                  <Button
+                    type="button"
+                    onClick={onInitialize}
+                    onMouseEnter={onInitializePrefetch}
+                    onFocus={onInitializePrefetch}
+                    disabled={isLoading}
+                    size="sm"
+                    variant="default"
+                    className="h-8 bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    {isLoading ? 'Running...' : isInitialized ? 'Re-run Algorithm' : 'Initialize Algorithm'}
+                  </Button>
+                ) : null}
+              </div>
             ) : null}
           </div>
-        )}
-      </div>
-
-      {/* Step Status Legend */}
-      <div className="flex items-center justify-center gap-6 mt-4 text-xs text-slate-600 dark:text-slate-400">
-        <div className="flex items-center gap-1.5">
-          <Circle className="w-3 h-3 text-slate-500 dark:text-slate-400" fill="currentColor" />
-          <span>Pending</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <AlertCircle className="w-3 h-3 text-yellow-500" />
-          <span>Modified</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Check className="w-3 h-3 text-emerald-500" />
-          <span>Completed</span>
+          <div aria-hidden />
         </div>
       </div>
     </div>

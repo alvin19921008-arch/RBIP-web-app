@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { Team, LeaveType } from '@/types/staff'
 import { Staff } from '@/types/staff'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -56,7 +56,7 @@ function LeaveItem({ staff, onEditStaff }: LeaveItemProps) {
   )
 }
 
-export function LeaveBlock({ team, staffOnLeave, onEditStaff }: LeaveBlockProps) {
+export const LeaveBlock = memo(function LeaveBlock({ team, staffOnLeave, onEditStaff }: LeaveBlockProps) {
   return (
     <Card>
       <CardContent className="p-2 pt-1">
@@ -77,5 +77,5 @@ export function LeaveBlock({ team, staffOnLeave, onEditStaff }: LeaveBlockProps)
       </CardContent>
     </Card>
   )
-}
+})
 

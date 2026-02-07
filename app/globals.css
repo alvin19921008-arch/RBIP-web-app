@@ -398,3 +398,9 @@ html[data-vt="mode-switch"] .vt-mode-anim {
   transition: none !important;
 }
 
+/* Performance helpers */
+.cv-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: 960px 800px;
+}
+

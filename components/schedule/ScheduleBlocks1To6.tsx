@@ -36,7 +36,7 @@ type StaffOverrides = Record<
   }
 >
 
-export function ScheduleBlocks1To6(props: {
+export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: {
   mode: 'main' | 'reference'
   weekday: Weekday
   sptAllocations: SPTAllocation[]
@@ -166,7 +166,7 @@ export function ScheduleBlocks1To6(props: {
     <div className="bg-background">
       <div className="min-w-[960px]">
         {/* Block 1: Therapist Allocation */}
-        <div className="mb-4">
+        <div className="mb-4 cv-auto">
           <h3 className="text-xs font-semibold text-center mb-2">Therapist Allocation</h3>
           <div className="grid grid-cols-8 gap-2">
             {TEAMS.map((team) => (
@@ -187,7 +187,7 @@ export function ScheduleBlocks1To6(props: {
         </div>
 
         {/* Block 2: PCA Allocation */}
-        <div className="mb-4">
+        <div className="mb-4 cv-auto">
           <h3 className="text-xs font-semibold text-center mb-2">PCA Allocation</h3>
           <div className="grid grid-cols-8 gap-2">
             {TEAMS.map((team) => (
@@ -213,7 +213,7 @@ export function ScheduleBlocks1To6(props: {
         </div>
 
         {/* Block 3: Bed Allocation */}
-        <div className="mb-4">
+        <div className="mb-4 cv-auto">
           <h3 className="text-xs font-semibold text-center mb-2">Relieving Beds</h3>
           <div className="grid grid-cols-8 gap-2">
             {TEAMS.map((team) => (
@@ -231,7 +231,7 @@ export function ScheduleBlocks1To6(props: {
         </div>
 
         {/* Block 4: Leave Arrangements */}
-        <div className="mb-4">
+        <div className="mb-4 cv-auto">
           <h3 className="text-xs font-semibold text-center mb-2">Leave Arrangements</h3>
           <div className="grid grid-cols-8 gap-2">
             {TEAMS.map((team) => (
@@ -241,7 +241,7 @@ export function ScheduleBlocks1To6(props: {
         </div>
 
         {/* Block 5: Calculations */}
-        <div className="mb-4">
+        <div className="mb-4 cv-auto">
           <h3 className="text-xs font-semibold text-center mb-2">Beds Calculations</h3>
           <div className="grid grid-cols-8 gap-2">
             {TEAMS.map((team) => {
@@ -267,7 +267,7 @@ export function ScheduleBlocks1To6(props: {
         </div>
 
         {/* Block 6: PCA Calculations */}
-        <div className="mb-4">
+        <div className="mb-4 cv-auto">
           <h3 className="text-xs font-semibold text-center mb-2">PCA Calculations</h3>
           <div className="grid grid-cols-8 gap-2">
             {TEAMS.map((team) => (
@@ -278,5 +278,5 @@ export function ScheduleBlocks1To6(props: {
       </div>
     </div>
   )
-}
+})
 

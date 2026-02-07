@@ -56,7 +56,7 @@ function formatBedNumbersForDisplay(text: string): string {
   return nums.map(n => String(n)).join(', ')
 }
 
-export function BedBlock({
+export const BedBlock = React.memo(function BedBlock({
   team,
   allocations,
   wards,
@@ -874,5 +874,5 @@ export function BedBlock({
       </CardContent>
     </Card>
   )
-}
+})
 

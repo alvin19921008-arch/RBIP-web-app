@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, Fragment, useCallback, Suspense, useMemo, Profiler, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { DndContext, DragOverlay, DragEndEvent, DragStartEvent, DragMoveEvent, Active } from '@dnd-kit/core'
 import { snapCenterToCursor } from '@dnd-kit/modifiers'
 import { Team, Weekday, LeaveType } from '@/types/staff'
@@ -53,7 +54,7 @@ import { ScheduleMainLayout } from '@/components/schedule/ScheduleMainLayout'
 import { SplitPane } from '@/components/ui/SplitPane'
 import { ReferenceSchedulePane } from '@/components/schedule/ReferenceSchedulePane'
 import { ScheduleBlocks1To6 } from '@/components/schedule/ScheduleBlocks1To6'
-import { Save, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX } from 'lucide-react'
+import { Save, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -185,6 +186,7 @@ function SchedulePageContent() {
     if (!Number.isFinite(n)) return 0.5
     return Math.max(0.15, Math.min(0.85, n))
   })()
+  const splitSwapParam = searchParams.get('splitSwap') === '1'
   const isRefHidden = (refHiddenParam || '') === '1'
   const supabase = createClientComponentClient()
   const navLoading = useNavigationLoading()
@@ -212,7 +214,10 @@ function SchedulePageContent() {
 
   const [splitDirection, setSplitDirection] = useState<'col' | 'row'>(splitDirParam)
   const [splitRatio, setSplitRatio] = useState<number>(splitRatioParam)
+  const [isSplitSwapped, setIsSplitSwapped] = useState<boolean>(splitSwapParam)
   const [stepIndicatorCollapsed, setStepIndicatorCollapsed] = useState(false)
+  const [refPortalHost, setRefPortalHost] = useState<HTMLDivElement | null>(null)
+  const [refPortalHiddenHost, setRefPortalHiddenHost] = useState<HTMLDivElement | null>(null)
 
   // Keep local split UI state in sync with URL (e.g. back/forward).
   useEffect(() => {
@@ -221,6 +226,9 @@ function SchedulePageContent() {
   useEffect(() => {
     setSplitRatio(splitRatioParam)
   }, [splitRatioParam])
+  useEffect(() => {
+    setIsSplitSwapped(splitSwapParam)
+  }, [splitSwapParam])
   // Auto-collapse step indicator when entering split mode
   useEffect(() => {
     setStepIndicatorCollapsed(isSplitMode)
@@ -254,6 +262,183 @@ function SchedulePageContent() {
       }
     },
     [router, searchParams]
+  )
+
+  const toggleViewingMode = useCallback(() => {
+    replaceScheduleQuery((p) => {
+      if (p.get('view') === '1') p.delete('view')
+      else p.set('view', '1')
+    })
+  }, [replaceScheduleQuery])
+
+  const setRefHidden = useCallback(
+    (hidden: boolean) => {
+      try {
+        window.sessionStorage.setItem('rbip_split_ref_hidden', hidden ? '1' : '0')
+      } catch {
+        // ignore
+      }
+      replaceScheduleQuery((p) => {
+        p.set('split', '1')
+        p.set('refHidden', hidden ? '1' : '0')
+      })
+    },
+    [replaceScheduleQuery]
+  )
+
+  const toggleSplitSwap = useCallback(() => {
+    // True swap: swap pane positions (left<->right / top<->bottom), keeping each pane's own size.
+    const next = !isSplitSwapped
+    setIsSplitSwapped(next)
+    try {
+      window.sessionStorage.setItem('rbip_split_swapped', next ? '1' : '0')
+      // Swapping is most useful when reference is visible.
+      window.sessionStorage.setItem('rbip_split_ref_hidden', '0')
+    } catch {
+      // ignore
+    }
+    replaceScheduleQuery((p) => {
+      p.set('split', '1')
+      if (next) p.set('splitSwap', '1')
+      else p.delete('splitSwap')
+      p.set('refHidden', '0')
+    })
+  }, [isSplitSwapped, replaceScheduleQuery])
+
+  const toggleSplitMode = useCallback(() => {
+    if (isSplitMode) {
+      // Turn off split: persist last-used ref settings in sessionStorage for fast restore,
+      // but clear split-related params from the URL.
+      try {
+        const refDate = searchParams.get('refDate')
+        const dir = searchParams.get('splitDir')
+        const ratio = searchParams.get('splitRatio')
+        const hidden = searchParams.get('refHidden')
+        const swapped = searchParams.get('splitSwap')
+        if (refDate) window.sessionStorage.setItem('rbip_split_ref_date', refDate)
+        if (dir) window.sessionStorage.setItem('rbip_split_dir', dir)
+        if (ratio) window.sessionStorage.setItem('rbip_split_ratio', ratio)
+        if (hidden) window.sessionStorage.setItem('rbip_split_ref_hidden', hidden)
+        window.sessionStorage.setItem('rbip_split_swapped', swapped === '1' ? '1' : '0')
+      } catch {
+        // ignore
+      }
+
+      replaceScheduleQuery((p) => {
+        p.delete('split')
+        p.delete('splitDir')
+        p.delete('splitRatio')
+        p.delete('splitSwap')
+        p.delete('refHidden')
+        p.delete('refDate')
+      })
+      return
+    }
+
+    // Turn on split: seed from sessionStorage where possible.
+    let seededRefDate: string | null = null
+    try {
+      seededRefDate = window.sessionStorage.getItem('rbip_split_ref_date')
+    } catch {
+      seededRefDate = null
+    }
+    if (!seededRefDate) {
+      try {
+        seededRefDate = formatDateForInput(getPreviousWorkingDay(scheduleState.selectedDate))
+      } catch {
+        seededRefDate = formatDateForInput(new Date())
+      }
+    }
+
+    let dir: string | null = null
+    try {
+      dir = window.sessionStorage.getItem('rbip_split_dir')
+    } catch {
+      dir = null
+    }
+    if (dir !== 'col' && dir !== 'row') dir = 'col'
+
+    let ratioStr: string | null = null
+    try {
+      ratioStr = window.sessionStorage.getItem('rbip_split_ratio')
+    } catch {
+      ratioStr = null
+    }
+    const ratioNum = ratioStr != null ? Number(ratioStr) : NaN
+    const ratio = Number.isFinite(ratioNum) ? Math.max(0.15, Math.min(0.85, ratioNum)) : 0.5
+
+    let hidden: string | null = null
+    try {
+      hidden = window.sessionStorage.getItem('rbip_split_ref_hidden')
+    } catch {
+      hidden = null
+    }
+
+    let swapped: string | null = null
+    try {
+      swapped = window.sessionStorage.getItem('rbip_split_swapped')
+    } catch {
+      swapped = null
+    }
+
+    replaceScheduleQuery((p) => {
+      p.set('split', '1')
+      p.set('refDate', seededRefDate!)
+      p.set('splitDir', dir!)
+      p.set('splitRatio', ratio.toFixed(3))
+      p.set('refHidden', hidden === '1' ? '1' : '0')
+      if (swapped === '1') p.set('splitSwap', '1')
+      else p.delete('splitSwap')
+    })
+  }, [isSplitMode, replaceScheduleQuery, searchParams, scheduleState.selectedDate])
+
+  const displayToolsInlineNode = (
+    <div className="inline-flex items-center border border-border rounded-md overflow-hidden bg-background shadow-xs">
+      <span className="hidden lg:inline-flex px-2 py-1.5 text-[11px] font-medium text-muted-foreground border-r border-border">
+        Display
+      </span>
+      <Tooltip side="bottom" content={isViewingMode ? 'Exit viewing mode' : 'Enter viewing mode'}>
+        <button
+          type="button"
+          onClick={toggleViewingMode}
+          className={cn(
+            'px-2 py-1.5 text-xs font-medium transition-colors inline-flex items-center gap-1.5',
+            isViewingMode
+              ? 'bg-blue-600 text-white hover:bg-blue-700'
+              : 'text-muted-foreground hover:text-primary hover:bg-muted/60'
+          )}
+          aria-pressed={isViewingMode}
+        >
+          {isViewingMode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          <span>View</span>
+        </button>
+      </Tooltip>
+      <Tooltip
+        side="bottom"
+        content={
+          isSplitMode
+            ? isRefHidden
+              ? 'Split screen: ON (reference retracted)'
+              : 'Split screen: ON'
+            : 'Split screen: OFF'
+        }
+      >
+        <button
+          type="button"
+          onClick={toggleSplitMode}
+          className={cn(
+            'px-2 py-1.5 text-xs font-medium transition-colors inline-flex items-center gap-1.5 border-l border-border',
+            isSplitMode
+              ? 'bg-blue-600 text-white hover:bg-blue-700'
+              : 'text-muted-foreground hover:text-primary hover:bg-muted/60'
+          )}
+          aria-pressed={isSplitMode}
+        >
+          <SquareSplitHorizontal className="h-4 w-4" />
+          <span>Split</span>
+        </button>
+      </Tooltip>
+    </div>
   )
 
   // Split mode: ensure we always have a refDate param (seed from session storage or previous working day).
@@ -4714,16 +4899,23 @@ function SchedulePageContent() {
     setPcaAllocations(updatedPcaAllocations)
     
     // Handle any errors from the algorithm
-    if (result.errors?.preferredSlotUnassigned && result.errors.preferredSlotUnassigned.length > 0) {
+    const preferredSlotWarnings = Array.isArray(result.errors?.preferredSlotUnassigned)
+      ? result.errors!.preferredSlotUnassigned!.filter(Boolean)
+      : []
+    if (preferredSlotWarnings.length > 0) {
+      const msg = preferredSlotWarnings.join('; ')
       setPcaAllocationErrors((prev: PCAAllocationErrors) => ({
         ...prev,
-        preferredSlotUnassigned: result.errors!.preferredSlotUnassigned!.join('; ')
+        preferredSlotUnassigned: msg,
       }))
+      showActionToast('Step 3 completed with warnings.', 'warning', msg)
     }
     
     // Mark Step 3 as initialized and completed (domain-owned)
     scheduleActions.markStepCompleted('floating-pca')
-    showActionToast('Step 3 allocation completed.', 'success', 'Floating PCA assignments updated.')
+    if (preferredSlotWarnings.length === 0) {
+      showActionToast('Step 3 allocation completed.', 'success', 'Floating PCA assignments updated.')
+    }
   }
   
   /**
@@ -8860,8 +9052,10 @@ function SchedulePageContent() {
           snapshotDiffError={snapshotDiffError}
           snapshotDiffResult={snapshotDiffResult}
           rightActions={
-            isViewingMode ? null : (
-              <>
+            <>
+              {isSplitMode ? null : displayToolsInlineNode}
+              {isViewingMode ? null : (
+                <>
               {userRole === 'developer' ? (
                 <Tooltip
                   side="bottom"
@@ -9141,8 +9335,9 @@ function SchedulePageContent() {
                   {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
                 </Button>
               )}
-              </>
-            )
+                </>
+              )}
+            </>
           }
         />
         )}
@@ -9573,34 +9768,6 @@ function SchedulePageContent() {
             showClear={showClearForCurrentStep}
             isInitialized={initializedSteps.has(currentStep)}
             isLoading={loading}
-            errorMessage={
-              currentStep === 'therapist-pca'
-                ? (pcaAllocationErrors.missingSlotSubstitution || pcaAllocationErrors.specialProgramAllocation)
-                : undefined
-            }
-            bufferTherapistStatus={
-              currentStep === 'therapist-pca'
-                ? (() => {
-                    // Check if there are buffer therapists
-                    const bufferTherapists = bufferStaff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
-                    if (bufferTherapists.length === 0) return undefined
-                    
-                    // Check if all buffer therapists are assigned to teams
-                    const assignedBufferTherapists = bufferTherapists.filter(staff => {
-                      // Check if staff is in any team's therapistAllocations
-                      return Object.values(therapistAllocations).some(teamAllocs =>
-                        teamAllocs.some(alloc => alloc.staff_id === staff.id)
-                      )
-                    })
-                    
-                    if (assignedBufferTherapists.length === bufferTherapists.length) {
-                      return 'Buffer therapist detected and assigned'
-                    } else {
-                      return 'Buffer therapist detected and not yet assigned'
-                    }
-                  })()
-                : undefined
-            }
           />
         </div>
 
@@ -9972,7 +10139,12 @@ function SchedulePageContent() {
               </div>
             )}
             {/* Sticky Team headers row (Excel-like freeze) */}
-            <div className="sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-border">
+            <div
+              className={cn(
+                'sticky top-0 z-40 bg-background/95 border-b border-border',
+                !isSplitMode && 'backdrop-blur'
+              )}
+            >
               <div className="grid grid-cols-8 gap-2 py-2 min-w-[960px]">
                 {TEAMS.map((team) => (
                   <h2 key={`header-${team}`} className="text-lg font-bold text-center">
@@ -10251,9 +10423,104 @@ function SchedulePageContent() {
             </ScheduleMainLayout>
           )
 
-          if (!isSplitMode) return mainLayout
-
           const showReference = !isRefHidden
+
+          const refSelectedDate = refScheduleState.selectedDate
+          const refWeekday = getWeekday(refSelectedDate)
+          const refDateLabel = formatDateDDMMYYYY(refSelectedDate)
+
+          const referencePaneNode = (
+            <MaybeProfiler id="SplitReferencePane">
+              <ReferenceSchedulePane
+                direction={splitDirection}
+                refHidden={!showReference}
+                disableBlur={isSplitMode}
+                showTeamHeader={true}
+                refDateLabel={refDateLabel}
+                selectedDate={refSelectedDate}
+                datesWithData={datesWithData}
+                holidays={holidays}
+                onSelectDate={(d) => {
+                  const key = formatDateForInput(d)
+                  try {
+                    window.sessionStorage.setItem('rbip_split_ref_date', key)
+                  } catch {
+                    // ignore
+                  }
+                  replaceScheduleQuery((p) => {
+                    p.set('split', '1')
+                    p.set('refDate', key)
+                    p.set('refHidden', '0')
+                  })
+                }}
+                onToggleDirection={() => {
+                  const next = splitDirection === 'col' ? 'row' : 'col'
+                  setSplitDirection(next)
+                  try {
+                    window.sessionStorage.setItem('rbip_split_dir', next)
+                  } catch {
+                    // ignore
+                  }
+                  replaceScheduleQuery((p) => {
+                    p.set('split', '1')
+                    p.set('splitDir', next)
+                    p.set('refHidden', '0')
+                  })
+                }}
+                onRetract={() => {
+                  try {
+                    window.sessionStorage.setItem('rbip_split_ref_hidden', '1')
+                  } catch {
+                    // ignore
+                  }
+                  replaceScheduleQuery((p) => {
+                    p.set('split', '1')
+                    p.set('refHidden', '1')
+                  })
+                }}
+              >
+                {refScheduleState.isHydratingSchedule ? (
+                  <div className="rounded-lg border border-border bg-card p-3">
+                    <div className="h-4 w-48 rounded-md bg-muted animate-pulse" />
+                    <div className="mt-2 h-28 rounded-md bg-muted/70 animate-pulse" />
+                  </div>
+                ) : (
+                  <MaybeProfiler id="ReferenceBlocks">
+                    <ScheduleBlocks1To6
+                      mode="reference"
+                      weekday={refWeekday}
+                      sptAllocations={refScheduleState.sptAllocations as any}
+                      specialPrograms={refScheduleState.specialPrograms as any}
+                      therapistAllocationsByTeam={refScheduleState.therapistAllocations as any}
+                      pcaAllocationsByTeam={refScheduleState.pcaAllocations as any}
+                      bedAllocations={refScheduleState.bedAllocations as any}
+                      wards={refScheduleState.wards as any}
+                      calculationsByTeam={refScheduleState.calculations as any}
+                      staff={refScheduleState.staff as any}
+                      staffOverrides={refScheduleState.staffOverrides as any}
+                      bedCountsOverridesByTeam={refScheduleState.bedCountsOverridesByTeam as any}
+                      bedRelievingNotesByToTeam={refScheduleState.bedRelievingNotesByToTeam as any}
+                      stepStatus={refScheduleState.stepStatus as any}
+                      initializedSteps={refScheduleState.initializedSteps as any}
+                    />
+                  </MaybeProfiler>
+                )}
+              </ReferenceSchedulePane>
+            </MaybeProfiler>
+          )
+
+          const refPortalTarget = isSplitMode && showReference ? refPortalHost : refPortalHiddenHost
+          const referencePanePortal = refPortalTarget ? createPortal(referencePaneNode, refPortalTarget) : null
+
+          if (!isSplitMode) {
+            return (
+              <>
+                {mainLayout}
+                <div ref={setRefPortalHiddenHost} className="hidden" aria-hidden={true} />
+                {referencePanePortal}
+              </>
+            )
+          }
 
           const mainHeader = (
             <div className="shrink-0 bg-blue-50/60 dark:bg-blue-950/25 backdrop-blur border-b border-border">
@@ -10267,7 +10534,39 @@ function SchedulePageContent() {
                     <div className="text-[11px] text-muted-foreground truncate">Reference is retracted</div>
                   ) : null}
                 </div>
-                {/* Retract button moved to collapsed pane */}
+                <div className="shrink-0 flex items-center gap-2">
+                  <div className="inline-flex items-center border border-border rounded-md overflow-hidden bg-background shadow-xs">
+                    <Tooltip side="bottom" content={isViewingMode ? 'Exit viewing mode' : 'Enter viewing mode'}>
+                      <button
+                        type="button"
+                        onClick={toggleViewingMode}
+                        className={cn(
+                          'px-2 py-1.5 text-xs font-medium transition-colors inline-flex items-center gap-1.5',
+                          isViewingMode
+                            ? 'bg-blue-600 text-white hover:bg-blue-700'
+                            : 'text-muted-foreground hover:text-primary hover:bg-muted/60'
+                        )}
+                        aria-pressed={isViewingMode}
+                      >
+                        {isViewingMode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        <span className="hidden md:inline">View</span>
+                      </button>
+                    </Tooltip>
+                    <Tooltip side="bottom" content="Exit split mode">
+                      <button
+                        type="button"
+                        onClick={toggleSplitMode}
+                        className={cn(
+                          'px-2 py-1.5 text-xs font-medium transition-colors inline-flex items-center gap-1.5 border-l border-border',
+                          'bg-blue-600 text-white hover:bg-blue-700'
+                        )}
+                      >
+                        <SquareSplitHorizontal className="h-4 w-4" />
+                        <span className="hidden md:inline">Split</span>
+                      </button>
+                    </Tooltip>
+                  </div>
+                </div>
               </div>
             </div>
           )
@@ -10275,14 +10574,15 @@ function SchedulePageContent() {
           if (!showReference) {
             const refCollapsedDateLabel = formatDateDDMMYYYY(refScheduleState.selectedDate)
             return (
-               <div className={cn('h-full min-h-0 flex overflow-hidden', splitDirection === 'col' ? 'flex-row' : 'flex-col')}>
+              <>
+                <div className={cn('h-full min-h-0 flex overflow-hidden', splitDirection === 'col' ? 'flex-row' : 'flex-col')}>
                   <div className="flex-1 min-w-0 flex flex-col min-h-0">
                     {/* Fixed header for Main Pane in retracted mode */}
                     {mainHeader}
-                    
+
                     <div className="flex-1 min-w-0 overflow-auto">
-                        <div className="shrink-0">
-            <ScheduleHeaderBar
+                      <div className="inline-block min-w-full align-top">
+                        <ScheduleHeaderBar
           showBackButton={showBackButton}
           onBack={() => {
               const returnPath = sessionStorage.getItem('scheduleReturnPath')
@@ -10321,8 +10621,10 @@ function SchedulePageContent() {
           snapshotDiffError={snapshotDiffError}
           snapshotDiffResult={snapshotDiffResult}
           rightActions={
-            isViewingMode ? null : (
-              <>
+            <>
+              {isSplitMode ? null : displayToolsInlineNode}
+              {isViewingMode ? null : (
+                <>
               {userRole === 'developer' ? (
                 <Tooltip
                   side="bottom"
@@ -10602,18 +10904,21 @@ function SchedulePageContent() {
                   {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
                 </Button>
               )}
-              </>
-            )
+                </>
+              )}
+            </>
           }
         />
+                        {mainLayout}
+                      </div>
                     </div>
-                    {mainLayout}
                   </div>
-                </div>
-                <ReferenceSchedulePane
+                  <ReferenceSchedulePane
                     collapsed={true}
                     direction={splitDirection}
                     refHidden={true}
+                    disableBlur={isSplitMode}
+                    showTeamHeader={false}
                     refDateLabel={refCollapsedDateLabel}
                     selectedDate={refScheduleState.selectedDate}
                     datesWithData={new Set()}
@@ -10631,119 +10936,90 @@ function SchedulePageContent() {
                       })
                     }}
                   />
-               </div>
+                </div>
+                <div ref={setRefPortalHiddenHost} className="hidden" aria-hidden={true} />
+                {referencePanePortal}
+              </>
             )
           }
 
-          const refSelectedDate = refScheduleState.selectedDate
-          const refWeekday = getWeekday(refSelectedDate)
-          const refDateLabel = formatDateDDMMYYYY(refSelectedDate)
+          const splitLayout = (
+            <MaybeProfiler id="SplitPane">
+              <SplitPane
+                direction={splitDirection}
+                ratio={splitRatio}
+                swapped={isSplitSwapped}
+                liveResize={false}
+                paneOverflow="hidden"
+                dividerOverlay={
+                  <div
+                    className={cn(
+                      'group/pill rounded-full border border-border bg-background/95 shadow-sm',
+                      'overflow-hidden transition-[max-width] duration-150 ease-out',
+                      // Retracted by default; expands only when hovering the pill itself.
+                      'max-w-9 hover:max-w-[220px]'
+                    )}
+                    aria-label="Split controls"
+                    title="Split controls"
+                  >
+                    <div className="flex items-center gap-1 px-1 py-1">
+                      {/* Retracted indicator */}
+                      <div className="px-2 py-1 text-[11px] font-medium text-muted-foreground group-hover/pill:hidden select-none">
+                        ⋯
+                      </div>
 
-          const referencePane = (
-            <ReferenceSchedulePane
-              direction={splitDirection}
-              refHidden={false}
-              refDateLabel={refDateLabel}
-              selectedDate={refSelectedDate}
-              datesWithData={datesWithData}
-              holidays={holidays}
-              onSelectDate={(d) => {
-                const key = formatDateForInput(d)
-                try {
-                  window.sessionStorage.setItem('rbip_split_ref_date', key)
-                } catch {
-                  // ignore
+                      {/* Expanded controls */}
+                      <div className="hidden group-hover/pill:flex items-center gap-1">
+                        <button
+                          type="button"
+                          className="px-2 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 rounded-full transition-colors"
+                          onClick={toggleSplitSwap}
+                          aria-label="Swap panes"
+                          title="Swap panes"
+                        >
+                          Swap
+                        </button>
+                        <div className="h-4 w-px bg-border" aria-hidden />
+                        <button
+                          type="button"
+                          className="px-2 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 rounded-full transition-colors"
+                          onClick={() => setRefHidden(!isRefHidden)}
+                          aria-label={isRefHidden ? 'Show reference pane' : 'Hide reference pane'}
+                          title={isRefHidden ? 'Show reference pane' : 'Hide reference pane'}
+                        >
+                          {isRefHidden ? 'Show ref' : 'Hide ref'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 }
-                replaceScheduleQuery((p) => {
-                  p.set('split', '1')
-                  p.set('refDate', key)
-                  p.set('refHidden', '0')
-                })
-              }}
-              onToggleDirection={() => {
-                const next = splitDirection === 'col' ? 'row' : 'col'
-                setSplitDirection(next)
-                try {
-                  window.sessionStorage.setItem('rbip_split_dir', next)
-                } catch {
-                  // ignore
-                }
-                replaceScheduleQuery((p) => {
-                  p.set('split', '1')
-                  p.set('splitDir', next)
-                  p.set('refHidden', '0')
-                })
-              }}
-              onRetract={() => {
-                try {
-                  window.sessionStorage.setItem('rbip_split_ref_hidden', '1')
-                } catch {
-                  // ignore
-                }
-                replaceScheduleQuery((p) => {
-                  p.set('split', '1')
-                  p.set('refHidden', '1')
-                })
-              }}
-            >
-              {refScheduleState.isHydratingSchedule ? (
-                <div className="rounded-lg border border-border bg-card p-3">
-                  <div className="h-4 w-48 rounded-md bg-muted animate-pulse" />
-                  <div className="mt-2 h-28 rounded-md bg-muted/70 animate-pulse" />
-                </div>
-              ) : (
-                <ScheduleBlocks1To6
-                  mode="reference"
-                  weekday={refWeekday}
-                  sptAllocations={refScheduleState.sptAllocations as any}
-                  specialPrograms={refScheduleState.specialPrograms as any}
-                  therapistAllocationsByTeam={refScheduleState.therapistAllocations as any}
-                  pcaAllocationsByTeam={refScheduleState.pcaAllocations as any}
-                  bedAllocations={refScheduleState.bedAllocations as any}
-                  wards={refScheduleState.wards as any}
-                  calculationsByTeam={refScheduleState.calculations as any}
-                  staff={refScheduleState.staff as any}
-                  staffOverrides={refScheduleState.staffOverrides as any}
-                  bedCountsOverridesByTeam={refScheduleState.bedCountsOverridesByTeam as any}
-                  bedRelievingNotesByToTeam={refScheduleState.bedRelievingNotesByToTeam as any}
-                  stepStatus={refScheduleState.stepStatus as any}
-                  initializedSteps={refScheduleState.initializedSteps as any}
-                />
-              )}
-            </ReferenceSchedulePane>
-          )
+                onRatioCommit={(r) => {
+                  setSplitRatio(r)
+                  try {
+                    window.sessionStorage.setItem('rbip_split_ratio', String(r))
+                  } catch {
+                    // ignore
+                  }
+                  replaceScheduleQuery((p) => {
+                    p.set('split', '1')
+                    p.set('splitRatio', r.toFixed(3))
+                    p.set('refHidden', '0')
+                  })
+                }}
+                minPx={420}
+                className="h-full"
+                paneAClassName="bg-blue-50/20 dark:bg-blue-950/10"
+                paneBClassName="bg-amber-50/20 dark:bg-amber-950/10"
+                paneA={
+                    <MaybeProfiler id="SplitMainPane">
+                      <div className="h-full min-h-0 flex flex-col">
+                        {/* Fixed header for Main Pane */}
+                        {mainHeader}
 
-          return (
-            <SplitPane
-              direction={splitDirection}
-              ratio={splitRatio}
-              onRatioChange={(r) => setSplitRatio(r)}
-              onRatioCommit={(r) => {
-                setSplitRatio(r)
-                try {
-                  window.sessionStorage.setItem('rbip_split_ratio', String(r))
-                } catch {
-                  // ignore
-                }
-                replaceScheduleQuery((p) => {
-                  p.set('split', '1')
-                  p.set('splitRatio', r.toFixed(3))
-                  p.set('refHidden', '0')
-                })
-              }}
-              minPx={420}
-              className="h-full"
-              paneAClassName="bg-blue-50/20 dark:bg-blue-950/10"
-              paneBClassName="bg-amber-50/20 dark:bg-amber-950/10"
-              paneA={
-                <div className="h-full min-h-0 flex flex-col">
-                  {/* Fixed header for Main Pane */}
-                  {mainHeader}
-
-                  {/* Scrollable Main content (includes schedule header bar + full layout) */}
-                  <div className="flex-1 min-w-0 overflow-auto">
-                    <div className="shrink-0">
-                      <ScheduleHeaderBar
+                        {/* Scrollable Main content (includes schedule header bar + full layout) */}
+                        <div className="flex-1 min-w-0 overflow-auto">
+                          <div className="inline-block min-w-full align-top">
+                            <ScheduleHeaderBar
           showBackButton={showBackButton}
           onBack={() => {
               const returnPath = sessionStorage.getItem('scheduleReturnPath')
@@ -10782,8 +11058,10 @@ function SchedulePageContent() {
           snapshotDiffError={snapshotDiffError}
           snapshotDiffResult={snapshotDiffResult}
           rightActions={
-            isViewingMode ? null : (
-              <>
+            <>
+              {isSplitMode ? null : displayToolsInlineNode}
+              {isViewingMode ? null : (
+                <>
               {userRole === 'developer' ? (
                 <Tooltip
                   side="bottom"
@@ -11063,17 +11341,28 @@ function SchedulePageContent() {
                   {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
                 </Button>
               )}
-              </>
-            )
+                </>
+              )}
+            </>
           }
         />
-                    </div>
-                    {mainLayout}
+                          {mainLayout}
+                        </div>
                   </div>
-                </div>
-              }
-              paneB={referencePane}
-            />
+                    </div>
+                  </MaybeProfiler>
+                }
+                paneB={<div ref={setRefPortalHost} className="h-full min-h-0" />}
+              />
+            </MaybeProfiler>
+          )
+
+          return (
+            <>
+              {splitLayout}
+              <div ref={setRefPortalHiddenHost} className="hidden" aria-hidden={true} />
+              {referencePanePortal}
+            </>
           )
         })()}
         </div>

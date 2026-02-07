@@ -5,7 +5,7 @@ import { ScheduleCalculations } from '@/types/schedule'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { Pencil } from 'lucide-react'
 
 interface CalculationBlockProps {
@@ -30,7 +30,7 @@ function AcademicCapIcon({ className }: { className?: string }) {
   )
 }
 
-export function CalculationBlock({
+export const CalculationBlock = memo(function CalculationBlock({
   team,
   calculations,
   shsBedCounts,
@@ -121,4 +121,4 @@ export function CalculationBlock({
       </CardContent>
     </Card>
   )
-}
+})

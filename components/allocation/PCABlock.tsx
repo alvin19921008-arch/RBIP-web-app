@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useMemo, useCallback } from 'react'
+import React, { useMemo, useCallback, memo } from 'react'
 import { Team } from '@/types/staff'
 import { PCAAllocation, TeamAllocationLog } from '@/types/schedule'
 import { Staff } from '@/types/staff'
@@ -50,7 +50,7 @@ interface PCABlockProps {
   droppableIdPrefix?: string
 }
 
-export function PCABlock({
+export const PCABlock = memo(function PCABlock({
   team,
   allocations,
   onEditStaff,
@@ -1503,5 +1503,5 @@ export function PCABlock({
       </CardContent>
     </Card>
   )
-}
+})
 

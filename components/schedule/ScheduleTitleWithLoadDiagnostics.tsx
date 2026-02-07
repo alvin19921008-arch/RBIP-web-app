@@ -198,7 +198,16 @@ function RenderPerfBlock(props: { perfTick: number; perfStats: Record<string, Pe
   // Force this subtree to re-render when new perf stats come in.
   void props.perfTick
 
-  const ids = ['TeamGrid', 'StaffPool', 'PCADedicatedTable', 'AllocationNotesBoard']
+  const ids = [
+    'TeamGrid',
+    'StaffPool',
+    'PCADedicatedTable',
+    'AllocationNotesBoard',
+    'SplitPane',
+    'SplitMainPane',
+    'SplitReferencePane',
+    'ReferenceBlocks',
+  ]
   const rows = ids
     .map((id) => ({ id, s: props.perfStats[id] }))
     .filter((r) => !!r.s && (r.s as any).commits > 0) as Array<{ id: string; s: PerfStat }>

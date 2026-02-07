@@ -88,8 +88,8 @@ export function ScheduleHeaderBar(props: {
         </Button>
       ) : null}
 
-      <div className="flex justify-between items-center mb-4">
-        <div className="flex items-center space-x-4">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div className="flex flex-wrap items-center gap-4 min-w-0 flex-1">
           <ScheduleTitleWithLoadDiagnostics
             userRole={props.userRole}
             showDiagnostics={props.showLoadDiagnostics}
@@ -101,8 +101,8 @@ export function ScheduleHeaderBar(props: {
             perfStats={props.perfStats}
           />
 
-          <div className="flex items-center gap-0.5 relative">
-            <div className="inline-flex items-center border border-border rounded-md overflow-hidden bg-background shadow-xs">
+          <div className="flex flex-wrap items-center gap-2 relative min-w-0">
+            <div className="inline-flex shrink-0 items-center border border-border rounded-md overflow-hidden bg-background shadow-xs">
               <Tooltip side="bottom" content={`Previous working day: ${prevLabel}`}>
                 <button
                   type="button"
@@ -139,12 +139,13 @@ export function ScheduleHeaderBar(props: {
               </Tooltip>
             </div>
 
-            <div className="inline-flex items-center gap-1">
+            <div className="inline-flex items-center gap-1 min-w-0">
               <span
                 suppressHydrationWarning
-                className={`text-lg font-semibold rounded px-2 py-1 transition-shadow transition-colors ${
-                  props.isDateHighlighted ? 'bg-amber-50 ring-2 ring-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.55)]' : ''
-                }`}
+                className={cn(
+                  'text-lg font-semibold rounded px-2 py-1 transition-shadow transition-colors truncate',
+                  props.isDateHighlighted ? 'bg-amber-50 ring-2 ring-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.55)]' : null
+                )}
               >
                 {displayDate} ({props.weekdayName})
               </span>
@@ -164,7 +165,7 @@ export function ScheduleHeaderBar(props: {
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2 w-full sm:w-auto sm:ml-auto">
           {props.showSnapshotUiReminder ? (
             <Popover open={props.savedSetupPopoverOpen} onOpenChange={props.onSavedSetupPopoverOpenChange}>
               <Tooltip
