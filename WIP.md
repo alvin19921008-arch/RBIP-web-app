@@ -246,6 +246,82 @@ This document tracks a **step-by-step refactor + loading speed optimization plan
 
 ---
 
+## Draft Plan (2026-02-07) — Next Refactor Sequence
+
+### Phase 0 — Baseline + Scope Lock
+- [x] **0.1 Confirm critical flows and freeze behavior expectations**
+  - Schedule: load date, switch date, Step 2/3/4, save/copy
+  - Dashboard: panel switching, access gating, sync/publish panel
+- [x] **0.2 Capture baseline timings**
+  - Use existing dev load diagnostics tooltips (schedule)
+  - Quick manual check on dashboard initial render
+  - Note: chrome-devtools MCP active; trace saved as `trace-dashboard.json`
+  - Baseline log (fill in as measured):
+    - Schedule cold load (cache miss, 2026-01-23): total 817ms; rpc load_schedule_v1 804ms; snapshot yes; cache size 1
+    - Date switch (next working day, cache miss, 2026-01-26): total 1432ms; rpc load_schedule_v1 1431ms; snapshot yes; cache size 2
+    - Date switch (prev working day, cache hit, 2026-01-23): total 184ms; rpc no; snapshot yes; cache size 2
+    - Step 2 run (2026-01-23, after Special Program Overrides confirm): ~49.4s
+    - Step 3 run (2026-01-23): ~17.5s
+    - Step 4 run (2026-01-23): ~9.8s
+    - Dashboard initial render (perf trace): LCP 685ms; TTFB 532ms; render delay 153ms; CLS 0.00
+- [x] **0.3 Decide dev-only utilities**
+  - Decision: keep but dev-gate (avoid prod exposure)
+  - Candidates:
+    - `app/(auth)/login/test-simple/page.tsx`
+    - `app/(auth)/login/debug/page.tsx`
+    - `app/api/test-connection/route.ts`
+    - `app/api/verify-schema/route.ts`
+    - `proxy.ts`
+
+### Phase 1 — Orphan & Dev-Only Cleanup (low risk)
+- [x] **1.1 Remove or dev-gate debug routes**
+  - Dev-gated:
+    - `app/(auth)/login/test-simple/page.tsx`
+    - `app/(auth)/login/debug/page.tsx`
+    - `app/api/test-connection/route.ts`
+    - `app/api/verify-schema/route.ts`
+    - `proxy.ts`
+- [x] **1.2 Document retained debug utilities**
+  - Short note in README or internal dev notes
+
+### Phase 2 — Dashboard Streamlining
+- [x] **2.1 Build a panel registry**
+  - Single source for id, label, description, component, access
+- [x] **2.2 Replace conditional rendering with registry lookup**
+  - Reduce repeated `activePanel === ...` blocks
+- [x] **2.3 Lazy-load panels**
+  - `next/dynamic` for each panel to trim initial bundle
+
+### Phase 3 — Schedule Page Import Hygiene
+- [x] **3.1 Convert type-only imports to `import type`**
+- [x] **3.2 Dynamic import remaining heavy dialogs**
+  - `TieBreakDialog` now lazy-loaded via `next/dynamic`
+- [x] **3.3 Reduce icon bundle cost**
+  - Added `optimizePackageImports: ['lucide-react']` in `next.config.js`
+- [x] **3.4 Decouple HK holiday data from initial bundle**
+  - Replace `date-holidays` runtime use with static holiday map (2010–2040)
+- [x] **3.5 Split reference schedule chunks**
+  - Lazy-load `ReferenceSchedulePane` and `ScheduleBlocks1To6`
+
+### Phase 4 — Hot Path Cleanups
+- [x] **4.1 Remove `JSON.stringify` comparisons in render path**
+  - Swap to version counters from `useScheduleController`
+- [x] **4.2 Extract `PCABlock` view-model logic**
+  - Moved heavy derived state into `usePcaBlockViewModel`
+
+### Phase 5 — Bundle Diagnostics (optional)
+- [x] **5.1 Add bundle analyzer for visibility**
+  - `@next/bundle-analyzer` + `npm run analyze` (sets `ANALYZE=true`)
+- [ ] **5.2 Consider `optimizePackageImports` / `removeConsole`**
+  - `optimizePackageImports` already enabled for `lucide-react` (Phase 3)
+
+### Phase 6 — Verify & Document
+- [ ] **6.1 Smoke tests**
+  - Load date, switch date, run Step 2/3/4, save/copy
+  - Investigate why the prev/next working-day buttons aren’t advancing in the automated run (Chrome DevTools MCP). Manual navigation works; might be automation timing / click target / state update.
+- [ ] **6.2 Update `CHANGELOG.md`**
+  - Note controller hook + refactor summary
+
 ## Notes / Decisions Log
 
 - **Keep snapshot isolation**: `baseline_snapshot` is the frozen truth for non-today schedules.

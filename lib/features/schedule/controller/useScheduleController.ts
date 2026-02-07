@@ -180,6 +180,12 @@ type ScheduleDomainState = {
   savedBedCountsOverridesByTeam: BedCountsOverridesByTeam
   bedRelievingNotesByToTeam: BedRelievingNotesByToTeam
   savedBedRelievingNotesByToTeam: BedRelievingNotesByToTeam
+  staffOverridesVersion: number
+  savedOverridesVersion: number
+  bedCountsOverridesVersion: number
+  savedBedCountsOverridesVersion: number
+  bedRelievingNotesVersion: number
+  savedBedRelievingNotesVersion: number
   allocationNotesDoc: any
   savedAllocationNotesDoc: any
 
@@ -201,6 +207,12 @@ type ScheduleDomainState = {
 type ScheduleDomainAction =
   | { type: 'set'; key: keyof ScheduleDomainState; value: unknown }
   | { type: 'patch'; patch: Partial<ScheduleDomainState> }
+  | { type: 'setStaffOverrides'; value: SetStateAction<ScheduleDomainState['staffOverrides']> }
+  | { type: 'setSavedOverrides'; value: SetStateAction<ScheduleDomainState['savedOverrides']> }
+  | { type: 'setBedCountsOverridesByTeam'; value: SetStateAction<ScheduleDomainState['bedCountsOverridesByTeam']> }
+  | { type: 'setSavedBedCountsOverridesByTeam'; value: SetStateAction<ScheduleDomainState['savedBedCountsOverridesByTeam']> }
+  | { type: 'setBedRelievingNotesByToTeam'; value: SetStateAction<ScheduleDomainState['bedRelievingNotesByToTeam']> }
+  | { type: 'setSavedBedRelievingNotesByToTeam'; value: SetStateAction<ScheduleDomainState['savedBedRelievingNotesByToTeam']> }
 
 function applySetStateAction<T>(prev: T, action: SetStateAction<T>): T {
   return typeof action === 'function' ? (action as (p: T) => T)(prev) : action
@@ -216,6 +228,54 @@ function scheduleDomainReducer(state: ScheduleDomainState, action: ScheduleDomai
       const prevVal = (state as any)[key]
       const nextVal = applySetStateAction(prevVal, action.value as any)
       return { ...(state as any), [key]: nextVal }
+    }
+    case 'setStaffOverrides': {
+      const nextVal = applySetStateAction(state.staffOverrides, action.value)
+      return {
+        ...state,
+        staffOverrides: nextVal,
+        staffOverridesVersion: state.staffOverridesVersion + 1,
+      }
+    }
+    case 'setSavedOverrides': {
+      const nextVal = applySetStateAction(state.savedOverrides, action.value)
+      return {
+        ...state,
+        savedOverrides: nextVal,
+        savedOverridesVersion: state.staffOverridesVersion,
+      }
+    }
+    case 'setBedCountsOverridesByTeam': {
+      const nextVal = applySetStateAction(state.bedCountsOverridesByTeam, action.value)
+      return {
+        ...state,
+        bedCountsOverridesByTeam: nextVal,
+        bedCountsOverridesVersion: state.bedCountsOverridesVersion + 1,
+      }
+    }
+    case 'setSavedBedCountsOverridesByTeam': {
+      const nextVal = applySetStateAction(state.savedBedCountsOverridesByTeam, action.value)
+      return {
+        ...state,
+        savedBedCountsOverridesByTeam: nextVal,
+        savedBedCountsOverridesVersion: state.bedCountsOverridesVersion,
+      }
+    }
+    case 'setBedRelievingNotesByToTeam': {
+      const nextVal = applySetStateAction(state.bedRelievingNotesByToTeam, action.value)
+      return {
+        ...state,
+        bedRelievingNotesByToTeam: nextVal,
+        bedRelievingNotesVersion: state.bedRelievingNotesVersion + 1,
+      }
+    }
+    case 'setSavedBedRelievingNotesByToTeam': {
+      const nextVal = applySetStateAction(state.savedBedRelievingNotesByToTeam, action.value)
+      return {
+        ...state,
+        savedBedRelievingNotesByToTeam: nextVal,
+        savedBedRelievingNotesVersion: state.bedRelievingNotesVersion,
+      }
     }
     default:
       return state
@@ -256,6 +316,12 @@ function createInitialScheduleDomainState(defaultDate: Date): ScheduleDomainStat
     savedBedCountsOverridesByTeam: {},
     bedRelievingNotesByToTeam: {},
     savedBedRelievingNotesByToTeam: {},
+    staffOverridesVersion: 0,
+    savedOverridesVersion: 0,
+    bedCountsOverridesVersion: 0,
+    savedBedCountsOverridesVersion: 0,
+    bedRelievingNotesVersion: 0,
+    savedBedRelievingNotesVersion: 0,
     allocationNotesDoc: null,
     savedAllocationNotesDoc: null,
 
@@ -298,6 +364,30 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
     if (existing) return existing as (next: SetStateAction<ScheduleDomainState[K]>) => void
 
     const fn = (next: SetStateAction<any>) => {
+      if (key === 'staffOverrides') {
+        dispatch({ type: 'setStaffOverrides', value: next })
+        return
+      }
+      if (key === 'savedOverrides') {
+        dispatch({ type: 'setSavedOverrides', value: next })
+        return
+      }
+      if (key === 'bedCountsOverridesByTeam') {
+        dispatch({ type: 'setBedCountsOverridesByTeam', value: next })
+        return
+      }
+      if (key === 'savedBedCountsOverridesByTeam') {
+        dispatch({ type: 'setSavedBedCountsOverridesByTeam', value: next })
+        return
+      }
+      if (key === 'bedRelievingNotesByToTeam') {
+        dispatch({ type: 'setBedRelievingNotesByToTeam', value: next })
+        return
+      }
+      if (key === 'savedBedRelievingNotesByToTeam') {
+        dispatch({ type: 'setSavedBedRelievingNotesByToTeam', value: next })
+        return
+      }
       dispatch({ type: 'set', key, value: next })
     }
     setterCacheRef.current[key] = fn
@@ -2177,8 +2267,8 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
       timer.stage('writeAllocations')
       onProgress(0.86)
 
-      setSavedOverrides({ ...overridesToSave })
       setStaffOverrides({ ...overridesToSave })
+      setSavedOverrides({ ...overridesToSave })
       setSavedBedCountsOverridesByTeam({ ...(bedCountsOverridesByTeam as any) })
       setSavedBedRelievingNotesByToTeam({ ...(bedRelievingNotesByToTeam as any) })
       setSavedAllocationNotesDoc(allocationNotesDoc)

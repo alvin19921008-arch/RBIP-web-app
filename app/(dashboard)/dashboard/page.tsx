@@ -1,55 +1,99 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { SpecialProgramPanel } from '@/components/dashboard/SpecialProgramPanel'
-import { SPTAllocationPanel } from '@/components/dashboard/SPTAllocationPanel'
-import { PCAPreferencePanel } from '@/components/dashboard/PCAPreferencePanel'
-import { StaffProfilePanel } from '@/components/dashboard/StaffProfilePanel'
-import { WardConfigPanel } from '@/components/dashboard/WardConfigPanel'
-import { TeamConfigurationPanel } from '@/components/dashboard/TeamConfigurationPanel'
-import { AccountManagementPanel } from '@/components/dashboard/AccountManagementPanel'
-import { ConfigSyncPanel } from '@/components/dashboard/ConfigSyncPanel'
+import { useState, useEffect, useRef, type ComponentType } from 'react'
+import dynamic from 'next/dynamic'
 import { DashboardSidebar, DASHBOARD_CATEGORIES, type CategoryId } from '@/components/dashboard/DashboardSidebar'
 import { useAccessControl } from '@/lib/access/useAccessControl'
 import type { FeatureId } from '@/lib/access/types'
 
-type PanelType =
-  | 'special-programs'
-  | 'spt-allocations'
-  | 'pca-preferences'
-  | 'staff-profile'
-  | 'ward-config'
-  | 'team-configuration'
-  | 'account-management'
-  | 'sync-publish'
-  | null
-type PanelKey = Exclude<PanelType, null>
+type PanelKey = Exclude<CategoryId, null>
 
-const categoryLabels: Record<PanelKey, string> = {
-  'special-programs': 'Special Programs',
-  'spt-allocations': 'SPT Allocations',
-  'pca-preferences': 'PCA Preferences',
-  'staff-profile': 'Staff Profile',
-  'ward-config': 'Ward Config and Bed Stat',
-  'team-configuration': 'Team Configuration',
-  'account-management': 'Account Management',
-  'sync-publish': 'Sync / Publish',
-}
+const SpecialProgramPanel = dynamic(
+  () => import('@/components/dashboard/SpecialProgramPanel').then(m => m.SpecialProgramPanel),
+  { ssr: false }
+)
+const SPTAllocationPanel = dynamic(
+  () => import('@/components/dashboard/SPTAllocationPanel').then(m => m.SPTAllocationPanel),
+  { ssr: false }
+)
+const PCAPreferencePanel = dynamic(
+  () => import('@/components/dashboard/PCAPreferencePanel').then(m => m.PCAPreferencePanel),
+  { ssr: false }
+)
+const StaffProfilePanel = dynamic(
+  () => import('@/components/dashboard/StaffProfilePanel').then(m => m.StaffProfilePanel),
+  { ssr: false }
+)
+const WardConfigPanel = dynamic(
+  () => import('@/components/dashboard/WardConfigPanel').then(m => m.WardConfigPanel),
+  { ssr: false }
+)
+const TeamConfigurationPanel = dynamic(
+  () => import('@/components/dashboard/TeamConfigurationPanel').then(m => m.TeamConfigurationPanel),
+  { ssr: false }
+)
+const AccountManagementPanel = dynamic(
+  () => import('@/components/dashboard/AccountManagementPanel').then(m => m.AccountManagementPanel),
+  { ssr: false }
+)
+const ConfigSyncPanel = dynamic(
+  () => import('@/components/dashboard/ConfigSyncPanel').then(m => m.ConfigSyncPanel),
+  { ssr: false }
+)
 
-const categoryDescriptions: Record<PanelKey, string> = {
-  'special-programs': 'Manage special program configurations',
-  'spt-allocations': 'Configure SPT allocation settings',
-  'pca-preferences': 'Manage PCA preference settings',
-  'staff-profile': 'Manage staff records and configurations',
-  'ward-config': 'Manage ward names and bed stat',
-  'team-configuration': 'Manage team staffing and ward responsibilities',
-  'account-management': 'Manage user accounts and access rights',
-  'sync-publish': 'Compare and synchronize schedule snapshots with published dashboard configuration',
+const CATEGORY_LABELS = Object.fromEntries(
+  DASHBOARD_CATEGORIES.map(category => [category.id, category.label])
+) as Record<PanelKey, string>
+
+const PANEL_CONFIG: Record<
+  PanelKey,
+  { description: string; featureId: FeatureId; Component: ComponentType }
+> = {
+  'special-programs': {
+    description: 'Manage special program configurations',
+    featureId: 'dashboard.category.special-programs',
+    Component: SpecialProgramPanel,
+  },
+  'spt-allocations': {
+    description: 'Configure SPT allocation settings',
+    featureId: 'dashboard.category.spt-allocations',
+    Component: SPTAllocationPanel,
+  },
+  'pca-preferences': {
+    description: 'Manage PCA preference settings',
+    featureId: 'dashboard.category.pca-preferences',
+    Component: PCAPreferencePanel,
+  },
+  'staff-profile': {
+    description: 'Manage staff records and configurations',
+    featureId: 'dashboard.category.staff-profile',
+    Component: StaffProfilePanel,
+  },
+  'ward-config': {
+    description: 'Manage ward names and bed stat',
+    featureId: 'dashboard.category.ward-config',
+    Component: WardConfigPanel,
+  },
+  'team-configuration': {
+    description: 'Manage team staffing and ward responsibilities',
+    featureId: 'dashboard.category.team-configuration',
+    Component: TeamConfigurationPanel,
+  },
+  'account-management': {
+    description: 'Manage user accounts and access rights',
+    featureId: 'dashboard.category.account-management',
+    Component: AccountManagementPanel,
+  },
+  'sync-publish': {
+    description: 'Compare and synchronize schedule snapshots with published dashboard configuration',
+    featureId: 'dashboard.category.sync-publish',
+    Component: ConfigSyncPanel,
+  },
 }
 
 export default function DashboardPage() {
   const access = useAccessControl()
-  const [activePanel, setActivePanel] = useState<PanelType>(null)
+  const [activePanel, setActivePanel] = useState<CategoryId>(null)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [topLoadingVisible, setTopLoadingVisible] = useState(false)
   const [topLoadingProgress, setTopLoadingProgress] = useState(0)
@@ -133,28 +177,10 @@ export default function DashboardPage() {
     }, 200)
   }
 
-  const featureForCategory = (id: Exclude<CategoryId, null>): FeatureId => {
-    switch (id) {
-      case 'special-programs':
-        return 'dashboard.category.special-programs'
-      case 'spt-allocations':
-        return 'dashboard.category.spt-allocations'
-      case 'pca-preferences':
-        return 'dashboard.category.pca-preferences'
-      case 'staff-profile':
-        return 'dashboard.category.staff-profile'
-      case 'ward-config':
-        return 'dashboard.category.ward-config'
-      case 'team-configuration':
-        return 'dashboard.category.team-configuration'
-      case 'account-management':
-        return 'dashboard.category.account-management'
-      case 'sync-publish':
-        return 'dashboard.category.sync-publish'
-    }
-  }
+  const featureForCategory = (id: PanelKey): FeatureId => PANEL_CONFIG[id].featureId
 
   const visibleCategories = DASHBOARD_CATEGORIES.filter((c) => access.can(featureForCategory(c.id)))
+  const activePanelConfig = activePanel ? PANEL_CONFIG[activePanel] : null
 
   useEffect(() => {
     if (!activePanel) return
@@ -185,26 +211,19 @@ export default function DashboardPage() {
         {/* Header section - dynamic based on selection */}
         <div className="mb-6">
           <h1 className="text-3xl font-bold mb-2">
-            {activePanel ? categoryLabels[activePanel] : 'Dashboard'}
+            {activePanel ? CATEGORY_LABELS[activePanel] : 'Dashboard'}
           </h1>
           <p className="text-muted-foreground">
-            {activePanel ? categoryDescriptions[activePanel] : 'Configure system settings and preferences'}
+            {activePanel ? activePanelConfig?.description : 'Configure system settings and preferences'}
           </p>
         </div>
 
         {/* Content area with smooth scroll - panels handle their own loading states */}
-        {activePanel && (
+        {activePanelConfig ? (
           <div>
-            {activePanel === 'special-programs' && <SpecialProgramPanel />}
-            {activePanel === 'spt-allocations' && <SPTAllocationPanel />}
-            {activePanel === 'pca-preferences' && <PCAPreferencePanel />}
-            {activePanel === 'staff-profile' && <StaffProfilePanel />}
-            {activePanel === 'ward-config' && <WardConfigPanel />}
-            {activePanel === 'team-configuration' && <TeamConfigurationPanel />}
-            {activePanel === 'account-management' && <AccountManagementPanel />}
-            {activePanel === 'sync-publish' && <ConfigSyncPanel />}
+            <activePanelConfig.Component />
           </div>
-        )}
+        ) : null}
         {!activePanel && (
           <div className="text-center text-muted-foreground py-12">
             {visibleCategories.length > 0

@@ -5,6 +5,19 @@ import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 export default function DebugPage() {
+  const isDev = process.env.NODE_ENV !== 'production'
+  if (!isDev) {
+    return (
+      <div className="container mx-auto p-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>Not Found</CardTitle>
+          </CardHeader>
+        </Card>
+      </div>
+    )
+  }
+
   const [session, setSession] = useState<any>(null)
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)

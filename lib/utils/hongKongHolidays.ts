@@ -1,7 +1,4 @@
-import Holidays from 'date-holidays'
-
-// date-holidays instantiation is relatively expensive; reuse a single instance.
-const hk = new Holidays('HK')
+import { HK_PUBLIC_HOLIDAYS_BY_YEAR } from './hongKongHolidayData'
 
 // Cache computed year maps (YYYY-MM-DD -> holiday name) to avoid recomputation.
 const yearHolidayCache = new Map<number, Map<string, string>>()
@@ -15,16 +12,11 @@ export function getHongKongHolidays(year: number): Map<string, string> {
   if (cached) return cached
 
   const holidays = new Map<string, string>()
-  
-  // Get all holidays for the year
-  const yearHolidays = hk.getHolidays(year)
-  
-  for (const holiday of yearHolidays) {
-    // Format date as YYYY-MM-DD
-    const date = new Date(holiday.date)
-    const dateStr = formatDateString(date)
-    holidays.set(dateStr, holiday.name)
-  }
+
+  const yearHolidayData = HK_PUBLIC_HOLIDAYS_BY_YEAR[year] ?? {}
+  Object.entries(yearHolidayData).forEach(([dateStr, name]) => {
+    holidays.set(dateStr, name)
+  })
   
   // Also add all Sundays for the year
   const startDate = new Date(year, 0, 1)
@@ -53,11 +45,13 @@ export function isHongKongHoliday(date: Date): { isHoliday: boolean; name?: stri
   }
   
   // Check if it's a public holiday
-  const holiday = hk.isHoliday(date)
-  if (holiday) {
-    // In date-holidays typings, a truthy result is an array of holidays for that date.
-    const name = holiday.map(h => h.name).join(', ')
-    return { isHoliday: true, name }
+  const yearHolidayData = HK_PUBLIC_HOLIDAYS_BY_YEAR[date.getFullYear()]
+  if (yearHolidayData) {
+    const dateStr = formatDateString(date)
+    const name = yearHolidayData[dateStr]
+    if (name) {
+      return { isHoliday: true, name }
+    }
   }
   
   return { isHoliday: false }

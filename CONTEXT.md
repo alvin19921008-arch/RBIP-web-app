@@ -15,6 +15,19 @@ Hospital therapist and PCA allocation system with automated daily duty assignmen
 - **staffOverrides**: Single source of truth for all staff modifications
 - **Per-Date Isolation**: Each schedule date has isolated snapshot to prevent cross-date contamination
 
+## Dev-Only Utilities (dev-gated)
+
+These routes exist for local debugging only and return 404 in production:
+
+- UI debug pages:
+  - `/login/test-simple` → `app/(auth)/login/test-simple/page.tsx`
+  - `/login/debug` → `app/(auth)/login/debug/page.tsx`
+- API debug endpoints:
+  - `/api/test-connection` → `app/api/test-connection/route.ts`
+  - `/api/verify-schema` → `app/api/verify-schema/route.ts`
+- Middleware helper (unused in production):
+  - `proxy.ts`
+
 ## Critical Files
 
 - `app/(dashboard)/schedule/page.tsx` - Main schedule page

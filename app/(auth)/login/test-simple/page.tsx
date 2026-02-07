@@ -3,6 +3,15 @@
 import { useToast } from '@/components/ui/toast-provider'
 
 export default function TestSimplePage() {
+  const isDev = process.env.NODE_ENV !== 'production'
+  if (!isDev) {
+    return (
+      <div className="p-8">
+        <h1 className="text-2xl font-bold mb-4">Not Found</h1>
+      </div>
+    )
+  }
+
   const toast = useToast()
 
   const handleClick = () => {

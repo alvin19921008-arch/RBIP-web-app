@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useRef, Fragment, useCallback, Suspense, useMemo, Profiler, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { DndContext, DragOverlay, DragEndEvent, DragStartEvent, DragMoveEvent, Active } from '@dnd-kit/core'
+import { DndContext, DragOverlay, type DragEndEvent, type DragStartEvent, type DragMoveEvent, type Active } from '@dnd-kit/core'
 import { snapCenterToCursor } from '@dnd-kit/modifiers'
-import { Team, Weekday, LeaveType } from '@/types/staff'
-import {
+import type { Team, Weekday, LeaveType, Staff } from '@/types/staff'
+import type {
   TherapistAllocation,
   PCAAllocation,
   BedAllocation,
@@ -20,7 +20,6 @@ import {
   GlobalHeadAtCreation,
   SnapshotHealthReport,
 } from '@/types/schedule'
-import { Staff } from '@/types/staff'
 import { TeamColumn } from '@/components/allocation/TeamColumn'
 import { StaffPool } from '@/components/allocation/StaffPool'
 import { TherapistBlock } from '@/components/allocation/TherapistBlock'
@@ -40,7 +39,6 @@ import { SummaryColumn } from '@/components/allocation/SummaryColumn'
 import { Button } from '@/components/ui/button'
 import { ActionToast } from '@/components/ui/action-toast'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
-import { TieBreakDialog } from '@/components/allocation/TieBreakDialog'
 import { StepIndicator } from '@/components/allocation/StepIndicator'
 import dynamic from 'next/dynamic'
 import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopover'
@@ -52,8 +50,6 @@ import { ScheduleHeaderBar } from '@/components/schedule/ScheduleHeaderBar'
 import { ScheduleDialogsLayer } from '@/components/schedule/ScheduleDialogsLayer'
 import { ScheduleMainLayout } from '@/components/schedule/ScheduleMainLayout'
 import { SplitPane } from '@/components/ui/SplitPane'
-import { ReferenceSchedulePane } from '@/components/schedule/ReferenceSchedulePane'
-import { ScheduleBlocks1To6 } from '@/components/schedule/ScheduleBlocks1To6'
 import { Save, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -76,9 +72,9 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import type { StaffData, AllocationContext } from '@/lib/algorithms/therapistAllocation'
 import type { PCAAllocationContext, PCAData, FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
 import type { BedAllocationContext } from '@/lib/algorithms/bedAllocation'
-import { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation'
+import type { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
-import { executeSlotAssignments, SlotAssignment } from '@/lib/utils/reservationLogic'
+import { executeSlotAssignments, type SlotAssignment } from '@/lib/utils/reservationLogic'
 import { Input } from '@/components/ui/input'
 
 const ScheduleCopyWizard = dynamic(
@@ -96,6 +92,10 @@ const NonFloatingSubstitutionDialog = dynamic(
   () => import('@/components/allocation/NonFloatingSubstitutionDialog').then(m => m.NonFloatingSubstitutionDialog),
   { ssr: false }
 )
+const TieBreakDialog = dynamic(
+  () => import('@/components/allocation/TieBreakDialog').then(m => m.TieBreakDialog),
+  { ssr: false }
+)
 const SpecialProgramOverrideDialog = dynamic(
   () => import('@/components/allocation/SpecialProgramOverrideDialog').then(m => m.SpecialProgramOverrideDialog),
   { ssr: false }
@@ -110,6 +110,14 @@ const BufferStaffCreateDialog = dynamic(
 )
 const ScheduleCalendarPopover = dynamic(
   () => import('@/components/schedule/ScheduleCalendarPopover').then(m => m.ScheduleCalendarPopover),
+  { ssr: false }
+)
+const ReferenceSchedulePane = dynamic(
+  () => import('@/components/schedule/ReferenceSchedulePane').then(m => m.ReferenceSchedulePane),
+  { ssr: false }
+)
+const ScheduleBlocks1To6 = dynamic(
+  () => import('@/components/schedule/ScheduleBlocks1To6').then(m => m.ScheduleBlocks1To6),
   { ssr: false }
 )
 const DevLeaveSimPanel = dynamic(
@@ -149,7 +157,6 @@ import {
   normalizeFTE,
   programNamesToIds,
   assertValidSpecialProgramIds,
-  SpecialProgramRef,
   prepareTherapistAllocationForDb,
   preparePCAAllocationForDb,
 } from '@/lib/db/types'
@@ -568,6 +575,12 @@ function SchedulePageContent() {
     savedBedCountsOverridesByTeam,
     bedRelievingNotesByToTeam,
     savedBedRelievingNotesByToTeam,
+    staffOverridesVersion,
+    savedOverridesVersion,
+    bedCountsOverridesVersion,
+    savedBedCountsOverridesVersion,
+    bedRelievingNotesVersion,
+    savedBedRelievingNotesVersion,
     allocationNotesDoc,
     savedAllocationNotesDoc,
     currentStep,
@@ -5147,32 +5160,19 @@ function SchedulePageContent() {
   }
 
 
-  const staffOverridesKey = useMemo(() => JSON.stringify(staffOverrides), [staffOverrides])
-  const savedOverridesKey = useMemo(() => JSON.stringify(savedOverrides), [savedOverrides])
-  const bedCountsOverridesKey = useMemo(() => JSON.stringify(bedCountsOverridesByTeam), [bedCountsOverridesByTeam])
-  const savedBedCountsOverridesKey = useMemo(
-    () => JSON.stringify(savedBedCountsOverridesByTeam),
-    [savedBedCountsOverridesByTeam]
-  )
-  const bedRelievingNotesKey = useMemo(() => JSON.stringify(bedRelievingNotesByToTeam), [bedRelievingNotesByToTeam])
-  const savedBedRelievingNotesKey = useMemo(
-    () => JSON.stringify(savedBedRelievingNotesByToTeam),
-    [savedBedRelievingNotesByToTeam]
-  )
-
   // Check if there are unsaved changes (staff overrides or bed edits)
   const hasUnsavedChanges = useMemo(
     () =>
-      staffOverridesKey !== savedOverridesKey ||
-      bedCountsOverridesKey !== savedBedCountsOverridesKey ||
-      bedRelievingNotesKey !== savedBedRelievingNotesKey,
+      staffOverridesVersion !== savedOverridesVersion ||
+      bedCountsOverridesVersion !== savedBedCountsOverridesVersion ||
+      bedRelievingNotesVersion !== savedBedRelievingNotesVersion,
     [
-      staffOverridesKey,
-      savedOverridesKey,
-      bedCountsOverridesKey,
-      savedBedCountsOverridesKey,
-      bedRelievingNotesKey,
-      savedBedRelievingNotesKey,
+      staffOverridesVersion,
+      savedOverridesVersion,
+      bedCountsOverridesVersion,
+      savedBedCountsOverridesVersion,
+      bedRelievingNotesVersion,
+      savedBedRelievingNotesVersion,
     ]
   )
 
