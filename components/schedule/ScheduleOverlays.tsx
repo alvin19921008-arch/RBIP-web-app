@@ -1,6 +1,6 @@
 'use client'
 
-import { memo } from 'react'
+import { memo, type ReactNode } from 'react'
 import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopover'
 
 export const ScheduleOverlays = memo(function ScheduleOverlays(props: {
@@ -13,6 +13,10 @@ export const ScheduleOverlays = memo(function ScheduleOverlays(props: {
     selectedSlots: number[]
     position: { x: number; y: number }
     isDiscardMode?: boolean
+    mode?: 'drag' | 'confirm' | 'hybrid'
+    onConfirm?: () => void
+    confirmDisabled?: boolean
+    confirmHint?: ReactNode
   } | null
   onSlotToggle: (slot: number) => void
   onCloseSlotSelection: () => void
@@ -50,6 +54,10 @@ export const ScheduleOverlays = memo(function ScheduleOverlays(props: {
           onStartDrag={onStartDragFromSlotPopover}
           position={pcaSlotSelection.position}
           isDiscardMode={pcaSlotSelection.isDiscardMode}
+          mode={pcaSlotSelection.mode}
+          onConfirm={pcaSlotSelection.onConfirm}
+          confirmDisabled={pcaSlotSelection.confirmDisabled}
+          confirmHint={pcaSlotSelection.confirmHint}
         />
       )}
     </>

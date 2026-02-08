@@ -8,12 +8,26 @@ import { Staff } from '@/types/staff'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getTeamFloor, isFloorPCAForTeam, getTeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
+
+// Step 2.1 Wizard team themes:
+// Used to visually differentiate teams when multiple teams need non-floating substitution on the same day.
+// NOTE: We intentionally keep these light (50 backgrounds, 200 borders, 700 text) for readability.
+// Added 2 more themes to reduce early recycling (4th+ team).
+const TEAM_THEME_PALETTE = [
+  { badge: 'border-sky-200 bg-sky-50 text-sky-700', panel: 'border-sky-200 bg-sky-50/40 text-sky-950' },
+  { badge: 'border-emerald-200 bg-emerald-50 text-emerald-700', panel: 'border-emerald-200 bg-emerald-50/40 text-emerald-950' },
+  { badge: 'border-violet-200 bg-violet-50 text-violet-700', panel: 'border-violet-200 bg-violet-50/40 text-violet-950' },
+  // New themes (to avoid quick recycling)
+  { badge: 'border-teal-200 bg-teal-50 text-teal-700', panel: 'border-teal-200 bg-teal-50/40 text-teal-950' },
+  { badge: 'border-rose-200 bg-rose-50 text-rose-700', panel: 'border-rose-200 bg-rose-50/40 text-rose-950' },
+] as const
 
 interface NonFloatingSubstitutionDialogProps {
   open: boolean
@@ -90,6 +104,7 @@ export function NonFloatingSubstitutionDialog({
   // For single team mode, always use the first (and only) team
   const currentTeam = isWizardMode ? teams[currentTeamIndex] : teams[0]
   const currentSubstitutions = substitutionsByTeam[currentTeam] || []
+  const currentTheme = TEAM_THEME_PALETTE[currentTeamIndex % TEAM_THEME_PALETTE.length]
 
   // Use availableFloatingPCAs directly from substitution data (already filtered and sorted by algorithm)
   const availablePCAsByNonFloating = useMemo(() => {
@@ -225,9 +240,26 @@ export function NonFloatingSubstitutionDialog({
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
-            {isWizardMode 
-              ? 'Non-Floating PCA Substitution – Step 2.1' 
-              : `Non-Floating PCA Substitution – Step 2.1 - ${currentTeam} Team`}
+            {isWizardMode ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span>Non-Floating PCA Substitution – Step 2.1 –</span>
+                <Badge variant="outline" className={cn('select-none px-2 py-0.5 text-[11px] font-medium', currentTheme.badge)}>
+                  {currentTeam}
+                </Badge>
+                <span>Team</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5">
+                <span>Non-Floating PCA Substitution – Step 2.1 –</span>
+                <Badge
+                  variant="outline"
+                  className="select-none border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
+                >
+                  {currentTeam}
+                </Badge>
+                <span>Team</span>
+              </span>
+            )}
           </DialogTitle>
           <DialogDescription>
             {isWizardMode 
@@ -249,7 +281,17 @@ export function NonFloatingSubstitutionDialog({
               Previous
             </Button>
             <div className="text-sm font-medium">
-              Team {currentTeamIndex + 1} of {teams.length}: {currentTeam}
+              <span className="inline-flex items-center gap-2">
+                <span>
+                  Team {currentTeamIndex + 1} of {teams.length}:
+                </span>
+                <Badge
+                  variant="outline"
+                  className={cn('select-none px-2 py-0.5 text-[11px] font-medium', currentTheme.badge)}
+                >
+                  {currentTeam}
+                </Badge>
+              </span>
             </div>
             {isLastTeam ? (
               <Button

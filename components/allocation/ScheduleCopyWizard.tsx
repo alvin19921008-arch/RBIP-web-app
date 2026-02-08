@@ -15,8 +15,6 @@ function formatDateIso(date: Date): string {
   return `${year}-${month}-${day}`
 }
 
-type CopyMode = 'full' | 'hybrid'
-
 type FlowType = 'next-working-day' | 'last-working-day' | 'specific-date'
 
 interface ScheduleCopyWizardProps {
@@ -34,7 +32,6 @@ interface ScheduleCopyWizardProps {
   onConfirmCopy: (params: {
     fromDate: Date
     toDate: Date
-    mode: CopyMode
     includeBufferStaff: boolean
   }) => Promise<{ copiedUpToStep?: string } | void>
 }
@@ -52,7 +49,6 @@ export function ScheduleCopyWizard({
 }: ScheduleCopyWizardProps) {
   // Step 1 is only used for specific-date flows; next/last working day starts at Step 2
   const [step, setStep] = useState(flowType === 'specific-date' ? 1 : 2)
-  const [copyMode, setCopyMode] = useState<CopyMode | null>(null)
   const [includeBuffer, setIncludeBuffer] = useState(true)
   const [targetDate, setTargetDate] = useState<Date | null>(initialTargetDate)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -106,11 +102,6 @@ export function ScheduleCopyWizard({
         }
         const data = await res.json()
         const list = (data?.bufferStaff || []) as Staff[]
-        const rankCounts = list.reduce<Record<string, number>>((acc, s) => {
-          const r = (s as any)?.rank ?? 'unknown'
-          acc[r] = (acc[r] || 0) + 1
-          return acc
-        }, {})
         setSourceBufferStaff(list)
       } catch (e) {
         console.error('Error loading source buffer staff:', e)
@@ -124,7 +115,6 @@ export function ScheduleCopyWizard({
   const handleClose = () => {
     // Reset internal state when closing
     setStep(isSpecificDateFlow ? 1 : 2)
-    setCopyMode(null)
     setIncludeBuffer(true)
     setIsSubmitting(false)
     setError(null)
@@ -155,10 +145,6 @@ export function ScheduleCopyWizard({
   const canGoNextFromStep1 = () => {
     if (!isSpecificDateFlow || step !== 1) return true
     return validateSpecificDate() === null
-  }
-
-  const canGoNextFromStep2 = () => {
-    return copyMode !== null
   }
 
   const isCalendarDateDisabled = useCallback(
@@ -192,32 +178,17 @@ export function ScheduleCopyWizard({
       }
       setError(null)
       setStep(2)
-    } else if (step === 2) {
-      if (!copyMode) {
-        setError('Please choose Full copy or Partial copy.')
-        return
-      }
-      setError(null)
-      setStep(3)
     }
   }
 
   const handleBack = () => {
-    if (step === 3) {
-      setStep(2)
-      setError(null)
-    } else if (step === 2 && isSpecificDateFlow) {
+    if (step === 2 && isSpecificDateFlow) {
       setStep(1)
       setError(null)
     }
   }
 
   const handleConfirmCopy = async () => {
-    if (!copyMode) {
-      setError('Please choose Full copy or Partial copy.')
-      return
-    }
-
     const { fromDate, toDate } = resolveFromAndTo()
     if (!fromDate || !toDate) {
       setError('Both source and target dates must be selected.')
@@ -227,15 +198,9 @@ export function ScheduleCopyWizard({
     setIsSubmitting(true)
     setError(null)
     try {
-      const clientRankCounts = sourceBufferStaff.reduce<Record<string, number>>((acc, s) => {
-        const r = (s as any)?.rank ?? 'unknown'
-        acc[r] = (acc[r] || 0) + 1
-        return acc
-      }, {})
       const result = await onConfirmCopy({
         fromDate,
         toDate,
-        mode: copyMode,
         includeBufferStaff: includeBuffer,
       })
       if (result && (result as any).copiedUpToStep) {
@@ -252,13 +217,12 @@ export function ScheduleCopyWizard({
 
   const renderStepTitle = () => {
     if (step === 1) return 'Choose date'
-    if (step === 2) return 'Choose copy type'
     return 'Buffer staff in copied schedule'
   }
 
   const renderStepIndicator = () => {
-    const totalSteps = isSpecificDateFlow ? 3 : 2
-    const currentStep = isSpecificDateFlow ? step : step - 1
+    const totalSteps = isSpecificDateFlow ? 2 : 1
+    const currentStep = isSpecificDateFlow ? step : 1
     return (
       <p className="text-xs text-muted-foreground mb-1">
         Step {currentStep} of {totalSteps}
@@ -293,62 +257,26 @@ export function ScheduleCopyWizard({
   }
 
   const renderStep2 = () => {
-    const fullSelected = copyMode === 'full'
-    const partialSelected = copyMode === 'hybrid'
-
-    return (
-      <>
-        <DialogDescription className="mb-3">
-          Choose how much of the source schedule to copy from{' '}
-          <span className="font-semibold whitespace-nowrap">{sourceDateStr}</span> to{' '}
-          <span className="font-semibold whitespace-nowrap">{targetDateStr || '...'}</span>.
-        </DialogDescription>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <button
-            type="button"
-            className={`border rounded-md p-3 text-left text-xs ${
-              fullSelected ? 'border-blue-600 bg-blue-50' : 'border-border bg-background'
-            }`}
-            onClick={() => setCopyMode('full')}
-          >
-            <p className="font-semibold mb-1">Full copy</p>
-            <ul className="list-disc list-inside space-y-1 text-[11px] text-muted-foreground">
-              <li>Copies all steps (1–4), including bed allocations.</li>
-              <li>
-                Preserves all staff edits/overrides, including bed count overrides (Total beds, SHS,
-                Students) and manual slot transfers.
-              </li>
-              <li>Keeps tie-break decisions and workflow state.</li>
-            </ul>
-          </button>
-          <button
-            type="button"
-            className={`border rounded-md p-3 text-left text-xs ${
-              partialSelected ? 'border-blue-600 bg-blue-50' : 'border-border bg-background'
-            }`}
-            onClick={() => setCopyMode('hybrid')}
-          >
-            <p className="font-semibold mb-1">Partial copy</p>
-            <ul className="list-disc list-inside space-y-1 text-[11px] text-muted-foreground">
-              <li>Copies Step 1 &amp; Step 2 setup and outputs.</li>
-              <li>Resets floating PCA allocations (Step 3) and bed relieving (Step 4).</li>
-              <li>
-                Keeps leave/FTE choices, substitutions, special program overrides, and bed count
-                overrides (Total beds, SHS, Students).
-              </li>
-            </ul>
-          </button>
-        </div>
-      </>
-    )
-  }
-
-  const renderStep3 = () => {
     const bufferTherapists = sourceBufferStaff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
     const bufferPCAs = sourceBufferStaff.filter(s => s.rank === 'PCA')
 
     return (
       <>
+        <DialogDescription className="mb-3">
+          This will copy Step 1 setup and selected Step 2 setup, but will reset later steps. SPT allocations and SPT day-specific configuration are not copied.
+        </DialogDescription>
+        <div className="mb-3 border border-border rounded-md p-3 text-[11px] text-muted-foreground">
+          <p className="font-semibold text-foreground mb-1">What gets copied</p>
+          <ul className="list-disc list-inside space-y-1">
+            <li>Leave/FTE edits, substitutions, special program overrides, bed count overrides.</li>
+            <li>Non-floating + special-program + substitution PCA allocations (Step 2 outputs).</li>
+            <li>Therapist allocations excluding SPT (SPT is reconfigured per weekday).</li>
+          </ul>
+          <p className="font-semibold text-foreground mt-3 mb-1">What gets reset</p>
+          <ul className="list-disc list-inside space-y-1">
+            <li>Floating PCA allocations (Step 3), bed relieving (Step 4), calculations, tie-break decisions.</li>
+          </ul>
+        </div>
         <DialogDescription className="mb-3">
           Detected buffer staff for the source date ({effectiveFromDateStr}). Choose whether to keep them as buffer
           staff in the copied schedule.
@@ -419,8 +347,7 @@ export function ScheduleCopyWizard({
 
   const renderBody = () => {
     if (step === 1) return renderStep1()
-    if (step === 2) return renderStep2()
-    return renderStep3()
+    return renderStep2()
   }
 
   const { fromDate, toDate } = resolveFromAndTo()
@@ -448,7 +375,7 @@ export function ScheduleCopyWizard({
             Cancel
           </Button>
           <div className="flex-1" />
-          {step > 1 && (
+          {step > 1 && isSpecificDateFlow && (
             <Button
               variant="outline"
               size="sm"
@@ -458,16 +385,16 @@ export function ScheduleCopyWizard({
               Back
             </Button>
           )}
-          {step < 3 && (
+          {step < 2 && (
             <Button
               size="sm"
               onClick={handleNext}
-              disabled={isSubmitting || (step === 1 && !canGoNextFromStep1()) || (step === 2 && !canGoNextFromStep2())}
+              disabled={isSubmitting || (step === 1 && !canGoNextFromStep1())}
             >
               Next
             </Button>
           )}
-          {step === 3 && (
+          {step === 2 && (
             <Button
               size="sm"
               onClick={handleConfirmCopy}

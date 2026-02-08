@@ -37,6 +37,7 @@ import {
 import { PCACalculationBlock } from '@/components/allocation/PCACalculationBlock'
 import { SummaryColumn } from '@/components/allocation/SummaryColumn'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { ActionToast } from '@/components/ui/action-toast'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
 import { StepIndicator } from '@/components/allocation/StepIndicator'
@@ -1621,6 +1622,7 @@ function SchedulePageContent() {
     selectedSlots: number[]   // Slots user has selected to move
     showSlotSelection: boolean // Whether to show slot selection popover
     popoverPosition: { x: number; y: number } | null // Fixed position near source team
+    inferredTargetTeam?: Team | null // Drop-zone inferred target team (DnD multi-slot flow)
     isDiscardMode?: boolean // True when discarding slots (opposite of transfer)
     isBufferStaff?: boolean // True if the dragged PCA is buffer staff
   }>({
@@ -1633,6 +1635,7 @@ function SchedulePageContent() {
     selectedSlots: [],
     showSlotSelection: false,
     popoverPosition: null,
+    inferredTargetTeam: null,
     isDiscardMode: false,
     isBufferStaff: false,
   })
@@ -5176,12 +5179,10 @@ function SchedulePageContent() {
   const handleConfirmCopy = async ({
     fromDate,
     toDate,
-    mode,
     includeBufferStaff,
   }: {
     fromDate: Date
     toDate: Date
-    mode: 'full' | 'hybrid'
     includeBufferStaff: boolean
   }): Promise<{ copiedUpToStep?: string }> => {
     let timing: any = null
@@ -5197,7 +5198,7 @@ function SchedulePageContent() {
       const result = await scheduleActions.copySchedule({
         fromDate,
         toDate,
-        mode,
+        mode: 'hybrid',
         includeBufferStaff,
         onProgress: bumpTopLoadingTo,
         startSoftAdvance,
@@ -6272,6 +6273,7 @@ function SchedulePageContent() {
         selectedSlots: availableSlots.length === 1 ? availableSlots : [], // Auto-select if only one slot
         showSlotSelection: false,
         popoverPosition: popoverPosition,
+        inferredTargetTeam: null,
         isBufferStaff: isBufferStaff,
       })
       
@@ -6328,6 +6330,7 @@ function SchedulePageContent() {
       selectedSlots: availableSlots.length === 1 ? availableSlots : [], // Auto-select if single slot
       showSlotSelection: false, // Will be shown when leaving team zone
       popoverPosition: popoverPosition,
+      inferredTargetTeam: null,
       isBufferStaff: isBufferStaff,
     })
   }
@@ -6427,6 +6430,7 @@ function SchedulePageContent() {
       selectedSlots: [],
       showSlotSelection: false,
       popoverPosition: null,
+      inferredTargetTeam: null,
       isDiscardMode: false,
       isBufferStaff: false,
     })
@@ -6444,6 +6448,7 @@ function SchedulePageContent() {
       selectedSlots: [],
       showSlotSelection: false,
       popoverPosition: null,
+      inferredTargetTeam: null,
       isDiscardMode: false,
       isBufferStaff: false,
     })
@@ -7053,12 +7058,16 @@ function SchedulePageContent() {
             isActive: false,
             isDraggingFromPopover: false,
             showSlotSelection: true,
+            staffId: effectiveStaffId,
+            staffName: prev.staffName ?? staff.find(s => s.id === effectiveStaffId)?.name ?? null,
+            sourceTeam,
             availableSlots: assignedSlots,
             selectedSlots: [], // User will select which slots to discard
             popoverPosition:
               discardPopoverPosition ??
               prev.popoverPosition ??
               calculatePopoverPosition({ left: 100, top: 100, width: 0, height: 0 }, 150),
+            inferredTargetTeam: null,
             isDiscardMode: true, // Flag to indicate this is discard, not transfer
           }))
           return
@@ -7114,12 +7123,16 @@ function SchedulePageContent() {
             isActive: false,
             isDraggingFromPopover: false,
             showSlotSelection: true,
+            staffId: effectiveStaffId,
+            staffName: prev.staffName ?? staff.find(s => s.id === effectiveStaffId)?.name ?? null,
+            sourceTeam,
             availableSlots: assignedSlots,
             selectedSlots: [],
             popoverPosition:
               discardPopoverPosition ??
               prev.popoverPosition ??
               calculatePopoverPosition({ left: 100, top: 100, width: 0, height: 0 }, 150),
+            inferredTargetTeam: null,
             isDiscardMode: true,
           }))
           return
@@ -7184,6 +7197,8 @@ function SchedulePageContent() {
               isActive: false,
               isDraggingFromPopover: false,
               showSlotSelection: true,
+              inferredTargetTeam: targetTeam,
+              isDiscardMode: false,
               ...(dropTargetPosition && { popoverPosition: dropTargetPosition }),
             }))
           })
@@ -7847,6 +7862,40 @@ function SchedulePageContent() {
                 selectedSlots: pcaDragState.selectedSlots,
                 position: pcaDragState.popoverPosition,
                 isDiscardMode: pcaDragState.isDiscardMode,
+                mode:
+                  pcaDragState.isDiscardMode
+                    ? 'confirm'
+                    : !pcaDragState.isDiscardMode && pcaDragState.inferredTargetTeam
+                      ? 'hybrid'
+                      : 'drag',
+                confirmDisabled:
+                  !!pcaDragState.isDiscardMode
+                    ? false
+                    : !pcaDragState.inferredTargetTeam ||
+                      pcaDragState.inferredTargetTeam === pcaDragState.sourceTeam,
+                confirmHint:
+                  pcaDragState.isDiscardMode
+                    ? 'Discard selected slot(s)'
+                    : !pcaDragState.isDiscardMode && pcaDragState.inferredTargetTeam
+                      ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate">Default target</span>
+                            <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+                              {pcaDragState.inferredTargetTeam}
+                            </Badge>
+                          </div>
+                        )
+                      : undefined,
+                onConfirm:
+                  pcaDragState.isDiscardMode
+                    ? () => {
+                        if (!pcaDragState.staffId || !pcaDragState.sourceTeam) return
+                        performSlotDiscard(pcaDragState.staffId, pcaDragState.sourceTeam, pcaDragState.selectedSlots)
+                        resetPcaDragState()
+                      }
+                    : !pcaDragState.isDiscardMode && pcaDragState.inferredTargetTeam
+                      ? () => performSlotTransfer(pcaDragState.inferredTargetTeam as Team)
+                      : undefined,
               }
             : null
         }
@@ -9931,9 +9980,9 @@ function SchedulePageContent() {
               const targetIndex = ALLOCATION_STEPS.findIndex(s => s.id === stepId)
               const currentIndex = ALLOCATION_STEPS.findIndex(s => s.id === currentStep)
               if (targetIndex <= currentIndex) return true
-              // Can only go forward if previous step is completed
+              // Can only go forward if previous step has been started (completed or modified).
               const previousStep = ALLOCATION_STEPS[targetIndex - 1]
-              return previousStep && stepStatus[previousStep.id] === 'completed'
+              return previousStep && stepStatus[previousStep.id] !== 'pending'
             }}
             onNext={handleNextStep}
             onPrevious={handlePreviousStep}

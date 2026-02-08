@@ -10,12 +10,13 @@ import { createTimingCollector } from '@/lib/utils/timing'
 import { fetchGlobalHeadAtCreation } from '@/lib/features/config/globalHead'
 import { createSupabaseAdminClient } from '@/lib/supabase/admin'
 
-type CopyMode = 'full' | 'hybrid'
+type CopyMode = 'hybrid'
 
 interface CopyScheduleRequest {
   fromDate: string
   toDate: string
-  mode: CopyMode
+  // Legacy: used to support 'full' | 'hybrid'. Full copy has been removed; we treat all copies as 'hybrid'.
+  mode?: string
   includeBufferStaff: boolean
 }
 
@@ -42,7 +43,7 @@ async function buildBaselineSnapshot(supabase: any): Promise<BaselineSnapshot> {
       ),
       safeSelect(
         'spt_allocations',
-        'id,staff_id,specialty,teams,weekdays,slots,slot_modes,fte_addon,substitute_team_head,is_rbip_supervisor,active'
+        'id,staff_id,specialty,teams,weekdays,slots,slot_modes,fte_addon,config_by_weekday,substitute_team_head,is_rbip_supervisor,active,created_at,updated_at'
       ),
       safeSelect('wards', 'id,name,total_beds,team_assignments,team_assignment_portions'),
       safeSelect(
@@ -100,6 +101,74 @@ function stripNonCopyableScheduleOverrides(overrides: any): any {
   return next
 }
 
+function scrubSptFromStaffOverrides(args: {
+  overrides: any
+  sptStaffIds: Set<string>
+}): any {
+  const { overrides, sptStaffIds } = args
+  if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) return overrides
+
+  const isPlainObject = (v: any) => !!v && typeof v === 'object' && !Array.isArray(v)
+  const stripSptTherapistFromSpecialProgramOverrides = (obj: any) => {
+    if (!isPlainObject(obj)) return obj
+    const list = (obj as any).specialProgramOverrides
+    if (!Array.isArray(list)) return obj
+
+    const nextList = list
+      .map((entry: any) => {
+        if (!isPlainObject(entry)) return entry
+        const therapistId = entry.therapistId
+        if (therapistId && sptStaffIds.has(String(therapistId))) {
+          // Keep PCA overrides / other metadata, but remove therapist choice for SPT.
+          const { therapistId: _t, therapistFTESubtraction: _fte, ...rest } = entry
+          return rest
+        }
+        return entry
+      })
+      .filter((entry: any) => {
+        if (!isPlainObject(entry)) return true
+        const keys = Object.keys(entry)
+        // Drop no-op shells like { programId }.
+        return keys.some((k) => k !== 'programId')
+      })
+
+    const next = { ...obj }
+    if (nextList.length > 0) {
+      next.specialProgramOverrides = nextList
+    } else {
+      delete next.specialProgramOverrides
+    }
+    return next
+  }
+
+  const cleaned: Record<string, any> = {}
+  Object.entries(overrides as any).forEach(([key, raw]) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      cleaned[key] = raw
+      return
+    }
+
+    // Strip "special program therapist = SPT" selections wherever they live.
+    const base = stripSptTherapistFromSpecialProgramOverrides(raw as any)
+
+    // For SPT staff rows: do not carry over team/FTE/SPT day config.
+    // Preserve leaveType only when explicitly set (non-null), since it is a deliberate per-day edit.
+    if (sptStaffIds.has(key)) {
+      const leaveType = (base as any)?.leaveType ?? null
+      if (leaveType == null) {
+        return
+      }
+      const fteRemaining = typeof (base as any)?.fteRemaining === 'number' ? (base as any).fteRemaining : 0
+      cleaned[key] = { leaveType, fteRemaining }
+      return
+    }
+
+    cleaned[key] = base
+  })
+
+  return cleaned
+}
+
 function getBufferStaffIdsFromScheduleLocalOverrides(overrides: any): Set<string> {
   const ids = new Set<string>()
   const map = overrides?.__staffStatusOverrides
@@ -131,9 +200,10 @@ export async function POST(request: NextRequest) {
     const globalHeadAtCreation = await fetchGlobalHeadAtCreation(supabase)
     const body: CopyScheduleRequest = await request.json()
 
-    const { fromDate, toDate, mode, includeBufferStaff } = body
+    const { fromDate, toDate, includeBufferStaff } = body
+    const mode: CopyMode = 'hybrid'
 
-    if (!fromDate || !toDate || (mode !== 'full' && mode !== 'hybrid')) {
+    if (!fromDate || !toDate) {
       return NextResponse.json({ error: 'Invalid payload' }, { status: 400 })
     }
 
@@ -304,7 +374,6 @@ export async function POST(request: NextRequest) {
 
     const sourceOverridesRaw = (fromSchedule as any).staff_overrides || {}
     const sourceOverrides = stripNonCopyableScheduleOverrides(sourceOverridesRaw)
-    const sourceWorkflowState = (fromSchedule as any).workflow_state || null
 
     // Load allocations to clone
     const [
@@ -349,6 +418,16 @@ export async function POST(request: NextRequest) {
       targetOverrides = next
     }
 
+    // SPT reset rules for copy:
+    // - Drop SPT day-specific overrides (fte/team/sptOnDayOverride etc) by removing the SPT override entry entirely,
+    //   unless leaveType is explicitly set (then we preserve leaveType + numeric fteRemaining only).
+    // - Drop any "special program therapist = SPT" selections from specialProgramOverrides.
+    const snapshotStaffForRank: any[] = (sourceBaselineData as any).staff || []
+    const sptStaffIds = new Set<string>(
+      snapshotStaffForRank.filter((s: any) => s?.id && s?.rank === 'SPT').map((s: any) => String(s.id))
+    )
+    targetOverrides = scrubSptFromStaffOverrides({ overrides: targetOverrides, sptStaffIds })
+
     // Build target baseline (legacy-only adjustment):
     // If old snapshots contain status='buffer' rows, downgrade them to inactive when excluding.
     let targetBaselineData: BaselineSnapshot = sourceBaselineData
@@ -377,15 +456,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Prepare workflow_state for target
-    let targetWorkflowState: any = sourceWorkflowState
-    if (mode === 'hybrid') {
-      const completed: string[] = []
-      if (Object.keys(sourceOverrides || {}).length > 0) completed.push('leave-fte')
-      if ((therapistAllocations || []).length > 0) completed.push('therapist-pca')
-      targetWorkflowState = {
-        currentStep: 'floating-pca',
-        completedSteps: completed,
-      }
+    const completed: string[] = []
+    if (Object.keys(targetOverrides || {}).length > 0) completed.push('leave-fte')
+    const targetWorkflowState = {
+      currentStep: 'therapist-pca',
+      completedSteps: completed,
     }
 
     // Fast path: SQL-based clone (RPC) if available. Falls back to JS copy if function isn't installed.
@@ -397,11 +472,24 @@ export async function POST(request: NextRequest) {
       baseline_snapshot: targetBaselineEnvelope as any,
       staff_overrides: targetOverrides,
       workflow_state: targetWorkflowState,
-      tie_break_decisions: (fromSchedule as any).tie_break_decisions || {},
+      // Reset tie-break decisions (Step 3+) after copy.
+      tie_break_decisions: {},
       buffer_staff_ids: Array.from(bufferStaffIds),
     })
 
     if (!rpcAttempt.error) {
+      // Defensive cleanup: older deployed RPC versions may still copy SPT therapist allocations.
+      // Remove them here so the app behavior is correct even before the DB function is updated.
+      if (sptStaffIds.size > 0) {
+        const del = await supabase
+          .from('schedule_therapist_allocations')
+          .delete()
+          .eq('schedule_id', toScheduleId)
+          .in('staff_id', Array.from(sptStaffIds))
+        if (del.error) {
+          return NextResponse.json({ error: `Failed to drop SPT allocations after copy: ${del.error.message}` }, { status: 500 })
+        }
+      }
       try {
         await rebaseTargetBaselineToCurrentGlobal()
         timer.stage('rebaseBaselineToGlobal')
@@ -457,36 +545,31 @@ export async function POST(request: NextRequest) {
     let therapistToInsert = (therapistAllocations || []).filter(
       a => includeBufferStaff || !bufferStaffIds.has(a.staff_id)
     )
+    // Drop SPT therapist allocations on copy (weekday-specific; must be reconfigured on the target date).
+    therapistToInsert = therapistToInsert.filter((a: any) => !sptStaffIds.has(String(a.staff_id)))
 
-    let pcaToInsert: any[] = []
-    if (mode === 'full') {
-      pcaToInsert = (pcaAllocations || []).filter(
-        a => includeBufferStaff || !bufferStaffIds.has(a.staff_id)
-      )
-    } else {
-      // hybrid mode: non-floating + special-program + substitution PCAs
-      const allStaff: any[] = snapshotStaff
-      const nonFloatingPCAIds = new Set<string>(
-        allStaff.filter(s => s.rank === 'PCA' && !s.floating).map(s => s.id)
-      )
-      const substitutionStaffIds = new Set<string>()
-      Object.entries(sourceOverrides || {}).forEach(([staffId, override]: [string, any]) => {
-        if (override && (override as any).substitutionFor) {
-          substitutionStaffIds.add(staffId)
-        }
-      })
+    // Setup-only copy: non-floating + special-program + substitution PCAs (Step 2 outputs).
+    const allStaff: any[] = snapshotStaff
+    const nonFloatingPCAIds = new Set<string>(
+      allStaff.filter(s => s.rank === 'PCA' && !s.floating).map(s => s.id)
+    )
+    const substitutionStaffIds = new Set<string>()
+    Object.entries(targetOverrides || {}).forEach(([staffId, override]: [string, any]) => {
+      if (override && (override as any).substitutionFor) {
+        substitutionStaffIds.add(staffId)
+      }
+    })
 
-      pcaToInsert = (pcaAllocations || []).filter(alloc => {
-        const isNonFloating = nonFloatingPCAIds.has(alloc.staff_id)
-        const hasSpecialProgram =
-          Array.isArray(alloc.special_program_ids) && alloc.special_program_ids.length > 0
-        const isSubstitute = substitutionStaffIds.has(alloc.staff_id)
-        const passesModeFilter = isNonFloating || hasSpecialProgram || isSubstitute
-        if (!passesModeFilter) return false
-        if (!includeBufferStaff && bufferStaffIds.has(alloc.staff_id)) return false
-        return true
-      })
-    }
+    const pcaToInsert = (pcaAllocations || []).filter((alloc: any) => {
+      const isNonFloating = nonFloatingPCAIds.has(alloc.staff_id)
+      const hasSpecialProgram =
+        Array.isArray(alloc.special_program_ids) && alloc.special_program_ids.length > 0
+      const isSubstitute = substitutionStaffIds.has(alloc.staff_id)
+      const passesModeFilter = isNonFloating || hasSpecialProgram || isSubstitute
+      if (!passesModeFilter) return false
+      if (!includeBufferStaff && bufferStaffIds.has(alloc.staff_id)) return false
+      return true
+    })
 
     // Insert cloned allocations for target
     if (therapistToInsert.length > 0) {
@@ -519,34 +602,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (mode === 'full') {
-      if (bedAllocations && bedAllocations.length > 0) {
-        const bedClones = bedAllocations.map((a: any) => {
-          const { id: _id, ...rest } = a
-          return {
-            ...rest,
-            schedule_id: toScheduleId,
-          }
-        })
-        const ins = await supabase.from('schedule_bed_allocations').insert(bedClones)
-        if (ins.error) {
-          return NextResponse.json({ error: `Failed to copy bed allocations: ${ins.error.message}` }, { status: 500 })
-        }
-      }
-      if (calculations && calculations.length > 0) {
-        const calcClones = calculations.map((c: any) => {
-          const { id: _id, ...rest } = c
-          return {
-            ...rest,
-            schedule_id: toScheduleId,
-          }
-        })
-        const ins = await supabase.from('schedule_calculations').insert(calcClones)
-        if (ins.error) {
-          return NextResponse.json({ error: `Failed to copy schedule calculations: ${ins.error.message}` }, { status: 500 })
-        }
-      }
-    }
+    // NOTE: We intentionally do NOT copy bed allocations or calculations.
+    // They are derived from Step 2+ outputs and must be regenerated after SPT reset.
 
     // Update daily_schedules metadata for target
     const { error: updateError } = await supabase
@@ -556,7 +613,8 @@ export async function POST(request: NextRequest) {
         baseline_snapshot: targetBaselineEnvelope as any,
         staff_overrides: targetOverrides,
         workflow_state: targetWorkflowState,
-        tie_break_decisions: (fromSchedule as any).tie_break_decisions || {},
+        // Reset tie-break decisions (Step 3+) after copy.
+        tie_break_decisions: {},
       })
       .eq('id', toScheduleId)
 

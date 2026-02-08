@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Staff, StaffRank, Team, Weekday, SpecialProgram as StaffSpecialProgram } from '@/types/staff'
 import { SpecialProgram } from '@/types/allocation'
 import { AlertCircle, Edit2, ChevronDown } from 'lucide-react'
@@ -1142,7 +1143,30 @@ export function SpecialProgramOverrideDialog({
                           {program.name !== 'Robotic' && (
                             <div className="space-y-2">
                               <Label>Therapist</Label>
-                        {therapist ? (
+                        {isEditingTherapist ? (
+                          <div className="flex items-center justify-between gap-2 p-2 border rounded">
+                            <Select
+                              value={override.therapistId ?? undefined}
+                              onValueChange={(value) => {
+                                if (value) handleTherapistSelect(program.id, value)
+                              }}
+                            >
+                              <SelectTrigger className="h-9 w-full max-w-[320px]">
+                                <SelectValue placeholder="Select therapist" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {availableTherapists.map((t) => (
+                                  <SelectItem key={t.id} value={t.id}>
+                                    {t.name} ({t.rank})
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Button variant="outline" size="sm" onClick={() => setEditingTherapist(null)}>
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : therapist ? (
                           <div className="flex items-center justify-between p-2 border rounded">
                             <span>{therapist.name} ({therapist.rank})</span>
                             <Button
@@ -1215,35 +1239,6 @@ export function SpecialProgramOverrideDialog({
                           </div>
                         )}
 
-                        {isEditingTherapist && (
-                          <div className="p-3 border rounded space-y-2">
-                            <Label>Select Therapist</Label>
-                            <select
-                              className="w-full max-w-[320px] px-3 py-2 border rounded-md"
-                              value={override.therapistId || ''}
-                              onChange={(e) => {
-                                if (e.target.value) {
-                                  handleTherapistSelect(program.id, e.target.value)
-                                }
-                              }}
-                            >
-                              <option value="">-- Select Therapist --</option>
-                              {availableTherapists.map(t => (
-                                <option key={t.id} value={t.id}>
-                                  {t.name} ({t.rank})
-                                </option>
-                              ))}
-                            </select>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setEditingTherapist(null)}
-                            >
-                              Cancel
-                            </Button>
-                          </div>
-                        )}
-
                               {/* Therapist FTE Subtraction */}
                               <div>
                                 <Label htmlFor={`therapist-fte-${program.id}`}>
@@ -1308,7 +1303,30 @@ export function SpecialProgramOverrideDialog({
                       {program.name !== 'DRM' && (
                         <div className="space-y-2">
                           <Label>PCA</Label>
-                          {pca ? (
+                          {isEditingPCA ? (
+                            <div className="flex items-center justify-between gap-2 p-2 border rounded">
+                              <Select
+                                value={override.pcaId ?? undefined}
+                                onValueChange={(value) => {
+                                  if (value) handlePCASelect(program.id, value)
+                                }}
+                              >
+                                <SelectTrigger className="h-9 w-full max-w-[320px]">
+                                  <SelectValue placeholder="Select PCA" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {availablePCAs.map((p) => (
+                                    <SelectItem key={p.id} value={p.id}>
+                                      {p.name} ({p.status === 'buffer' ? 'Buffer ' : ''}{p.floating ? 'Floating' : 'Non-floating'})
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <Button variant="outline" size="sm" onClick={() => setEditingPCA(null)}>
+                                Cancel
+                              </Button>
+                            </div>
+                          ) : pca ? (
                             <div className="flex items-center justify-between p-2 border rounded">
                               <span>{pca.name} ({pca.floating ? 'Floating' : 'Non-floating'})</span>
                               <Button
@@ -1380,35 +1398,6 @@ export function SpecialProgramOverrideDialog({
                                   </div>
                                 )}
                               </div>
-                            </div>
-                          )}
-
-                          {isEditingPCA && (
-                            <div className="p-3 border rounded space-y-2">
-                              <Label>Select PCA</Label>
-                              <select
-                                className="w-full max-w-[320px] px-3 py-2 border rounded-md"
-                                value={override.pcaId || ''}
-                                onChange={(e) => {
-                                  if (e.target.value) {
-                                    handlePCASelect(program.id, e.target.value)
-                                  }
-                                }}
-                              >
-                                <option value="">-- Select PCA --</option>
-                                {availablePCAs.map(p => (
-                                  <option key={p.id} value={p.id}>
-                                    {p.name} ({p.status === 'buffer' ? 'Buffer ' : ''}{p.floating ? 'Floating' : 'Non-floating'})
-                                  </option>
-                                ))}
-                              </select>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setEditingPCA(null)}
-                              >
-                                Cancel
-                              </Button>
                             </div>
                           )}
 

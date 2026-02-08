@@ -2669,7 +2669,7 @@ export function useScheduleController(params: {
   const copySchedule = async (args: {
     fromDate: Date
     toDate: Date
-    mode: 'full' | 'hybrid'
+    mode: 'hybrid'
     includeBufferStaff: boolean
     onProgress?: (next: number) => void
     startSoftAdvance?: (cap: number) => void

@@ -16,9 +16,10 @@ interface SlotSelectionPopoverProps {
   position: { x: number; y: number }
   isDiscardMode?: boolean // True when discarding slots (opposite of transfer)
   actionLabel?: 'move' | 'discard' | 'assign'
-  mode?: 'drag' | 'confirm'
+  mode?: 'drag' | 'confirm' | 'hybrid'
   onConfirm?: () => void
   confirmDisabled?: boolean
+  confirmHint?: React.ReactNode
 }
 
 export function SlotSelectionPopover({
@@ -34,6 +35,7 @@ export function SlotSelectionPopover({
   mode = 'drag',
   onConfirm,
   confirmDisabled = false,
+  confirmHint,
 }: SlotSelectionPopoverProps) {
   // Track if mouse moved enough to be considered a drag vs click
   const dragStartRef = useRef<{ x: number; y: number } | null>(null)
@@ -49,7 +51,7 @@ export function SlotSelectionPopover({
     e.stopPropagation()
     e.preventDefault() // Prevent default to avoid text selection and other behaviors
     
-    if (mode !== 'drag') return
+    if (mode !== 'drag' && mode !== 'hybrid') return
     if (!isSelected) {
       // If not selected, just toggle it
       return
@@ -116,7 +118,7 @@ export function SlotSelectionPopover({
       
       {/* Header */}
       <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-1.5 font-medium pr-4">
-        {mode === 'confirm' ? (
+        {mode === 'confirm' || mode === 'hybrid' ? (
           effectiveAction === 'assign'
             ? (hasSelectedSlots ? 'Confirm assign:' : 'Select slots to assign:')
             : effectiveAction === 'discard'
@@ -187,7 +189,7 @@ export function SlotSelectionPopover({
             {selectedSlots.length} slot{selectedSlots.length !== 1 ? 's' : ''} selected ({(selectedSlots.length * 0.25).toFixed(2)} FTE)
           </div>
           <div className="text-[9px] text-slate-400 dark:text-slate-500 mt-0.5 italic">
-            {mode === 'confirm'
+            {mode === 'confirm' || mode === 'hybrid'
               ? 'Use the buttons below to confirm'
               : effectiveAction === 'assign'
                 ? 'Click to assign selected slots'
@@ -201,7 +203,7 @@ export function SlotSelectionPopover({
       {/* Instruction when no slots selected */}
       {!hasSelectedSlots && (
         <div className="mt-1.5 pt-1.5 border-t border-slate-200 dark:border-slate-600 text-[10px] text-slate-400 dark:text-slate-500 italic leading-tight">
-          {mode === 'confirm'
+          {mode === 'confirm' || mode === 'hybrid'
             ? 'Click slots to select, then confirm'
             : effectiveAction === 'assign'
               ? 'Click slots to select, then click to assign'
@@ -211,39 +213,46 @@ export function SlotSelectionPopover({
         </div>
       )}
 
-      {mode === 'confirm' && (
-        <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600 flex items-center justify-end gap-1.5">
-          <Tooltip content="Cancel" side="top" zIndex={120000}>
-            <button
-              type="button"
-              className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
-              onClick={(e) => {
-                e.stopPropagation()
-                onClose()
-              }}
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </Tooltip>
-          <Tooltip content="Confirm" side="top" zIndex={120000}>
-            <button
-              type="button"
-              className={cn(
-                'p-1 rounded text-amber-700 dark:text-amber-300',
-                confirmDisabled || !hasSelectedSlots
-                  ? 'opacity-50 cursor-not-allowed'
-                  : 'hover:bg-amber-100 dark:hover:bg-amber-900/40'
-              )}
-              disabled={confirmDisabled || !hasSelectedSlots}
-              onClick={(e) => {
-                e.stopPropagation()
-                if (confirmDisabled || !hasSelectedSlots) return
-                onConfirm?.()
-              }}
-            >
-              <Check className="w-4 h-4" />
-            </button>
-          </Tooltip>
+      {(mode === 'confirm' || mode === 'hybrid') && (
+        <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600 flex flex-col gap-1.5">
+          {confirmHint ? (
+            <div className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight whitespace-normal break-words">
+              {confirmHint}
+            </div>
+          ) : null}
+          <div className="flex items-center justify-end gap-1.5">
+            <Tooltip content="Cancel" side="top" zIndex={120000}>
+              <button
+                type="button"
+                className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onClose()
+                }}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </Tooltip>
+            <Tooltip content="Confirm" side="top" zIndex={120000}>
+              <button
+                type="button"
+                className={cn(
+                  'p-1 rounded text-amber-700 dark:text-amber-300',
+                  confirmDisabled || !hasSelectedSlots
+                    ? 'opacity-50 cursor-not-allowed'
+                    : 'hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                )}
+                disabled={confirmDisabled || !hasSelectedSlots}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (confirmDisabled || !hasSelectedSlots) return
+                  onConfirm?.()
+                }}
+              >
+                <Check className="w-4 h-4" />
+              </button>
+            </Tooltip>
+          </div>
         </div>
       )}
     </div>
