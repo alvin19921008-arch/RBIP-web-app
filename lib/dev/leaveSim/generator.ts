@@ -1,7 +1,6 @@
 import type { Staff } from '@/types/staff'
 import type { Weekday } from '@/types/staff'
 import type { SpecialProgram, SPTAllocation } from '@/types/allocation'
-import { roundToNearestQuarter } from '@/lib/utils/rounding'
 import { createRng, pickWeighted, randChoice, randInt } from '@/lib/dev/leaveSim/rng'
 import {
   ALL_SLOTS,
@@ -20,6 +19,12 @@ import {
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100
+}
+
+function pcaSlotFteFromAvailableSlots(availableSlots: unknown): number {
+  if (!Array.isArray(availableSlots)) return 0
+  const uniq = Array.from(new Set(availableSlots)).filter((s) => isValidSlot(s))
+  return round2(clampNumber(uniq.length * 0.25, 0, 1.0))
 }
 
 function isActiveSpecialProgramForStaff(args: {
@@ -463,24 +468,12 @@ export function generateDevLeaveSimDraft(args: {
       continue
     }
 
-    // PCA urgent leave: allow non-quarter leave cost, but keep slots consistent with rounded FTE.
+    // PCA urgent leave: keep FTE strictly aligned to available quarter-slots (harness behavior).
     const shouldUseInvalidSlot = args.config.pcaUrgentUsesInvalidSlot && rng() < clampNumber(args.config.pcaUrgentInvalidSlotProbability, 0, 1)
 
     const invalidSlot = shouldUseInvalidSlot ? (randChoice(rng, ALL_SLOTS) as 1 | 2 | 3 | 4 | undefined) : undefined
     const baseSlots = invalidSlot ? ALL_SLOTS.filter((s) => s !== invalidSlot) : [...ALL_SLOTS]
-    const slotFte = baseSlots.length * 0.25
-
-    // Choose an fteRemaining that is NOT necessarily a multiple of 0.25,
-    // but rounds to match slotFte (the UI expects this alignment).
-    // Keep strictly inside the rounding band to avoid flakiness at midpoints.
-    const lower = slotFte - 0.124
-    const upper = slotFte + 0.124
-    const rawRemaining = lower + rng() * (upper - lower)
-    const remaining = round2(clampNumber(rawRemaining, 0, 1.0))
-    const rounded = roundToNearestQuarter(remaining)
-    if (Math.abs(rounded - slotFte) > 0.001) {
-      warnings.push(`PCA urgent FTE rounding mismatch for ${pick.id}: fte=${remaining}, rounded=${rounded}, slotsFte=${slotFte}`)
-    }
+    const remaining = pcaSlotFteFromAvailableSlots(baseSlots)
 
     const patch: DevLeaveSimStaffPatch = {
       staffId: pick.id,
@@ -522,6 +515,10 @@ export function generateDevLeaveSimDraft(args: {
     if (Array.isArray(p.availableSlots)) {
       p.availableSlots = Array.from(new Set(p.availableSlots)).filter((s) => isValidSlot(s)).sort((a, b) => a - b)
     }
+    // Harness invariant: PCA fteRemaining should match quarter-slot availability.
+    // (Each slot contributes 0.25 FTE; invalid slot is excluded above.)
+    p.fteRemaining = pcaSlotFteFromAvailableSlots(p.availableSlots)
+    p.fteSubtraction = round2(1.0 - p.fteRemaining)
   }
 
   const metaWarnings: string[] = []

@@ -7801,6 +7801,16 @@ function SchedulePageContent() {
     setColorContextAction,
   ])
 
+  // Avoid a transient "today → fallback date" flicker on cold load:
+  // wait until our initial date resolver (URL param / last-open / fallback lookup) finishes.
+  if (!initialDateResolved) {
+    return (
+      <div className="min-h-[calc(100vh-64px)] flex items-center justify-center bg-background">
+        <div className="text-sm text-muted-foreground">Loading schedule…</div>
+      </div>
+    )
+  }
+
   return (
     <DndContext
       onDragStart={handleDragStart}
@@ -9510,9 +9520,16 @@ function SchedulePageContent() {
                 toast: showActionToast,
               })
             }}
-            runStep2Auto={async ({ autoStep20, autoStep21 }) => {
-              // Auto Step 2.1: skip special program override wizard and proceed.
-              // Auto Step 2.0: auto-handle substitution decisions (no dialog).
+            runStep2Auto={async ({ autoStep20, autoStep21, autoStep22 }) => {
+              // Step numbering:
+              // - Step 2.0: Special Program Override dialog
+              // - Step 2.1: Non-floating PCA substitution dialog
+              // - Step 2.2: SPT Final Edit dialog
+              //
+              // Harness flags:
+              // - autoStep21 => skip Step 2.0 (special programs)
+              // - autoStep20 => auto-handle Step 2.1 (substitution)
+              // - autoStep22 => skip Step 2.2 (SPT final edit)
 
               // If the caller wants the real special-program override dialog, open it and await results.
               let baseOverrides: any = { ...(staffOverrides as any) }
@@ -9542,12 +9559,6 @@ function SchedulePageContent() {
                 allStaff: [...staff, ...bufferStaff],
               })
               setStaffOverrides(cleanedOverrides as any)
-
-              if (!autoStep20) {
-                // Use the real substitution wizard flow.
-                await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides as any)
-                return
-              }
 
               const autoSelectSubstitutions = (params: {
                 teams: Team[]
@@ -9603,20 +9614,37 @@ function SchedulePageContent() {
                 return selections
               }
 
-              await scheduleActions.runStep2TherapistAndNonFloatingPCA({
-                cleanedOverrides: cleanedOverrides as any,
-                toast: showActionToast,
-                onNonFloatingSubstitutionWizard: async ({ teams, substitutionsByTeam }) => {
-                  return autoSelectSubstitutions({ teams, substitutionsByTeam: substitutionsByTeam as any })
-                },
-              })
+              while (true) {
+                if (!autoStep20) {
+                  // Use the real substitution wizard flow.
+                  await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides as any)
+                } else {
+                  await scheduleActions.runStep2TherapistAndNonFloatingPCA({
+                    cleanedOverrides: cleanedOverrides as any,
+                    toast: showActionToast,
+                    onNonFloatingSubstitutionWizard: async ({ teams, substitutionsByTeam }) => {
+                      return autoSelectSubstitutions({ teams, substitutionsByTeam: substitutionsByTeam as any })
+                    },
+                  })
+                }
+
+                // Step 2.2 (SPT Final Edit)
+                if (autoStep22) break
+                const step22 = await showStep2Point2_SptFinalEdit()
+                if (step22 === null) break
+                if ((step22 as any)?.__nav === 'back') continue
+                if (step22 && Object.keys(step22).length > 0) {
+                  applyStep2Point2_SptFinalEdits(step22 as any)
+                }
+                break
+              }
             }}
             runStep3={async ({ onTieBreak }) => {
               await scheduleActions.runStep3FloatingPCA({
                 onTieBreak: onTieBreak as any,
               })
             }}
-            runStep3V2Auto={async ({ autoStep32, autoStep33, bufferPreAssignRatio }) => {
+            runStep3V2Auto={async ({ autoStep32, autoStep33, bufferPreAssignRatio, mode }) => {
               // Build defaults similar to the wizard (3.1/3.4), optionally auto-applying 3.0/3.2/3.3.
               const pending0 = pendingPCAFTEPerTeam
               const teamOrder = [...TEAMS].sort((a, b) => {
@@ -9710,7 +9738,7 @@ function SchedulePageContent() {
               }
 
               // Step 3.2 (auto): preferred PCA + preferred slot reservations.
-              if (autoStep32) {
+              if (autoStep32 && mode !== 'balanced') {
                 const res = computeReservations(
                   pcaPreferences,
                   currentPending,
@@ -9744,7 +9772,7 @@ function SchedulePageContent() {
               }
 
               // Step 3.3 (auto): adjacent-slot reservations from special program PCAs.
-              if (autoStep33) {
+              if (autoStep33 && mode !== 'balanced') {
                 // Keep selecting greedily until no more valid options.
                 const used = new Set<string>()
                 const markUsedFromAllocations = () => {
@@ -9801,6 +9829,7 @@ function SchedulePageContent() {
                 pcaPool: floatingPCAs as any,
                 pcaPreferences,
                 specialPrograms,
+                mode: (mode as any) ?? 'standard',
               })
 
               // Add Step 3.0/3.2/3.3 assignments into tracker for visibility, matching wizard behavior.

@@ -41,6 +41,7 @@ type SpecialProgramLite = {
 type SptAllocationLite = {
   id: string
   staff_id: string
+  staff_name?: string
   weekdays?: string[] | null
   fte_addon?: number | null
   slots?: unknown
@@ -73,7 +74,7 @@ export type SnapshotDiffResult = {
   sptAllocations: {
     added: SptAllocationLite[]
     removed: SptAllocationLite[]
-    changed: Array<{ id: string; staff_id: string; changes: FieldChange[] }>
+    changed: Array<{ id: string; staff_id: string; staff_name?: string; changes: FieldChange[] }>
   }
 }
 
@@ -438,6 +439,7 @@ export function diffBaselineSnapshot(params: {
   const snapSpt: SptAllocationLite[] = (params.snapshot.sptAllocations || []).map((a: any) => ({
     id: a.id,
     staff_id: a.staff_id,
+    staff_name: typeof a?.staff_id === 'string' ? (idToName.get(a.staff_id) ?? undefined) : undefined,
     weekdays: a.weekdays ?? null,
     fte_addon: a.fte_addon ?? null,
     slots: a.slots ?? null,
@@ -445,6 +447,7 @@ export function diffBaselineSnapshot(params: {
   const liveSpt: SptAllocationLite[] = (params.live.sptAllocations || []).map((a: any) => ({
     id: a.id,
     staff_id: a.staff_id,
+    staff_name: typeof a?.staff_id === 'string' ? (idToName.get(a.staff_id) ?? undefined) : undefined,
     weekdays: a.weekdays ?? null,
     fte_addon: a.fte_addon ?? null,
     slots: a.slots ?? null,
@@ -453,7 +456,7 @@ export function diffBaselineSnapshot(params: {
   const liveSptById = new Map(liveSpt.map((a) => [a.id, a] as const))
   const sptAdded: SptAllocationLite[] = []
   const sptRemoved: SptAllocationLite[] = []
-  const sptChanged: Array<{ id: string; staff_id: string; changes: FieldChange[] }> = []
+  const sptChanged: Array<{ id: string; staff_id: string; staff_name?: string; changes: FieldChange[] }> = []
   liveSptById.forEach((a, id) => {
     if (!snapSptById.has(id)) sptAdded.push(a)
   })
@@ -473,7 +476,15 @@ export function diffBaselineSnapshot(params: {
     const slotsA = toStr(snap.slots)
     const slotsB = toStr(live.slots)
     if (slotsA !== slotsB) changes.push({ field: 'slots', from: 'changed', to: 'changed' })
-    if (changes.length > 0) sptChanged.push({ id, staff_id: live.staff_id || snap.staff_id, changes })
+    if (changes.length > 0) {
+      const staffId = live.staff_id || snap.staff_id
+      sptChanged.push({
+        id,
+        staff_id: staffId,
+        staff_name: idToName.get(staffId) ?? live.staff_name ?? snap.staff_name,
+        changes,
+      })
+    }
   })
 
   return {

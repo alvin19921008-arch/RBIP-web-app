@@ -2,8 +2,10 @@
 
 > **Purpose**: This document serves as a comprehensive historical changelog and reference for the RBIP Duty List web application. It captures detailed project history, data architecture, code rules, and key patterns. For essential patterns that are auto-loaded, see `.cursor/rules/`. For quick context, see `CONTEXT.md`.
 
+> **New changelog**: Starting **2026-02-08**, ongoing phase updates are recorded in `CHANGELOG_2.md`. This file remains as the legacy “big” reference.
+
 **Last Updated**: 2026-02-08
-**Latest Phase**: Phase 39 - Unsaved state preservation across date switch
+**Latest Phase (legacy file)**: Phase 39 - Unsaved state preservation across date switch
 **Note**: Legacy development phases (1-20) have been moved to `Journal_legacy.md` for reference.
 **Optimization Note**: Essential patterns have been extracted to `.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc` for automatic loading. This changelog is read on-demand for historical context.  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  

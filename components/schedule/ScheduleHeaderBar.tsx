@@ -205,8 +205,8 @@ export function ScheduleHeaderBar(props: {
                 <div className="w-full space-y-3">
                   <div className="flex items-start justify-between gap-3 w-full">
                     <div className="min-w-0 flex-1 space-y-0.5">
-                      <div className="font-semibold text-sm">Saved setup for this date</div>
-                      <div className="text-amber-900/75">New dashboard changes may not apply here.</div>
+                      <div className="font-semibold text-sm">Saved setup snapshot (this date)</div>
+                      <div className="text-amber-900/75">Showing differences: saved snapshot → current dashboard.</div>
                     </div>
 
                     <button

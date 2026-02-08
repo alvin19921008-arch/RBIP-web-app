@@ -6,6 +6,7 @@ import type { PCAAllocation } from '@/types/schedule'
 import type { Staff } from '@/types/staff'
 import type { SpecialProgram } from '@/types/allocation'
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import { RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { cn } from '@/lib/utils'
@@ -412,15 +413,12 @@ export function PCADedicatedScheduleTable({
             const runLen = j - i
 
             const team = (cell as any).team as Team
-            if (runLen >= 2) {
-              specs[slot] = { rowSpan: runLen, hidden: false, cell: { kind: 'mainPost', team } }
-              for (let k = i + 1; k < j; k++) {
-                const hiddenSlot = slots[k]
-                specs[hiddenSlot] = { rowSpan: 1, hidden: true, cell: { kind: 'empty' } }
-              }
-            } else {
-              // single available slot: show team (not 主位 merge)
-              specs[slot] = { rowSpan: 1, hidden: false, cell: { kind: 'team', team } }
+            // Even a single isolated non-floating slot should still display "<Team> 主位"
+            // (otherwise non-adjacent runs break the 主位 pattern when a slot is used for special programs).
+            specs[slot] = { rowSpan: runLen, hidden: false, cell: { kind: 'mainPost', team } }
+            for (let k = i + 1; k < j; k++) {
+              const hiddenSlot = slots[k]
+              specs[hiddenSlot] = { rowSpan: 1, hidden: true, cell: { kind: 'empty' } }
             }
             i = j
           }
@@ -580,6 +578,8 @@ export function PCADedicatedScheduleTable({
   const renderCellContent = (cell: CellKind) => {
     const commonLine1 = 'text-center leading-tight'
     const commonLine2 = 'text-center leading-tight whitespace-normal break-words'
+    const substitutionTeamClass =
+      'text-green-700 dark:text-green-400 underline underline-offset-2 decoration-2 font-bold'
 
     if (cell.kind === 'empty') return null
 
@@ -604,12 +604,11 @@ export function PCADedicatedScheduleTable({
     }
 
     if (cell.kind === 'invalidSlot') {
-      const teamClass = cell.isSubstitution
-        ? 'text-green-700 dark:text-green-400 underline underline-offset-2 decoration-2 font-medium'
-        : 'font-medium'
+      const teamClass = cell.isSubstitution ? substitutionTeamClass : 'font-medium'
+      const teamLabel = cell.isSubstitution ? `${cell.team} 替位` : cell.team
       return (
         <div className="flex flex-col items-center justify-center px-1">
-          <div className={`${commonLine1} ${teamClass}`}>{cell.team}</div>
+          <div className={`${commonLine1} ${teamClass}`}>{teamLabel}</div>
           <div className={`${commonLine2} text-blue-600 text-xs`}>
             ({cell.timeRange.start}-{cell.timeRange.end})
           </div>
@@ -618,24 +617,22 @@ export function PCADedicatedScheduleTable({
     }
 
     if (cell.kind === 'teamAndProgram') {
-      const teamClass = cell.isSubstitution
-        ? 'text-green-700 dark:text-green-400 underline underline-offset-2 decoration-2 font-medium'
-        : 'font-medium'
+      const teamClass = cell.isSubstitution ? substitutionTeamClass : 'font-medium'
+      const teamLabel = cell.isSubstitution ? `${cell.team} 替位` : cell.team
       return (
         <div className="flex flex-col items-center justify-center px-1">
-          <div className={`${commonLine1} ${teamClass}`}>{cell.team}</div>
+          <div className={`${commonLine1} ${teamClass}`}>{teamLabel}</div>
           <div className={`${commonLine2} text-red-600 text-xs font-medium`}>{cell.programName}</div>
         </div>
       )
     }
 
     if (cell.kind === 'team') {
-      const teamClass = cell.isSubstitution
-        ? 'text-green-700 dark:text-green-400 underline underline-offset-2 decoration-2 font-medium'
-        : 'font-medium'
+      const teamClass = cell.isSubstitution ? substitutionTeamClass : 'font-medium'
+      const teamLabel = cell.isSubstitution ? `${cell.team} 替位` : cell.team
       return (
         <div className="flex items-center justify-center px-1">
-          <div className={`${commonLine1} ${teamClass}`}>{cell.team}</div>
+          <div className={`${commonLine1} ${teamClass}`}>{teamLabel}</div>
         </div>
       )
     }
@@ -645,10 +642,13 @@ export function PCADedicatedScheduleTable({
 
   const tableNodeForColumns = (cols: Staff[], keyPrefix: string, opts?: { stickyLeft?: boolean }) => {
     const sticky = opts?.stickyLeft !== false
-    const stickyClass = sticky ? 'sticky left-0 z-10' : ''
+    // Keep sticky just above normal cells, but below overlay controls (scroll buttons).
+    // NOTE: Table paint order with border-collapse can cause sticky cells to appear "non-sticky"
+    // if they are painted underneath scrolled cells. Give them a high z-index so they always stay visible.
+    const stickyClass = sticky ? 'sticky left-0 z-50 rbip-sticky-col-divider' : ''
     const stickyBg = 'bg-background'
     return (
-      <table className="border-collapse w-full">
+      <table className={cn('border-collapse', sticky ? 'w-full min-w-max' : 'w-full')}>
         <thead>
           <tr>
             <th
@@ -740,19 +740,21 @@ export function PCADedicatedScheduleTable({
     <div className="mt-6">
       <div className="flex items-center justify-center gap-2 mb-2">
         <h3 className="text-xs font-semibold text-center">PCA Dedicated Schedule</h3>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 opacity-60 hover:opacity-100"
-          onClick={() => {
-            setRefreshKey((x) => x + 1)
-            toast.success('Table refreshed')
-          }}
-          title="Refresh"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-        </Button>
+        <Tooltip side="top" content="Refresh">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Refresh table"
+            className="h-6 w-6 opacity-60 hover:opacity-100 rbip-hover-scale rbip-refresh-action"
+            onClick={() => {
+              setRefreshKey((x) => x + 1)
+              toast.success('Table refreshed')
+            }}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </Button>
+        </Tooltip>
       </div>
 
       <div
@@ -816,7 +818,7 @@ export function PCADedicatedScheduleTable({
         {/* Horizontal scroll controls - ensuring z-index to stay on top */}
         <button
           type="button"
-          className={`absolute left-1 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-background/90 border border-border shadow-xs flex items-center justify-center hover:bg-accent/80 z-20 transition-opacity ${
+          className={`absolute left-1 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-background/90 border border-border shadow-xs flex items-center justify-center hover:bg-accent/80 z-70 transition-opacity ${
             controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
           }`}
           onClick={() => {
@@ -829,7 +831,7 @@ export function PCADedicatedScheduleTable({
         </button>
         <button
           type="button"
-          className={`absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-background/90 border border-border shadow-xs flex items-center justify-center hover:bg-accent/80 z-20 transition-opacity ${
+          className={`absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-background/90 border border-border shadow-xs flex items-center justify-center hover:bg-accent/80 z-70 transition-opacity ${
             controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
           }`}
           onClick={() => {

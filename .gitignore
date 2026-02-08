@@ -26,6 +26,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# dev harness artifacts
+rbip-dev-leave-sim-*.json
+
 # Cursor local logs (keep .cursor/plans and rules tracked)
 .cursor/debug.log
 .cursor/*.log

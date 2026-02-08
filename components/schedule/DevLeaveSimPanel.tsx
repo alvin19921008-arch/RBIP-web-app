@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Staff, Team, LeaveType } from '@/types/staff'
 import type { Weekday } from '@/types/staff'
 import type { SpecialProgram, SPTAllocation } from '@/types/allocation'
@@ -60,6 +60,12 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
+function pcaSlotFteFromAvailableSlots(availableSlots: unknown): number {
+  if (!Array.isArray(availableSlots)) return 0
+  const uniq = Array.from(new Set(availableSlots)).filter((s) => isValidSlot(s))
+  return round2(clampNumber(uniq.length * 0.25, 0, 1.0))
+}
+
 function safeNumberInput(v: string, fallback: number): number {
   const n = parseFloat(v)
   return Number.isFinite(n) ? n : fallback
@@ -69,11 +75,13 @@ function patchToOverride(p: DevLeaveSimStaffPatch): StaffOverrideLike[string] {
   const inv = p.invalidSlots?.[0]?.slot
   const availableSlots = Array.isArray(p.availableSlots) ? p.availableSlots.filter((s) => isValidSlot(s)) : undefined
   const invalidSlots = Array.isArray(p.invalidSlots) ? p.invalidSlots.filter((x) => isValidSlot(x.slot)) : undefined
+  const filteredSlots = inv && availableSlots ? availableSlots.filter((s) => s !== inv) : availableSlots
+  const derivedPcaFteRemaining = p.rank === 'PCA' ? pcaSlotFteFromAvailableSlots(filteredSlots) : p.fteRemaining
   return {
     leaveType: p.leaveType,
-    fteRemaining: p.fteRemaining,
-    fteSubtraction: p.fteSubtraction,
-    availableSlots: inv && availableSlots ? availableSlots.filter((s) => s !== inv) : availableSlots,
+    fteRemaining: derivedPcaFteRemaining,
+    fteSubtraction: p.rank === 'PCA' ? round2(1 - derivedPcaFteRemaining) : p.fteSubtraction,
+    availableSlots: filteredSlots,
     invalidSlots,
     // Legacy single-slot marker used by the PCA algorithm (controller will also derive when needed)
     invalidSlot: inv,
@@ -121,13 +129,18 @@ export function DevLeaveSimPanel(props: {
 
   runStep2: (args: { cleanedOverrides?: any; toast?: (title: string, variant?: any, description?: string) => void }) => Promise<any>
   /** Optional: run Step 2 with auto substep controls (2.0/2.1). */
-  runStep2Auto?: (args: { autoStep20: boolean; autoStep21: boolean }) => Promise<void>
+  runStep2Auto?: (args: { autoStep20: boolean; autoStep21: boolean; autoStep22: boolean }) => Promise<void>
   runStep3: (args: { onTieBreak?: (params: { teams: Team[]; pendingFTE: number; tieBreakKey: string }) => Promise<Team> }) => Promise<void>
   /**
    * Optional: run Step 3 using the same v2 engine as `FloatingPCAConfigDialog`.
    * When provided, the sim runner will prefer this over the legacy Step 3 runner.
    */
-  runStep3V2Auto?: (args: { autoStep32: boolean; autoStep33: boolean; bufferPreAssignRatio: number }) => Promise<void>
+  runStep3V2Auto?: (args: {
+    autoStep32: boolean
+    autoStep33: boolean
+    bufferPreAssignRatio: number
+    mode: 'standard' | 'balanced'
+  }) => Promise<void>
   /** Optional: open the actual Step 3 wizard UI (3.0→3.4). */
   openStep3Wizard?: () => void
   runStep4: () => Promise<void>
@@ -146,11 +159,14 @@ export function DevLeaveSimPanel(props: {
   const [isRunningSteps, setIsRunningSteps] = useState(false)
   const [step2Auto20, setStep2Auto20] = useState(true)
   const [step2Auto21, setStep2Auto21] = useState(true)
+  const [step2Auto22, setStep2Auto22] = useState(true)
   const [step3Auto32, setStep3Auto32] = useState(true)
   const [step3Auto33, setStep3Auto33] = useState(true)
+  const [step3AllocationMode, setStep3AllocationMode] = useState<'standard' | 'balanced'>('standard')
   // 0..1 ratio of buffer PCA slots to pre-assign in "Step 3.0" (before 3.1).
   const [step30BufferPreAssignRatio, setStep30BufferPreAssignRatio] = useState(0)
   const [pipelinePhase, setPipelinePhase] = useState<null | 'step2' | 'step3' | 'step4' | 'invariants'>(null)
+  const draftPatchesTopRef = useRef<HTMLDivElement | null>(null)
 
   // Numeric inputs should allow free typing (incl. empty string), then normalize on blur.
   const [plannedTherapistCountInput, setPlannedTherapistCountInput] = useState<string>(() => String(config.plannedTherapistCount))
@@ -207,8 +223,12 @@ export function DevLeaveSimPanel(props: {
       if (parsed?.activeTab === 'edit' || parsed?.activeTab === 'run' || parsed?.activeTab === 'bundle') setActiveTab(parsed.activeTab)
       if (typeof parsed?.step2Auto20 === 'boolean') setStep2Auto20(parsed.step2Auto20)
       if (typeof parsed?.step2Auto21 === 'boolean') setStep2Auto21(parsed.step2Auto21)
+      if (typeof parsed?.step2Auto22 === 'boolean') setStep2Auto22(parsed.step2Auto22)
       if (typeof parsed?.step3Auto32 === 'boolean') setStep3Auto32(parsed.step3Auto32)
       if (typeof parsed?.step3Auto33 === 'boolean') setStep3Auto33(parsed.step3Auto33)
+      if (parsed?.step3AllocationMode === 'standard' || parsed?.step3AllocationMode === 'balanced') {
+        setStep3AllocationMode(parsed.step3AllocationMode)
+      }
       if (typeof parsed?.step30BufferPreAssignRatio === 'number') {
         const n = Math.max(0, Math.min(1, parsed.step30BufferPreAssignRatio))
         setStep30BufferPreAssignRatio(n)
@@ -235,8 +255,10 @@ export function DevLeaveSimPanel(props: {
           report,
           step2Auto20,
           step2Auto21,
+          step2Auto22,
           step3Auto32,
           step3Auto33,
+          step3AllocationMode,
           step30BufferPreAssignRatio,
         })
       )
@@ -253,8 +275,10 @@ export function DevLeaveSimPanel(props: {
     report,
     step2Auto20,
     step2Auto21,
+    step2Auto22,
     step3Auto32,
     step3Auto33,
+    step3AllocationMode,
     step30BufferPreAssignRatio,
   ])
 
@@ -300,6 +324,15 @@ export function DevLeaveSimPanel(props: {
     })
     setDraft(d)
     setReport(null)
+    // UX: after generating, jump to the draft patches so dev can review immediately
+    // (especially on small screens where patches appear below the config controls).
+    requestAnimationFrame(() => {
+      try {
+        draftPatchesTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      } catch {
+        // ignore
+      }
+    })
   }
 
   const randomizeCountsAndSeed = () => {
@@ -415,7 +448,7 @@ export function DevLeaveSimPanel(props: {
           props.goToStep('therapist-pca')
           props.recalculateScheduleCalculations()
           if (props.runStep2Auto) {
-            await props.runStep2Auto({ autoStep20: step2Auto20, autoStep21: step2Auto21 })
+            await props.runStep2Auto({ autoStep20: step2Auto20, autoStep21: step2Auto21, autoStep22: step2Auto22 })
           } else {
             await props.runStep2({ cleanedOverrides: undefined })
           }
@@ -427,10 +460,13 @@ export function DevLeaveSimPanel(props: {
           props.clearDomainFromStep('floating-pca')
           props.goToStep('floating-pca')
           if (props.runStep3V2Auto) {
+            const effectiveAuto32 = step3AllocationMode === 'balanced' ? false : step3Auto32
+            const effectiveAuto33 = step3AllocationMode === 'balanced' ? false : step3Auto33
             await props.runStep3V2Auto({
-              autoStep32: step3Auto32,
-              autoStep33: step3Auto33,
+              autoStep32: effectiveAuto32,
+              autoStep33: effectiveAuto33,
               bufferPreAssignRatio: step30BufferPreAssignRatio,
+              mode: step3AllocationMode,
             })
           } else {
             await props.runStep3({
@@ -483,8 +519,10 @@ export function DevLeaveSimPanel(props: {
     clearTieBreakDecisions,
     step2Auto20,
     step2Auto21,
+    step2Auto22,
     step3Auto32,
     step3Auto33,
+    step3AllocationMode,
     step30BufferPreAssignRatio,
     touchedStaffIds,
   ])
@@ -554,6 +592,7 @@ export function DevLeaveSimPanel(props: {
     const isPca = p.rank === 'PCA'
     const inv = p.invalidSlots?.[0]
     const invSlot = inv?.slot ?? null
+    const pcaDerivedFteRemaining = isPca ? pcaSlotFteFromAvailableSlots(p.availableSlots) : null
     return (
       <div key={`patch-${p.staffId}`} className="rounded-md border border-border p-3 space-y-2">
         <div className="flex items-center justify-between gap-3">
@@ -591,21 +630,29 @@ export function DevLeaveSimPanel(props: {
           <div className="space-y-1">
             <Tooltip
               side="bottom"
-              content="FTE remaining can be non-multiple of 0.25. For PCA slot capacity, Step 2+ still uses availableSlots."
+              content={
+                isPca
+                  ? 'Derived from available slots (0.25 FTE per slot). Tick/untick slots to change.'
+                  : 'FTE remaining can be non-multiple of 0.25. For PCA slot capacity, Step 2+ still uses availableSlots.'
+              }
             >
               <Label className="text-xs cursor-default">FTE remaining</Label>
             </Tooltip>
-            <Input
-              value={String(p.fteRemaining)}
-              onChange={(e) => {
-                const n = safeNumberInput(e.target.value, p.fteRemaining)
-                updatePatch(p.staffId, (prev) => ({
-                  ...prev,
-                  fteRemaining: round2(clampNumber(n, 0, 1)),
-                  fteSubtraction: round2(1 - clampNumber(n, 0, 1)),
-                }))
-              }}
-            />
+            {isPca ? (
+              <Input value={String(pcaDerivedFteRemaining ?? 0)} disabled />
+            ) : (
+              <Input
+                value={String(p.fteRemaining)}
+                onChange={(e) => {
+                  const n = safeNumberInput(e.target.value, p.fteRemaining)
+                  updatePatch(p.staffId, (prev) => ({
+                    ...prev,
+                    fteRemaining: round2(clampNumber(n, 0, 1)),
+                    fteSubtraction: round2(1 - clampNumber(n, 0, 1)),
+                  }))
+                }}
+              />
+            )}
           </div>
 
           {isPca ? (
@@ -626,7 +673,8 @@ export function DevLeaveSimPanel(props: {
                             const cur = Array.isArray(prev.availableSlots) ? prev.availableSlots : []
                             const next = v ? [...cur, slot] : cur.filter((s) => s !== slot)
                             const uniq = Array.from(new Set(next)).sort((a, b) => a - b)
-                            return { ...prev, availableSlots: uniq }
+                            const derived = pcaSlotFteFromAvailableSlots(uniq)
+                            return { ...prev, availableSlots: uniq, fteRemaining: derived, fteSubtraction: round2(1 - derived) }
                           })
                         }}
                         disabled={disabled}
@@ -654,7 +702,10 @@ export function DevLeaveSimPanel(props: {
                 value={invSlot == null ? 'none' : String(invSlot)}
                 onValueChange={(v) => {
                   if (v === 'none') {
-                    updatePatch(p.staffId, (prev) => ({ ...prev, invalidSlots: [] }))
+                    updatePatch(p.staffId, (prev) => {
+                      const derived = pcaSlotFteFromAvailableSlots(prev.availableSlots)
+                      return { ...prev, invalidSlots: [], fteRemaining: derived, fteSubtraction: round2(1 - derived) }
+                    })
                     return
                   }
                   const slot = parseInt(v, 10)
@@ -663,6 +714,15 @@ export function DevLeaveSimPanel(props: {
                     ...prev,
                     invalidSlots: [{ slot, timeRange: prev.invalidSlots?.[0]?.timeRange ?? { start: '0900', end: '1030' } }],
                     availableSlots: Array.isArray(prev.availableSlots) ? prev.availableSlots.filter((s) => s !== slot) : prev.availableSlots,
+                    fteRemaining: pcaSlotFteFromAvailableSlots(
+                      Array.isArray(prev.availableSlots) ? prev.availableSlots.filter((s) => s !== slot) : prev.availableSlots
+                    ),
+                    fteSubtraction: round2(
+                      1 -
+                        pcaSlotFteFromAvailableSlots(
+                          Array.isArray(prev.availableSlots) ? prev.availableSlots.filter((s) => s !== slot) : prev.availableSlots
+                        )
+                    ),
                   }))
                 }}
               >
@@ -718,7 +778,7 @@ export function DevLeaveSimPanel(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="max-w-[1100px] w-[calc(100vw-32px)] max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-[1100px] w-[calc(100vw-32px)] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -817,18 +877,27 @@ export function DevLeaveSimPanel(props: {
             <div className="space-y-3">
               <div className="rounded-md border border-border p-3 space-y-2">
                 <div className="text-sm font-medium">Step 2 auto options</div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <div className="flex items-center justify-between gap-2">
-                    <Tooltip side="bottom" content="Auto-handle Step 2.0 non-floating PCA substitution decisions (no dialog).">
-                      <Label className="text-xs cursor-default">Auto 2.0 (substitution)</Label>
+                    <Tooltip side="bottom" content="Auto-handle Step 2.1 non-floating PCA substitution decisions (no dialog).">
+                      <Label className="text-xs cursor-default">Auto 2.1 (substitution)</Label>
                     </Tooltip>
                     <Switch checked={step2Auto20} onCheckedChange={setStep2Auto20} />
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <Tooltip side="bottom" content="Auto-skip Step 2.1 special program override wizard and proceed with existing program config.">
-                      <Label className="text-xs cursor-default">Auto 2.1 (special programs)</Label>
+                    <Tooltip side="bottom" content="Auto-skip Step 2.0 special program override wizard and proceed with existing program config.">
+                      <Label className="text-xs cursor-default">Auto 2.0 (special programs)</Label>
                     </Tooltip>
                     <Switch checked={step2Auto21} onCheckedChange={setStep2Auto21} />
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <Tooltip
+                      side="bottom"
+                      content="Auto-skip Step 2.2 SPT Final Edit dialog and proceed with the current SPT setup/overrides."
+                    >
+                      <Label className="text-xs cursor-default">Auto 2.2 (SPT final edit)</Label>
+                    </Tooltip>
+                    <Switch checked={step2Auto22} onCheckedChange={setStep2Auto22} />
                   </div>
                 </div>
               </div>
@@ -843,18 +912,43 @@ export function DevLeaveSimPanel(props: {
 
                 <div className="rounded-md border border-border p-2 space-y-2">
                   <div className="text-xs font-medium">Step 3 auto options</div>
+                  <div className="space-y-1">
+                    <Tooltip
+                      side="bottom"
+                      content="Standard runs 3.2/3.3 reservations (if enabled) before 3.4. Balanced runs 3.4 directly (skips 3.2 and 3.3)."
+                    >
+                      <Label className="text-xs cursor-default">Step 3.4 allocation mode</Label>
+                    </Tooltip>
+                    <Select value={step3AllocationMode} onValueChange={(v) => setStep3AllocationMode(v as any)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="standard">standard</SelectItem>
+                        <SelectItem value="balanced">balanced (skip 3.2/3.3)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <div className="flex items-center justify-between gap-2">
                       <Tooltip side="bottom" content="Auto-apply Step 3.2 preferred-slot reservations (greedy, conflict-safe).">
                         <Label className="text-xs cursor-default">Auto 3.2 (preferred)</Label>
                       </Tooltip>
-                      <Switch checked={step3Auto32} onCheckedChange={setStep3Auto32} />
+                      <Switch
+                        checked={step3Auto32}
+                        onCheckedChange={setStep3Auto32}
+                        disabled={step3AllocationMode === 'balanced'}
+                      />
                     </div>
                     <div className="flex items-center justify-between gap-2">
                       <Tooltip side="bottom" content="Auto-apply Step 3.3 adjacent-slot reservations (from special program assignments).">
                         <Label className="text-xs cursor-default">Auto 3.3 (adjacent)</Label>
                       </Tooltip>
-                      <Switch checked={step3Auto33} onCheckedChange={setStep3Auto33} />
+                      <Switch
+                        checked={step3Auto33}
+                        onCheckedChange={setStep3Auto33}
+                        disabled={step3AllocationMode === 'balanced'}
+                      />
                     </div>
                   </div>
                   <div className="space-y-1">
@@ -900,7 +994,7 @@ export function DevLeaveSimPanel(props: {
                         props.goToStep('therapist-pca')
                         props.recalculateScheduleCalculations()
                         if (props.runStep2Auto) {
-                          await props.runStep2Auto({ autoStep20: step2Auto20, autoStep21: step2Auto21 })
+                          await props.runStep2Auto({ autoStep20: step2Auto20, autoStep21: step2Auto21, autoStep22: step2Auto22 })
                         } else {
                           await props.runStep2({})
                         }
@@ -922,10 +1016,13 @@ export function DevLeaveSimPanel(props: {
                         props.clearDomainFromStep('floating-pca')
                         props.goToStep('floating-pca')
                         if (props.runStep3V2Auto) {
+                          const effectiveAuto32 = step3AllocationMode === 'balanced' ? false : step3Auto32
+                          const effectiveAuto33 = step3AllocationMode === 'balanced' ? false : step3Auto33
                           await props.runStep3V2Auto({
-                            autoStep32: step3Auto32,
-                            autoStep33: step3Auto33,
+                            autoStep32: effectiveAuto32,
+                            autoStep33: effectiveAuto33,
                             bufferPreAssignRatio: step30BufferPreAssignRatio,
+                            mode: step3AllocationMode,
                           })
                         } else {
                           await props.runStep3({
@@ -1003,7 +1100,7 @@ export function DevLeaveSimPanel(props: {
           </div>
         ) : (
           <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="space-y-3">
+          <div className="space-y-3 order-2 lg:order-1">
             <div className="flex items-center gap-2">
               <Tooltip side="bottom" content="Deterministic seed. Same seed + same roster/config should reproduce the same draft.">
                 <Label className="text-xs cursor-default w-14">Seed</Label>
@@ -1348,7 +1445,8 @@ export function DevLeaveSimPanel(props: {
             ) : null}
           </div>
 
-          <div className="lg:col-span-2 space-y-3">
+          <div className="lg:col-span-2 space-y-3 order-1 lg:order-2">
+            <div ref={draftPatchesTopRef} />
             <div className="flex items-center justify-between">
               <div className="font-medium">Draft patches</div>
               <div className="text-xs text-muted-foreground">
@@ -1356,7 +1454,7 @@ export function DevLeaveSimPanel(props: {
               </div>
             </div>
             {draft ? (
-              <div className="space-y-2 max-h-[46vh] overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
                 {draft.patches.map(renderPatchRow)}
               </div>
             ) : (

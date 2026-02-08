@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { DashboardSidebar, DASHBOARD_CATEGORIES, type CategoryId } from '@/components/dashboard/DashboardSidebar'
 import { useAccessControl } from '@/lib/access/useAccessControl'
 import type { FeatureId } from '@/lib/access/types'
+import { Button } from '@/components/ui/button'
 
 type PanelKey = Exclude<CategoryId, null>
 
@@ -226,9 +227,26 @@ export default function DashboardPage() {
         ) : null}
         {!activePanel && (
           <div className="text-center text-muted-foreground py-12">
-            {visibleCategories.length > 0
-              ? 'Select a category from the sidebar to begin'
-              : 'No dashboard sections are enabled for your role. Ask an admin/developer to enable access.'}
+            {access.loading ? (
+              <div className="space-y-2">
+                <div className="text-sm">Loading dashboard permissions…</div>
+                <div className="text-xs text-muted-foreground">Fetching access settings.</div>
+              </div>
+            ) : access.status === 'error' ? (
+              <div className="space-y-3">
+                <div className="text-sm text-destructive">Failed to load access settings.</div>
+                {access.error ? <div className="text-xs text-muted-foreground">{access.error}</div> : null}
+                <div>
+                  <Button type="button" variant="outline" onClick={() => access.reload()}>
+                    Retry
+                  </Button>
+                </div>
+              </div>
+            ) : visibleCategories.length > 0 ? (
+              'Select a category from the sidebar to begin'
+            ) : (
+              'No dashboard sections are enabled for your role. Ask an admin/developer to enable access.'
+            )}
           </div>
         )}
       </div>

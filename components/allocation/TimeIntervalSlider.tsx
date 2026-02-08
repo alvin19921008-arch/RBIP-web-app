@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type MouseEvent } from 'react'
 
 interface TimeIntervalSliderProps {
   slot: number
@@ -55,6 +55,32 @@ export function TimeIntervalSlider({
     }
   }, [value, intervals])
 
+  const indexFromClientX = (clientX: number): number | null => {
+    if (!trackRef.current) return null
+    const rect = trackRef.current.getBoundingClientRect()
+    const x = clientX - rect.left
+    const percentage = Math.max(0, Math.min(1, x / rect.width))
+    const idx = Math.round(percentage * (intervals.length - 1))
+    return Math.max(0, Math.min(intervals.length - 1, idx))
+  }
+
+  const handleTrackMouseDown = (e: MouseEvent<HTMLDivElement>) => {
+    // Allow click-to-jump anywhere on the track (including the blue selected bar).
+    // Move the *nearest* handle to the clicked position.
+    const idx = indexFromClientX(e.clientX)
+    if (idx == null) return
+
+    const distToStart = Math.abs(idx - sliderStart)
+    const distToEnd = Math.abs(idx - sliderEnd)
+    const moveStart = distToStart <= distToEnd
+
+    if (moveStart) {
+      handleSliderChange(idx, Math.max(idx, sliderEnd))
+    } else {
+      handleSliderChange(Math.min(idx, sliderStart), idx)
+    }
+  }
+
   const handleSliderChange = (startIdx: number, endIdx: number) => {
     setSliderStart(startIdx)
     setSliderEnd(endIdx)
@@ -75,7 +101,7 @@ export function TimeIntervalSlider({
     <div className="space-y-2">
       {/* Instructional text */}
       <p className="text-xs text-muted-foreground">
-        Slide the bar to indicate which time interval the PCA would be present
+        Slide or click the bar to indicate which time interval the PCA would be present
       </p>
       
       {/* Time labels below slider */}
@@ -90,7 +116,11 @@ export function TimeIntervalSlider({
       {/* Range slider implementation using HTML5 range inputs */}
       <div className="relative px-2">
         {/* Slider track */}
-        <div ref={trackRef} className="relative h-2 bg-gray-200 rounded-full">
+        <div
+          ref={trackRef}
+          className="relative h-2 bg-gray-200 rounded-full cursor-pointer"
+          onMouseDown={handleTrackMouseDown}
+        >
           {/* Selected range */}
           <div
             className="absolute h-full bg-blue-500 rounded-full"
@@ -109,6 +139,7 @@ export function TimeIntervalSlider({
             }}
             onMouseDown={(e) => {
               e.preventDefault()
+              e.stopPropagation()
               if (!trackRef.current) return
               
               const startDrag = (moveEvent: MouseEvent) => {
@@ -139,6 +170,7 @@ export function TimeIntervalSlider({
             }}
             onMouseDown={(e) => {
               e.preventDefault()
+              e.stopPropagation()
               if (!trackRef.current) return
               
               const startDrag = (moveEvent: MouseEvent) => {
