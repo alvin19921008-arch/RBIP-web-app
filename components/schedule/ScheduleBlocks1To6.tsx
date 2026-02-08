@@ -15,6 +15,7 @@ import type { Staff } from '@/types/staff'
 import { TEAMS, EMPTY_BED_ALLOCATIONS } from '@/lib/features/schedule/constants'
 import { getSptWeekdayConfigMap } from '@/lib/features/schedule/sptConfig'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
+import { cn } from '@/lib/utils'
 
 import { TherapistBlock } from '@/components/allocation/TherapistBlock'
 import { PCABlock } from '@/components/allocation/PCABlock'
@@ -38,6 +39,9 @@ type StaffOverrides = Record<
 
 export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: {
   mode: 'main' | 'reference'
+  density?: 'normal' | 'compact'
+  /** Perf optimization for on-screen rendering. Disable for offscreen export. */
+  enableContentVisibility?: boolean
   weekday: Weekday
   sptAllocations: SPTAllocation[]
   specialPrograms: SpecialProgram[]
@@ -62,6 +66,8 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
 }) {
   const {
     mode,
+    density = 'normal',
+    enableContentVisibility = true,
     weekday,
     sptAllocations,
     specialPrograms,
@@ -80,6 +86,10 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
   } = props
 
   const readOnly = mode === 'reference'
+  const isCompact = density === 'compact'
+  const cvClass = enableContentVisibility ? 'cv-auto' : ''
+  const blockWrapClass = cn(isCompact ? 'mb-2' : 'mb-4', cvClass)
+  const titleClass = isCompact ? 'text-xs font-semibold text-center mb-1' : 'text-xs font-semibold text-center mb-2'
 
   const sptWeekdayByStaffId = React.useMemo(() => {
     return getSptWeekdayConfigMap({ weekday, sptAllocations })
@@ -166,8 +176,8 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
     <div className="bg-background">
       <div className="min-w-[960px]">
         {/* Block 1: Therapist Allocation */}
-        <div className="mb-4 cv-auto">
-          <h3 className="text-xs font-semibold text-center mb-2">Therapist Allocation</h3>
+        <div className={blockWrapClass}>
+          <h3 className={titleClass}>Therapist Allocation</h3>
           <div className="grid grid-cols-8 gap-2">
             {TEAMS.map((team) => (
               <TherapistBlock
@@ -187,8 +197,8 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
         </div>
 
         {/* Block 2: PCA Allocation */}
-        <div className="mb-4 cv-auto">
-          <h3 className="text-xs font-semibold text-center mb-2">PCA Allocation</h3>
+        <div className={blockWrapClass}>
+          <h3 className={titleClass}>PCA Allocation</h3>
           <div className="grid grid-cols-8 gap-2">
             {TEAMS.map((team) => (
               <PCABlock
@@ -213,8 +223,8 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
         </div>
 
         {/* Block 3: Bed Allocation */}
-        <div className="mb-4 cv-auto">
-          <h3 className="text-xs font-semibold text-center mb-2">Relieving Beds</h3>
+        <div className={blockWrapClass}>
+          <h3 className={titleClass}>Relieving Beds</h3>
           <div className="grid grid-cols-8 gap-2">
             {TEAMS.map((team) => (
               <BedBlock
@@ -231,8 +241,8 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
         </div>
 
         {/* Block 4: Leave Arrangements */}
-        <div className="mb-4 cv-auto">
-          <h3 className="text-xs font-semibold text-center mb-2">Leave Arrangements</h3>
+        <div className={blockWrapClass}>
+          <h3 className={titleClass}>Leave Arrangements</h3>
           <div className="grid grid-cols-8 gap-2">
             {TEAMS.map((team) => (
               <LeaveBlock key={`leave-${team}`} team={team} staffOnLeave={staffOnLeaveByTeam[team] ?? []} />
@@ -241,8 +251,8 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
         </div>
 
         {/* Block 5: Calculations */}
-        <div className="mb-4 cv-auto">
-          <h3 className="text-xs font-semibold text-center mb-2">Beds Calculations</h3>
+        <div className={blockWrapClass}>
+          <h3 className={titleClass}>Beds Calculations</h3>
           <div className="grid grid-cols-8 gap-2">
             {TEAMS.map((team) => {
               const bedOverride = bedCountsOverridesByTeam?.[team]
@@ -267,8 +277,8 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
         </div>
 
         {/* Block 6: PCA Calculations */}
-        <div className="mb-4 cv-auto">
-          <h3 className="text-xs font-semibold text-center mb-2">PCA Calculations</h3>
+        <div className={blockWrapClass}>
+          <h3 className={titleClass}>PCA Calculations</h3>
           <div className="grid grid-cols-8 gap-2">
             {TEAMS.map((team) => (
               <PCACalculationBlock key={`pca-calc-${team}`} team={team} calculations={calculationsByTeam[team]} />

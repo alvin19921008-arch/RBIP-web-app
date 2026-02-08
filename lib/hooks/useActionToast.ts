@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import type { ActionToastVariant } from '@/components/ui/action-toast'
+import type { ActionToastProgress, ActionToastVariant } from '@/components/ui/action-toast'
 
 export type ActionToastState = {
   id: number
@@ -7,6 +7,7 @@ export type ActionToastState = {
   description?: string
   variant: ActionToastVariant
   actions?: ReactNode
+  progress?: ActionToastProgress
   persistUntilDismissed?: boolean
   dismissOnOutsideClick?: boolean
   open: boolean
@@ -17,6 +18,13 @@ export function useActionToast() {
   const toastIdRef = useRef(0)
   const actionToastContainerRef = useRef<HTMLDivElement | null>(null)
   const [actionToast, setActionToast] = useState<ActionToastState | null>(null)
+
+  const scheduleAutoDismiss = useCallback((id: number, durationMs: number) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = setTimeout(() => {
+      setActionToast((prev) => (prev && prev.id === id ? { ...prev, open: false } : prev))
+    }, durationMs)
+  }, [])
 
   const dismissActionToast = useCallback(() => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
@@ -32,6 +40,7 @@ export function useActionToast() {
       options?: {
         durationMs?: number
         actions?: ReactNode
+        progress?: ActionToastProgress
         persistUntilDismissed?: boolean
         dismissOnOutsideClick?: boolean
       }
@@ -43,6 +52,7 @@ export function useActionToast() {
         description,
         variant,
         actions: options?.actions,
+        progress: options?.progress,
         persistUntilDismissed: options?.persistUntilDismissed,
         dismissOnOutsideClick: options?.dismissOnOutsideClick,
         open: true,
@@ -52,12 +62,42 @@ export function useActionToast() {
       toastTimerRef.current = null
 
       if (!options?.persistUntilDismissed) {
-        toastTimerRef.current = setTimeout(() => {
-          setActionToast((prev) => (prev && prev.id === id ? { ...prev, open: false } : prev))
-        }, options?.durationMs ?? 3000)
+        scheduleAutoDismiss(id, options?.durationMs ?? 3000)
+      }
+
+      return id
+    },
+    [scheduleAutoDismiss]
+  )
+
+  const updateActionToast = useCallback(
+    (
+      id: number,
+      patch: Partial<Omit<ActionToastState, 'id'>>,
+      options?: { durationMs?: number; persistUntilDismissed?: boolean }
+    ) => {
+      setActionToast((prev) => {
+        if (!prev || prev.id !== id) return prev
+        const nextPersist =
+          typeof options?.persistUntilDismissed === 'boolean'
+            ? options.persistUntilDismissed
+            : typeof patch.persistUntilDismissed === 'boolean'
+              ? patch.persistUntilDismissed
+              : prev.persistUntilDismissed
+        return { ...prev, ...patch, persistUntilDismissed: nextPersist }
+      })
+
+      // Timer policy: only adjust when caller explicitly sets persist policy.
+      if (typeof options?.persistUntilDismissed === 'boolean') {
+        if (options.persistUntilDismissed) {
+          if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+          toastTimerRef.current = null
+        } else {
+          scheduleAutoDismiss(id, options.durationMs ?? 2500)
+        }
       }
     },
-    []
+    [scheduleAutoDismiss]
   )
 
   const handleToastExited = useCallback((id: number) => {
@@ -92,6 +132,7 @@ export function useActionToast() {
     actionToast,
     actionToastContainerRef,
     showActionToast,
+    updateActionToast,
     dismissActionToast,
     handleToastExited,
   }

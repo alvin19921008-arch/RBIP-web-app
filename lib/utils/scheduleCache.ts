@@ -6,6 +6,11 @@
 interface CachedScheduleData {
   scheduleId: string
   overrides: Record<string, any>
+  /**
+   * Step-wise workflow: which steps have been initialized for this date.
+   * Stored as an array for cache/persistence; hydrated into Set by controller.
+   */
+  initializedSteps?: string[]
   // Schedule-level metadata extracted from staff_overrides (NOT staff UUID keyed)
   bedCountsOverridesByTeam?: Record<string, any>
   bedRelievingNotesByToTeam?: Record<string, any>
@@ -18,6 +23,14 @@ interface CachedScheduleData {
   workflowState: any
   calculations: Record<string, any> | null
   cachedAt: number // timestamp
+  /**
+   * Optional diagnostics about where the cache entry came from.
+   * - 'db': loaded from database/RPC then cached
+   * - 'writeThrough': in-memory unsaved state written on date switch (Option A)
+   */
+  __source?: 'db' | 'writeThrough' | string
+  /** Populated when a cache entry was rehydrated from sessionStorage. */
+  __cacheLayer?: 'memory' | 'sessionStorage'
 }
 
 // In-memory cache (survives navigation but not page refresh)
@@ -112,8 +125,9 @@ export function getCachedSchedule(dateStr: string): CachedScheduleData | null {
     const persisted = readPersistedSchedule(dateStr)
     if (!persisted) return null
     // Rehydrate into memory cache for faster subsequent hits.
-    scheduleCache.set(dateStr, persisted)
-    return persisted
+    const rehydrated = { ...(persisted as any), __cacheLayer: 'sessionStorage' as const }
+    scheduleCache.set(dateStr, rehydrated as any)
+    return rehydrated as any
   }
 
   // Check if cache is still valid
@@ -130,19 +144,26 @@ export function getCachedSchedule(dateStr: string): CachedScheduleData | null {
     return null
   }
 
-  return cached
+  return { ...(cached as any), __cacheLayer: 'memory' as const } as any
 }
 
 /**
  * Cache schedule data for a date
  */
-export function cacheSchedule(dateStr: string, data: CachedScheduleData): void {
+export function cacheSchedule(
+  dateStr: string,
+  data: CachedScheduleData,
+  opts?: { persist?: boolean; source?: CachedScheduleData['__source'] }
+): void {
   const stored = {
     ...data,
     cachedAt: Date.now(),
+    __source: opts?.source ?? (data as any).__source,
+    __cacheLayer: 'memory' as const,
   }
   scheduleCache.set(dateStr, stored)
-  persistSchedule(dateStr, stored)
+  const shouldPersist = opts?.persist !== false
+  if (shouldPersist) persistSchedule(dateStr, stored as any)
 }
 
 /**

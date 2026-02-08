@@ -114,20 +114,6 @@ function usePcaBlockViewModel({
     return map
   }, [resolvedSpecialPrograms])
 
-  // Filter out staff with FTE = 0 (they should only appear in leave block)
-  // Check both allocation FTE and current override FTE (in case allocations haven't been regenerated)
-  const pcaAllocationsWithFTE = useMemo(() => {
-    return allocations.filter(alloc => {
-      // Check allocation FTE first
-      const allocationFTE = alloc.fte_pca || 0
-      // Check override FTE (current value from edits, may be more up-to-date)
-      const overrideFTE = resolvedStaffOverrides[alloc.staff_id]?.fteRemaining
-      // Use override FTE if available, otherwise use allocation FTE
-      const currentFTE = overrideFTE !== undefined ? overrideFTE : allocationFTE
-      return currentFTE > 0
-    })
-  }, [allocations, resolvedStaffOverrides])
-
   // Helper function to determine if slots in a team are part of special program assignment
   const areSlotsPartOfSpecialProgram = useCallback((
     allocation: PCAAllocation & { staff: Staff },
@@ -563,7 +549,23 @@ function usePcaBlockViewModel({
     return [...new Set(specialProgramSlots)] // Remove duplicates
   }
 
-  const { regularPCA, specialProgramPCA, splitAllocationSlots, assignedPcaFteRounded, substitutionInfoByAllocId } = useMemo(() => {
+  const {
+    pcaAllocationsWithFTE,
+    regularPCA,
+    specialProgramPCA,
+    splitAllocationSlots,
+    assignedPcaFteRounded,
+    substitutionInfoByAllocId,
+  } = useMemo(() => {
+    // Filter out staff with FTE = 0 (they should only appear in leave block)
+    // Check both allocation FTE and current override FTE (in case allocations haven't been regenerated)
+    const pcaAllocationsWithFTE: (PCAAllocation & { staff: Staff })[] = allocations.filter((alloc) => {
+      const allocationFTE = alloc.fte_pca || 0
+      const overrideFTE = resolvedStaffOverrides[alloc.staff_id]?.fteRemaining
+      const currentFTE = overrideFTE !== undefined ? overrideFTE : allocationFTE
+      return currentFTE > 0
+    })
+
     const getSlotsForThisTeam = (alloc: PCAAllocation & { staff: Staff }): number[] => {
       const slots: number[] = []
       if (alloc.slot1 === team) slots.push(1)
@@ -670,9 +672,15 @@ function usePcaBlockViewModel({
     // Round to nearest 0.25 using the same rounding logic as pending values
     const assignedPcaFteRounded = roundToNearestQuarterWithMidpoint(assignedPcaFteRaw)
 
-    return { regularPCA, specialProgramPCA, splitAllocationSlots, assignedPcaFteRounded, substitutionInfoByAllocId }
+    return {
+      pcaAllocationsWithFTE,
+      regularPCA,
+      specialProgramPCA,
+      splitAllocationSlots,
+      assignedPcaFteRounded,
+      substitutionInfoByAllocId,
+    }
   }, [
-    pcaAllocationsWithFTE,
     resolvedStaffOverrides,
     allocations,
     resolvedAllPCAAllocations,

@@ -11,6 +11,7 @@ import { DeleteConfirmDialog } from '@/components/history/DeleteConfirmDialog'
 import { useToast } from '@/components/ui/toast-provider'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
 import { useAccessControl } from '@/lib/access/useAccessControl'
+import { Tooltip } from '@/components/ui/tooltip'
 import {
   ScheduleHistoryEntry,
   groupSchedulesByMonth,
@@ -348,16 +349,27 @@ export default function HistoryPage() {
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-bold">Schedule History</h1>
         <div className="flex items-center gap-2">
-          <Button
-            variant={cleanupMode ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => {
-              setCleanupMode((v) => !v)
-              setCleanupSelectedIds(new Set())
-            }}
+          <Tooltip
+            side="bottom"
+            content={
+              <div className="max-w-[360px] whitespace-normal">
+                Shows schedules with <span className="font-medium">no allocations</span> and at{' '}
+                <span className="font-medium">Step 1 or earlier</span>, so admins/devs can safely delete test schedules.
+              </div>
+            }
+            wrapperClassName="inline-flex"
           >
-            {cleanupMode ? 'Cleanup mode: ON' : 'Cleanup mode'}
-          </Button>
+            <Button
+              variant={cleanupMode ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => {
+                setCleanupMode((v) => !v)
+                setCleanupSelectedIds(new Set())
+              }}
+            >
+              {cleanupMode ? 'Cleanup mode: ON' : 'Cleanup mode'}
+            </Button>
+          </Tooltip>
           {cleanupMode && canDeleteSchedules && cleanupSelectedIds.size > 0 ? (
             <Button variant="destructive" size="sm" onClick={() => setCleanupDeleteDialogOpen(true)}>
               <Trash2 className="h-4 w-4 mr-2" />

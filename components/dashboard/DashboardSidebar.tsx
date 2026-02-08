@@ -96,7 +96,7 @@ export function DashboardSidebar({
       <button
         onClick={() => handleCategoryClick(category.id)}
         className={cn(
-          'w-full flex items-center transition-colors rounded-md',
+          'w-full flex items-center transition-colors rounded-md rbip-hover-scale relative hover:z-10',
           isCollapsed ? 'justify-center px-3 py-3' : 'px-4 py-3',
           isActive
             ? 'bg-primary/10 text-primary font-semibold'

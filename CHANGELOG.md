@@ -2,8 +2,8 @@
 
 > **Purpose**: This document serves as a comprehensive historical changelog and reference for the RBIP Duty List web application. It captures detailed project history, data architecture, code rules, and key patterns. For essential patterns that are auto-loaded, see `.cursor/rules/`. For quick context, see `CONTEXT.md`.
 
-**Last Updated**: 2026-02-06
-**Latest Phase**: Phase 38 - Schedule Split Screen Viewing & Viewing Mode
+**Last Updated**: 2026-02-08
+**Latest Phase**: Phase 39 - Unsaved state preservation across date switch
 **Note**: Legacy development phases (1-20) have been moved to `Journal_legacy.md` for reference.
 **Optimization Note**: Essential patterns have been extracted to `.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc` for automatic loading. This changelog is read on-demand for historical context.  
 **Project Type**: Full-stack Next.js hospital therapist/PCA allocation system  
@@ -234,6 +234,15 @@ A hospital therapist and PCA (Patient Care Assistant) allocation system that aut
 - ✅ **Bug fixes**
   - Fixed reference pane stuck loading (hydration state not finalizing).
   - Fixed split mode exit/re-entry and retraction behavior.
+
+## Phase 39: Unsaved state preservation across date switch
+
+- ✅ **Preserve unsaved work when switching dates**
+  - When leaving a date (e.g. 22/01 → 21/01), the current in-memory state (overrides, allocations, workflow, **initializedSteps**) is written to the schedule cache (write-through, memory-only).
+  - When returning to that date, the cache is used so the latest unsaved edits and step state (e.g. "Initialize Algorithm" vs "Re-run Algorithm") are restored.
+- ✅ **Cache and controller**
+  - `CachedScheduleData` and write-through payload now include `initializedSteps`; on load, cached `initializedSteps` is preferred over a fallback so StepIndicator label stays correct after date switch.
+  - Removed temporary debug instrumentation (fetch logs, agent log regions).
 
 ## Phase 36: Step 2.2 SPT Final Edit + Step 2 Clear/Override Reliability
 

@@ -3,6 +3,7 @@
 import { Fragment, memo, useRef, type RefObject } from 'react'
 import { CalendarGrid } from '@/components/ui/calendar-grid'
 import { useAnchoredPopoverPosition } from '@/lib/hooks/useAnchoredPopoverPosition'
+import { isWorkingDay } from '@/lib/utils/dateHelpers'
 
 export const ScheduleCalendarPopover = memo(function ScheduleCalendarPopover(props: {
   open: boolean
@@ -40,7 +41,13 @@ export const ScheduleCalendarPopover = memo(function ScheduleCalendarPopover(pro
         className="fixed z-50 bg-background border border-border rounded-lg shadow-lg"
         style={pos ? { left: pos.left, top: pos.top } : undefined}
       >
-        <CalendarGrid selectedDate={selectedDate} onDateSelect={onDateSelect} datesWithData={datesWithData} holidays={holidays} />
+        <CalendarGrid
+          selectedDate={selectedDate}
+          onDateSelect={onDateSelect}
+          datesWithData={datesWithData}
+          holidays={holidays}
+          isDateDisabled={(date) => !isWorkingDay(date)}
+        />
       </div>
     </Fragment>
   )

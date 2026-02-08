@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
+import { isHongKongHoliday } from '@/lib/utils/hongKongHolidays'
 
 interface CalendarGridProps {
   selectedDate: Date
@@ -144,8 +145,13 @@ export function CalendarGrid({
       </div>
 
       <div className="grid grid-cols-7 gap-1 mb-2">
-        {weekdayNames.map((day) => (
-          <div key={day} className="text-center text-sm font-medium text-muted-foreground p-2">
+        {weekdayNames.map((day, idx) => (
+          <div
+            key={day}
+            className={`text-center text-sm font-medium text-muted-foreground p-2 ${
+              idx === 0 || idx === 6 ? 'opacity-40' : ''
+            }`}
+          >
             {day}
           </div>
         ))}
@@ -159,8 +165,12 @@ export function CalendarGrid({
           const future = isFuture(date)
           const dateStr = formatDateString(date)
           const hasData = datesWithData.has(dateStr)
-          const holidayName = holidays.get(dateStr)
-          const isHoliday = !!holidayName
+          const dayOfWeek = date.getDay()
+          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
+          const holidayNameFromMap = holidays.get(dateStr)
+          const hk = holidayNameFromMap ? null : isHongKongHoliday(date)
+          const holidayName = holidayNameFromMap ?? (hk?.isHoliday ? hk.name : undefined)
+          const isHoliday = !isWeekend && !!holidayName
           const disabled = isDateDisabled?.(date) ?? false
           
           // Build className for the button
@@ -193,7 +203,7 @@ export function CalendarGrid({
           }
 
           if (disabled && !selected) {
-            buttonClasses += ' opacity-40 cursor-not-allowed hover:bg-transparent'
+            buttonClasses += ' opacity-35 cursor-not-allowed hover:bg-transparent'
           }
           
           // Wrap in Tooltip if it's a holiday

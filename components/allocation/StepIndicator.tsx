@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Check, Circle, ChevronRight, ChevronLeft, AlertCircle, HelpCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { Popover, PopoverArrow, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Popover, PopoverArrow, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 interface Step {
   id: string
@@ -65,7 +65,7 @@ export function StepIndicator({
     (typeof canResetToBaseline === 'boolean' ? canResetToBaseline : userRole === 'developer') &&
     typeof onResetToBaseline === 'function' &&
     canClear
-  const [showClearMenu, setShowClearMenu] = useState(false)
+  const [clearMenuOpen, setClearMenuOpen] = useState(false)
 
   return (
     <div
@@ -130,10 +130,11 @@ export function StepIndicator({
                       aria-current={isCurrent ? 'step' : undefined}
                       title={step.description}
                       className={cn(
-                        "group inline-flex items-center gap-2 rounded-md px-2 py-1 transition-colors",
+                        "group inline-flex items-center gap-2 rounded-md px-2 py-1 transition-colors rbip-hover-scale",
                         "focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-slate-900",
                         isCurrent ? "bg-amber-50 dark:bg-amber-950/20" : "hover:bg-slate-50 dark:hover:bg-slate-800/40",
-                        !canNavigate && "opacity-50 cursor-not-allowed hover:bg-transparent dark:hover:bg-transparent"
+                        !canNavigate &&
+                          "opacity-50 cursor-not-allowed hover:bg-transparent dark:hover:bg-transparent hover:scale-100 active:scale-100"
                       )}
                     >
                       <span className={cn(circleBase, circleSize, circleStyle)}>
@@ -250,7 +251,7 @@ export function StepIndicator({
               <div className="flex items-center justify-center gap-2 flex-wrap">
                 {canClear && showClear && onClearStep ? (
                   canResetBaseline ? (
-                    <div className="relative inline-flex">
+                    <div className="inline-flex">
                       <Button
                         type="button"
                         onClick={() => onClearStep(currentStep)}
@@ -261,33 +262,39 @@ export function StepIndicator({
                       >
                         Clear
                       </Button>
-                      <Button
-                        type="button"
-                        onClick={() => setShowClearMenu((v) => !v)}
-                        disabled={isLoading}
-                        size="sm"
-                        variant="outline"
-                        className="h-8 border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40 rounded-l-none border-l-0 px-2"
-                        aria-label="More clear actions"
-                      >
-                        <ChevronRight
-                          className={cn("w-4 h-4 transition-transform", showClearMenu ? "rotate-90" : "")}
-                        />
-                      </Button>
-                      {showClearMenu ? (
-                        <div className="absolute right-0 top-full mt-1 w-56 rounded-md border border-slate-200 bg-white shadow-lg z-50 dark:border-slate-700 dark:bg-slate-900">
-                          <button
-                            className="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
-                            onClick={() => {
-                              setShowClearMenu(false)
-                              onResetToBaseline?.()
-                            }}
+                      <Popover open={clearMenuOpen} onOpenChange={setClearMenuOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
                             type="button"
+                            disabled={isLoading}
+                            size="sm"
+                            variant="outline"
+                            className="h-8 border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40 rounded-l-none border-l-0 px-2"
+                            aria-label="More clear actions"
                           >
-                            <span className="text-red-600 dark:text-red-300">Reset to baseline</span>
-                          </button>
-                        </div>
-                      ) : null}
+                            <ChevronRight
+                              className={cn("w-4 h-4 transition-transform", clearMenuOpen ? "rotate-90" : "")}
+                            />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent
+                          side="bottom"
+                          align="end"
+                          sideOffset={6}
+                          className="w-56 rounded-md border border-slate-200 bg-white p-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900"
+                        >
+                          <PopoverArrow width={10} height={6} className="fill-white stroke-slate-200 dark:fill-slate-900 dark:stroke-slate-700" />
+                          <PopoverClose asChild>
+                            <button
+                              className="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
+                              onClick={() => onResetToBaseline?.()}
+                              type="button"
+                            >
+                              <span className="text-red-600 dark:text-red-300">Reset to baseline</span>
+                            </button>
+                          </PopoverClose>
+                        </PopoverContent>
+                      </Popover>
                     </div>
                   ) : (
                     <Button
@@ -311,9 +318,11 @@ export function StepIndicator({
                     disabled={isLoading}
                     size="sm"
                     variant="default"
-                    className="h-8 bg-blue-600 hover:bg-blue-700 text-white"
+                    className="h-8 bg-blue-600 hover:bg-blue-700 text-white rbip-cta-primary"
                   >
-                    {isLoading ? 'Running...' : isInitialized ? 'Re-run Algorithm' : 'Initialize Algorithm'}
+                    <span className="rbip-cta-text">
+                      {isLoading ? 'Running...' : isInitialized ? 'Re-run Algorithm' : 'Initialize Algorithm'}
+                    </span>
                   </Button>
                 ) : null}
               </div>

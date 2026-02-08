@@ -50,7 +50,7 @@ import { ScheduleHeaderBar } from '@/components/schedule/ScheduleHeaderBar'
 import { ScheduleDialogsLayer } from '@/components/schedule/ScheduleDialogsLayer'
 import { ScheduleMainLayout } from '@/components/schedule/ScheduleMainLayout'
 import { SplitPane } from '@/components/ui/SplitPane'
-import { Save, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal } from 'lucide-react'
+import { Save, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, ImageDown } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -177,6 +177,8 @@ import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { ALLOCATION_STEPS, EMPTY_BED_ALLOCATIONS, TEAMS, WEEKDAYS, WEEKDAY_NAMES } from '@/lib/features/schedule/constants'
 import { useScheduleController } from '@/lib/features/schedule/controller/useScheduleController'
 import type { PCAAllocationErrors } from '@/lib/features/schedule/controller/useScheduleController'
+import { AllocationExportView } from '@/components/schedule/AllocationExportView'
+import { downloadBlobAsFile, renderElementToPngBlob } from '@/lib/utils/exportPng'
 
 
 function SchedulePageContent() {
@@ -206,11 +208,21 @@ function SchedulePageContent() {
   const rightContentHeight = useResizeObservedHeight({ targetRef: rightContentRef })
 
   const initialDefaultDate = useMemo(() => new Date(), [])
-  const schedule = useScheduleController({ defaultDate: initialDefaultDate, supabase })
+  const schedule = useScheduleController({
+    defaultDate: initialDefaultDate,
+    supabase,
+    controllerRole: 'main',
+    preserveUnsavedAcrossDateSwitch: true,
+  })
   const { state: scheduleState, actions: scheduleActions } = schedule
 
   const refInitialDefaultDate = useMemo(() => new Date(), [])
-  const refSchedule = useScheduleController({ defaultDate: refInitialDefaultDate, supabase })
+  const refSchedule = useScheduleController({
+    defaultDate: refInitialDefaultDate,
+    supabase,
+    controllerRole: 'ref',
+    preserveUnsavedAcrossDateSwitch: false,
+  })
   const { state: refScheduleState, actions: refScheduleActions } = refSchedule
   const {
     beginDateTransition: refControllerBeginDateTransition,
@@ -400,8 +412,15 @@ function SchedulePageContent() {
   }, [isSplitMode, replaceScheduleQuery, searchParams, scheduleState.selectedDate])
 
   const displayToolsInlineNode = (
-    <div className="inline-flex items-center border border-border rounded-md overflow-hidden bg-background shadow-xs">
-      <span className="hidden lg:inline-flex px-2 py-1.5 text-[11px] font-medium text-muted-foreground border-r border-border">
+    <div
+      className={cn(
+        // Soft segmented control (2026-style): subtle surface, minimal borders.
+        'inline-flex items-center rounded-lg overflow-hidden',
+        'bg-muted/25',
+        'ring-1 ring-border/35'
+      )}
+    >
+      <span className="hidden lg:inline-flex px-2 py-1.5 text-[11px] font-medium text-muted-foreground select-none pointer-events-none tracking-wide uppercase">
         Display
       </span>
       <Tooltip side="bottom" content={isViewingMode ? 'Exit viewing mode' : 'Enter viewing mode'}>
@@ -409,10 +428,13 @@ function SchedulePageContent() {
           type="button"
           onClick={toggleViewingMode}
           className={cn(
-            'px-2 py-1.5 text-xs font-medium transition-colors inline-flex items-center gap-1.5',
+            'px-2 py-1.5 text-xs font-medium inline-flex items-center gap-1.5',
+            'transition-colors',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
             isViewingMode
-              ? 'bg-blue-600 text-white hover:bg-blue-700'
-              : 'text-muted-foreground hover:text-primary hover:bg-muted/60'
+              ? 'bg-blue-600 text-white'
+              : 'text-muted-foreground hover:text-foreground hover:bg-muted/45',
+            'active:bg-muted/55'
           )}
           aria-pressed={isViewingMode}
         >
@@ -434,10 +456,14 @@ function SchedulePageContent() {
           type="button"
           onClick={toggleSplitMode}
           className={cn(
-            'px-2 py-1.5 text-xs font-medium transition-colors inline-flex items-center gap-1.5 border-l border-border',
+            'px-2 py-1.5 text-xs font-medium inline-flex items-center gap-1.5',
+            'transition-colors',
+            'border-l border-border/30',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
             isSplitMode
-              ? 'bg-blue-600 text-white hover:bg-blue-700'
-              : 'text-muted-foreground hover:text-primary hover:bg-muted/60'
+              ? 'bg-blue-600 text-white'
+              : 'text-muted-foreground hover:text-foreground hover:bg-muted/45',
+            'active:bg-muted/55'
           )}
           aria-pressed={isSplitMode}
         >
@@ -817,7 +843,11 @@ function SchedulePageContent() {
   const gridLoadingUsesLocalBarRef = useRef(false)
   const [userRole, setUserRole] = useState<'developer' | 'admin' | 'user'>('user')
   const [devLeaveSimOpen, setDevLeaveSimOpen] = useState(false)
-  const { actionToast, actionToastContainerRef, showActionToast, dismissActionToast, handleToastExited } = useActionToast()
+  const { actionToast, actionToastContainerRef, showActionToast, updateActionToast, dismissActionToast, handleToastExited } =
+    useActionToast()
+  const [exportPngLayerOpen, setExportPngLayerOpen] = useState(false)
+  const [exportingPng, setExportingPng] = useState(false)
+  const exportPngRootRef = useRef<HTMLDivElement | null>(null)
   const highlightTimerRef = useRef<any>(null)
   const [highlightDateKey, setHighlightDateKey] = useState<string | null>(null)
   const [isDateHighlighted, setIsDateHighlighted] = useState(false)
@@ -4879,7 +4909,13 @@ function SchedulePageContent() {
     setStaffOverrides(newOverrides)
     
     // Update PCA allocations state with all new slot assignments
-    const updatedPcaAllocations = { ...pcaAllocations }
+    // IMPORTANT: Avoid mutating existing arrays in-place.
+    // `PCABlock` / table view-models memoize heavily by `allocations` array reference, so we must
+    // ensure each team gets a fresh array reference when Step 3 updates allocations.
+    const updatedPcaAllocations = createEmptyTeamRecordFactory<(PCAAllocation & { staff: Staff })[]>(() => [])
+    ;(Object.keys(pcaAllocations) as Team[]).forEach((t) => {
+      updatedPcaAllocations[t] = [...(pcaAllocations[t] || [])]
+    })
     for (const alloc of result.allocations) {
       // Find the staff member for this allocation
       const staffMember = staff.find(s => s.id === alloc.staff_id)
@@ -4887,6 +4923,13 @@ function SchedulePageContent() {
       
       // Create allocation with staff property
       const allocWithStaff = { ...alloc, staff: staffMember }
+
+      // Remove this staff from all teams first (slots may have moved).
+      ;(Object.keys(updatedPcaAllocations) as Team[]).forEach((t) => {
+        const arr = updatedPcaAllocations[t]
+        const idx = arr.findIndex((a) => a.staff_id === alloc.staff_id)
+        if (idx >= 0) arr.splice(idx, 1)
+      })
       
       // Find which team(s) this PCA is now assigned to
       const teamsWithSlots: Team[] = []
@@ -4897,15 +4940,8 @@ function SchedulePageContent() {
       
       // Add allocation to each team that has a slot
       for (const team of new Set(teamsWithSlots)) {
-        const teamAllocs = updatedPcaAllocations[team] || []
-        // Check if already exists
-        const existingIdx = teamAllocs.findIndex(a => a.staff_id === alloc.staff_id)
-        if (existingIdx >= 0) {
-          teamAllocs[existingIdx] = allocWithStaff
-        } else {
-          teamAllocs.push(allocWithStaff)
-        }
-        updatedPcaAllocations[team] = teamAllocs
+        updatedPcaAllocations[team] = updatedPcaAllocations[team] || []
+        updatedPcaAllocations[team].push(allocWithStaff)
       }
     }
 
@@ -5075,6 +5111,60 @@ function SchedulePageContent() {
     } finally {
       if (timing) setLastSaveTiming(timing)
       finishTopLoading()
+    }
+  }
+
+  const exportAllocationToPng = async () => {
+    if (exportingPng) return
+    setExportingPng(true)
+
+    const dateKey = toDateKey(selectedDate)
+    const filename = `RBIP-allocation-${dateKey}.png`
+
+    const toastId = showActionToast('Exporting allocation…', 'info', 'Preparing layout…', {
+      persistUntilDismissed: true,
+      progress: { kind: 'indeterminate' },
+    })
+
+    const nextPaint = () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      })
+
+    try {
+      setExportPngLayerOpen(true)
+      exportPngRootRef.current = null
+      await nextPaint()
+
+      updateActionToast(toastId, { description: 'Rendering PNG…', progress: { kind: 'indeterminate' } })
+
+      const el = exportPngRootRef.current
+      if (!el) throw new Error('Export view not ready')
+
+      // Ensure stable layout measurements (fonts/CSS).
+      await nextPaint()
+
+      const bg = window.getComputedStyle(el).backgroundColor
+      const blob = await renderElementToPngBlob(el, { pixelRatio: 2, backgroundColor: bg })
+
+      updateActionToast(toastId, { description: 'Downloading…', progress: { kind: 'indeterminate' } })
+      downloadBlobAsFile(blob, filename)
+
+      updateActionToast(
+        toastId,
+        { title: 'Downloaded', variant: 'success', description: filename, progress: undefined },
+        { persistUntilDismissed: false, durationMs: 2500 }
+      )
+    } catch (e) {
+      const msg = (e as any)?.message || 'Export failed'
+      updateActionToast(
+        toastId,
+        { title: 'Export failed', variant: 'error', description: msg, progress: undefined },
+        { persistUntilDismissed: false, durationMs: 4500 }
+      )
+    } finally {
+      setExportPngLayerOpen(false)
+      setExportingPng(false)
     }
   }
 
@@ -9003,6 +9093,7 @@ function SchedulePageContent() {
               title={actionToast.title}
               description={actionToast.description}
               actions={actionToast.actions}
+              progress={actionToast.progress}
               variant={actionToast.variant}
               open={actionToast.open}
               onClose={dismissActionToast}
@@ -9012,6 +9103,42 @@ function SchedulePageContent() {
             />
           </div>
         )}
+        {exportPngLayerOpen ? (
+          <div
+            aria-hidden={true}
+            style={{
+              position: 'fixed',
+              left: -100000,
+              top: 0,
+              // keep it out of flow but still renderable
+              pointerEvents: 'none',
+            }}
+          >
+            <AllocationExportView
+              ref={exportPngRootRef}
+              dateKey={toDateKey(selectedDate)}
+              weekday={currentWeekday as any}
+              currentStep={currentStep as any}
+              sptAllocations={sptAllocations as any}
+              specialPrograms={specialPrograms as any}
+              therapistAllocationsByTeam={therapistAllocations as any}
+              pcaAllocationsByTeam={pcaAllocations as any}
+              bedAllocations={bedAllocations as any}
+              wards={(wards as any[]).map((w: any) => ({ name: w.name, team_assignments: w.team_assignments }))}
+              calculationsByTeam={calculations as any}
+              staff={staff as any}
+              staffOverrides={staffOverrides as any}
+              bedCountsOverridesByTeam={bedCountsOverridesByTeam as any}
+              bedRelievingNotesByToTeam={bedRelievingNotesByToTeam as any}
+              stepStatus={stepStatus as any}
+              initializedSteps={initializedSteps as any}
+              allPCAStaff={[
+                ...staff.filter((s) => s.rank === 'PCA'),
+                ...bufferStaff.filter((s) => s.rank === 'PCA'),
+              ]}
+            />
+          </div>
+        ) : null}
         {!isSplitMode && (
         <ScheduleHeaderBar
           showBackButton={showBackButton}
@@ -9262,6 +9389,21 @@ function SchedulePageContent() {
                   </div>
                 )}
               </div>
+              <Tooltip
+                side="bottom"
+                content="Export Blocks 1–6 + PCA Dedicated Schedule as a PNG (downloads via your browser)."
+              >
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={exportAllocationToPng}
+                  disabled={exportingPng || copying || saving}
+                  className="flex items-center"
+                >
+                  <ImageDown className="h-4 w-4 mr-2" />
+                  {exportingPng ? 'Exporting…' : 'Export PNG'}
+                </Button>
+              </Tooltip>
               {access.can('schedule.diagnostics.save') ? (
                 <Tooltip
                   side="bottom"
@@ -10831,6 +10973,21 @@ function SchedulePageContent() {
                   </div>
                 )}
               </div>
+              <Tooltip
+                side="bottom"
+                content="Export Blocks 1–6 + PCA Dedicated Schedule as a PNG (downloads via your browser)."
+              >
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={exportAllocationToPng}
+                  disabled={exportingPng || copying || saving}
+                  className="flex items-center"
+                >
+                  <ImageDown className="h-4 w-4 mr-2" />
+                  {exportingPng ? 'Exporting…' : 'Export PNG'}
+                </Button>
+              </Tooltip>
               {access.can('schedule.diagnostics.save') ? (
                 <Tooltip
                   side="bottom"
@@ -10921,8 +11078,8 @@ function SchedulePageContent() {
                     showTeamHeader={false}
                     refDateLabel={refCollapsedDateLabel}
                     selectedDate={refScheduleState.selectedDate}
-                    datesWithData={new Set()}
-                    holidays={new Map()}
+                    datesWithData={datesWithData}
+                    holidays={holidays}
                     onSelectDate={() => {}}
                     onToggleDirection={() => {}}
                     onRetract={() => {}}
@@ -11268,6 +11425,21 @@ function SchedulePageContent() {
                   </div>
                 )}
               </div>
+              <Tooltip
+                side="bottom"
+                content="Export Blocks 1–6 + PCA Dedicated Schedule as a PNG (downloads via your browser)."
+              >
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={exportAllocationToPng}
+                  disabled={exportingPng || copying || saving}
+                  className="flex items-center"
+                >
+                  <ImageDown className="h-4 w-4 mr-2" />
+                  {exportingPng ? 'Exporting…' : 'Export PNG'}
+                </Button>
+              </Tooltip>
               {access.can('schedule.diagnostics.save') ? (
                 <Tooltip
                   side="bottom"

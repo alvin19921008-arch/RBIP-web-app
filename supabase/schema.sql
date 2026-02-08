@@ -101,7 +101,7 @@ CREATE TABLE wards (
 CREATE TABLE daily_schedules (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   date DATE NOT NULL UNIQUE,
-  is_tentative BOOLEAN DEFAULT false,
+  is_tentative BOOLEAN DEFAULT true,
   tie_break_decisions JSONB DEFAULT '{}',
   baseline_snapshot JSONB DEFAULT '{}',
   staff_overrides JSONB DEFAULT '{}',

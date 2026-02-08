@@ -110,7 +110,7 @@ export function Navbar() {
                 href={item.href}
                 onClick={() => navLoading.start(item.href)}
                 className={cn(
-                  "text-sm font-medium transition-colors hover:text-primary inline-flex items-center gap-1.5 rounded-md px-2 py-1",
+                  "text-sm font-medium transition-colors rbip-hover-scale hover:text-primary inline-flex items-center gap-1.5 rounded-md px-2 py-1",
                   pathname === item.href
                     ? "bg-muted/50 text-foreground"
                     : "text-muted-foreground hover:bg-muted/50"

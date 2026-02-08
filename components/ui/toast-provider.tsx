@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 
-import { ActionToast, type ActionToastVariant } from '@/components/ui/action-toast'
+import { ActionToast, type ActionToastProgress, type ActionToastVariant } from '@/components/ui/action-toast'
 
 type ToastInput = {
   title: string
@@ -10,6 +10,7 @@ type ToastInput = {
   variant?: ActionToastVariant
   durationMs?: number
   actions?: React.ReactNode
+  progress?: ActionToastProgress
   persistUntilDismissed?: boolean
 }
 
@@ -35,6 +36,7 @@ type ToastState = {
   description?: string
   variant: ActionToastVariant
   actions?: React.ReactNode
+  progress?: ActionToastProgress
   persistUntilDismissed?: boolean
   open: boolean
 }
@@ -53,9 +55,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const show = React.useCallback(
-    ({ title, description, variant = 'success', durationMs, actions, persistUntilDismissed }: ToastInput) => {
+    ({ title, description, variant = 'success', durationMs, actions, persistUntilDismissed, progress }: ToastInput) => {
       const id = (idRef.current += 1)
-      setToast({ id, title, description, variant, actions, persistUntilDismissed, open: true })
+      setToast({ id, title, description, variant, actions, persistUntilDismissed, progress, open: true })
 
       if (timerRef.current) window.clearTimeout(timerRef.current)
       timerRef.current = null
@@ -96,6 +98,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             title={toast.title}
             description={toast.description}
             actions={toast.actions}
+            progress={toast.progress}
             variant={toast.variant}
             open={toast.open}
             onClose={api.dismiss}

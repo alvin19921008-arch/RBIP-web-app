@@ -8,6 +8,7 @@ import type { SpecialProgram } from '@/types/allocation'
 import { Button } from '@/components/ui/button'
 import { RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
+import { cn } from '@/lib/utils'
 import { useToast } from '@/components/ui/toast-provider'
 import { useAutoHideFlag } from '@/lib/hooks/useAutoHideFlag'
 import { useIsolatedWheelScroll } from '@/lib/hooks/useIsolatedWheelScroll'
@@ -39,6 +40,10 @@ interface PCADedicatedScheduleTableProps {
   initializedSteps: Set<string>
   /** Developer-only helper to map UI cards ↔ staff_id. */
   showStaffIds?: boolean
+  /** Render mode: interactive (scrollable) vs export (stacked, non-scroll). */
+  renderMode?: 'interactive' | 'export'
+  /** In export mode, max PCA staff columns per table chunk. */
+  maxColumnsPerChunk?: number
 }
 
 type CellKind =
@@ -117,6 +122,13 @@ function getFurthestPCAStage(stepStatus: StepStatus, initializedSteps: Set<strin
   return 'none'
 }
 
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const n = Math.max(1, Math.floor(size || 1))
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))
+  return out
+}
+
 export function PCADedicatedScheduleTable({
   allPCAStaff,
   pcaAllocationsByTeam,
@@ -126,6 +138,8 @@ export function PCADedicatedScheduleTable({
   stepStatus,
   initializedSteps,
   showStaffIds = false,
+  renderMode = 'interactive',
+  maxColumnsPerChunk = 10,
 }: PCADedicatedScheduleTableProps) {
   const toast = useToast()
   const [refreshKey, setRefreshKey] = useState(0)
@@ -154,6 +168,12 @@ export function PCADedicatedScheduleTable({
     const deduped = Array.from(byId.values())
     return sortPCAColumns(deduped)
   }, [allPCAStaff, refreshKey])
+
+  const isExport = renderMode === 'export'
+  const exportChunks = useMemo(() => {
+    if (!isExport) return [columns]
+    return chunkArray(columns, maxColumnsPerChunk)
+  }, [columns, isExport, maxColumnsPerChunk])
 
   const allAllocations = useMemo(() => {
     // Flatten, de-dupe by allocation id + staff_id + team (defensive; schedule page sometimes duplicates in slot teams)
@@ -419,6 +439,13 @@ export function PCADedicatedScheduleTable({
       // First, build base cells for each slot
       const baseCells: Record<RowSlot, CellKind> = { 1: { kind: 'empty' }, 2: { kind: 'empty' }, 3: { kind: 'empty' }, 4: { kind: 'empty' } }
       const substitutionBySlot: Record<RowSlot, boolean> = { 1: false, 2: false, 3: false, 4: false }
+
+      // For floating PCAs, `availableSlots` can encode partial-day leave (e.g. half-day VL).
+      // When a slot is NOT available and has no team assignment, we still want to show NA + leaveType.
+      const availableSlotsForFloating =
+        Array.isArray(o?.availableSlots) && o.availableSlots.length > 0
+          ? o.availableSlots.filter((x) => typeof x === 'number' && isValidSlot(x)).sort((a, b) => a - b)
+          : null
       
       for (const slot of [1, 2, 3, 4] as const) {
         const assignedTeam = slotTeams[slot]
@@ -429,23 +456,29 @@ export function PCADedicatedScheduleTable({
           !!assignedTeam && assignedTeam === substitutedTeam && substitutedSlots.has(slot)
         substitutionBySlot[slot] = isSubstitution
 
-        if (!assignedTeam) {
-          baseCells[slot] = { kind: 'empty' }
-          continue
-        }
-
+        // Invalid slots should render even if this slot isn't assigned (displayTeam comes from paired slot).
         if (inv) {
-          // FIX: Invalid slots should be displayed with the team of the adjacent paired slot (1↔2, 3↔4),
-          // not with whatever stale team might be sitting in the invalid slot field.
-          // This matches the rule: invalid slot is always paired with its adjacent slot within the same half-day.
           const pairedSlot: RowSlot | null = slot === 1 ? 2 : slot === 2 ? 1 : slot === 3 ? 4 : slot === 4 ? 3 : null
           const pairedTeam = pairedSlot ? slotTeams[pairedSlot] : null
           const displayTeam = pairedTeam ?? assignedTeam
+          const invIsSub =
+            !!displayTeam && displayTeam === substitutedTeam && (substitutedSlots.has(slot) || (pairedSlot ? substitutedSlots.has(pairedSlot) : false))
 
           if (!displayTeam) {
+            // No team context → show empty.
             baseCells[slot] = { kind: 'empty' }
           } else {
-            baseCells[slot] = { kind: 'invalidSlot', team: displayTeam, timeRange: inv, isSubstitution }
+            baseCells[slot] = { kind: 'invalidSlot', team: displayTeam, timeRange: inv, isSubstitution: invIsSub }
+          }
+          continue
+        }
+
+        if (!assignedTeam) {
+          // If slot is unavailable (via availableSlots) and we have a leave label, show NA(leave).
+          if (availableSlotsForFloating && !availableSlotsForFloating.includes(slot) && leaveTypeLabel) {
+            baseCells[slot] = { kind: 'naLeave', leaveType: leaveTypeLabel }
+          } else {
+            baseCells[slot] = { kind: 'empty' }
           }
           continue
         }
@@ -464,8 +497,8 @@ export function PCADedicatedScheduleTable({
         const slot = slots[i]
         const cell = baseCells[slot]
         
-        // Only merge plain 'team' cells (not program, invalid, or empty)
-        const canMerge = cell.kind === 'team'
+        // Merge plain 'team' cells and adjacent NA(leave) cells (same leaveType).
+        const canMerge = cell.kind === 'team' || cell.kind === 'naLeave'
         if (!canMerge) {
           specs[slot] = { rowSpan: 1, hidden: false, cell }
           i += 1
@@ -474,8 +507,9 @@ export function PCADedicatedScheduleTable({
 
         // Find run length: adjacent slots with same team, same substitution status, and no program/invalid
         let j = i
-        const firstTeam = (cell as any).team as Team
-        const firstSubstitution = substitutionBySlot[slot]
+        const firstTeam = cell.kind === 'team' ? ((cell as any).team as Team) : null
+        const firstLeaveType = cell.kind === 'naLeave' ? ((cell as any).leaveType as string) : null
+        const firstSubstitution = cell.kind === 'team' ? substitutionBySlot[slot] : false
         
         while (j < slots.length) {
           const checkSlot = slots[j]
@@ -485,13 +519,24 @@ export function PCADedicatedScheduleTable({
           // 1. Same kind ('team')
           // 2. Same team
           // 3. Same substitution status
-          if (
-            checkCell.kind === 'team' &&
-            (checkCell as any).team === firstTeam &&
-            substitutionBySlot[checkSlot] === firstSubstitution
-          ) {
-            j += 1
-          } else {
+          if (cell.kind === 'team') {
+            if (
+              checkCell.kind === 'team' &&
+              (checkCell as any).team === firstTeam &&
+              substitutionBySlot[checkSlot] === firstSubstitution
+            ) {
+              j += 1
+              continue
+            }
+            break
+          }
+
+          // NA leave merge: same leave type, no substitution dimension.
+          if (cell.kind === 'naLeave') {
+            if (checkCell.kind === 'naLeave' && (checkCell as any).leaveType === firstLeaveType) {
+              j += 1
+              continue
+            }
             break
           }
         }
@@ -598,6 +643,99 @@ export function PCADedicatedScheduleTable({
     return null
   }
 
+  const tableNodeForColumns = (cols: Staff[], keyPrefix: string, opts?: { stickyLeft?: boolean }) => {
+    const sticky = opts?.stickyLeft !== false
+    const stickyClass = sticky ? 'sticky left-0 z-10' : ''
+    const stickyBg = 'bg-background'
+    return (
+      <table className="border-collapse w-full">
+        <thead>
+          <tr>
+            <th
+              className={cn(
+                stickyClass,
+                stickyBg,
+                'border-b border-r px-1 py-1 text-center text-xs font-semibold min-w-[72px]'
+              )}
+            >
+              {/* empty corner */}
+            </th>
+            {cols.map((s) => (
+              <th
+                key={s.id}
+                className="border-b border-r px-1 py-1 text-center text-xs font-semibold min-w-[80px] max-w-[100px]"
+              >
+                <div className="whitespace-normal break-words leading-tight">{s.name}</div>
+                {showStaffIds ? (
+                  <div
+                    className="mt-0.5 font-normal text-[10px] leading-tight text-muted-foreground whitespace-normal break-all"
+                    title={s.id}
+                  >
+                    {s.id.slice(0, 8)}
+                  </div>
+                ) : null}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {([1, 2, 3, 4] as const).map((slot) => (
+            <tr key={`${keyPrefix}-slot-${slot}`}>
+              <th
+                className={cn(
+                  stickyClass,
+                  stickyBg,
+                  'border-b border-r px-1 py-1 text-center text-xs font-semibold min-w-[72px]'
+                )}
+              >
+                Slot {slot}
+              </th>
+              {cols.map((s) => {
+                const spec = tableSpecs.get(s.id)?.[slot]
+                if (!spec || spec.hidden) return null
+
+                return (
+                  <td
+                    key={`${keyPrefix}-${s.id}-${slot}`}
+                    rowSpan={spec.rowSpan}
+                    className="border-b border-r px-1 py-1 align-middle text-center min-w-[80px] max-w-[100px]"
+                  >
+                    {renderCellContent(spec.cell)}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )
+  }
+
+  if (isExport) {
+    return (
+      <div className="mt-3">
+        <div className="flex items-center justify-center gap-2 mb-2">
+          <h3 className="text-xs font-semibold text-center">PCA Dedicated Schedule</h3>
+        </div>
+
+        <div className="space-y-2">
+          {exportChunks.map((cols, idx) => (
+            <div key={`export-chunk-${idx}`} className="w-full border rounded-md overflow-hidden">
+              {exportChunks.length > 1 ? (
+                <div className="border-b border-border px-2 py-1 text-[11px] text-muted-foreground">
+                  PCA columns {idx + 1}/{exportChunks.length}
+                </div>
+              ) : null}
+              <div className="w-full">
+                {tableNodeForColumns(cols, `export-${idx}`, { stickyLeft: false })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="mt-6">
       <div className="flex items-center justify-center gap-2 mb-2">
@@ -672,54 +810,7 @@ export function PCADedicatedScheduleTable({
             controlsVisible ? '' : 'pca-scroll-container--hidden'
           }`}
         >
-          <table className="border-collapse">
-          <thead>
-            <tr>
-              <th className="sticky left-0 z-10 bg-background border-b border-r px-1 py-1 text-center text-xs font-semibold min-w-[72px]">
-                {/* empty corner */}
-              </th>
-              {columns.map((s) => (
-                <th
-                  key={s.id}
-                  className="border-b border-r px-1 py-1 text-center text-xs font-semibold min-w-[80px] max-w-[100px]"
-                >
-                  <div className="whitespace-normal break-words leading-tight">{s.name}</div>
-                  {showStaffIds ? (
-                    <div
-                      className="mt-0.5 font-normal text-[10px] leading-tight text-muted-foreground whitespace-normal break-all"
-                      title={s.id}
-                    >
-                      {s.id.slice(0, 8)}
-                    </div>
-                  ) : null}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {([1, 2, 3, 4] as const).map((slot) => (
-              <tr key={slot}>
-                <th className="sticky left-0 z-10 bg-background border-b border-r px-1 py-1 text-center text-xs font-semibold min-w-[72px]">
-                  Slot {slot}
-                </th>
-                {columns.map((s) => {
-                  const spec = tableSpecs.get(s.id)?.[slot]
-                  if (!spec || spec.hidden) return null
-
-                  return (
-                    <td
-                      key={`${s.id}-${slot}`}
-                      rowSpan={spec.rowSpan}
-                      className="border-b border-r px-1 py-1 align-middle text-center min-w-[80px] max-w-[100px]"
-                    >
-                      {renderCellContent(spec.cell)}
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          {tableNodeForColumns(columns, 'interactive', { stickyLeft: true })}
         </div>
 
         {/* Horizontal scroll controls - ensuring z-index to stay on top */}

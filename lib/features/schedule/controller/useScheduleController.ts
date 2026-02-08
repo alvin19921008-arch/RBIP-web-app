@@ -350,7 +350,24 @@ function createInitialScheduleDomainState(defaultDate: Date): ScheduleDomainStat
 let cachedLoadScheduleRpcAvailable: boolean | null = null
 let cachedSaveScheduleRpcAvailable: boolean | null = null
 
-export function useScheduleController(params: { defaultDate: Date; supabase: any }) {
+export function useScheduleController(params: {
+  defaultDate: Date
+  supabase: any
+  /**
+   * Debug/diagnostic tag (main schedule vs reference pane in split mode).
+   * Used only for runtime logging/guarding cache write-through behavior.
+   */
+  controllerRole?: 'main' | 'ref' | string
+  /**
+   * When true (default), switching away from a date will write the latest in-memory (unsaved) work
+   * into the per-date cache so switching back restores it.
+   *
+   * IMPORTANT: In split mode, the reference pane uses a second controller instance that shares the same
+   * global cache. That controller should typically NOT write-through unsaved state, or it can "mix" cache
+   * entries between panes.
+   */
+  preserveUnsavedAcrossDateSwitch?: boolean
+}) {
   const [domainState, dispatch] = useReducer(
     scheduleDomainReducer,
     params.defaultDate,
@@ -478,6 +495,12 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
     savedBedRelievingNotesByToTeam,
     allocationNotesDoc,
     savedAllocationNotesDoc,
+    staffOverridesVersion,
+    savedOverridesVersion,
+    bedCountsOverridesVersion,
+    savedBedCountsOverridesVersion,
+    bedRelievingNotesVersion,
+    savedBedRelievingNotesVersion,
     currentStep,
     stepStatus,
     initializedSteps,
@@ -766,11 +789,56 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
     const month = String(date.getMonth() + 1).padStart(2, '0')
     const day = String(date.getDate()).padStart(2, '0')
     const dateStr = `${year}-${month}-${day}`
+    const cacheKey = params.controllerRole === 'ref' ? `ref:${dateStr}` : dateStr
 
     // Check cache first (for fast navigation)
-    const cached = getCachedSchedule(dateStr)
+    const cached = getCachedSchedule(cacheKey)
+
     if (cached) {
       innerTimer.stage('cacheHit')
+      // Repair legacy/polluted cache entries:
+      // Cached allocations must be the canonical DB rows (one per allocation id). If duplicates exist and we
+      // group-by-team again, UI can show repeated PCA cards/slots.
+      const dedupeByIdKeepFirst = (items: any[]) => {
+        const seen = new Set<string>()
+        const out: any[] = []
+        for (const it of items || []) {
+          const id = (it as any)?.id
+          if (typeof id !== 'string' || !id) continue
+          if (seen.has(id)) continue
+          seen.add(id)
+          out.push(it)
+        }
+        return out
+      }
+
+      const therapistAllocsDeduped = Array.isArray((cached as any).therapistAllocs)
+        ? dedupeByIdKeepFirst((cached as any).therapistAllocs || [])
+        : ((cached as any).therapistAllocs || [])
+      const pcaAllocsDeduped = Array.isArray((cached as any).pcaAllocs)
+        ? dedupeByIdKeepFirst((cached as any).pcaAllocs || [])
+        : ((cached as any).pcaAllocs || [])
+      const repaired =
+        (Array.isArray((cached as any).therapistAllocs) &&
+          therapistAllocsDeduped.length !== ((cached as any).therapistAllocs || []).length) ||
+        (Array.isArray((cached as any).pcaAllocs) && pcaAllocsDeduped.length !== ((cached as any).pcaAllocs || []).length)
+
+      if (repaired) {
+        try {
+          cacheSchedule(
+            cacheKey,
+            {
+            ...(cached as any),
+            therapistAllocs: therapistAllocsDeduped,
+            pcaAllocs: pcaAllocsDeduped,
+            cachedAt: Date.now(),
+            } as any,
+            { persist: params.controllerRole !== 'ref' }
+          )
+        } catch {
+          // ignore
+        }
+      }
       if (!opts?.prefetchOnly) {
         setCurrentScheduleId(cached.scheduleId)
         if (cached.baselineSnapshot) {
@@ -801,8 +869,9 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
       return {
         scheduleId: cached.scheduleId,
         overrides: cached.overrides,
-        pcaAllocs: cached.pcaAllocs,
-        therapistAllocs: cached.therapistAllocs,
+        initializedSteps: (cached as any).initializedSteps ?? null,
+        pcaAllocs: (repaired ? pcaAllocsDeduped : (cached.pcaAllocs as any)) as any,
+        therapistAllocs: (repaired ? therapistAllocsDeduped : (cached.therapistAllocs as any)) as any,
         bedAllocs: cached.bedAllocs || [],
         baselineSnapshot: cached.baselineSnapshot,
         workflowState: cached.workflowState,
@@ -1101,7 +1170,9 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
       }
     }
 
-    cacheSchedule(dateStr, {
+    cacheSchedule(
+      cacheKey,
+      {
       scheduleId,
       overrides,
       bedCountsOverridesByTeam: bedCountsByTeamForCache,
@@ -1115,7 +1186,11 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
       workflowState: effectiveWorkflowState,
       calculations: storedCalculations,
       cachedAt: Date.now(),
-    } as any)
+      __source: 'db',
+    } as any,
+      // Ref pane should not pollute main cache keys nor persist across refresh.
+      { persist: params.controllerRole !== 'ref', source: 'db' }
+    )
     innerTimer.stage('cacheWrite')
 
     if (opts?.prefetchOnly) {
@@ -1227,6 +1302,84 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
     const dateStr = `${year}-${month}-${day}`
 
     try {
+      // Preserve latest unsaved work across date switches (Option A).
+      // When leaving a date, write the *current in-memory* domain state back into the cache for the previous date,
+      // so navigating away and back shows the latest unsaved work instead of the last DB/cached snapshot.
+      const prevDateStr = scheduleLoadedForDate
+      const prevScheduleId = currentScheduleId
+      const switchingAway = !!prevDateStr && prevDateStr !== dateStr
+
+      const preserveUnsaved = params.preserveUnsavedAcrossDateSwitch !== false
+      if (switchingAway && prevDateStr && prevScheduleId && preserveUnsaved) {
+        const completedSteps = Object.entries(stepStatus || {})
+          .filter(([, v]) => v === 'completed')
+          .map(([k]) => k)
+
+        const workflowStateForCache: WorkflowState = {
+          currentStep: (currentStep as any) ?? 'leave-fte',
+          completedSteps,
+        }
+
+        const therapistAllocsForCacheRaw = TEAMS.flatMap((t) =>
+          ((therapistAllocations as any)?.[t] || []).map((a: any) => {
+            const { staff: _staff, ...rest } = a || {}
+            return rest
+          })
+        )
+
+        const pcaAllocsForCacheRaw = TEAMS.flatMap((t) =>
+          ((pcaAllocations as any)?.[t] || []).map((a: any) => {
+            const { staff: _staff, ...rest } = a || {}
+            return rest
+          })
+        )
+
+        // IMPORTANT:
+        // `pcaAllocations` is grouped *by team*, and the same allocation row can appear under multiple teams
+        // (because a PCA can have slots in multiple teams). If we cache the flattened grouped arrays, then on
+        // rehydrate we group again, causing multiplicative duplicates (same allocation id repeated many times).
+        // Always cache the canonical allocation rows (dedupe by id) for pca/therapist allocations.
+        const dedupeByIdKeepFirst = (items: any[]) => {
+          const seen = new Set<string>()
+          const out: any[] = []
+          for (const it of items || []) {
+            const id = (it as any)?.id
+            if (typeof id !== 'string' || !id) continue
+            if (seen.has(id)) continue
+            seen.add(id)
+            out.push(it)
+          }
+          return out
+        }
+
+        const therapistAllocsForCache = dedupeByIdKeepFirst(therapistAllocsForCacheRaw)
+        const pcaAllocsForCache = dedupeByIdKeepFirst(pcaAllocsForCacheRaw)
+
+        cacheSchedule(
+          prevDateStr,
+          {
+          scheduleId: prevScheduleId,
+          overrides: (staffOverrides as any) || {},
+          initializedSteps: Array.from((initializedSteps as any) || []) as any,
+          bedCountsOverridesByTeam: (bedCountsOverridesByTeam as any) || {},
+          bedRelievingNotesByToTeam: (bedRelievingNotesByToTeam as any) || {},
+          allocationNotesDoc: (allocationNotesDoc as any) ?? null,
+          tieBreakDecisions: (tieBreakDecisions as any) || {},
+          therapistAllocs: therapistAllocsForCache,
+          pcaAllocs: pcaAllocsForCache,
+          bedAllocs: (bedAllocations as any) || [],
+          baselineSnapshot: (baselineSnapshot as any) || null,
+          workflowState: workflowStateForCache,
+          calculations: (calculations as any) || null,
+          cachedAt: Date.now(),
+          __source: 'writeThrough',
+        } as any,
+          // Critical: preserve across date switches, but do NOT persist unsaved work to sessionStorage.
+          // This prevents "refresh shows different FTE (0.83 vs 1.0)" due to rehydrating unsaved cache.
+          { persist: false, source: 'writeThrough' }
+        )
+      }
+
       setIsHydratingSchedule(true)
       setHasSavedAllocations(false)
       setDeferBelowFold(true)
@@ -1312,13 +1465,21 @@ export function useScheduleController(params: { defaultDate: Date; supabase: any
         // Without this, Block 3 can appear empty after refresh even though loadScheduleForDate returned bedAllocs.
         setBedAllocations((hasBedData ? (resultAny.bedAllocs || []) : []) as any)
 
-        setInitializedSteps(
-          new Set<string>([
-            'therapist-pca',
-            'floating-pca',
-            ...(hasBedData ? ['bed-relieving'] : []),
-          ])
-        )
+        const initializedStepsFromLoaded: string[] | null = (() => {
+          const raw = (resultAny as any)?.initializedSteps
+          if (!Array.isArray(raw)) return null
+          return raw.filter((x: any) => typeof x === 'string') as string[]
+        })()
+
+        const initializedStepsFallback: string[] = [
+          'therapist-pca',
+          'floating-pca',
+          ...(hasBedData ? ['bed-relieving'] : []),
+        ]
+
+        const initializedStepsToApply = initializedStepsFromLoaded ?? initializedStepsFallback
+
+        setInitializedSteps(new Set<string>(initializedStepsToApply))
 
         if (!resultAny.calculations && typeof queueMicrotask === 'function' && args.recalculateScheduleCalculations) {
           queueMicrotask(() => {
