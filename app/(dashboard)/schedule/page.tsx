@@ -838,7 +838,12 @@ function SchedulePageContent() {
     }
   }, [initialDateResolved, selectedDate, toDateKey])
 
-  useScheduleDateParam({ searchParams, selectedDate, setSelectedDate: controllerBeginDateTransition })
+  useScheduleDateParam({
+    searchParams,
+    selectedDate,
+    // URL-driven date changes should be treated like "real navigation": reset loaded-for-date to force proper hydration.
+    setSelectedDate: (d) => controllerBeginDateTransition(d, { resetLoadedForDate: true }),
+  })
   const [showBackButton, setShowBackButton] = useState(false)
   const gridLoadingUsesLocalBarRef = useRef(false)
   const [userRole, setUserRole] = useState<'developer' | 'admin' | 'user'>('user')
@@ -3251,6 +3256,7 @@ function SchedulePageContent() {
     specialPrograms,
     sptAllocations,
     selectedDate,
+    hasLoadedStoredCalculations,
     step2Initialized: initializedSteps.has('therapist-pca'),
     setTherapistAllocations,
     recalculateScheduleCalculations,
@@ -4333,9 +4339,7 @@ function SchedulePageContent() {
         // Check for active special programs - show override dialog if any exist
         const weekday = getWeekday(selectedDate)
         const activeSpecialPrograms = specialPrograms.filter(p => p.weekdays.includes(weekday))
-
-        
-        
+ 
         if (activeSpecialPrograms.length > 0) {
           // Show special program override dialog and wait for user confirmation
           return new Promise<void>((resolve) => {
@@ -5273,7 +5277,22 @@ function SchedulePageContent() {
       startTopLoading(0.08)
       startSoftAdvance(0.75)
     }
-    controllerBeginDateTransition(nextDate, { resetLoadedForDate: options?.resetLoadedForDate })
+    // IMPORTANT: Keep URL `?date=YYYY-MM-DD` in sync for user-driven date changes.
+    // Otherwise `useScheduleDateParam` may snap state back to the old URL date.
+    const key = toDateKey(nextDate)
+    const curUrlDate = searchParams.get('date')
+    if (curUrlDate !== key) {
+      replaceScheduleQuery((p) => {
+        p.set('date', key)
+      })
+      // IMPORTANT:
+      // Do NOT call controllerBeginDateTransition here.
+      // `useScheduleDateParam` will observe the URL change and drive the controller update once,
+      // preventing a brief URL/state mismatch that can trigger a snap-back loop and cache pollution.
+      return
+    }
+    // Fallback: if URL is already at the target date, update controller directly.
+    controllerBeginDateTransition(nextDate, { resetLoadedForDate: options?.resetLoadedForDate ?? true })
   }
 
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -9188,9 +9207,12 @@ function SchedulePageContent() {
           snapshotDiffLoading={snapshotDiffLoading}
           snapshotDiffError={snapshotDiffError}
           snapshotDiffResult={snapshotDiffResult}
+          displayTools={isSplitMode ? null : displayToolsInlineNode}
+          isViewingMode={isViewingMode}
+          stepIndicatorCollapsed={stepIndicatorCollapsed}
+          onToggleStepIndicatorCollapsed={() => setStepIndicatorCollapsed((v) => !v)}
           rightActions={
             <>
-              {isSplitMode ? null : displayToolsInlineNode}
               {isViewingMode ? null : (
                 <>
               {userRole === 'developer' ? (
@@ -9884,18 +9906,6 @@ function SchedulePageContent() {
         ) : null}
 
         {/* Step Indicator with Navigation */}
-        <div className={cn(
-            'vt-mode-anim mb-1 flex justify-end',
-            isViewingMode ? 'opacity-0 pointer-events-none h-0 overflow-hidden' : 'opacity-100'
-        )}>
-            <Button variant="ghost" size="sm" onClick={() => setStepIndicatorCollapsed(v => !v)} className="h-6 text-xs text-muted-foreground hover:text-foreground">
-                {stepIndicatorCollapsed ? (
-                    <>Show Steps <ChevronDown className="ml-1 h-3 w-3" /></>
-                ) : (
-                    <>Hide Steps <ChevronUp className="ml-1 h-3 w-3" /></>
-                )}
-            </Button>
-        </div>
         <div
           className={cn(
             'vt-mode-anim',
@@ -10791,9 +10801,12 @@ function SchedulePageContent() {
           snapshotDiffLoading={snapshotDiffLoading}
           snapshotDiffError={snapshotDiffError}
           snapshotDiffResult={snapshotDiffResult}
+          displayTools={isSplitMode ? null : displayToolsInlineNode}
+          isViewingMode={isViewingMode}
+          stepIndicatorCollapsed={stepIndicatorCollapsed}
+          onToggleStepIndicatorCollapsed={() => setStepIndicatorCollapsed((v) => !v)}
           rightActions={
             <>
-              {isSplitMode ? null : displayToolsInlineNode}
               {isViewingMode ? null : (
                 <>
               {userRole === 'developer' ? (
@@ -11243,9 +11256,12 @@ function SchedulePageContent() {
           snapshotDiffLoading={snapshotDiffLoading}
           snapshotDiffError={snapshotDiffError}
           snapshotDiffResult={snapshotDiffResult}
+          displayTools={isSplitMode ? null : displayToolsInlineNode}
+          isViewingMode={isViewingMode}
+          stepIndicatorCollapsed={stepIndicatorCollapsed}
+          onToggleStepIndicatorCollapsed={() => setStepIndicatorCollapsed((v) => !v)}
           rightActions={
             <>
-              {isSplitMode ? null : displayToolsInlineNode}
               {isViewingMode ? null : (
                 <>
               {userRole === 'developer' ? (

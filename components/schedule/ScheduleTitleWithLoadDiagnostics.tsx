@@ -107,6 +107,8 @@ function LoadMetaBlock(props: {
         cache(read):{isPending ? 'pending' : isStale ? 'stale' : meta.cacheHit ? 'hit' : 'miss'}
         {isPending ? (meta.cacheHit ? ' (cached)' : ' (not cached)') : null}
         {!isPending && !isStale && !meta.cacheHit ? ' (stored)' : ''}
+        {meta.cacheLayer ? `, layer:${meta.cacheLayer}` : ''}
+        {meta.cacheSource ? `, src:${meta.cacheSource}` : ''}
         {typeof meta.cacheSize === 'number' ? `, size:${meta.cacheSize}` : ''}
       </div>
       <div>

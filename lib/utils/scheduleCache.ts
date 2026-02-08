@@ -77,6 +77,9 @@ function writePersistIndex(ids: string[]): void {
 function persistSchedule(dateStr: string, data: CachedScheduleData): void {
   if (!canUseSessionStorage()) return
   try {
+    // Never persist write-through (unsaved) cache across refresh.
+    // These entries are meant to be in-memory only and can become stale or cross-date polluted.
+    if ((data as any)?.__source === 'writeThrough') return
     const json = JSON.stringify(data)
     if (json.length > PERSIST_MAX_BYTES) return
     window.sessionStorage.setItem(persistKey(dateStr), json)
@@ -103,6 +106,11 @@ function readPersistedSchedule(dateStr: string): CachedScheduleData | null {
     if (!parsed || typeof parsed !== 'object') return null
     if (typeof parsed.scheduleId !== 'string') return null
     if (typeof parsed.cachedAt !== 'number') return null
+    // If a legacy/buggy client persisted a write-through cache entry, treat it as invalid.
+    if (parsed.__source === 'writeThrough') {
+      window.sessionStorage.removeItem(persistKey(dateStr))
+      return null
+    }
     // validate TTL
     const age = Date.now() - parsed.cachedAt
     if (age > CACHE_TTL) {
@@ -162,7 +170,7 @@ export function cacheSchedule(
     __cacheLayer: 'memory' as const,
   }
   scheduleCache.set(dateStr, stored)
-  const shouldPersist = opts?.persist !== false
+  const shouldPersist = opts?.persist !== false && (stored as any).__source !== 'writeThrough'
   if (shouldPersist) persistSchedule(dateStr, stored as any)
 }
 

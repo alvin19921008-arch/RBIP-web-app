@@ -171,6 +171,88 @@ export function SpecialProgramOverrideDialog({
   // - Slots/FTE in DB are sometimes staffId-keyed, so we pick the staff member(s) with a
   //   non-zero weekday entry (when available) to derive the "configured" baseline.
   // - Exception: CRP therapist subtraction may be explicitly configured as 0 (meaningful).
+  const getConfiguredTherapistFteForStaffAndWeekday = (
+    program: SpecialProgram,
+    staffId: string,
+    day: Weekday
+  ): number | undefined => {
+    const rawByStaff: any = (program as any).fte_subtraction?.[staffId]
+    const hasDayKey =
+      rawByStaff && typeof rawByStaff === 'object' && Object.prototype.hasOwnProperty.call(rawByStaff, day)
+    const fte = hasDayKey ? rawByStaff[day] : undefined
+    return typeof fte === 'number' ? fte : undefined
+  }
+
+  const getPrimaryConfiguredTherapistIdForWeekday = (
+    program: SpecialProgram,
+    day: Weekday
+  ): { id: string; fte: number | undefined } | null => {
+    if (!Array.isArray(program.staff_ids) || program.staff_ids.length === 0) return null
+
+    const prefIds = program.therapist_preference_order ? Object.values(program.therapist_preference_order).flat() : []
+    const prefIndex = (id: string) => {
+      const idx = prefIds.indexOf(id)
+      return idx >= 0 ? idx : Number.POSITIVE_INFINITY
+    }
+
+    const candidates: Array<{
+      id: string
+      fte: number | undefined
+      slotCount: number
+      hasExplicitFteForDay: boolean
+    }> = []
+    for (const id of program.staff_ids) {
+      const staff = allStaff.find((s) => s.id === id)
+      if (!staff) continue
+      if (!['SPT', 'APPT', 'RPT'].includes(staff.rank)) continue
+
+      const fte = getConfiguredTherapistFteForStaffAndWeekday(program, id, day)
+      const hasExplicitFteForDay = typeof fte === 'number'
+      const rawSlots: any = (program as any).slots
+      const slotCount = Array.isArray(rawSlots?.[id]?.[day]) ? (rawSlots[id][day] as any[]).length : 0
+      if (program.name === 'CRP') {
+        // CRP runner inference:
+        // - Prefer staff who have weekday slots configured (dashboard intent)
+        // - If no slots exist for any staff, fall back to explicit fte_subtraction (0 is meaningful)
+        if (slotCount > 0 || (typeof fte === 'number' && fte >= 0)) {
+          candidates.push({
+            id,
+            fte: slotCount > 0 ? (typeof fte === 'number' ? fte : 0) : fte,
+            slotCount,
+            hasExplicitFteForDay,
+          })
+        }
+        continue
+      }
+
+      if (typeof fte === 'number' && fte > 0) {
+        candidates.push({ id, fte, slotCount, hasExplicitFteForDay })
+      }
+    }
+
+    if (candidates.length === 0) return null
+
+    // Primary configured runner:
+    // - CRP: prefer staff with configured slots, then higher FTE, then preference order, then stable id.
+    // - Others: higher configured FTE, then preference order, then stable id.
+    candidates.sort((a, b) => {
+      if (program.name === 'CRP') {
+        const as = a.slotCount > 0 ? 1 : 0
+        const bs = b.slotCount > 0 ? 1 : 0
+        if (bs !== as) return bs - as
+        if (b.slotCount !== a.slotCount) return b.slotCount - a.slotCount
+      }
+      const af = typeof a.fte === 'number' ? a.fte : -1
+      const bf = typeof b.fte === 'number' ? b.fte : -1
+      if (bf !== af) return bf - af
+      const pi = prefIndex(a.id) - prefIndex(b.id)
+      if (pi !== 0) return pi
+      return a.id.localeCompare(b.id)
+    })
+
+    return { id: candidates[0].id, fte: candidates[0].fte }
+  }
+
   const getConfiguredTherapistFTESubtractionForWeekday = (
     program: SpecialProgram,
     day: Weekday
@@ -219,6 +301,70 @@ export function SpecialProgramOverrideDialog({
     return best
   }
 
+  const getTherapistEffectiveFteRemaining = (staff: Staff): number => {
+    const override = staffOverrides?.[staff.id]
+    const leaveType = override?.leaveType
+    const isOnDuty = isOnDutyLeaveType(leaveType as any)
+
+    const fteRemaining =
+      override?.fteRemaining ??
+      (staff.rank === 'SPT'
+        ? (sptBaseFteByStaffId?.[staff.id] ?? 0)
+        : (isOnDuty ? 1.0 : 0))
+
+    return typeof fteRemaining === 'number' ? fteRemaining : 0
+  }
+
+  const pickBestTherapistForCRP = (program: SpecialProgram): string | undefined => {
+    // Candidate pool is the same as UI dropdown pool (availability + special_program property).
+    const candidates = getAvailableTherapists(program.name)
+    if (candidates.length === 0) return undefined
+
+    // If ANY therapist explicitly ticked "A/v during special program", respect that as the source of truth.
+    const hasAnyExplicit = candidates.some((t) => staffOverrides?.[t.id]?.specialProgramAvailable === true)
+    const pool = hasAnyExplicit
+      ? candidates.filter((t) => staffOverrides?.[t.id]?.specialProgramAvailable === true)
+      : candidates
+
+    const prefIds = program.therapist_preference_order ? Object.values(program.therapist_preference_order).flat() : []
+    const prefIndex = (id: string) => {
+      const idx = prefIds.indexOf(id)
+      return idx >= 0 ? idx : Number.POSITIVE_INFINITY
+    }
+
+    const rawSlots: any = (program as any).slots
+    const slotCountFor = (id: string) => {
+      const slots = rawSlots?.[id]?.[weekday]
+      return Array.isArray(slots) ? slots.length : 0
+    }
+
+    // For CRP: "No duty" SPTs can show up with 0 FTE; deprioritize them behind real on-duty therapists.
+    const rankOrder: Record<StaffRank, number> = { APPT: 1, RPT: 2, SPT: 3, PCA: 99, workman: 99 }
+
+    const sorted = [...pool].sort((a, b) => {
+      const aSlots = slotCountFor(a.id)
+      const bSlots = slotCountFor(b.id)
+      if (bSlots !== aSlots) return bSlots - aSlots
+
+      const aFte = getTherapistEffectiveFteRemaining(a)
+      const bFte = getTherapistEffectiveFteRemaining(b)
+      const aPos = aFte > 1e-6 ? 1 : 0
+      const bPos = bFte > 1e-6 ? 1 : 0
+      if (bPos !== aPos) return bPos - aPos
+      if (bFte !== aFte) return bFte - aFte
+
+      const rd = (rankOrder[a.rank] || 99) - (rankOrder[b.rank] || 99)
+      if (rd !== 0) return rd
+
+      const pi = prefIndex(a.id) - prefIndex(b.id)
+      if (pi !== 0) return pi
+
+      return a.name.localeCompare(b.name)
+    })
+
+    return sorted[0]?.id
+  }
+
   const getConfiguredProgramSlotsForWeekday = (
     program: SpecialProgram,
     day: Weekday
@@ -248,7 +394,8 @@ export function SpecialProgramOverrideDialog({
       return typeof fte === 'number' && fte > 0
     })
 
-    return getProgramSlotsForWeekday(program, day, configuredTherapistId, configuredPcaId)
+    const out = getProgramSlotsForWeekday(program, day, configuredTherapistId, configuredPcaId)
+    return out
   }
 
   const getMinRequiredFTEForProgram = (
@@ -398,63 +545,23 @@ export function SpecialProgramOverrideDialog({
       let therapistId: string | undefined
       const therapistPrefOrder = program.therapist_preference_order
 
+      // CRP is special: "configured runner" often has 0 therapist subtraction, and SPTs with 0 FTE can
+      // incorrectly win due to generic rank sorting. Prefer explicit special-program availability +
+      // configured runner signals.
+      if (!therapistId && program.name === 'CRP') {
+        therapistId = pickBestTherapistForCRP(program)
+      }
+
       // Prefer the therapist configured in dashboard for THIS weekday.
-      // In dashboard config, a therapist "assigned" to a program/day has a non-zero fte_subtraction entry.
-      // This avoids picking some other available therapist who merely has the program property.
-      if (!therapistId && program.staff_ids && program.fte_subtraction) {
-        const configuredTherapistIdsWithFte = program.staff_ids.filter(id => {
-          const staff = allStaff.find(s => s.id === id)
-          if (!staff) return false
-          if (!['SPT', 'APPT', 'RPT'].includes(staff.rank)) return false
-          const rawByStaff: any = (program as any).fte_subtraction?.[id]
-          const hasWeekdayKey =
-            rawByStaff && typeof rawByStaff === 'object' && Object.prototype.hasOwnProperty.call(rawByStaff, weekday)
-          const fte = hasWeekdayKey ? rawByStaff[weekday] : undefined
-          if (program.name === 'CRP') {
-            // CRP can be configured with 0 therapist FTE subtraction (still a real "runner")
-            return typeof fte === 'number' && fte >= 0
-          }
-          return typeof fte === 'number' && fte > 0
-        })
-
-        // CRP legacy support: if fte_subtraction omits explicit 0 entries, infer configured runner(s)
-        // from staffId-keyed slots for this weekday.
-        const configuredTherapistIdsForSelection =
-          program.name === 'CRP' && configuredTherapistIdsWithFte.length === 0
-            ? (program.staff_ids || []).filter((id) => {
-                const staff = allStaff.find(s => s.id === id)
-                if (!staff) return false
-                if (!['SPT', 'APPT', 'RPT'].includes(staff.rank)) return false
-                const rawSlots: any = (program as any).slots
-                const daySlots = rawSlots?.[id]?.[weekday]
-                return Array.isArray(daySlots) && daySlots.length > 0
-              })
-            : configuredTherapistIdsWithFte
-
-        if (configuredTherapistIdsForSelection.length > 0) {
-          // If preference order has entries, use it to break ties among configured therapists
-          const prefIds = therapistPrefOrder ? Object.values(therapistPrefOrder).flat() : []
-          const orderedIds = prefIds.length > 0
-            ? prefIds.filter(id => configuredTherapistIdsForSelection.includes(id))
-            : configuredTherapistIdsForSelection
-
-          for (const id of orderedIds) {
-            const staff = allStaff.find(s => s.id === id)
-            if (staff && isTherapistAvailable(staff, program.name)) {
-              therapistId = id
-              break
-            }
-          }
-
-          // If none matched preference order (or no pref order), pick first available configured therapist
-          if (!therapistId) {
-            for (const id of configuredTherapistIdsForSelection) {
-              const staff = allStaff.find(s => s.id === id)
-              if (staff && isTherapistAvailable(staff, program.name)) {
-                therapistId = id
-                break
-              }
-            }
+      // In dashboard config, a therapist "assigned" to a program/day has a weekday entry in `fte_subtraction`
+      // (CRP may intentionally be 0). Prefer that "primary configured runner" rather than falling back to
+      // the first available therapist (which often picks SPT due to sort order).
+      const primaryConfiguredTherapist = getPrimaryConfiguredTherapistIdForWeekday(program, weekday)
+      if (!therapistId) {
+        if (!therapistId && primaryConfiguredTherapist) {
+          const staff = allStaff.find((s) => s.id === primaryConfiguredTherapist.id)
+          if (staff && isTherapistAvailable(staff, program.name)) {
+            therapistId = primaryConfiguredTherapist.id
           }
         }
       }
@@ -508,7 +615,7 @@ export function SpecialProgramOverrideDialog({
       let therapistFTESubtraction: number | undefined =
         program.name === 'Robotic'
           ? undefined
-          : getConfiguredTherapistFTESubtractionForWeekday(program, weekday)
+          : (primaryConfiguredTherapist?.fte ?? getConfiguredTherapistFTESubtractionForWeekday(program, weekday))
       if (program.name === 'CRP' && therapistId && therapistFTESubtraction === undefined) {
         // Legacy support: if dashboard omitted explicit 0 entries, treat configured CRP therapist as 0 subtraction.
         therapistFTESubtraction = 0
@@ -534,6 +641,11 @@ export function SpecialProgramOverrideDialog({
         therapistFTESubtraction,
         pcaFTESubtraction,
         drmAddOn,
+      }
+
+      if (program.name === 'CRP') {
+        const available = getAvailableTherapists(program.name)
+        const explicitAvailCount = available.filter((t) => staffOverrides?.[t.id]?.specialProgramAvailable === true).length
       }
     })
 
@@ -988,17 +1100,9 @@ export function SpecialProgramOverrideDialog({
                     // For CRP: Check if configured therapist exists but is not available
                     let needsTherapistSubstitution = !therapist && availableTherapists.length === 0
                     if (program.name === 'CRP' && !therapist) {
-                      // Check if there's a configured therapist in dashboard
-                      const configuredTherapistIds = program.staff_ids?.filter(id => {
-                        const staff = allStaff.find(s => s.id === id)
-                        if (!staff) return false
-                        if (!['SPT', 'APPT', 'RPT'].includes(staff.rank)) return false
-                        const fte = program.fte_subtraction?.[id]?.[weekday] ?? 0
-                        return fte > 0
-                      }) || []
-                      if (configuredTherapistIds.length > 0) {
-                        // Check if configured therapist is available
-                        const configuredTherapist = allStaff.find(s => s.id === configuredTherapistIds[0])
+                      const primaryConfiguredTherapist = getPrimaryConfiguredTherapistIdForWeekday(program, weekday)
+                      if (primaryConfiguredTherapist) {
+                        const configuredTherapist = allStaff.find((s) => s.id === primaryConfiguredTherapist.id)
                         if (configuredTherapist && !isTherapistAvailable(configuredTherapist, program.name)) {
                           needsTherapistSubstitution = true
                         }

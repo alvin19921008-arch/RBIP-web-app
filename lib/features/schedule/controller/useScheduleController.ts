@@ -375,6 +375,9 @@ export function useScheduleController(params: {
   )
 
   const setterCacheRef = useRef<Partial<Record<keyof ScheduleDomainState, unknown>>>({})
+  // Guards against overlapping/stale date loads applying state out of order.
+  // The currently-requested date (from loadAndHydrateDate) is the only one allowed to mutate state.
+  const activeHydrationDateStrRef = useRef<string | null>(null)
 
   const makeSetter = <K extends keyof ScheduleDomainState>(key: K) => {
     const existing = setterCacheRef.current[key]
@@ -790,6 +793,10 @@ export function useScheduleController(params: {
     const day = String(date.getDate()).padStart(2, '0')
     const dateStr = `${year}-${month}-${day}`
     const cacheKey = params.controllerRole === 'ref' ? `ref:${dateStr}` : dateStr
+    if (!opts?.prefetchOnly && !activeHydrationDateStrRef.current) {
+      activeHydrationDateStrRef.current = dateStr
+    }
+    const shouldApplyToState = !opts?.prefetchOnly && activeHydrationDateStrRef.current === dateStr
 
     // Check cache first (for fast navigation)
     const cached = getCachedSchedule(cacheKey)
@@ -839,7 +846,7 @@ export function useScheduleController(params: {
           // ignore
         }
       }
-      if (!opts?.prefetchOnly) {
+      if (shouldApplyToState) {
         setCurrentScheduleId(cached.scheduleId)
         if (cached.baselineSnapshot) {
           applyBaselineSnapshot(cached.baselineSnapshot, cached.overrides)
@@ -877,10 +884,14 @@ export function useScheduleController(params: {
         workflowState: cached.workflowState,
         calculations: cached.calculations,
         meta: {
+          loadFrom: 'cache',
           rpcUsed: false,
           batchedQueriesUsed: false,
           baselineSnapshotUsed: !!cached.baselineSnapshot,
           cacheHit: true,
+          cacheLayer: (cached as any).__cacheLayer ?? 'memory',
+          cacheSource: (cached as any).__source ?? null,
+          cacheEntryAt: typeof (cached as any).cachedAt === 'number' ? (cached as any).cachedAt : null,
           cacheSize: getCacheSize(),
           stages: innerTimer.finalize().stages,
           calculationsSource: cached.calculations ? 'schedule_calculations' : 'none',
@@ -1006,7 +1017,9 @@ export function useScheduleController(params: {
     }
 
     scheduleId = scheduleData.id
-    setCurrentScheduleId(scheduleId)
+    if (shouldApplyToState) {
+      setCurrentScheduleId(scheduleId)
+    }
 
     // Extract baseline snapshot and workflow state if present
     const rawBaselineSnapshotStored = (scheduleData as any).baseline_snapshot as BaselineSnapshotStored | null | undefined
@@ -1015,19 +1028,23 @@ export function useScheduleController(params: {
     effectiveWorkflowState = effectiveWorkflowState ?? (rawWorkflowState ?? null)
 
     // Tie-break decisions
-    if ((scheduleData as any).tie_break_decisions) {
+    if (shouldApplyToState && (scheduleData as any).tie_break_decisions) {
       setTieBreakDecisions((scheduleData as any).tie_break_decisions as Record<string, Team>)
-    } else {
+    } else if (shouldApplyToState) {
       setTieBreakDecisions({})
     }
     const tieBreakDecisionsForCache = ((scheduleData as any)?.tie_break_decisions || {}) as any
 
     // Staff overrides + step metadata
     const overrides = ((scheduleData as any).staff_overrides || {}) as any
-    setStaffOverrides(overrides || {})
-    setSavedOverrides(overrides || {})
+    if (shouldApplyToState) {
+      setStaffOverrides(overrides || {})
+      setSavedOverrides(overrides || {})
+    }
 
-    setPersistedWorkflowState(effectiveWorkflowState ?? null)
+    if (shouldApplyToState) {
+      setPersistedWorkflowState(effectiveWorkflowState ?? null)
+    }
 
     // Load allocations
     let therapistAllocs: any[] = rpcUsed ? ((rpcBundle as any).therapist_allocations as any[]) : []
@@ -1204,10 +1221,14 @@ export function useScheduleController(params: {
         workflowState: effectiveWorkflowState,
         calculations: storedCalculations,
         meta: {
+          loadFrom: 'db',
           rpcUsed,
           batchedQueriesUsed,
           baselineSnapshotUsed: !!baselineSnapshotData,
           cacheHit: false,
+          cacheLayer: null,
+          cacheSource: 'db',
+          cacheEntryAt: null,
           cacheSize: getCacheSize(),
           stages: innerTimer.finalize().stages,
           calculationsSource,
@@ -1232,10 +1253,14 @@ export function useScheduleController(params: {
       workflowState: effectiveWorkflowState,
       calculations: storedCalculations,
       meta: {
+        loadFrom: 'db',
         rpcUsed,
         batchedQueriesUsed,
         baselineSnapshotUsed: !!baselineSnapshotData,
         cacheHit: false,
+        cacheLayer: null,
+        cacheSource: 'db',
+        cacheEntryAt: null,
         cacheSize: getCacheSize(),
         stages: innerTimer.finalize().stages,
         rpcServerMs,
@@ -1300,6 +1325,7 @@ export function useScheduleController(params: {
     const month = String(date.getMonth() + 1).padStart(2, '0')
     const day = String(date.getDate()).padStart(2, '0')
     const dateStr = `${year}-${month}-${day}`
+    activeHydrationDateStrRef.current = dateStr
 
     try {
       // Preserve latest unsaved work across date switches (Option A).
@@ -1627,10 +1653,14 @@ export function useScheduleController(params: {
       setScheduleLoadedForDate(dateStr)
       return timer.finalize({
         dateStr,
+        loadFrom: resultAny?.meta?.loadFrom,
         rpcUsed: !!resultAny?.meta?.rpcUsed,
         batchedQueriesUsed: !!resultAny?.meta?.batchedQueriesUsed,
         baselineSnapshotUsed: !!resultAny?.meta?.baselineSnapshotUsed,
         cacheHit: !!resultAny?.meta?.cacheHit,
+        cacheLayer: resultAny?.meta?.cacheLayer ?? null,
+        cacheSource: resultAny?.meta?.cacheSource ?? null,
+        cacheEntryAt: resultAny?.meta?.cacheEntryAt ?? null,
         cacheSize: typeof resultAny?.meta?.cacheSize === 'number' ? resultAny.meta.cacheSize : getCacheSize(),
         stages: Array.isArray(resultAny?.meta?.stages) ? resultAny.meta.stages : undefined,
         rpcServerMs: resultAny?.meta?.rpcServerMs ?? null,
@@ -1699,8 +1729,11 @@ export function useScheduleController(params: {
     amPmSelection?: 'AM' | 'PM'
     specialProgramAvailable?: boolean
   }) => {
+    // Step 1 edits invalidate Step 2-derived state. Clear Step 2-only keys so Step 2.0 can
+    // re-seed from dashboard config (preselect therapist/PCA/slots) instead of stale overrides.
+    const baseOverrides = removeStep2KeysFromOverrides(staffOverrides as any)
     const nextOverrides: Record<string, StaffOverrideState> = {
-      ...(staffOverrides as any),
+      ...(baseOverrides as any),
       [args.staffId]: {
         leaveType: args.leaveType,
         fteRemaining: args.fteRemaining,

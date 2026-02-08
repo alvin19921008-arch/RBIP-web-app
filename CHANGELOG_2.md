@@ -17,6 +17,7 @@
 - “Saved setup snapshot” wording clarified to explicitly compare saved snapshot → current dashboard.
 
 ### Fixed
+- **Step 2.0 Special Program Override dialog** now preselects therapist and PCA slots from dashboard config when no prior Step 2 overrides exist. Editing a staff member in Step 1 (leave/FTE or "A/v during special program") clears Step 2-only override keys (`specialProgramOverrides`, `substitutionFor`, etc.) so the dialog re-seeds from dashboard (e.g. CRP therapist and correct weekday slot) instead of reusing stale selections.
 - PCA Dedicated Schedule table labeling for non-floating PCAs (“主位”) and substitution (“替位”) display.
 - Sticky first column right divider visibility during horizontal scroll.
 - Refresh icon tooltip uses app tooltip styling and spins once on hover.

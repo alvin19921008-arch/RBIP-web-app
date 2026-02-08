@@ -772,6 +772,22 @@ export const PCABlock = memo(function PCABlock({
     weekday,
   })
 
+  // DRO only: if this is a DRM weekday, we can derive base Avg PCA/team even when legacy/stored calculations
+  // did not persist `base_average_pca_per_team`.
+  const isDrmActive =
+    team === 'DRO' &&
+    !!weekday &&
+    specialPrograms.some((p) => p.name === 'DRM' && p.weekdays.includes(weekday))
+  const drmPcaFteAddon = 0.4
+  const derivedBaseAveragePCAPerTeam =
+    isDrmActive && typeof averagePCAPerTeam === 'number' ? averagePCAPerTeam - drmPcaFteAddon : undefined
+  const effectiveBaseAveragePCAPerTeam =
+    team === 'DRO'
+      ? typeof baseAveragePCAPerTeam === 'number'
+        ? baseAveragePCAPerTeam
+        : derivedBaseAveragePCAPerTeam
+      : undefined
+
   // Helper function to group slots and format them (for both substituting and regular slots)
   const formatSlotGroup = (slots: number[]): string => {
     if (slots.length === 0) return ''
@@ -1158,17 +1174,17 @@ export const PCABlock = memo(function PCABlock({
         {(averagePCAPerTeam !== undefined && averagePCAPerTeam > 0) || assignedPcaFteRounded > 0 ? (
           <div className="mt-auto pt-1 border-t border-border/50">
             {/* DRM special program indicator for DRO team (similar to CRP in TherapistBlock) */}
-            {team === 'DRO' && weekday && specialPrograms.some(p => p.name === 'DRM' && p.weekdays.includes(weekday)) && (
+            {isDrmActive && (
               <div className="flex justify-between items-center mb-1">
                 <div className="text-xs text-red-600 font-medium">DRM</div>
                 <div className="text-xs text-red-600 font-medium">+0.4</div>
               </div>
             )}
             {/* Average PCA per team (calculated requirement) */}
-            {/* For DRO: show base avg PCA/team (without +0.4) if available, otherwise show regular avg */}
-            {team === 'DRO' && baseAveragePCAPerTeam !== undefined && baseAveragePCAPerTeam > 0 ? (
+            {/* For DRO+DRM: show base avg PCA/team (without +0.4) if available (or derivable), otherwise show regular avg */}
+            {team === 'DRO' && effectiveBaseAveragePCAPerTeam !== undefined && effectiveBaseAveragePCAPerTeam > 0 ? (
               <div className="text-xs text-black font-medium">
-                Avg PCA/team: {baseAveragePCAPerTeam.toFixed(2)}
+                Avg PCA/team: {effectiveBaseAveragePCAPerTeam.toFixed(2)}
               </div>
             ) : averagePCAPerTeam !== undefined && averagePCAPerTeam > 0 ? (
               <div className="text-xs text-black font-medium">
@@ -1176,7 +1192,12 @@ export const PCABlock = memo(function PCABlock({
               </div>
             ) : null}
             {/* Final PCA/team for DRO team (with +0.4) */}
-            {team === 'DRO' && averagePCAPerTeam !== undefined && averagePCAPerTeam > 0 && baseAveragePCAPerTeam !== undefined && (
+            {team === 'DRO' &&
+              isDrmActive &&
+              averagePCAPerTeam !== undefined &&
+              averagePCAPerTeam > 0 &&
+              effectiveBaseAveragePCAPerTeam !== undefined &&
+              effectiveBaseAveragePCAPerTeam > 0 && (
               <div className="text-xs text-black/70 mt-0.5">
                 Final PCA/team: {averagePCAPerTeam.toFixed(2)}
               </div>

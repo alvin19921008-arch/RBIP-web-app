@@ -69,6 +69,11 @@ export interface AllocationSyncDeps {
   sptAllocations: SPTAllocation[]
   selectedDate: Date
   /**
+   * When true, calculations were loaded from DB/cache and should be treated as the source of truth
+   * until user edits occur. This avoids "first click Step 1" recalculation drift after refresh.
+   */
+  hasLoadedStoredCalculations?: boolean
+  /**
    * When true, Step 2 ("Therapist & Non-Floating PCA") has been initialized for this date.
    *
    * We use this to decide whether to preserve existing SPT allocations. SPT allocations are
@@ -171,6 +176,7 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
     specialPrograms,
     sptAllocations,
     selectedDate,
+    hasLoadedStoredCalculations = false,
     step2Initialized = false,
     setTherapistAllocations,
     recalculateScheduleCalculations,
@@ -486,6 +492,17 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
       return
     }
 
+    // If we loaded stored calculations and nothing in staffOverrides has changed since the last sync,
+    // do NOT recalculate on step navigation. This prevents a one-time "Avg PCA/team" drift when the
+    // user first clicks Step 1 after a page refresh.
+    if (hasLoadedStoredCalculations) {
+      const changes = detectChanges(staffOverrides, prevOverridesRef.current)
+      if (!changes.hasAnyChange) {
+        prevStepRef.current = currentStep
+        return
+      }
+    }
+
     // When loading an existing schedule, currentStep may jump from 'leave-fte' to a later step
     // while staffOverrides is being initialized from DB. Do NOT sync/recalculate from this load-driven step transition.
     const prevOverrideKeys = Object.keys(prevOverridesRef.current || {}).length
@@ -517,7 +534,16 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
 
     // Update ref
     prevStepRef.current = currentStep
-  }, [currentStep, staff.length, syncAllocations, therapistAllocations, recalculateScheduleCalculations, isHydrating])
+  }, [
+    currentStep,
+    staff.length,
+    syncAllocations,
+    therapistAllocations,
+    recalculateScheduleCalculations,
+    isHydrating,
+    hasLoadedStoredCalculations,
+    staffOverrides,
+  ])
 
   return {
     syncAllocations,
