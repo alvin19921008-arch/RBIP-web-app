@@ -232,23 +232,13 @@ function SchedulePageContent() {
   } = refScheduleActions
   const { setGridLoading: setRefGridLoading, setIsHydratingSchedule: setRefIsHydratingSchedule } = refUnsafe
 
-  const [splitDirection, setSplitDirection] = useState<'col' | 'row'>(splitDirParam)
-  const [splitRatio, setSplitRatio] = useState<number>(splitRatioParam)
-  const [isSplitSwapped, setIsSplitSwapped] = useState<boolean>(splitSwapParam)
+  const splitDirection = splitDirParam
+  const splitRatio = splitRatioParam
+  const isSplitSwapped = splitSwapParam
   const [stepIndicatorCollapsed, setStepIndicatorCollapsed] = useState(false)
   const [refPortalHost, setRefPortalHost] = useState<HTMLDivElement | null>(null)
   const [refPortalHiddenHost, setRefPortalHiddenHost] = useState<HTMLDivElement | null>(null)
 
-  // Keep local split UI state in sync with URL (e.g. back/forward).
-  useEffect(() => {
-    setSplitDirection(splitDirParam)
-  }, [splitDirParam])
-  useEffect(() => {
-    setSplitRatio(splitRatioParam)
-  }, [splitRatioParam])
-  useEffect(() => {
-    setIsSplitSwapped(splitSwapParam)
-  }, [splitSwapParam])
   // Auto-collapse step indicator when entering split mode
   useEffect(() => {
     setStepIndicatorCollapsed(isSplitMode)
@@ -309,7 +299,6 @@ function SchedulePageContent() {
   const toggleSplitSwap = useCallback(() => {
     // True swap: swap pane positions (left<->right / top<->bottom), keeping each pane's own size.
     const next = !isSplitSwapped
-    setIsSplitSwapped(next)
     try {
       window.sessionStorage.setItem('rbip_split_swapped', next ? '1' : '0')
       // Swapping is most useful when reference is visible.
@@ -845,7 +834,6 @@ function SchedulePageContent() {
     // URL-driven date changes should be treated like "real navigation": reset loaded-for-date to force proper hydration.
     setSelectedDate: (d) => controllerBeginDateTransition(d, { resetLoadedForDate: true }),
   })
-  const [showBackButton, setShowBackButton] = useState(false)
   const gridLoadingUsesLocalBarRef = useRef(false)
   const [userRole, setUserRole] = useState<'developer' | 'admin' | 'user'>('user')
   const [devLeaveSimOpen, setDevLeaveSimOpen] = useState(false)
@@ -942,13 +930,7 @@ function SchedulePageContent() {
   const [tieBreakDialogOpen, setTieBreakDialogOpen] = useState(false)
   const [tieBreakTeams, setTieBreakTeams] = useState<Team[]>([])
   const [tieBreakPendingFTE, setTieBreakPendingFTE] = useState<number>(0)
-  const [tieBreakResolver, setTieBreakResolver] = useState<((team: Team) => void) | null>(null)
   const tieBreakResolverRef = useRef<((team: Team) => void) | null>(null)
-  
-  // Keep ref in sync with state
-  useEffect(() => {
-    tieBreakResolverRef.current = tieBreakResolver
-  }, [tieBreakResolver])
   // tieBreakDecisions moved into useScheduleController() (domain state)
 
   // NOTE: Team grid used to have an internal horizontal scroller with a synced sticky header scroller.
@@ -1135,30 +1117,13 @@ function SchedulePageContent() {
   
   // Step 2.0: Special Program Override Dialog state
   const [showSpecialProgramOverrideDialog, setShowSpecialProgramOverrideDialog] = useState(false)
-  const [specialProgramOverrideResolver, setSpecialProgramOverrideResolver] = useState<
-    ((
-      overrides: Record<string, { specialProgramOverrides?: SpecialProgramOverrideEntry[] }> | null
-    ) => void) | null
-  >(null)
   const specialProgramOverrideResolverRef = useRef<
     ((overrides: Record<string, { specialProgramOverrides?: SpecialProgramOverrideEntry[] }> | null) => void) | null
   >(null)
-  
-  // Keep ref in sync with state
-  useEffect(() => {
-    specialProgramOverrideResolverRef.current = specialProgramOverrideResolver
-  }, [specialProgramOverrideResolver])
 
   // Step 2.2: SPT Final Edit Dialog state
   const [showSptFinalEditDialog, setShowSptFinalEditDialog] = useState(false)
-  const [sptFinalEditResolver, setSptFinalEditResolver] = useState<((updates: Record<string, SptFinalEditUpdate> | null) => void) | null>(
-    null
-  )
   const sptFinalEditResolverRef = useRef<((updates: Record<string, SptFinalEditUpdate> | null) => void) | null>(null)
-
-  useEffect(() => {
-    sptFinalEditResolverRef.current = sptFinalEditResolver
-  }, [sptFinalEditResolver])
 
   // Step 2.0: If the user selects staff from the inactive pool as a special-program substitute,
   // promote them to status='buffer' so they appear on the schedule page (active/buffer pool)
@@ -1854,14 +1819,6 @@ function SchedulePageContent() {
       // ignore
     }
   }, [])
-  // Check for return path from history page
-  useEffect(() => {
-    if (typeof sessionStorage !== 'undefined') {
-      const returnPath = sessionStorage.getItem('scheduleReturnPath')
-      setShowBackButton(!!returnPath)
-    }
-  }, [])
-
   // End the grid loading overlay only after schedule data is loaded for this date,
   // so we never undim the grid while it's still visually blank.
   useEffect(() => {
@@ -4202,7 +4159,6 @@ function SchedulePageContent() {
           const resolver = (selectedTeam: Team) => {
             resolve(selectedTeam)
           }
-          setTieBreakResolver(() => resolver)
           tieBreakResolverRef.current = resolver
           setTieBreakDialogOpen(true)
         })
@@ -4235,7 +4191,6 @@ function SchedulePageContent() {
       const resolver = (updates: Record<string, SptFinalEditUpdate> | null) => {
         resolve(updates)
       }
-      setSptFinalEditResolver(() => resolver)
       sptFinalEditResolverRef.current = resolver
       setShowSptFinalEditDialog(true)
     })
@@ -4362,7 +4317,6 @@ function SchedulePageContent() {
               // Cancel: abort Step 2 initialization (do not run algorithm, no success toast).
               if (overrides === null) {
                 setShowSpecialProgramOverrideDialog(false)
-                setSpecialProgramOverrideResolver(null)
                 specialProgramOverrideResolverRef.current = null
                 resolve()
                 return
@@ -4520,7 +4474,6 @@ function SchedulePageContent() {
                     setPcaAllocationErrors(snapshot.pcaAllocationErrors as any)
 
                     // Re-arm resolver and re-open the special program dialog.
-                    setSpecialProgramOverrideResolver(() => resolver)
                     specialProgramOverrideResolverRef.current = resolver
                     setShowSpecialProgramOverrideDialog(true)
                     return
@@ -4533,7 +4486,6 @@ function SchedulePageContent() {
               })()
             }
             
-            setSpecialProgramOverrideResolver(() => resolver)
             specialProgramOverrideResolverRef.current = resolver
             prefetchSpecialProgramOverrideDialog().catch(() => {})
             // Step 2 can also pause into substitution flow; warm it up too.
@@ -4747,10 +4699,8 @@ function SchedulePageContent() {
   const clearStepOnly = async (stepId: ScheduleStepId) => {
     // UI-only: close any step dialogs to avoid dangling resolvers.
     setShowSpecialProgramOverrideDialog(false)
-    setSpecialProgramOverrideResolver(null)
     specialProgramOverrideResolverRef.current = null
     setShowSptFinalEditDialog(false)
-    setSptFinalEditResolver(null)
     sptFinalEditResolverRef.current = null
     setSubstitutionWizardOpen(false)
     setSubstitutionWizardData(null)
@@ -4768,10 +4718,8 @@ function SchedulePageContent() {
   const clearFromStep = async (stepId: ScheduleStepId) => {
     // Close any step dialogs to avoid dangling resolvers.
     setShowSpecialProgramOverrideDialog(false)
-    setSpecialProgramOverrideResolver(null)
     specialProgramOverrideResolverRef.current = null
     setShowSptFinalEditDialog(false)
-    setSptFinalEditResolver(null)
     sptFinalEditResolverRef.current = null
     setSubstitutionWizardOpen(false)
     setSubstitutionWizardData(null)
@@ -9219,18 +9167,6 @@ function SchedulePageContent() {
         ) : null}
         {!isSplitMode && (
         <ScheduleHeaderBar
-          showBackButton={showBackButton}
-          onBack={() => {
-              const returnPath = sessionStorage.getItem('scheduleReturnPath')
-              if (returnPath) {
-                sessionStorage.removeItem('scheduleReturnPath')
-                navLoading.start(returnPath)
-                router.push(returnPath)
-              } else {
-                navLoading.start('/history')
-                router.push('/history')
-              }
-            }}
           userRole={userRole}
           showLoadDiagnostics={access.can('schedule.diagnostics.load')}
           lastLoadTiming={lastLoadTiming}
@@ -9611,7 +9547,6 @@ function SchedulePageContent() {
               if (!autoStep21 && activeSpecialPrograms.length > 0) {
                 const overridesFromDialog = await new Promise<Record<string, any>>((resolve) => {
                   const resolver = (overrides: Record<string, any>) => resolve(overrides || {})
-                  setSpecialProgramOverrideResolver(() => resolver as any)
                   specialProgramOverrideResolverRef.current = resolver as any
                   prefetchSpecialProgramOverrideDialog().catch(() => {})
                   setShowSpecialProgramOverrideDialog(true)
@@ -10685,7 +10620,6 @@ function SchedulePageContent() {
                 }}
                 onToggleDirection={() => {
                   const next = splitDirection === 'col' ? 'row' : 'col'
-                  setSplitDirection(next)
                   try {
                     window.sessionStorage.setItem('rbip_split_dir', next)
                   } catch {
@@ -10810,21 +10744,9 @@ function SchedulePageContent() {
                     {/* Fixed header for Main Pane in retracted mode */}
                     {mainHeader}
 
-                    <div className="flex-1 min-w-0 overflow-auto">
+                    <div className="flex-1 min-w-0 min-h-0 overflow-auto">
                       <div className="inline-block min-w-full align-top">
                         <ScheduleHeaderBar
-          showBackButton={showBackButton}
-          onBack={() => {
-              const returnPath = sessionStorage.getItem('scheduleReturnPath')
-              if (returnPath) {
-                sessionStorage.removeItem('scheduleReturnPath')
-                navLoading.start(returnPath)
-                router.push(returnPath)
-              } else {
-                navLoading.start('/history')
-                router.push('/history')
-              }
-            }}
           userRole={userRole}
           showLoadDiagnostics={access.can('schedule.diagnostics.load')}
           lastLoadTiming={lastLoadTiming}
@@ -11193,13 +11115,14 @@ function SchedulePageContent() {
 
           const splitLayout = (
             <MaybeProfiler id="SplitPane">
-              <SplitPane
-                direction={splitDirection}
-                ratio={splitRatio}
-                swapped={isSplitSwapped}
-                liveResize={false}
-                paneOverflow="hidden"
-                dividerOverlay={
+              <div className="flex-1 min-h-0">
+                <SplitPane
+                  direction={splitDirection}
+                  ratio={splitRatio}
+                  swapped={isSplitSwapped}
+                  liveResize={false}
+                  paneOverflow="hidden"
+                  dividerOverlay={
                   <div
                     className={cn(
                       'group/pill rounded-full border border-border bg-background/95 shadow-sm',
@@ -11242,7 +11165,6 @@ function SchedulePageContent() {
                   </div>
                 }
                 onRatioCommit={(r) => {
-                  setSplitRatio(r)
                   try {
                     window.sessionStorage.setItem('rbip_split_ratio', String(r))
                   } catch {
@@ -11254,8 +11176,10 @@ function SchedulePageContent() {
                     p.set('refHidden', '0')
                   })
                 }}
-                minPx={420}
-                className="h-full"
+                minPx={splitDirection === 'row' ? 240 : 420}
+                // Explicit height is required for top-down (row) mode percentage tracks.
+                // Outer split wrapper is `h-[calc(100vh-64px)]` with `py-4` (2rem total), so match its content box.
+                className="min-h-0 w-full h-[calc(100vh-64px-2rem)]"
                 paneAClassName="bg-blue-50/20 dark:bg-blue-950/10"
                 paneBClassName="bg-amber-50/20 dark:bg-amber-950/10"
                 paneA={
@@ -11265,21 +11189,9 @@ function SchedulePageContent() {
                         {mainHeader}
 
                         {/* Scrollable Main content (includes schedule header bar + full layout) */}
-                        <div className="flex-1 min-w-0 overflow-auto">
+                        <div className="flex-1 min-w-0 min-h-0 overflow-auto">
                           <div className="inline-block min-w-full align-top">
                             <ScheduleHeaderBar
-          showBackButton={showBackButton}
-          onBack={() => {
-              const returnPath = sessionStorage.getItem('scheduleReturnPath')
-              if (returnPath) {
-                sessionStorage.removeItem('scheduleReturnPath')
-                navLoading.start(returnPath)
-                router.push(returnPath)
-              } else {
-                navLoading.start('/history')
-                router.push('/history')
-              }
-            }}
           userRole={userRole}
           showLoadDiagnostics={access.can('schedule.diagnostics.load')}
           lastLoadTiming={lastLoadTiming}
@@ -11620,6 +11532,7 @@ function SchedulePageContent() {
                 }
                 paneB={<div ref={setRefPortalHost} className="h-full min-h-0" />}
               />
+              </div>
             </MaybeProfiler>
           )
 
@@ -11843,7 +11756,6 @@ function SchedulePageContent() {
                   const resolver = tieBreakResolverRef.current
                   if (resolver) {
                     resolver(team)
-                    setTieBreakResolver(null)
                     tieBreakResolverRef.current = null
                   }
                   setTieBreakDialogOpen(false)
@@ -11899,7 +11811,6 @@ function SchedulePageContent() {
                     const resolver = specialProgramOverrideResolverRef.current
                     if (resolver) {
                       resolver(null)
-                      setSpecialProgramOverrideResolver(null)
                       specialProgramOverrideResolverRef.current = null
                     }
                   }
@@ -11913,7 +11824,6 @@ function SchedulePageContent() {
                   const resolver = specialProgramOverrideResolverRef.current
                   if (resolver) {
                     resolver(overrides)
-                    setSpecialProgramOverrideResolver(null)
                     specialProgramOverrideResolverRef.current = null
                   }
                   setShowSpecialProgramOverrideDialog(false)
@@ -11922,7 +11832,6 @@ function SchedulePageContent() {
                   const resolver = specialProgramOverrideResolverRef.current
                   if (resolver) {
                     resolver({})
-                    setSpecialProgramOverrideResolver(null)
                     specialProgramOverrideResolverRef.current = null
                   }
                   setShowSpecialProgramOverrideDialog(false)
@@ -11950,7 +11859,6 @@ function SchedulePageContent() {
                     const resolver = sptFinalEditResolverRef.current
                     if (resolver) {
                       resolver(null)
-                      setSptFinalEditResolver(null)
                       sptFinalEditResolverRef.current = null
                     }
                   }
@@ -11966,7 +11874,6 @@ function SchedulePageContent() {
                   const resolver = sptFinalEditResolverRef.current
                   if (resolver) {
                     resolver(updates as any)
-                    setSptFinalEditResolver(null)
                     sptFinalEditResolverRef.current = null
                   }
                   setShowSptFinalEditDialog(false)
@@ -11975,7 +11882,6 @@ function SchedulePageContent() {
                   const resolver = sptFinalEditResolverRef.current
                   if (resolver) {
                     resolver({})
-                    setSptFinalEditResolver(null)
                     sptFinalEditResolverRef.current = null
                   }
                   setShowSptFinalEditDialog(false)
@@ -11984,7 +11890,6 @@ function SchedulePageContent() {
                   const resolver = sptFinalEditResolverRef.current
                   if (resolver) {
                     resolver({ __nav: 'back' } as any)
-                    setSptFinalEditResolver(null)
                     sptFinalEditResolverRef.current = null
                   }
                   setShowSptFinalEditDialog(false)

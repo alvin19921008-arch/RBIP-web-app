@@ -2,7 +2,7 @@
 
 import { type ReactNode } from 'react'
 import dynamic from 'next/dynamic'
-import { AlertCircle, ArrowLeft, Calendar, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
+import { AlertCircle, Calendar, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
 import type { Weekday } from '@/types/staff'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
@@ -35,10 +35,6 @@ function formatDateKeyDDMMYYYY(dateKey: string): string {
 }
 
 export function ScheduleHeaderBar(props: {
-  // Back button
-  showBackButton: boolean
-  onBack: () => void
-
   // Title + developer diagnostics
   userRole: 'developer' | 'admin' | 'user'
   showLoadDiagnostics?: boolean
@@ -110,13 +106,6 @@ export function ScheduleHeaderBar(props: {
 
   return (
     <>
-      {props.showBackButton ? (
-        <Button variant="ghost" size="sm" onClick={props.onBack} className="mb-4">
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to History
-        </Button>
-      ) : null}
-
       <div className="mb-3 sm:mb-4 space-y-2 sm:space-y-3">
         {/* Row 1: title + primary actions */}
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">

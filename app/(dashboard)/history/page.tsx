@@ -326,8 +326,6 @@ export default function HistoryPage() {
   }
 
   const handleNavigate = (date: string) => {
-    // Store return path in sessionStorage
-    sessionStorage.setItem('scheduleReturnPath', '/history')
     navLoading.start(`/schedule?date=${date}`)
     router.push(`/schedule?date=${date}`)
   }
