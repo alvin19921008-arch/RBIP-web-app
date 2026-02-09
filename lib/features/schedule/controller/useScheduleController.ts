@@ -2950,6 +2950,53 @@ export function useScheduleController(params: {
         therapistByTeam[alloc.team as Team].push({ ...alloc, staff: staffMember })
       })
 
+      // Defensive de-dupe: ensure each SPT appears at most once globally.
+      // Historically, SPTs could be allocated twice (default assignment + SPT phase),
+      // which is most noticeable when Step 2.2 is skipped.
+      try {
+        const canonicalSptByStaffId = new Map<string, (TherapistAllocation & { staff: Staff })>()
+        const nonSpt: Array<TherapistAllocation & { staff: Staff }> = []
+
+        TEAMS.forEach((team) => {
+          ;(therapistByTeam[team] || []).forEach((a) => {
+            if (a.staff?.rank !== 'SPT') {
+              nonSpt.push(a)
+              return
+            }
+
+            const staffId = a.staff_id
+            if (!staffId) return
+
+            const o: any = overrides?.[staffId]
+            const preferredTeam = (o?.team ?? o?.sptOnDayOverride?.assignedTeam) as Team | undefined
+
+            const existing = canonicalSptByStaffId.get(staffId)
+            if (!existing) {
+              canonicalSptByStaffId.set(staffId, a)
+              return
+            }
+
+            if (preferredTeam && a.team === preferredTeam && existing.team !== preferredTeam) {
+              canonicalSptByStaffId.set(staffId, a)
+              return
+            }
+          })
+        })
+
+        // Rebuild per-team arrays in-place.
+        TEAMS.forEach((team) => {
+          therapistByTeam[team] = []
+        })
+        nonSpt.forEach((a) => {
+          therapistByTeam[a.team as Team].push(a)
+        })
+        canonicalSptByStaffId.forEach((a) => {
+          therapistByTeam[a.team as Team].push(a)
+        })
+      } catch {
+        // ignore - never block Step 2 initialization
+      }
+
       // Sort: APPT first (preserve existing behavior)
       TEAMS.forEach((team) => {
         therapistByTeam[team].sort((a, b) => {

@@ -290,9 +290,44 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
     // IMPORTANT: When Step 2 has been cleared, we must NOT re-preserve stale SPT allocations,
     // otherwise the user needs multiple clears and Step 2.2 overrides can appear "ignored".
     if (step2Initialized) {
+      // Dedupe existing SPT allocations by staff_id.
+      // If duplicates exist (e.g. due to historical bugs / prior reruns), preserving them blindly would
+      // stack more duplicates on every Step 2 rerun, especially when Step 2.2 is skipped.
+      // Prefer the allocation that matches the override-assigned team if available, otherwise keep the first.
+      const canonicalExistingSPTByStaffId = new Map<string, TherapistAllocation & { staff: Staff }>()
+      for (const sptAlloc of allExistingSPTAllocations) {
+        const staffId = sptAlloc?.staff_id
+        if (!staffId) continue
+
+        const existing = canonicalExistingSPTByStaffId.get(staffId)
+        if (!existing) {
+          canonicalExistingSPTByStaffId.set(staffId, sptAlloc)
+          continue
+        }
+
+        const override = staffOverrides?.[staffId] as any
+        const preferredTeam = (override?.team ?? override?.sptOnDayOverride?.assignedTeam) as Team | undefined
+
+        // Prefer matching team.
+        if (preferredTeam && sptAlloc.team === preferredTeam && existing.team !== preferredTeam) {
+          canonicalExistingSPTByStaffId.set(staffId, sptAlloc)
+          continue
+        }
+
+        // Prefer manual overrides when team can't disambiguate.
+        const existingManual = (existing as any)?.is_manual_override === true
+        const nextManual = (sptAlloc as any)?.is_manual_override === true
+        if (nextManual && !existingManual) {
+          canonicalExistingSPTByStaffId.set(staffId, sptAlloc)
+          continue
+        }
+      }
+
+      const canonicalExistingSPTAllocations = Array.from(canonicalExistingSPTByStaffId.values())
+
       // Check if each existing SPT is already in the new result (across all teams).
       // If not, preserve it but update team/FTE from staffOverrides.
-      allExistingSPTAllocations.forEach((sptAlloc) => {
+      canonicalExistingSPTAllocations.forEach((sptAlloc) => {
         // If this staff is explicitly split/merged or has no allocation, do not preserve.
         if (therapistSplitIds.has(sptAlloc.staff_id) || therapistNoAllocationIds.has(sptAlloc.staff_id)) {
           return

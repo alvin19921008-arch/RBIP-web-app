@@ -91,6 +91,12 @@ export function allocateTherapists(context: AllocationContext): AllocationResult
   context.staff.forEach((staff) => {
     if (context.manualOverrides[staff.id]) return // Skip if manually overridden
     
+    // IMPORTANT: SPT allocations are handled exclusively by the dedicated SPT phases (6a/6b),
+    // or preserved externally when `includeSPTAllocation` is false.
+    // If we allocate SPTs here (default assignment) and again in Phase 6, they will appear as
+    // duplicated SPT cards across teams (especially noticeable when Step 2.2 is skipped).
+    if (staff.rank === 'SPT') return
+
     // Allow staff with leave_type if they have FTE > 0 (partial availability)
     if (staff.team && staff.is_available && staff.fte_therapist > 0) {
       // Map program names to UUIDs using the specialPrograms context
@@ -317,6 +323,10 @@ export function allocateTherapists(context: AllocationContext): AllocationResult
     canonicalSptAllocs
       .filter((sptAlloc) => !sptAlloc.is_rbip_supervisor)
       .forEach((sptAlloc) => {
+        // Safety: ensure we never emit more than one allocation per SPT staff member.
+        // (e.g. if upstream logic ever adds an SPT allocation before Phase 6a).
+        if (allocations.some((a) => a.staff_id === sptAlloc.staff_id)) return
+
         const staffMember = context.staff.find((s) => s.id === sptAlloc.staff_id)
         if (staffMember && !staffMember.is_available) return
 

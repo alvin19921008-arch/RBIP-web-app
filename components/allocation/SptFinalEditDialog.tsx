@@ -10,6 +10,7 @@ import type { StaffOverrideState, SptOnDayOverrideState } from '@/lib/features/s
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -43,11 +44,13 @@ function normalizeSlotModes(m: any): { am: SlotMode; pm: SlotMode } {
 
 function clampSlotModeChoices(args: { slots: number[]; slotModes: { am: SlotModeChoice; pm: SlotModeChoice } }): { am: SlotModeChoice; pm: SlotModeChoice } {
   const slots = uniqueSortedSlots(args.slots)
-  const hasAM = slots.some((s) => s === 1 || s === 2)
-  const hasPM = slots.some((s) => s === 3 || s === 4)
+  const amSlots = slots.filter((s) => s === 1 || s === 2)
+  const pmSlots = slots.filter((s) => s === 3 || s === 4)
+  const needsAMMode = amSlots.length > 1
+  const needsPMMode = pmSlots.length > 1
   return {
-    am: hasAM ? (args.slotModes.am ?? 'AND') : null,
-    pm: hasPM ? (args.slotModes.pm ?? 'AND') : null,
+    am: needsAMMode ? (args.slotModes.am ?? 'AND') : null,
+    pm: needsPMMode ? (args.slotModes.pm ?? 'AND') : null,
   }
 }
 
@@ -90,6 +93,15 @@ function computeConfiguredBaseFte(args: {
   return { effectiveSlots: { am: effectiveAM, pm: effectivePM, total: effectiveTotal }, baseFte, slotDisplay }
 }
 
+function buildSlotDisplayText(effectiveSlots: { am: number; pm: number }): string {
+  const amFte = effectiveSlots.am * 0.25
+  const pmFte = effectiveSlots.pm * 0.25
+  if (amFte > 0 && pmFte > 0) return `${formatFteShort(amFte)} AM + ${formatFteShort(pmFte)} PM`
+  if (amFte > 0) return `${formatFteShort(amFte)} AM`
+  if (pmFte > 0) return `${formatFteShort(pmFte)} PM`
+  return '—'
+}
+
 type CardState = {
   staffId: string
   staffName: string
@@ -123,6 +135,13 @@ type CardState = {
 function formatFte(x: number): string {
   if (!Number.isFinite(x)) return '0.00'
   return x.toFixed(2)
+}
+
+function formatFteShort(x: number): string {
+  if (!Number.isFinite(x)) return '0'
+  return x
+    .toFixed(2)
+    .replace(/\.?0+$/, '')
 }
 
 function clampLeaveCost(raw: number, baseFte: number): number {
@@ -418,12 +437,15 @@ export function SptFinalEditDialog(props: {
     for (const card of cards) {
       const slotModes = normalizeSlotModes(card.slotModes)
       const slots = uniqueSortedSlots(card.slots)
-      const { baseFte } = computeConfiguredBaseFte({
+      const { baseFte, effectiveSlots } = computeConfiguredBaseFte({
         enabled: card.enabled,
         contributesFte: card.contributesFte,
         slots,
         slotModes,
       })
+      const useDetailedDisplay = typeof card.displayText === 'string' && card.displayText.trim() !== ''
+      const resolvedDisplayText =
+        useDetailedDisplay && effectiveSlots.total === 3 ? buildSlotDisplayText(effectiveSlots) : null
 
       const leaveCostRaw = parseFloat(card.leaveCostInput)
       const leaveCost = clampLeaveCost(leaveCostRaw, baseFte)
@@ -441,7 +463,7 @@ export function SptFinalEditDialog(props: {
           contributesFte: card.contributesFte,
           slots,
           slotModes,
-          displayText: card.displayText ?? null,
+          displayText: resolvedDisplayText,
           assignedTeam: team,
         },
       }
@@ -477,7 +499,14 @@ export function SptFinalEditDialog(props: {
         <DialogHeader>
           <DialogTitle>SPT Final Edit – Step 2.2</DialogTitle>
           <DialogDescription>
-            Review and override SPT weekday configuration for <span className="font-medium">{weekday.toUpperCase()}</span>.
+            Review and override SPT weekday configuration for{' '}
+            <Badge
+              variant="secondary"
+              className="ml-1 align-middle text-[11px] font-semibold tracking-wide uppercase"
+            >
+              {weekday.toUpperCase()}
+            </Badge>
+            .
             This is a per-day override and won’t change dashboard settings.
           </DialogDescription>
         </DialogHeader>
@@ -488,7 +517,7 @@ export function SptFinalEditDialog(props: {
               No SPT configured for this weekday. You can add one below.
             </div>
           ) : (
-            <HorizontalCardCarousel recomputeKey={open} fill={false} showDots={false} containerClassName="h-auto">
+            <HorizontalCardCarousel recomputeKey={open} fill={true} showDots={false} containerClassName="h-full">
               {cards.map((card) => {
                 const computed = computeConfiguredBaseFte({
                   enabled: card.enabled,
@@ -500,6 +529,18 @@ export function SptFinalEditDialog(props: {
                 const leaveCost = clampLeaveCost(leaveCostRaw, computed.baseFte)
                 const fteRemaining = Math.max(0, computed.baseFte - leaveCost)
                 const suggestedTeam = computeSuggestedTeam(card, fteRemaining)
+                const amSlotsCount = card.slots.filter((s) => s === 1 || s === 2).length
+                const pmSlotsCount = card.slots.filter((s) => s === 3 || s === 4).length
+                const needsAmMode = amSlotsCount > 1
+                const needsPmMode = pmSlotsCount > 1
+                const slotDisplayText = buildSlotDisplayText(computed.effectiveSlots)
+                const simpleSlotDisplayText = computed.baseFte > 0 ? formatFteShort(computed.baseFte) : '—'
+                const hasExplicitDisplay = typeof card.displayText === 'string' && card.displayText.trim() !== ''
+                const showToggle = computed.effectiveSlots.total === 3
+                const showDetailedDisplay = showToggle && hasExplicitDisplay
+                const currentDisplayText = showToggle
+                  ? (showDetailedDisplay ? slotDisplayText : simpleSlotDisplayText)
+                  : slotDisplayText
 
                 const teamValue = card.teamChoice === 'AUTO' ? 'AUTO' : card.teamChoice
                 const allowedTeams = (card.allowedTeams?.length ? card.allowedTeams : TEAMS).filter((t) => TEAMS.includes(t))
@@ -507,7 +548,7 @@ export function SptFinalEditDialog(props: {
                 return (
                   <Card
                     key={card.staffId}
-                    className="min-w-[360px] max-w-[420px] w-[min(420px,calc(100vw-120px))] flex-shrink-0 max-h-[72vh] overflow-y-auto overscroll-contain"
+                    className="min-w-[360px] max-w-[420px] w-[min(420px,calc(100vw-120px))] flex-shrink-0 h-full max-h-full min-h-0 overflow-y-auto overscroll-contain"
                   >
                     <CardHeader className="space-y-2">
                       <div className="flex items-start justify-between gap-3">
@@ -606,7 +647,9 @@ export function SptFinalEditDialog(props: {
 
                         <div className="grid grid-cols-2 gap-3">
                           <div className="space-y-1">
-                            <div className="text-xs text-muted-foreground">AM slot mode</div>
+                            <div className="text-xs text-muted-foreground">
+                              AM slot mode{amSlotsCount === 1 ? ' (not needed for single slot)' : ''}
+                            </div>
                             <div className="flex gap-2">
                               {(['AND', 'OR'] as SlotMode[]).map((m) => (
                                 <Button
@@ -620,7 +663,7 @@ export function SptFinalEditDialog(props: {
                                       : 'bg-gray-100 text-gray-700'
                                   )}
                                   onClick={() => updateCard(card.staffId, { slotModes: { ...card.slotModes, am: m } })}
-                                  disabled={!card.enabled || !card.slots.some((s) => s === 1 || s === 2)}
+                                  disabled={!card.enabled || !needsAmMode}
                                 >
                                   {m}
                                 </Button>
@@ -628,7 +671,9 @@ export function SptFinalEditDialog(props: {
                             </div>
                           </div>
                           <div className="space-y-1">
-                            <div className="text-xs text-muted-foreground">PM slot mode</div>
+                            <div className="text-xs text-muted-foreground">
+                              PM slot mode{pmSlotsCount === 1 ? ' (not needed for single slot)' : ''}
+                            </div>
                             <div className="flex gap-2">
                               {(['AND', 'OR'] as SlotMode[]).map((m) => (
                                 <Button
@@ -642,7 +687,7 @@ export function SptFinalEditDialog(props: {
                                       : 'bg-gray-100 text-gray-700'
                                   )}
                                   onClick={() => updateCard(card.staffId, { slotModes: { ...card.slotModes, pm: m } })}
-                                  disabled={!card.enabled || !card.slots.some((s) => s === 3 || s === 4)}
+                                  disabled={!card.enabled || !needsPmMode}
                                 >
                                   {m}
                                 </Button>
@@ -651,9 +696,30 @@ export function SptFinalEditDialog(props: {
                           </div>
                         </div>
 
-                        <div className="text-xs text-muted-foreground">
-                          Slot display: <span className="font-medium">{computed.slotDisplay ?? '—'}</span> · Effective slots:{' '}
-                          <span className="font-medium">{computed.effectiveSlots.total}</span>
+                        <div className="text-xs text-muted-foreground flex items-center justify-between gap-2">
+                          <div>
+                            Slot display: <span className="font-medium">{currentDisplayText}</span> · Effective slots:{' '}
+                            <span className="font-medium">{computed.effectiveSlots.total}</span>
+                          </div>
+                          {showToggle ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className={cn(
+                                'h-6 px-2 text-[11px] font-medium rounded-full',
+                                'border-border/70 bg-background/90 shadow-xs',
+                                'text-muted-foreground hover:text-foreground'
+                              )}
+                              onClick={() =>
+                                updateCard(card.staffId, {
+                                  displayText: showDetailedDisplay ? null : slotDisplayText,
+                                })
+                              }
+                            >
+                              {showDetailedDisplay ? 'Simplify' : 'Detail'}
+                            </Button>
+                          ) : null}
                         </div>
                       </div>
 

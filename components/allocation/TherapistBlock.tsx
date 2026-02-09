@@ -219,6 +219,10 @@ export const TherapistBlock = memo(function TherapistBlock({
             // For SPT: show "FTE + AM/PM" on the right side based on spt_slot_display.
             // (Split-generated SPT allocations now preserve/infer spt_slot_display.)
             if (!isSupervisoryNoDuty && allocation.staff.rank === 'SPT') {
+              const overrideDisplayText = staffOverrides?.[allocation.staff_id]?.sptOnDayOverride?.displayText
+              if (typeof overrideDisplayText === 'string' && overrideDisplayText.trim() !== '') {
+                displayFTE = overrideDisplayText
+              } else {
               const fteNum =
                 typeof displayFTE === 'number'
                   ? displayFTE
@@ -229,6 +233,7 @@ export const TherapistBlock = memo(function TherapistBlock({
                 displayFTE = '0.75'
               } else if ((fteNum === 0.5 || fteNum === 0.25) && allocation.spt_slot_display) {
                 displayFTE = `${fteNum} ${allocation.spt_slot_display}`
+              }
               }
             }
             
