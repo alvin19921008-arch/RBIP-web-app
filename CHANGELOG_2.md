@@ -24,6 +24,7 @@
 - **Wizard dialog headers (Step 2 & 3)**: Short action titles, meta row (Step X.Y · context), and stepper chips (2.0 Programs · 2.1 Substitute · 2.2 SPT; 3.1 Adjust · 3.2 Preferred · 3.3 Adjacent). Step 3 stepper uses dot separators (aligned with Step 2). Step 3.2/3.3 instruction text shortened for readability.
 - **Step 2.0 Special Program Override**: Horizontal carousel dot markers disabled; left/right arrows remain. Step 2.0/2.1/2.2 dialogs use consistent stepper chip layout.
 - **Saved setup snapshot diff table**: Repeated “Item” collapsed per group (rowSpan); column widths rebalanced (colgroup) so Item/Field are narrower and Saved/Dashboard columns get more space, reducing horizontal scroll and truncation.
+- **Schedule page refactor**: Shared Supabase fetch for snapshot-diff inputs (`lib/features/schedule/snapshotDiffLiveInputs.ts`) with TTL and in-flight dedupe; Config Sync panel and schedule page use it. Split reference controller and reference pane mount only in split mode to reduce non-split load. Startup dialog prefetch limited to staff edit, copy wizard, and calendar; step/hover prefetch unchanged.
 
 ### Fixed
 - **Slot selection popover**: Hint text (“Default target” + team badge) no longer truncates; footer uses a stacked layout so the hint wraps and tick/cross buttons sit on the next line.
@@ -40,3 +41,4 @@
 - **Therapist card overflow (Step 2.2)**: Long FTE strings (e.g. “0.5 AM + 0.25 PM”) wrap in the card header instead of overflowing; right-side FTE uses `max-w-[60%]`, `whitespace-normal`, `break-words`.
 - **Step 2.2 Simplify/Detail button**: Small swap icon (ArrowLeftRight) added next to “Simplify”/“Detail” to indicate toggle.
 - **Step 3.1 scarcity callout**: Duplicate “Preview (Standard if run now)…” line removed; copy streamlined (trigger/today/shortage in separate lines; “slack” removed to avoid redundancy with shortage).
+- **Reference pane**: Changing reference date no longer restarts load repeatedly (effect keyed by ref date only; ref-stable actions and in-flight guard prevent thrash). Collapse/expand is faster by not rendering reference portal content when collapsed.
