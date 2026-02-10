@@ -137,7 +137,6 @@ const prefetchSpecialProgramOverrideDialog = () => import('@/components/allocati
 const prefetchSptFinalEditDialog = () => import('@/components/allocation/SptFinalEditDialog')
 const prefetchNonFloatingSubstitutionDialog = () => import('@/components/allocation/NonFloatingSubstitutionDialog')
 const prefetchScheduleCalendarPopover = () => import('@/components/schedule/ScheduleCalendarPopover')
-const prefetchDevLeaveSimPanel = () => import('@/components/schedule/DevLeaveSimPanel')
 
 const STAFF_SELECT_FIELDS =
   'id,name,rank,special_program,team,floating,floor_pca,status,buffer_fte,active'
@@ -168,6 +167,10 @@ import { useScheduleDateParam } from '@/lib/hooks/useScheduleDateParam'
 import { resetStep2OverridesForAlgoEntry } from '@/lib/features/schedule/stepReset'
 import { applySptFinalEditToTherapistAllocations } from '@/lib/features/schedule/sptFinalEdit'
 import type { SnapshotDiffResult } from '@/lib/features/schedule/snapshotDiff'
+import {
+  fetchSnapshotDiffLiveInputs,
+  SNAPSHOT_DIFF_LIVE_INPUTS_DEFAULT_TTL_MS,
+} from '@/lib/features/schedule/snapshotDiffLiveInputs'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
@@ -217,27 +220,11 @@ function SchedulePageContent() {
   })
   const { state: scheduleState, actions: scheduleActions } = schedule
 
-  const refInitialDefaultDate = useMemo(() => new Date(), [])
-  const refSchedule = useScheduleController({
-    defaultDate: refInitialDefaultDate,
-    supabase,
-    controllerRole: 'ref',
-    preserveUnsavedAcrossDateSwitch: false,
-  })
-  const { state: refScheduleState, actions: refScheduleActions } = refSchedule
-  const {
-    beginDateTransition: refControllerBeginDateTransition,
-    loadAndHydrateDate: refLoadAndHydrateDate,
-    _unsafe: refUnsafe,
-  } = refScheduleActions
-  const { setGridLoading: setRefGridLoading, setIsHydratingSchedule: setRefIsHydratingSchedule } = refUnsafe
-
   const splitDirection = splitDirParam
   const splitRatio = splitRatioParam
   const isSplitSwapped = splitSwapParam
   const [stepIndicatorCollapsed, setStepIndicatorCollapsed] = useState(false)
   const [refPortalHost, setRefPortalHost] = useState<HTMLDivElement | null>(null)
-  const [refPortalHiddenHost, setRefPortalHiddenHost] = useState<HTMLDivElement | null>(null)
 
   // Auto-collapse step indicator when entering split mode
   useEffect(() => {
@@ -493,76 +480,6 @@ function SchedulePageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSplitMode, refDateParam])
 
-  // Split mode: hydrate reference schedule when refDate changes.
-  useEffect(() => {
-    if (!isSplitMode) return
-    if (!refDateParam) return
-
-    try {
-      window.sessionStorage.setItem('rbip_split_ref_date', refDateParam)
-    } catch {
-      // ignore
-    }
-
-    if (refScheduleState.scheduleLoadedForDate === refDateParam && !refScheduleState.loading) {
-      return
-    }
-
-    let parsed: Date
-    try {
-      parsed = parseDateFromInput(refDateParam)
-    } catch {
-      return
-    }
-
-    const ac = new AbortController()
-    refControllerBeginDateTransition(parsed, { resetLoadedForDate: true })
-    void (async () => {
-      try {
-        await refLoadAndHydrateDate({ date: parsed, signal: ac.signal })
-      } finally {
-        if (!ac.signal.aborted) {
-          // Unlike the main schedule page, the reference pane doesn't have the page-level
-          // gridLoading finalizer effect; ensure this doesn't get stuck true.
-          setRefGridLoading(false)
-        }
-      }
-    })()
-    return () => ac.abort()
-  }, [
-    isSplitMode,
-    refDateParam,
-    refControllerBeginDateTransition,
-    refLoadAndHydrateDate,
-    refScheduleState.loading,
-    refScheduleState.scheduleLoadedForDate,
-    setRefGridLoading,
-  ])
-
-  // Split mode: the reference controller doesn't include the page-level hydration finalizer
-  // effect used by the main schedule page. Without this, the reference pane can remain
-  // stuck showing its skeleton forever.
-  useEffect(() => {
-    if (!isSplitMode) return
-    if (!refDateParam) return
-    if (!refScheduleState.isHydratingSchedule) return
-    if (refScheduleState.loading) return
-    if (refScheduleState.scheduleLoadedForDate !== refDateParam) return
-
-    // End hydration on next frame to ensure load-driven state updates have flushed.
-    try {
-      window.requestAnimationFrame(() => setRefIsHydratingSchedule(false))
-    } catch {
-      setRefIsHydratingSchedule(false)
-    }
-  }, [
-    isSplitMode,
-    refDateParam,
-    refScheduleState.isHydratingSchedule,
-    refScheduleState.loading,
-    refScheduleState.scheduleLoadedForDate,
-    setRefIsHydratingSchedule,
-  ])
   const {
     selectedDate,
     therapistAllocations,
@@ -5458,16 +5375,10 @@ function SchedulePageContent() {
     let cancelled = false
     const run = () => {
       if (cancelled) return
+      // Stage 1 (high-probability, lightweight): top-level actions users hit immediately.
       prefetchStaffEditDialog().catch(() => {})
       prefetchScheduleCopyWizard().catch(() => {})
       prefetchScheduleCalendarPopover().catch(() => {})
-      prefetchFloatingPCAConfigDialog().catch(() => {})
-      prefetchSpecialProgramOverrideDialog().catch(() => {})
-      prefetchSptFinalEditDialog().catch(() => {})
-      prefetchNonFloatingSubstitutionDialog().catch(() => {})
-      if (userRole === 'developer') {
-        prefetchDevLeaveSimPanel().catch(() => {})
-      }
     }
 
     const w = window as any
@@ -5484,7 +5395,7 @@ function SchedulePageContent() {
       cancelled = true
       window.clearTimeout(t)
     }
-  }, [scheduleLoadedForDate, showSnapshotUiReminder, userRole])
+  }, [scheduleLoadedForDate])
 
   // Drift notification (post-load; admin/developer only)
   const lastDriftToastKeyRef = useRef<string | null>(null)
@@ -5568,63 +5479,19 @@ function SchedulePageContent() {
         // Version metadata may remain unchanged (e.g., during testing or when global_version hasn't bumped),
         // but users still expect to be warned when the saved snapshot differs from today's Global config.
         if (thresholdMs === 0) {
-          const [staffRes, teamSettingsRes, wardsRes, prefsRes, programsRes, sptRes] = await Promise.all([
-            supabase
-              .from('staff')
-              .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program'),
-            supabase.from('team_settings').select('team,display_name'),
-            supabase.from('wards').select(WARDS_SELECT_FIELDS),
-            supabase.from('pca_preferences').select(PCA_PREFS_SELECT_FIELDS),
-            supabase.from('special_programs').select(SPECIAL_PROGRAM_SELECT_FIELDS),
-            supabase.from('spt_allocations').select(SPT_ALLOC_SELECT_FIELDS),
-          ])
+          const diffKey = `${selectedDateStr}|${currentScheduleId || ''}`
+          const liveInputs = await fetchSnapshotDiffLiveInputs({
+            supabase,
+            includeTeamSettings: true,
+            cacheKey: `schedule-snapshot-diff:${diffKey}`,
+            ttlMs: SNAPSHOT_DIFF_LIVE_INPUTS_DEFAULT_TTL_MS,
+          })
           if (cancelled) return
-
-          // Back-compat: some DBs do not have wards.team_assignment_portions
-          let effectiveWardsRes: typeof wardsRes = wardsRes
-          if ((wardsRes as any)?.error?.message?.includes('team_assignment_portions')) {
-            effectiveWardsRes = await supabase.from('wards').select('id,name,total_beds,team_assignments')
-            if (cancelled) return
-          }
-
-          let effectivePrefsRes: typeof prefsRes = prefsRes
-          if ((prefsRes as any)?.error?.message?.includes('column') || (prefsRes as any)?.error?.code === '42703') {
-            effectivePrefsRes = await supabase.from('pca_preferences').select('*')
-            if (cancelled) return
-          }
-
-          let effectiveProgramsRes: typeof programsRes = programsRes
-          if ((programsRes as any)?.error?.message?.includes('column') || (programsRes as any)?.error?.code === '42703') {
-            effectiveProgramsRes = await supabase.from('special_programs').select('*')
-            if (cancelled) return
-          }
-
-          let effectiveSptRes: typeof sptRes = sptRes
-          if ((sptRes as any)?.error?.message?.includes('column') || (sptRes as any)?.error?.code === '42703') {
-            effectiveSptRes = await supabase.from('spt_allocations').select('*')
-            if (cancelled) return
-          }
-
-          const firstError =
-            (staffRes as any).error ||
-            (teamSettingsRes as any).error ||
-            (effectiveWardsRes as any).error ||
-            (effectivePrefsRes as any).error ||
-            (effectiveProgramsRes as any).error ||
-            (effectiveSptRes as any).error
-          if (firstError) return
 
           const { diffBaselineSnapshot } = await import('@/lib/features/schedule/snapshotDiff')
           const diff = diffBaselineSnapshot({
             snapshot: baselineSnapshot as any,
-            live: {
-              staff: (staffRes as any).data || [],
-              teamSettings: (teamSettingsRes as any).data || [],
-              wards: (effectiveWardsRes as any).data || [],
-              pcaPreferences: (effectivePrefsRes as any).data || [],
-              specialPrograms: (effectiveProgramsRes as any).data || [],
-              sptAllocations: (effectiveSptRes as any).data || [],
-            },
+            live: liveInputs,
           })
 
           const hasAnyDrift =
@@ -5646,6 +5513,9 @@ function SchedulePageContent() {
           if (!hasAnyDrift) return
 
           if (cancelled) return
+          setSnapshotDiffError(null)
+          setSnapshotDiffResult(diff)
+          lastSnapshotDiffKeyRef.current = diffKey
           showDriftNotice()
           return
         }
@@ -5706,61 +5576,17 @@ function SchedulePageContent() {
         return
       }
 
-      const [staffRes, wardsRes, prefsRes, programsRes, sptRes] = await Promise.all([
-        supabase
-          .from('staff')
-          .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program'),
-        supabase.from('wards').select(WARDS_SELECT_FIELDS),
-        supabase.from('pca_preferences').select(PCA_PREFS_SELECT_FIELDS),
-        supabase.from('special_programs').select(SPECIAL_PROGRAM_SELECT_FIELDS),
-        supabase.from('spt_allocations').select(SPT_ALLOC_SELECT_FIELDS),
-      ])
-
-      // Back-compat: some DBs do not have wards.team_assignment_portions
-      let effectiveWardsRes: typeof wardsRes = wardsRes
-      if ((wardsRes as any)?.error?.message?.includes('team_assignment_portions')) {
-        effectiveWardsRes = await supabase.from('wards').select('id,name,total_beds,team_assignments')
-      }
-
-      let effectivePrefsRes: typeof prefsRes = prefsRes
-      if ((prefsRes as any)?.error?.message?.includes('column') || (prefsRes as any)?.error?.code === '42703') {
-        effectivePrefsRes = await supabase.from('pca_preferences').select('*')
-      }
-
-      let effectiveProgramsRes: typeof programsRes = programsRes
-      if ((programsRes as any)?.error?.message?.includes('column') || (programsRes as any)?.error?.code === '42703') {
-        effectiveProgramsRes = await supabase.from('special_programs').select('*')
-      }
-
-      let effectiveSptRes: typeof sptRes = sptRes
-      if ((sptRes as any)?.error?.message?.includes('column') || (sptRes as any)?.error?.code === '42703') {
-        effectiveSptRes = await supabase.from('spt_allocations').select('*')
-      }
-
-      const firstError =
-        (staffRes as any).error ||
-        (effectiveWardsRes as any).error ||
-        (effectivePrefsRes as any).error ||
-        (effectiveProgramsRes as any).error ||
-        (effectiveSptRes as any).error
-
-      if (firstError) {
-        if (cancelled) return
-        setSnapshotDiffError((firstError as any)?.message || 'Failed to load live dashboard config.')
-        setSnapshotDiffResult(null)
-        return
-      }
+      const liveInputs = await fetchSnapshotDiffLiveInputs({
+        supabase,
+        includeTeamSettings: true,
+        cacheKey: `schedule-snapshot-diff:${diffKey}`,
+        ttlMs: SNAPSHOT_DIFF_LIVE_INPUTS_DEFAULT_TTL_MS,
+      })
 
       const { diffBaselineSnapshot } = await import('@/lib/features/schedule/snapshotDiff')
       const diff = diffBaselineSnapshot({
         snapshot: baselineSnapshot,
-        live: {
-          staff: (staffRes as any).data || [],
-          wards: (effectiveWardsRes as any).data || [],
-          pcaPreferences: (effectivePrefsRes as any).data || [],
-          specialPrograms: (effectiveProgramsRes as any).data || [],
-          sptAllocations: (effectiveSptRes as any).data || [],
-        },
+        live: liveInputs,
       })
 
       if (cancelled) return
@@ -10588,103 +10414,33 @@ function SchedulePageContent() {
             </ScheduleMainLayout>
           )
 
-          const showReference = !isRefHidden
-
-          const refSelectedDate = refScheduleState.selectedDate
-          const refWeekday = getWeekday(refSelectedDate)
-          const refDateLabel = formatDateDDMMYYYY(refSelectedDate)
-
-          const referencePaneNode = (
-            <MaybeProfiler id="SplitReferencePane">
-              <ReferenceSchedulePane
-                direction={splitDirection}
-                refHidden={!showReference}
-                disableBlur={isSplitMode}
-                showTeamHeader={true}
-                refDateLabel={refDateLabel}
-                selectedDate={refSelectedDate}
-                datesWithData={datesWithData}
-                holidays={holidays}
-                onSelectDate={(d) => {
-                  const key = formatDateForInput(d)
-                  try {
-                    window.sessionStorage.setItem('rbip_split_ref_date', key)
-                  } catch {
-                    // ignore
-                  }
-                  replaceScheduleQuery((p) => {
-                    p.set('split', '1')
-                    p.set('refDate', key)
-                    p.set('refHidden', '0')
-                  })
-                }}
-                onToggleDirection={() => {
-                  const next = splitDirection === 'col' ? 'row' : 'col'
-                  try {
-                    window.sessionStorage.setItem('rbip_split_dir', next)
-                  } catch {
-                    // ignore
-                  }
-                  replaceScheduleQuery((p) => {
-                    p.set('split', '1')
-                    p.set('splitDir', next)
-                    p.set('refHidden', '0')
-                  })
-                }}
-                onRetract={() => {
-                  try {
-                    window.sessionStorage.setItem('rbip_split_ref_hidden', '1')
-                  } catch {
-                    // ignore
-                  }
-                  replaceScheduleQuery((p) => {
-                    p.set('split', '1')
-                    p.set('refHidden', '1')
-                  })
-                }}
-              >
-                {refScheduleState.isHydratingSchedule ? (
-                  <div className="rounded-lg border border-border bg-card p-3">
-                    <div className="h-4 w-48 rounded-md bg-muted animate-pulse" />
-                    <div className="mt-2 h-28 rounded-md bg-muted/70 animate-pulse" />
-                  </div>
-                ) : (
-                  <MaybeProfiler id="ReferenceBlocks">
-                    <ScheduleBlocks1To6
-                      mode="reference"
-                      weekday={refWeekday}
-                      sptAllocations={refScheduleState.sptAllocations as any}
-                      specialPrograms={refScheduleState.specialPrograms as any}
-                      therapistAllocationsByTeam={refScheduleState.therapistAllocations as any}
-                      pcaAllocationsByTeam={refScheduleState.pcaAllocations as any}
-                      bedAllocations={refScheduleState.bedAllocations as any}
-                      wards={refScheduleState.wards as any}
-                      calculationsByTeam={refScheduleState.calculations as any}
-                      staff={refScheduleState.staff as any}
-                      staffOverrides={refScheduleState.staffOverrides as any}
-                      bedCountsOverridesByTeam={refScheduleState.bedCountsOverridesByTeam as any}
-                      bedRelievingNotesByToTeam={refScheduleState.bedRelievingNotesByToTeam as any}
-                      stepStatus={refScheduleState.stepStatus as any}
-                      initializedSteps={refScheduleState.initializedSteps as any}
-                    />
-                  </MaybeProfiler>
-                )}
-              </ReferenceSchedulePane>
-            </MaybeProfiler>
-          )
-
-          const refPortalTarget = isSplitMode && showReference ? refPortalHost : refPortalHiddenHost
-          const referencePanePortal = refPortalTarget ? createPortal(referencePaneNode, refPortalTarget) : null
-
           if (!isSplitMode) {
-            return (
-              <>
-                {mainLayout}
-                <div ref={setRefPortalHiddenHost} className="hidden" aria-hidden={true} />
-                {referencePanePortal}
-              </>
-            )
+            return mainLayout
           }
+
+          const showReference = !isRefHidden
+          const refSelectedDateForUi = (() => {
+            if (refDateParam) {
+              try {
+                return parseDateFromInput(refDateParam)
+              } catch {
+                // ignore and fall back
+              }
+            }
+            return selectedDate
+          })()
+          const splitReferenceLayer = (
+            <SplitReferencePortal
+              supabase={supabase}
+              refDateParam={refDateParam}
+              splitDirection={splitDirection}
+              showReference={showReference}
+              datesWithData={datesWithData}
+              holidays={holidays}
+              replaceScheduleQuery={replaceScheduleQuery}
+              refPortalHost={refPortalHost}
+            />
+          )
 
           const mainHeader = (
             <div className="shrink-0 bg-blue-50/60 dark:bg-blue-950/25 backdrop-blur border-b border-border">
@@ -10736,7 +10492,7 @@ function SchedulePageContent() {
           )
 
           if (!showReference) {
-            const refCollapsedDateLabel = formatDateDDMMYYYY(refScheduleState.selectedDate)
+            const refCollapsedDateLabel = formatDateDDMMYYYY(refSelectedDateForUi)
             return (
               <>
                 <div className={cn('h-full min-h-0 flex overflow-hidden', splitDirection === 'col' ? 'flex-row' : 'flex-col')}>
@@ -11090,7 +10846,7 @@ function SchedulePageContent() {
                     disableBlur={isSplitMode}
                     showTeamHeader={false}
                     refDateLabel={refCollapsedDateLabel}
-                    selectedDate={refScheduleState.selectedDate}
+                    selectedDate={refSelectedDateForUi}
                     datesWithData={datesWithData}
                     holidays={holidays}
                     onSelectDate={() => {}}
@@ -11107,8 +10863,6 @@ function SchedulePageContent() {
                     }}
                   />
                 </div>
-                <div ref={setRefPortalHiddenHost} className="hidden" aria-hidden={true} />
-                {referencePanePortal}
               </>
             )
           }
@@ -11539,8 +11293,7 @@ function SchedulePageContent() {
           return (
             <>
               {splitLayout}
-              <div ref={setRefPortalHiddenHost} className="hidden" aria-hidden={true} />
-              {referencePanePortal}
+              {splitReferenceLayer}
             </>
           )
         })()}
@@ -11950,6 +11703,211 @@ function SchedulePageContent() {
       </div>
     </DndContext>
   )
+}
+
+function SplitReferencePortal(props: {
+  supabase: any
+  refDateParam: string | null
+  splitDirection: 'col' | 'row'
+  showReference: boolean
+  datesWithData: Set<string>
+  holidays: Map<string, string>
+  replaceScheduleQuery: (mutate: (params: URLSearchParams) => void) => void
+  refPortalHost: HTMLDivElement | null
+}) {
+  const refInitialDefaultDate = useMemo(() => new Date(), [])
+  const refSchedule = useScheduleController({
+    defaultDate: refInitialDefaultDate,
+    supabase: props.supabase,
+    controllerRole: 'ref',
+    preserveUnsavedAcrossDateSwitch: false,
+  })
+  const { state: refScheduleState, actions: refScheduleActions } = refSchedule
+  const {
+    beginDateTransition: refControllerBeginDateTransition,
+    loadAndHydrateDate: refLoadAndHydrateDate,
+    _unsafe: refUnsafe,
+  } = refScheduleActions
+  const { setGridLoading: setRefGridLoading, setIsHydratingSchedule: setRefIsHydratingSchedule } = refUnsafe
+  const beginDateTransitionRef = useRef(refControllerBeginDateTransition)
+  const loadAndHydrateRef = useRef(refLoadAndHydrateDate)
+  const setRefGridLoadingRef = useRef(setRefGridLoading)
+  const setRefIsHydratingScheduleRef = useRef(setRefIsHydratingSchedule)
+  const statusRef = useRef({ loading: refScheduleState.loading, loadedForDate: refScheduleState.scheduleLoadedForDate })
+  const lastRequestedRef = useRef<string | null>(null)
+  const inFlightAbortRef = useRef<AbortController | null>(null)
+
+  beginDateTransitionRef.current = refControllerBeginDateTransition
+  loadAndHydrateRef.current = refLoadAndHydrateDate
+  setRefGridLoadingRef.current = setRefGridLoading
+  setRefIsHydratingScheduleRef.current = setRefIsHydratingSchedule
+
+  useEffect(() => {
+    statusRef.current = {
+      loading: refScheduleState.loading,
+      loadedForDate: refScheduleState.scheduleLoadedForDate,
+    }
+  }, [refScheduleState.loading, refScheduleState.scheduleLoadedForDate])
+
+  // Split mode: hydrate reference schedule when refDate changes.
+  useEffect(() => {
+    if (!props.refDateParam) return
+
+    try {
+      window.sessionStorage.setItem('rbip_split_ref_date', props.refDateParam)
+    } catch {
+      // ignore
+    }
+
+    const status = statusRef.current
+    if (status.loadedForDate === props.refDateParam && !status.loading) {
+      lastRequestedRef.current = props.refDateParam
+      return
+    }
+
+    // Guard against duplicate retriggers for the same date while a load is in flight.
+    if (lastRequestedRef.current === props.refDateParam && status.loading) {
+      return
+    }
+
+    let parsed: Date
+    try {
+      parsed = parseDateFromInput(props.refDateParam)
+    } catch {
+      return
+    }
+
+    inFlightAbortRef.current?.abort()
+    const ac = new AbortController()
+    inFlightAbortRef.current = ac
+    lastRequestedRef.current = props.refDateParam
+    beginDateTransitionRef.current(parsed, { resetLoadedForDate: true })
+    void (async () => {
+      try {
+        await loadAndHydrateRef.current({ date: parsed, signal: ac.signal })
+      } finally {
+        if (!ac.signal.aborted) {
+          // Unlike the main schedule page, the reference pane doesn't have the page-level
+          // gridLoading finalizer effect; ensure this doesn't get stuck true.
+          setRefGridLoadingRef.current(false)
+        }
+      }
+    })()
+    return () => {
+      ac.abort()
+      if (inFlightAbortRef.current === ac) inFlightAbortRef.current = null
+    }
+  }, [props.refDateParam])
+
+  useEffect(() => {
+    return () => {
+      inFlightAbortRef.current?.abort()
+    }
+  }, [])
+
+  // Split mode: the reference controller doesn't include the page-level hydration finalizer
+  // effect used by the main schedule page. Without this, the reference pane can remain
+  // stuck showing its skeleton forever.
+  useEffect(() => {
+    if (!props.refDateParam) return
+    if (!refScheduleState.isHydratingSchedule) return
+    if (refScheduleState.loading) return
+    if (refScheduleState.scheduleLoadedForDate !== props.refDateParam) return
+
+    // End hydration on next frame to ensure load-driven state updates have flushed.
+    try {
+      window.requestAnimationFrame(() => setRefIsHydratingScheduleRef.current(false))
+    } catch {
+      setRefIsHydratingScheduleRef.current(false)
+    }
+  }, [
+    props.refDateParam,
+    refScheduleState.isHydratingSchedule,
+    refScheduleState.loading,
+    refScheduleState.scheduleLoadedForDate,
+  ])
+
+  const refSelectedDate = refScheduleState.selectedDate
+  const refWeekday = getWeekday(refSelectedDate)
+  const refDateLabel = formatDateDDMMYYYY(refSelectedDate)
+
+  const referencePaneNode = (
+    <ReferenceSchedulePane
+        direction={props.splitDirection}
+        refHidden={!props.showReference}
+        disableBlur={true}
+        showTeamHeader={true}
+        refDateLabel={refDateLabel}
+        selectedDate={refSelectedDate}
+        datesWithData={props.datesWithData}
+        holidays={props.holidays}
+        onSelectDate={(d) => {
+          const key = formatDateForInput(d)
+          try {
+            window.sessionStorage.setItem('rbip_split_ref_date', key)
+          } catch {
+            // ignore
+          }
+          props.replaceScheduleQuery((p) => {
+            p.set('split', '1')
+            p.set('refDate', key)
+            p.set('refHidden', '0')
+          })
+        }}
+        onToggleDirection={() => {
+          const next = props.splitDirection === 'col' ? 'row' : 'col'
+          try {
+            window.sessionStorage.setItem('rbip_split_dir', next)
+          } catch {
+            // ignore
+          }
+          props.replaceScheduleQuery((p) => {
+            p.set('split', '1')
+            p.set('splitDir', next)
+            p.set('refHidden', '0')
+          })
+        }}
+        onRetract={() => {
+          try {
+            window.sessionStorage.setItem('rbip_split_ref_hidden', '1')
+          } catch {
+            // ignore
+          }
+          props.replaceScheduleQuery((p) => {
+            p.set('split', '1')
+            p.set('refHidden', '1')
+          })
+        }}
+      >
+        {refScheduleState.isHydratingSchedule ? (
+          <div className="rounded-lg border border-border bg-card p-3">
+            <div className="h-4 w-48 rounded-md bg-muted animate-pulse" />
+            <div className="mt-2 h-28 rounded-md bg-muted/70 animate-pulse" />
+          </div>
+        ) : (
+          <ScheduleBlocks1To6
+            mode="reference"
+            weekday={refWeekday}
+            sptAllocations={refScheduleState.sptAllocations as any}
+            specialPrograms={refScheduleState.specialPrograms as any}
+            therapistAllocationsByTeam={refScheduleState.therapistAllocations as any}
+            pcaAllocationsByTeam={refScheduleState.pcaAllocations as any}
+            bedAllocations={refScheduleState.bedAllocations as any}
+            wards={refScheduleState.wards as any}
+            calculationsByTeam={refScheduleState.calculations as any}
+            staff={refScheduleState.staff as any}
+            staffOverrides={refScheduleState.staffOverrides as any}
+            bedCountsOverridesByTeam={refScheduleState.bedCountsOverridesByTeam as any}
+            bedRelievingNotesByToTeam={refScheduleState.bedRelievingNotesByToTeam as any}
+            stepStatus={refScheduleState.stepStatus as any}
+            initializedSteps={refScheduleState.initializedSteps as any}
+          />
+        )}
+      </ReferenceSchedulePane>
+  )
+
+  if (!props.showReference) return null
+  return props.refPortalHost ? createPortal(referencePaneNode, props.refPortalHost) : null
 }
 
 export default function SchedulePage() {

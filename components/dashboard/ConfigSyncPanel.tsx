@@ -14,6 +14,10 @@ import type { BaselineSnapshot, BaselineSnapshotStored, GlobalHeadAtCreation } f
 import { unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { diffBaselineSnapshot } from '@/lib/features/schedule/snapshotDiff'
 import type { SnapshotDiffResult } from '@/lib/features/schedule/snapshotDiff'
+import {
+  fetchSnapshotDiffLiveInputs,
+  SNAPSHOT_DIFF_LIVE_INPUTS_DEFAULT_TTL_MS,
+} from '@/lib/features/schedule/snapshotDiffLiveInputs'
 
 type CategoryKey =
   | 'staffProfile'
@@ -158,41 +162,16 @@ export function ConfigSyncPanel() {
   }, [])
 
   const computeDiff = async (baseline: BaselineSnapshot) => {
-    const [staffRes, teamSettingsRes, wardsRes, prefsRes, programsRes, sptRes] = await Promise.all([
-      supabase.from('staff').select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program'),
-      supabase.from('team_settings').select('team,display_name'),
-      supabase.from('wards').select('id,name,total_beds,team_assignments,team_assignment_portions'),
-      supabase.from('pca_preferences').select('*'),
-      supabase.from('special_programs').select('*'),
-      supabase.from('spt_allocations').select('*'),
-    ])
-
-    // Back-compat: some DBs do not have wards.team_assignment_portions
-    let effectiveWardsRes: typeof wardsRes = wardsRes
-    if ((wardsRes as any)?.error?.message?.includes('team_assignment_portions')) {
-      effectiveWardsRes = await supabase.from('wards').select('id,name,total_beds,team_assignments')
-    }
-
-    const firstError =
-      (staffRes as any).error ||
-      (teamSettingsRes as any).error ||
-      (effectiveWardsRes as any).error ||
-      (prefsRes as any).error ||
-      (programsRes as any).error ||
-      (sptRes as any).error
-
-    if (firstError) throw firstError
+    const liveInputs = await fetchSnapshotDiffLiveInputs({
+      supabase,
+      includeTeamSettings: true,
+      cacheKey: `config-sync-snapshot-diff:${selectedDate}|reload:${snapshotReloadToken}`,
+      ttlMs: SNAPSHOT_DIFF_LIVE_INPUTS_DEFAULT_TTL_MS,
+    })
 
     return diffBaselineSnapshot({
       snapshot: baseline,
-      live: {
-        staff: (staffRes as any).data || [],
-        teamSettings: (teamSettingsRes as any).data || [],
-        wards: (effectiveWardsRes as any).data || [],
-        pcaPreferences: (prefsRes as any).data || [],
-        specialPrograms: (programsRes as any).data || [],
-        sptAllocations: (sptRes as any).data || [],
-      },
+      live: liveInputs,
     })
   }
 

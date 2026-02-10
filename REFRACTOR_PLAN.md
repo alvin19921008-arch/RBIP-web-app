@@ -28,12 +28,17 @@
 - Rationale: reduces re-renders and repetitive patterns
 
 ### 4) Shared Supabase fetch helpers
-- Extract shared “snapshot diff inputs” fetch (with back-compat column fallback)
-- Rationale: de-dup logic and reduce chance of inconsistent behavior
-- Only do if it reduces duplicated calls in runtime
+- Status: Done
+- Extract shared “snapshot diff inputs” fetch (with back-compat column fallback) into `lib/features/schedule/snapshotDiffLiveInputs.ts`
+- Add short TTL + in-flight dedupe so drift check and popover diff reuse the same live payload
+- Reuse the same helper in `components/dashboard/ConfigSyncPanel.tsx` to keep snapshot diff behavior aligned
+- Rationale: de-dup logic, reduce repeated runtime calls, and keep diff behavior consistent
 
 ### 5) Lazy-load heavy UI clusters not on critical path
-- Audit popovers/panels that are always in tree; defer via dynamic import or conditional render
+- Status: In progress (high-ROI parts done)
+- Split reference controller + pane portal now mount only in split mode
+- Stage startup dialog prefetch to high-probability actions only (staff edit, copy wizard, calendar)
+- Keep step/hover-triggered prefetch for step-specific heavy dialogs
 - Rationale: reduce initial JS execution and memory
 
 ## Explicitly Out of Scope (Low ROI)
