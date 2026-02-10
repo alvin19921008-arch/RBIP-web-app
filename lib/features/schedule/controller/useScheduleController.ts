@@ -1337,9 +1337,9 @@ export function useScheduleController(params: {
 
       const preserveUnsaved = params.preserveUnsavedAcrossDateSwitch !== false
       if (switchingAway && prevDateStr && prevScheduleId && preserveUnsaved) {
-        const completedSteps = Object.entries(stepStatus || {})
+        const completedSteps: ScheduleStepId[] = Object.entries(stepStatus || {})
           .filter(([, v]) => v === 'completed')
-          .map(([k]) => k)
+          .map(([k]) => k as ScheduleStepId)
 
         const workflowStateForCache: WorkflowState = {
           currentStep: (currentStep as any) ?? 'leave-fte',

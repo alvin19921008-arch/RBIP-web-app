@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, ArrowRight } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getTeamFloor, isFloorPCAForTeam, getTeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
@@ -239,34 +239,34 @@ export function NonFloatingSubstitutionDialog({
     <Dialog open={open} onOpenChange={(open) => !open && onCancel()}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>
-            {isWizardMode ? (
-              <span className="inline-flex items-center gap-1.5">
-                <span>Non-Floating PCA Substitution – Step 2.1 –</span>
-                <Badge variant="outline" className={cn('select-none px-2 py-0.5 text-[11px] font-medium', currentTheme.badge)}>
-                  {currentTeam}
-                </Badge>
-                <span>Team</span>
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5">
-                <span>Non-Floating PCA Substitution – Step 2.1 –</span>
-                <Badge
-                  variant="outline"
-                  className="select-none border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
-                >
-                  {currentTeam}
-                </Badge>
-                <span>Team</span>
-              </span>
-            )}
-          </DialogTitle>
+          <DialogTitle>Choose substitutes</DialogTitle>
           <DialogDescription>
-            {isWizardMode 
-              ? `Select floating PCAs to substitute for non-floating PCAs with reduced FTE (${teams.length} team${teams.length > 1 ? 's' : ''} need substitution)`
-              : 'Select floating PCAs to substitute for non-floating PCAs with reduced FTE'}
+            <span className="block text-xs text-muted-foreground">
+              Step 2.1 ·{' '}
+              <Badge
+                variant="outline"
+                className={cn(
+                  'select-none px-2 py-0.5 text-[11px] font-medium align-middle',
+                  isWizardMode ? currentTheme.badge : 'border-amber-200 bg-amber-50 text-amber-700'
+                )}
+              >
+                {currentTeam}
+              </Badge>
+              {isWizardMode ? ` · ${currentTeamIndex + 1} / ${teams.length}` : ''}
+            </span>
+            <span className="mt-1 block">
+              Assign floating PCAs to cover missing non-floating slots.
+            </span>
           </DialogDescription>
         </DialogHeader>
+
+        <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground pb-2 border-b">
+          <span className="px-2.5 py-1 rounded-md">2.0 Programs</span>
+          <ChevronRight className="h-3 w-3" />
+          <span className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-700 font-semibold text-primary">2.1 Substitute</span>
+          <ChevronRight className="h-3 w-3" />
+          <span className="px-2.5 py-1 rounded-md">2.2 SPT</span>
+        </div>
 
         {/* Navigation - only show for wizard mode */}
         {isWizardMode && (

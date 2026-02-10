@@ -1239,19 +1239,19 @@ export function FloatingPCAConfigDialog({
                   ? 'Scarcity detected — Balanced auto-selected'
                   : 'Scarcity detected — Balanced recommended'}
               </div>
-              <div className="text-amber-900/80 text-xs">
-                Rule: trigger when global shortage ≥ {scarcityShortageSlotsThreshold} slot(s).
-                Today: need {scarcityMetrics.neededSlots} slot(s), available {scarcityMetrics.availableSlots} slot(s), shortage {shortageSlots} slot(s) (slack{' '}
-                {scarcityMetrics.slackSlots}).
-                {scarcityBehavior === 'remind_only'
-                  ? ' You can keep Standard to use Step 3.2/3.3, but Balanced may reduce “0-slot” outcomes.'
-                  : ' You can switch back to Standard if you want to use Step 3.2/3.3.'}
-              </div>
-              {step31Preview.status === 'ready' && step31Preview.standardZeroTeams.length > 0 ? (
-                <div className="text-amber-900/80 text-xs">
-                  Preview (Standard if run now): {step31Preview.standardZeroTeams.length} team(s) with 0 floating PCA.
+              <div className="text-amber-900/80 text-xs leading-relaxed space-y-0.5">
+                <div>
+                  Trigger: global shortage ≥ {scarcityShortageSlotsThreshold} slot(s)
                 </div>
-              ) : null}
+                <div>
+                  Today: need {scarcityMetrics.neededSlots}, available {scarcityMetrics.availableSlots} → shortage {shortageSlots}
+                </div>
+                <div>
+                  {scarcityBehavior === 'remind_only'
+                    ? 'Standard keeps Step 3.2/3.3; Balanced may reduce 0-slot teams.'
+                    : 'Switch back to Standard if you want Step 3.2/3.3.'}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1506,11 +1506,9 @@ export function FloatingPCAConfigDialog({
   const renderStep32 = () => (
     <>
       <DialogDescription>
-        Approve which preferred PCA slots to assign to each team.
-        Same slot of same PCA can only be assigned to one team.
-        <br />
-        <span className="text-xs mt-1 block">
-          Note: If you skip assignments, these reserved slots will remain available for the next step or the final floating PCA allocation algorithm.
+        Reserve preferred PCA/slot pairs (optional).
+        <span className="mt-1 block text-xs">
+          Each PCA slot can be reserved once. Skip to keep all slots available for the next step/final run.
         </span>
       </DialogDescription>
       
@@ -1566,10 +1564,9 @@ export function FloatingPCAConfigDialog({
   const renderStep33 = () => (
     <>
       <DialogDescription>
-        Assign adjacent slots from special program PCAs to the same team.
-        <br />
-        <span className="text-xs mt-1 block">
-          Gray items show slots already assigned in Step 3.2. Checkboxes show adjacent slots available from special program assignments.
+        Assign adjacent slots from special program PCAs (optional).
+        <span className="mt-1 block text-xs">
+          Gray = already reserved in 3.2. Checkboxes = available adjacent slots.
         </span>
       </DialogDescription>
       
@@ -1627,32 +1624,54 @@ export function FloatingPCAConfigDialog({
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onCancel()}>
       <DialogContent className="max-w-4xl max-h-[calc(100vh-96px)] overflow-y-auto overscroll-contain">
         <DialogHeader>
-          <DialogTitle>
-            Configure Floating PCA Allocation – Step {currentMiniStep}
-          </DialogTitle>
+          <DialogTitle>Floating PCA allocation</DialogTitle>
+          <DialogDescription>
+            <span className="block text-xs text-muted-foreground">
+              Step {currentMiniStep}
+              {currentMiniStep === '3.1'
+                ? ' · Adjust'
+                : currentMiniStep === '3.2'
+                  ? ' · Preferred'
+                  : currentMiniStep === '3.3'
+                    ? ' · Adjacent'
+                    : currentMiniStep === '3.0'
+                      ? ' · Manual pre-assign'
+                      : ''}
+            </span>
+          </DialogDescription>
         </DialogHeader>
         
         {/* Step indicator */}
         {currentMiniStep !== '3.0' && (
-          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground mb-2">
-            <span className={cn(
-              'px-3 py-1.5 rounded-lg transition-colors',
-              currentMiniStep === '3.1' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
-            )}>
+          <div className="flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground mb-2">
+            <span
+              className={cn(
+                'px-3 py-1.5 rounded-lg transition-colors',
+                currentMiniStep === '3.1' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
+              )}
+            >
               3.1 Adjust
             </span>
-            <ChevronRight className="h-4 w-4" />
-            <span className={cn(
-              'px-3 py-1.5 rounded-lg transition-colors',
-              currentMiniStep === '3.2' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
-            )}>
+            <span className="text-muted-foreground/70" aria-hidden="true">
+              ·
+            </span>
+            <span
+              className={cn(
+                'px-3 py-1.5 rounded-lg transition-colors',
+                currentMiniStep === '3.2' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
+              )}
+            >
               3.2 Preferred
             </span>
-            <ChevronRight className="h-4 w-4" />
-            <span className={cn(
-              'px-3 py-1.5 rounded-lg transition-colors',
-              currentMiniStep === '3.3' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
-            )}>
+            <span className="text-muted-foreground/70" aria-hidden="true">
+              ·
+            </span>
+            <span
+              className={cn(
+                'px-3 py-1.5 rounded-lg transition-colors',
+                currentMiniStep === '3.3' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
+              )}
+            >
               3.3 Adjacent
             </span>
           </div>

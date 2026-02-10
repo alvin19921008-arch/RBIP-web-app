@@ -178,15 +178,17 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
           </div>
           {/* Text content overlay */}
           <div className="relative z-10 flex flex-col">
-            <div className="flex items-center justify-between gap-1">
-          <span className={cn("text-sm font-medium flex-1", nameColor === 'underline' ? 'underline' : nameColor || "")}>{displayName}</span>
+            <div className="flex items-start justify-between gap-1">
+          <span className={cn("text-sm font-medium flex-1 min-w-0", nameColor === 'underline' ? 'underline' : nameColor || "")}>{displayName}</span>
               {headerRight ? (
                 <span className="text-xs font-medium flex-shrink-0 whitespace-nowrap">
                   {headerRight}
                 </span>
               ) : null}
               {fteDisplay && (
-                <span className="text-sm font-medium text-muted-foreground flex-shrink-0">{fteDisplay}</span>
+                <span className="text-sm font-medium text-muted-foreground text-right flex-shrink max-w-[60%] whitespace-normal break-words leading-tight">
+                  {fteDisplay}
+                </span>
               )}
           {onEdit && isHoveringCard && (
             <Button
@@ -241,15 +243,17 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
       ) : (
         // Normal display (no battery)
         <div className="flex flex-col">
-          <div className="flex items-center justify-between gap-1">
-            <span className={cn("text-sm font-medium flex-1", nameColor === 'underline' ? 'underline' : nameColor || "")}>{displayName}</span>
+          <div className="flex items-start justify-between gap-1">
+            <span className={cn("text-sm font-medium flex-1 min-w-0", nameColor === 'underline' ? 'underline' : nameColor || "")}>{displayName}</span>
             {headerRight ? (
               <span className="text-xs font-medium flex-shrink-0 whitespace-nowrap">
                 {headerRight}
               </span>
             ) : null}
             {fteDisplay && (
-              <span className="text-sm font-medium text-muted-foreground flex-shrink-0">{fteDisplay}</span>
+              <span className="text-sm font-medium text-muted-foreground text-right flex-shrink max-w-[60%] whitespace-normal break-words leading-tight">
+                {fteDisplay}
+              </span>
             )}
             {onEdit && isHoveringCard && (
               <Button

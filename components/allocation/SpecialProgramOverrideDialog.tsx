@@ -1078,11 +1078,20 @@ export function SpecialProgramOverrideDialog({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-[95vw] max-h-[90vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Special Program Overrides – Step 2.0</DialogTitle>
+            <DialogTitle>Special program overrides</DialogTitle>
             <DialogDescription>
-              Configure special program assignments before algorithm runs
+              <span className="block text-xs text-muted-foreground">Step 2.0 · Before allocation</span>
+              <span className="mt-1 block">Configure special program assignments before algorithm runs.</span>
             </DialogDescription>
           </DialogHeader>
+
+          <div className="mb-2 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
+            <span className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-700 font-semibold text-primary">2.0 Programs</span>
+            <span aria-hidden="true">·</span>
+            <span className="px-2.5 py-1 rounded-md">2.1 Substitute</span>
+            <span aria-hidden="true">·</span>
+            <span className="px-2.5 py-1 rounded-md">2.2 SPT</span>
+          </div>
 
           <div className="flex-1 overflow-hidden py-4 min-h-0 flex flex-col">
             {activePrograms.length === 0 ? (
@@ -1090,7 +1099,7 @@ export function SpecialProgramOverrideDialog({
                 No special programs active on this weekday.
               </div>
             ) : (
-              <HorizontalCardCarousel recomputeKey={open}>
+              <HorizontalCardCarousel recomputeKey={open} showDots={false}>
                 {activePrograms.map((program) => {
                     const override = programOverrides[program.id] || {}
                     const therapist = override.therapistId ? allStaff.find(s => s.id === override.therapistId) : null

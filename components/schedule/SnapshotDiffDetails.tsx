@@ -41,31 +41,61 @@ export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
   const renderChangeTable = (rows: ChangeTableRow[]) => {
     const shown = rows.slice(0, MAX)
     const rest = Math.max(0, rows.length - shown.length)
+    const grouped: Array<{ item: string; rows: ChangeTableRow[] }> = []
+    for (let i = 0; i < shown.length; ) {
+      const item = shown[i]?.item ?? ''
+      const bucket: ChangeTableRow[] = []
+      while (i < shown.length && (shown[i]?.item ?? '') === item) {
+        bucket.push(shown[i]!)
+        i++
+      }
+      grouped.push({ item, rows: bucket })
+    }
     return (
       <div className="space-y-1">
-        <div className="overflow-x-auto">
-          <table className="min-w-[520px] w-full text-[11px] border border-amber-200/60 rounded-md overflow-hidden">
+        <div className="w-full">
+          <table className="w-full table-fixed text-[11px] border border-amber-200/60 rounded-md overflow-hidden">
+            <colgroup>
+              <col style={{ width: '22%' }} />
+              <col style={{ width: '16%' }} />
+              <col style={{ width: '31%' }} />
+              <col style={{ width: '31%' }} />
+            </colgroup>
             <thead className="bg-amber-100/60">
               <tr className="text-amber-950/80">
-                <th className="text-left font-semibold px-2 py-1 border-b border-amber-200/60 w-[34%]">Item</th>
-                <th className="text-left font-semibold px-2 py-1 border-b border-amber-200/60 w-[22%]">Field</th>
-                <th className="text-left font-semibold px-2 py-1 border-b border-amber-200/60 w-[22%]">Saved snapshot</th>
-                <th className="text-left font-semibold px-2 py-1 border-b border-amber-200/60 w-[22%]">Dashboard</th>
+                <th className="text-left font-semibold px-2 py-1 border-b border-amber-200/60">Item</th>
+                <th className="text-left font-semibold px-2 py-1 border-b border-amber-200/60">Field</th>
+                <th className="text-left font-semibold px-2 py-1 border-b border-amber-200/60">Saved snapshot</th>
+                <th className="text-left font-semibold px-2 py-1 border-b border-amber-200/60">Dashboard</th>
               </tr>
             </thead>
             <tbody className="bg-background/40">
-              {shown.map((r, i) => (
-                <tr key={`${r.item}-${r.field}-${i}`} className="align-top">
-                  <td className="px-2 py-1 border-b border-amber-200/40 text-muted-foreground">{r.item}</td>
-                  <td className="px-2 py-1 border-b border-amber-200/40 text-muted-foreground">{r.field}</td>
-                  <td className="px-2 py-1 border-b border-amber-200/40 text-muted-foreground whitespace-pre-wrap break-words">
-                    {r.saved}
-                  </td>
-                  <td className="px-2 py-1 border-b border-amber-200/40 text-muted-foreground whitespace-pre-wrap break-words">
-                    {r.dashboard}
-                  </td>
-                </tr>
-              ))}
+              {grouped.flatMap((g, gi) => {
+                return g.rows.map((r, ri) => {
+                  const key = `${g.item}-${r.field}-${gi}-${ri}`
+                  return (
+                    <tr key={key} className="align-top">
+                      {ri === 0 ? (
+                        <td
+                          rowSpan={g.rows.length}
+                          className="px-2 py-1 border-b border-amber-200/40 text-foreground/80 whitespace-normal break-words"
+                        >
+                          {g.item}
+                        </td>
+                      ) : null}
+                      <td className="px-2 py-1 border-b border-amber-200/40 text-muted-foreground whitespace-normal break-words">
+                        {r.field}
+                      </td>
+                      <td className="px-2 py-1 border-b border-amber-200/40 text-muted-foreground whitespace-pre-wrap break-words">
+                        {r.saved}
+                      </td>
+                      <td className="px-2 py-1 border-b border-amber-200/40 text-muted-foreground whitespace-pre-wrap break-words">
+                        {r.dashboard}
+                      </td>
+                    </tr>
+                  )
+                })
+              })}
             </tbody>
           </table>
         </div>
@@ -83,6 +113,10 @@ export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
   const wardsAdded = props.result.wards.added.map((w) => w.name)
   const wardsRemoved = props.result.wards.removed.map((w) => w.name)
   const wardsChangedRows = buildChangeRows(props.result.wards.changed.map((w) => ({ item: w.name, changes: w.changes })))
+
+  const teamSettingsChangedRows = buildChangeRows(
+    props.result.teamSettings.changed.map((row) => ({ item: row.team, changes: row.changes }))
+  )
 
   const prefsChangedRows = buildChangeRows(
     props.result.pcaPreferences.changed.map((p) => ({ item: p.team, changes: p.changes }))
@@ -102,11 +136,12 @@ export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
   )
 
   const hasStaff = staffAdded.length > 0 || staffRemoved.length > 0 || staffChangedRows.length > 0
+  const hasTeamSettings = teamSettingsChangedRows.length > 0
   const hasWards = wardsAdded.length > 0 || wardsRemoved.length > 0 || wardsChangedRows.length > 0
   const hasPrefs = prefsChangedRows.length > 0
   const hasSpecialPrograms = spAdded.length > 0 || spRemoved.length > 0 || spChangedRows.length > 0
   const hasSpt = sptAdded.length > 0 || sptRemoved.length > 0 || sptChangedRows.length > 0
-  const hasAny = hasStaff || hasWards || hasPrefs || hasSpecialPrograms || hasSpt
+  const hasAny = hasStaff || hasTeamSettings || hasWards || hasPrefs || hasSpecialPrograms || hasSpt
 
   return (
     <div className="space-y-3">
@@ -160,6 +195,18 @@ export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
                 {renderChangeTable(wardsChangedRows)}
               </div>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {hasTeamSettings ? (
+        <div className="space-y-1">
+          <div className="text-xs font-semibold text-amber-950/80">Team Settings</div>
+          <div className="pl-2 border-l-2 border-amber-200/50 space-y-2">
+            <div>
+              <div className="text-[10px] font-medium text-amber-600 uppercase tracking-wider mb-0.5">Changed</div>
+              {renderChangeTable(teamSettingsChangedRows)}
+            </div>
           </div>
         </div>
       ) : null}

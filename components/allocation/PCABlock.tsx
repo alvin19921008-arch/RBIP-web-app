@@ -185,7 +185,9 @@ function usePcaBlockViewModel({
     const effectiveInvalidSlot = hasInvalidSlots ? null : (override?.invalidSlot ?? (allocation as any).invalid_slot)
     
     let effectiveSlotsToInclude = slotsToInclude
-    if (!effectiveSlotsToInclude && resolvedCurrentStep === 'leave-fte' && !allocation.staff.floating) {
+    // For NON-floating PCA, prefer staffOverrides.availableSlots as the UI source of truth
+    // across steps (prevents "Whole day" flicker when saved allocations store slot1-4 = team).
+    if (!effectiveSlotsToInclude && !allocation.staff.floating && cardKind !== 'specialProgram') {
       const overrideAvailable = override?.availableSlots
       if (Array.isArray(overrideAvailable) && overrideAvailable.length > 0) {
         const extra = typeof effectiveInvalidSlot === 'number' ? [effectiveInvalidSlot] : []
@@ -198,7 +200,7 @@ function usePcaBlockViewModel({
     const filteredSlots = effectiveSlotsToInclude 
       ? slotsForThisTeam.filter(slot => effectiveSlotsToInclude.includes(slot))
       : slotsForThisTeam
-    
+
     if (filteredSlots.length === 0) return null
     
     const invalidSlot = effectiveInvalidSlot
@@ -901,40 +903,34 @@ export const PCABlock = memo(function PCABlock({
     // Case 2: Mixed case - some slots are substituting, some are regular
     // This is the key case: floating PCA is both substituting AND assigned as regular
     if (substitutedSlots.length > 0 && regularSlots.length > 0) {
-      // We have both substituting and regular slots - separate them
-      const substitutingDisplay = formatSlotGroup(substitutedSlots)
-      const regularDisplay = formatSlotGroup(regularSlots)
-      
-      const parts: React.ReactNode[] = []
-      
-      if (substitutingDisplay) {
-        parts.push(
-          <span key="sub" className="text-green-700 font-medium">
-            {substitutingDisplay}
-          </span>
-        )
-      }
-      
-      if (regularDisplay) {
-        if (parts.length > 0) {
-          parts.push(<span key="sep">, </span>)
-        }
-        parts.push(
-          <span key="reg">
-            {regularDisplay}
-          </span>
-        )
-      }
-      
-      // Add invalid slot time ranges if any
-      const invalidSlotTimeRanges = invalidSlots.map(is => `(${is.timeRange.start}-${is.timeRange.end})`)
-        .join('')
-      
-      if (invalidSlotTimeRanges) {
-        parts.push(<span key="invalid" className="text-blue-600">{invalidSlotTimeRanges}</span>)
-      }
-      
-      return <span>{parts}</span>
+      // Preserve the original displayText ordering (slot order) and only color the substituted part(s).
+      // This avoids confusing "PM, 0900-1030" reordering on step navigation.
+      const substitutedSlotTimes = new Set<string>()
+      substitutedSlots.forEach((slot) => {
+        const slotTime = getSlotTime(slot)
+        substitutedSlotTimes.add(formatTimeRange(slotTime))
+      })
+      if (substitutedSlots.includes(1) && substitutedSlots.includes(2)) substitutedSlotTimes.add('AM')
+      if (substitutedSlots.includes(3) && substitutedSlots.includes(4)) substitutedSlotTimes.add('PM')
+
+      const parts = displayText.split(/(AM|PM|\d{4}-\d{4})/g)
+      const invalidSlotTimeRanges = invalidSlots.map((is) => `(${is.timeRange.start}-${is.timeRange.end})`).join('')
+
+      return (
+        <span>
+          {parts.map((part, index) => {
+            if (substitutedSlotTimes.has(part)) {
+              return (
+                <span key={index} className="text-green-700 font-medium">
+                  {part}
+                </span>
+              )
+            }
+            return <span key={index}>{part}</span>
+          })}
+          {invalidSlotTimeRanges && <span className="text-blue-600">{invalidSlotTimeRanges}</span>}
+        </span>
+      )
     }
     
     // Case 3: Only substituting slots (no regular slots) - partial substitution

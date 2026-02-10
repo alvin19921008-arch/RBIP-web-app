@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { Check, Plus, RotateCcw, Trash2, ArrowLeft } from 'lucide-react'
+import { Check, Plus, RotateCcw, Trash2, ArrowLeft, ArrowLeftRight, ChevronRight } from 'lucide-react'
 
 import type { Staff, Team, Weekday, LeaveType } from '@/types/staff'
 import type { SptWeekdayComputed } from '@/lib/features/schedule/sptConfig'
@@ -497,19 +497,31 @@ export function SptFinalEditDialog(props: {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader>
-          <DialogTitle>SPT Final Edit – Step 2.2</DialogTitle>
+          <DialogTitle>SPT day overrides</DialogTitle>
           <DialogDescription>
-            Review and override SPT weekday configuration for{' '}
-            <Badge
-              variant="secondary"
-              className="ml-1 align-middle text-[11px] font-semibold tracking-wide uppercase"
-            >
-              {weekday.toUpperCase()}
-            </Badge>
-            .
-            This is a per-day override and won’t change dashboard settings.
+            <span className="block text-xs text-muted-foreground">
+              Step 2.2 ·{' '}
+              <Badge
+                variant="secondary"
+                className="ml-1 align-middle text-[11px] font-semibold tracking-wide uppercase"
+              >
+                {weekday.toUpperCase()}
+              </Badge>{' '}
+              · Per-day only
+            </span>
+            <span className="mt-1 block">
+              Review and override SPT weekday configuration for this day. This won&apos;t change dashboard settings.
+            </span>
           </DialogDescription>
         </DialogHeader>
+
+        <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground pb-2 border-b">
+          <span className="px-2.5 py-1 rounded-md">2.0 Programs</span>
+          <ChevronRight className="h-3 w-3" />
+          <span className="px-2.5 py-1 rounded-md">2.1 Substitute</span>
+          <ChevronRight className="h-3 w-3" />
+          <span className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-700 font-semibold text-primary">2.2 SPT</span>
+        </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain py-4 flex flex-col">
           {cards.length === 0 ? (
@@ -717,6 +729,7 @@ export function SptFinalEditDialog(props: {
                                 })
                               }
                             >
+                              <ArrowLeftRight className="h-3 w-3 mr-1 opacity-70" />
                               {showDetailedDisplay ? 'Simplify' : 'Detail'}
                             </Button>
                           ) : null}
