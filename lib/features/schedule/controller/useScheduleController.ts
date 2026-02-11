@@ -144,6 +144,35 @@ export type PCAAllocationErrors = {
   preferredSlotUnassigned?: string
 }
 
+const UNDO_STACK_LIMIT = 30
+
+type UndoSnapshot = {
+  staffOverrides: Record<string, StaffOverrideState>
+  staffOverridesVersion: number
+  bedCountsOverridesByTeam: BedCountsOverridesByTeam
+  bedCountsOverridesVersion: number
+  bedRelievingNotesByToTeam: BedRelievingNotesByToTeam
+  bedRelievingNotesVersion: number
+  therapistAllocations: Record<Team, (TherapistAllocation & { staff: Staff })[]>
+  pcaAllocations: Record<Team, (PCAAllocation & { staff: Staff })[]>
+  pendingPCAFTEPerTeam: Record<Team, number>
+  bedAllocations: BedAllocation[]
+  calculations: Record<Team, ScheduleCalculations | null>
+  currentStep: string
+  stepStatus: Record<string, 'pending' | 'completed' | 'modified'>
+  initializedSteps: Set<string>
+  step2Result: any
+  hasSavedAllocations: boolean
+  pcaAllocationErrors: PCAAllocationErrors
+  tieBreakDecisions: Record<string, Team>
+}
+
+type UndoEntry = {
+  label: string
+  createdAt: number
+  snapshot: UndoSnapshot
+}
+
 type ScheduleDomainState = {
   // Core schedule date
   selectedDate: Date
@@ -202,6 +231,8 @@ type ScheduleDomainState = {
   step2Result: any
   pcaAllocationErrors: PCAAllocationErrors
   tieBreakDecisions: Record<string, Team>
+  undoStack: UndoEntry[]
+  redoStack: UndoEntry[]
 }
 
 type ScheduleDomainAction =
@@ -213,9 +244,71 @@ type ScheduleDomainAction =
   | { type: 'setSavedBedCountsOverridesByTeam'; value: SetStateAction<ScheduleDomainState['savedBedCountsOverridesByTeam']> }
   | { type: 'setBedRelievingNotesByToTeam'; value: SetStateAction<ScheduleDomainState['bedRelievingNotesByToTeam']> }
   | { type: 'setSavedBedRelievingNotesByToTeam'; value: SetStateAction<ScheduleDomainState['savedBedRelievingNotesByToTeam']> }
+  | { type: 'pushUndoEntry'; entry: UndoEntry; clearRedo: boolean }
+  | { type: 'clearUndoRedoHistory' }
+  | {
+      type: 'restoreFromHistory'
+      snapshot: UndoSnapshot
+      undoStack: UndoEntry[]
+      redoStack: UndoEntry[]
+    }
 
 function applySetStateAction<T>(prev: T, action: SetStateAction<T>): T {
   return typeof action === 'function' ? (action as (p: T) => T)(prev) : action
+}
+
+function pushHistoryEntry(stack: UndoEntry[], entry: UndoEntry): UndoEntry[] {
+  const next = [...stack, entry]
+  if (next.length <= UNDO_STACK_LIMIT) return next
+  return next.slice(next.length - UNDO_STACK_LIMIT)
+}
+
+function deepCloneSnapshotValue<T>(value: T): T {
+  const cloneFn = (globalThis as any).structuredClone as (<U>(input: U) => U) | undefined
+  if (typeof cloneFn === 'function') {
+    try {
+      return cloneFn(value)
+    } catch {
+      // Fall through to manual clone.
+    }
+  }
+  if (value instanceof Set) {
+    return new Set(Array.from(value.values())) as T
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => deepCloneSnapshotValue(item)) as T
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    Object.entries(value as Record<string, unknown>).forEach(([k, v]) => {
+      out[k] = deepCloneSnapshotValue(v)
+    })
+    return out as T
+  }
+  return value
+}
+
+function buildUndoSnapshotFromState(state: ScheduleDomainState): UndoSnapshot {
+  return {
+    staffOverrides: deepCloneSnapshotValue(state.staffOverrides),
+    staffOverridesVersion: state.staffOverridesVersion,
+    bedCountsOverridesByTeam: deepCloneSnapshotValue(state.bedCountsOverridesByTeam),
+    bedCountsOverridesVersion: state.bedCountsOverridesVersion,
+    bedRelievingNotesByToTeam: deepCloneSnapshotValue(state.bedRelievingNotesByToTeam),
+    bedRelievingNotesVersion: state.bedRelievingNotesVersion,
+    therapistAllocations: deepCloneSnapshotValue(state.therapistAllocations),
+    pcaAllocations: deepCloneSnapshotValue(state.pcaAllocations),
+    pendingPCAFTEPerTeam: deepCloneSnapshotValue(state.pendingPCAFTEPerTeam),
+    bedAllocations: deepCloneSnapshotValue(state.bedAllocations),
+    calculations: deepCloneSnapshotValue(state.calculations),
+    currentStep: state.currentStep,
+    stepStatus: deepCloneSnapshotValue(state.stepStatus),
+    initializedSteps: new Set(state.initializedSteps),
+    step2Result: deepCloneSnapshotValue(state.step2Result),
+    hasSavedAllocations: state.hasSavedAllocations,
+    pcaAllocationErrors: deepCloneSnapshotValue(state.pcaAllocationErrors),
+    tieBreakDecisions: deepCloneSnapshotValue(state.tieBreakDecisions),
+  }
 }
 
 function scheduleDomainReducer(state: ScheduleDomainState, action: ScheduleDomainAction): ScheduleDomainState {
@@ -275,6 +368,47 @@ function scheduleDomainReducer(state: ScheduleDomainState, action: ScheduleDomai
         ...state,
         savedBedRelievingNotesByToTeam: nextVal,
         savedBedRelievingNotesVersion: state.bedRelievingNotesVersion,
+      }
+    }
+    case 'pushUndoEntry': {
+      return {
+        ...state,
+        undoStack: pushHistoryEntry(state.undoStack, action.entry),
+        ...(action.clearRedo ? { redoStack: [] } : {}),
+      }
+    }
+    case 'clearUndoRedoHistory': {
+      if (state.undoStack.length === 0 && state.redoStack.length === 0) return state
+      return {
+        ...state,
+        undoStack: [],
+        redoStack: [],
+      }
+    }
+    case 'restoreFromHistory': {
+      const s = action.snapshot
+      return {
+        ...state,
+        staffOverrides: deepCloneSnapshotValue(s.staffOverrides),
+        staffOverridesVersion: s.staffOverridesVersion,
+        bedCountsOverridesByTeam: deepCloneSnapshotValue(s.bedCountsOverridesByTeam),
+        bedCountsOverridesVersion: s.bedCountsOverridesVersion,
+        bedRelievingNotesByToTeam: deepCloneSnapshotValue(s.bedRelievingNotesByToTeam),
+        bedRelievingNotesVersion: s.bedRelievingNotesVersion,
+        therapistAllocations: deepCloneSnapshotValue(s.therapistAllocations),
+        pcaAllocations: deepCloneSnapshotValue(s.pcaAllocations),
+        pendingPCAFTEPerTeam: deepCloneSnapshotValue(s.pendingPCAFTEPerTeam),
+        bedAllocations: deepCloneSnapshotValue(s.bedAllocations),
+        calculations: deepCloneSnapshotValue(s.calculations),
+        currentStep: s.currentStep,
+        stepStatus: deepCloneSnapshotValue(s.stepStatus),
+        initializedSteps: new Set(s.initializedSteps),
+        step2Result: deepCloneSnapshotValue(s.step2Result),
+        hasSavedAllocations: s.hasSavedAllocations,
+        pcaAllocationErrors: deepCloneSnapshotValue(s.pcaAllocationErrors),
+        tieBreakDecisions: deepCloneSnapshotValue(s.tieBreakDecisions),
+        undoStack: action.undoStack,
+        redoStack: action.redoStack,
       }
     }
     default:
@@ -343,6 +477,8 @@ function createInitialScheduleDomainState(defaultDate: Date): ScheduleDomainStat
     step2Result: null,
     pcaAllocationErrors: {},
     tieBreakDecisions: {},
+    undoStack: [],
+    redoStack: [],
   }
 }
 
@@ -514,6 +650,8 @@ export function useScheduleController(params: {
     step2Result,
     pcaAllocationErrors,
     tieBreakDecisions,
+    undoStack,
+    redoStack,
   } = domainState
 
 
@@ -1680,6 +1818,8 @@ export function useScheduleController(params: {
     // Prevent editing stale grid content while the next date's data is still loading.
     setGridLoading(true)
     setSelectedDate(nextDate)
+    // History is date-scoped; clear it when changing date.
+    clearUndoRedoHistory()
     if (options?.resetLoadedForDate) {
       setScheduleLoadedForDate(null)
     }
@@ -1719,6 +1859,54 @@ export function useScheduleController(params: {
     setCurrentStep(prev)
   }
 
+  const clearUndoRedoHistory = () => {
+    dispatch({ type: 'clearUndoRedoHistory' })
+  }
+
+  const captureUndoCheckpoint = (label: string) => {
+    const entry: UndoEntry = {
+      label,
+      createdAt: Date.now(),
+      snapshot: buildUndoSnapshotFromState(domainState),
+    }
+    dispatch({ type: 'pushUndoEntry', entry, clearRedo: true })
+    return entry
+  }
+
+  const undoLastManualEdit = (): UndoEntry | null => {
+    if (undoStack.length === 0) return null
+    const entry = undoStack[undoStack.length - 1]
+    const currentSnapshot = buildUndoSnapshotFromState(domainState)
+    dispatch({
+      type: 'restoreFromHistory',
+      snapshot: entry.snapshot,
+      undoStack: undoStack.slice(0, -1),
+      redoStack: pushHistoryEntry(redoStack, {
+        label: entry.label,
+        createdAt: Date.now(),
+        snapshot: currentSnapshot,
+      }),
+    })
+    return entry
+  }
+
+  const redoLastManualEdit = (): UndoEntry | null => {
+    if (redoStack.length === 0) return null
+    const entry = redoStack[redoStack.length - 1]
+    const currentSnapshot = buildUndoSnapshotFromState(domainState)
+    dispatch({
+      type: 'restoreFromHistory',
+      snapshot: entry.snapshot,
+      undoStack: pushHistoryEntry(undoStack, {
+        label: entry.label,
+        createdAt: Date.now(),
+        snapshot: currentSnapshot,
+      }),
+      redoStack: redoStack.slice(0, -1),
+    })
+    return entry
+  }
+
   const applyStaffEditDomain = (args: {
     staffId: string
     leaveType: LeaveType | null
@@ -1729,6 +1917,7 @@ export function useScheduleController(params: {
     amPmSelection?: 'AM' | 'PM'
     specialProgramAvailable?: boolean
   }) => {
+    captureUndoCheckpoint('Leave/FTE edit')
     // Step 1 edits invalidate Step 2-derived state. Clear Step 2-only keys so Step 2.0 can
     // re-seed from dashboard config (preselect therapist/PCA/slots) instead of stale overrides.
     const baseOverrides = removeStep2KeysFromOverrides(staffOverrides as any)
@@ -1774,6 +1963,7 @@ export function useScheduleController(params: {
     nameAtTime?: string | null
     rankAtTime?: Staff['rank'] | null
   }) => {
+    captureUndoCheckpoint('Staff status override')
     const prevAny = (staffOverrides as any) || {}
     const prevMap = getStaffStatusOverridesFromScheduleOverrides(prevAny)
     const nextMap: StaffStatusOverridesById = {
@@ -1807,6 +1997,7 @@ export function useScheduleController(params: {
     const prevAny = (staffOverrides as any) || {}
     const prevMap = getStaffStatusOverridesFromScheduleOverrides(prevAny)
     if (!prevMap[staffId]) return prevAny
+    captureUndoCheckpoint('Staff status override')
     const nextMap = { ...prevMap }
     delete (nextMap as any)[staffId]
     const nextOverrides = {
@@ -1825,6 +2016,7 @@ export function useScheduleController(params: {
     toTeam: Team
     notes: Partial<Record<Team, any[]>>
   }) => {
+    captureUndoCheckpoint('Bed relieving notes edit')
     setBedRelievingNotesByToTeam((prev) => ({
       ...(prev as any),
       [args.toTeam]: args.notes,
@@ -1931,6 +2123,7 @@ export function useScheduleController(params: {
   }
 
   const resetStep3ForReentry = () => {
+    clearUndoRedoHistory()
     const averagePcaByTeam = TEAMS.reduce((acc, team) => {
       acc[team] = (calculations as any)[team]?.average_pca_per_team || 0
       return acc
@@ -1952,6 +2145,7 @@ export function useScheduleController(params: {
   }
 
   const clearDomainFromStep = (stepId: ScheduleStepId) => {
+    clearUndoRedoHistory()
     if (stepId === 'leave-fte') {
       setStaffOverrides({})
       setPcaAllocationErrors({})
@@ -2751,6 +2945,7 @@ export function useScheduleController(params: {
   }): Promise<Record<Team, (PCAAllocation & { staff: Staff })[]>> => {
     if (staff.length === 0) return createEmptyTeamRecord<Array<PCAAllocation & { staff: Staff }>>([])
 
+    clearUndoRedoHistory()
     const toast = args.toast ?? (() => {})
     setLoading(true)
     try {
@@ -3508,6 +3703,7 @@ export function useScheduleController(params: {
       return
     }
 
+    clearUndoRedoHistory()
     setLoading(true)
     try {
       // Recalculate from current state to pick up any user edits after Step 2.
@@ -3686,6 +3882,7 @@ export function useScheduleController(params: {
   const runStep4BedRelieving = async (args?: {
     toast?: (title: string, variant?: any, description?: string) => void
   }) => {
+    clearUndoRedoHistory()
     const toast = args?.toast ?? (() => {})
 
     // Use EFFECTIVE total beds (after SHS/Student deductions) for relieving calculations.
@@ -3798,6 +3995,12 @@ export function useScheduleController(params: {
     goToStep,
     goToNextStep,
     goToPreviousStep,
+    captureUndoCheckpoint,
+    undoLastManualEdit,
+    redoLastManualEdit,
+    clearUndoRedoHistory,
+    canUndo: undoStack.length > 0,
+    canRedo: redoStack.length > 0,
     applyStaffEditDomain,
     setScheduleStaffStatusOverride,
     clearScheduleStaffStatusOverride,

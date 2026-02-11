@@ -6,6 +6,7 @@
 ## [Unreleased] - 2026-02-08
 
 ### Added
+- **Undo / Redo for manual schedule edits**: Multi-step Undo and Redo for user-driven changes only (DnD slot transfer/discard, context-menu slot actions, Step 1 leave/FTE edits, Step 4 bed-relieving notes, bed count overrides, staff card color, therapist move/discard/split/merge). History is cleared on date change and when running Step 2/3/4 algorithms or step-clear actions, so algorithm runs are not undoable. Undo and Redo buttons appear next to the Display controls (and in split-mode header); keyboard shortcuts: Cmd/Ctrl+Z (Undo), Cmd/Ctrl+Shift+Z or Ctrl+Y (Redo), with input/contenteditable guard so text fields keep native undo.
 - **UI_WIZARD_DIALOG_HEADER_DRAFT.md**: Visual/copy draft for Step 2 and Step 3 wizard dialog headers (short titles, meta row, stepper chips).
 - **Schedule copy (setup-only)**: Copy always drops SPT therapist allocations and SPT-FTE; bed allocations and calculations are not copied (workflow requires re-running Step 2–4). Full copy option removed; wizard offers “Copy setup (recommended)” only.
 - **DND floating PCA popover**: When a multi-slot floating PCA is dropped onto a team, the slot-selection popover shows the inferred target team as a badge, with ✓ Confirm / ✕ Cancel (hybrid mode). Multi-slot drag-to-discard now uses the same confirm/cancel pattern (tick/cross) instead of drag-only.

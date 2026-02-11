@@ -51,7 +51,7 @@ import { ScheduleHeaderBar } from '@/components/schedule/ScheduleHeaderBar'
 import { ScheduleDialogsLayer } from '@/components/schedule/ScheduleDialogsLayer'
 import { ScheduleMainLayout } from '@/components/schedule/ScheduleMainLayout'
 import { SplitPane } from '@/components/ui/SplitPane'
-import { Save, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, ImageDown } from 'lucide-react'
+import { Save, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, ImageDown, Undo2, Redo2 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -393,11 +393,11 @@ function SchedulePageContent() {
       className={cn(
         // Soft segmented control (2026-style): subtle surface, minimal borders.
         'inline-flex items-center rounded-lg overflow-hidden',
-        'bg-muted/25',
-        'ring-1 ring-border/35'
+        'bg-muted/35',
+        'ring-1 ring-border/40 shadow-sm'
       )}
     >
-      <span className="hidden lg:inline-flex px-2 py-1.5 text-[11px] font-medium text-muted-foreground select-none pointer-events-none tracking-wide uppercase">
+      <span className="hidden lg:inline-flex px-2.5 py-1.5 text-[10px] font-bold text-muted-foreground/80 select-none pointer-events-none tracking-wider uppercase">
         Display
       </span>
       <Tooltip side="bottom" content={isViewingMode ? 'Exit viewing mode' : 'Enter viewing mode'}>
@@ -405,12 +405,12 @@ function SchedulePageContent() {
           type="button"
           onClick={toggleViewingMode}
           className={cn(
-            'px-2 py-1.5 text-xs font-medium inline-flex items-center gap-1.5',
-            'transition-colors',
+            'px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5',
+            'transition-all duration-200',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
             isViewingMode
-              ? 'bg-blue-600 text-white'
-              : 'text-muted-foreground hover:text-foreground hover:bg-muted/45',
+              ? 'bg-blue-600 text-white shadow-inner'
+              : 'text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200/80 dark:hover:bg-slate-800/80',
             'active:bg-muted/55'
           )}
           aria-pressed={isViewingMode}
@@ -433,19 +433,87 @@ function SchedulePageContent() {
           type="button"
           onClick={toggleSplitMode}
           className={cn(
-            'px-2 py-1.5 text-xs font-medium inline-flex items-center gap-1.5',
-            'transition-colors',
-            'border-l border-border/30',
+            'px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5',
+            'transition-all duration-200',
+            'border-l border-border/40',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
             isSplitMode
-              ? 'bg-blue-600 text-white'
-              : 'text-muted-foreground hover:text-foreground hover:bg-muted/45',
+              ? 'bg-blue-600 text-white shadow-inner'
+              : 'text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200/80 dark:hover:bg-slate-800/80',
             'active:bg-muted/55'
           )}
           aria-pressed={isSplitMode}
         >
           <SquareSplitHorizontal className="h-4 w-4" />
           <span>Split</span>
+        </button>
+      </Tooltip>
+      <Tooltip
+        side="bottom"
+        content={
+          isViewingMode
+            ? 'Undo disabled in viewing mode'
+            : scheduleActions.canUndo
+              ? 'Undo last manual edit'
+              : 'Nothing to undo'
+        }
+      >
+        <button
+          type="button"
+          onClick={() => {
+            if (isViewingMode || !scheduleActions.canUndo) return
+            const undone = scheduleActions.undoLastManualEdit()
+            if (undone) {
+              showActionToast('Undo', 'success', `Undid: ${undone.label}`)
+            }
+          }}
+          disabled={!scheduleActions.canUndo || isViewingMode}
+          className={cn(
+            'px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5',
+            'transition-all duration-200 border-l border-border/40',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            scheduleActions.canUndo && !isViewingMode
+              ? 'text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200/80 dark:hover:bg-slate-800/80 active:bg-muted/55'
+              : 'text-slate-400/30 dark:text-slate-600/30 cursor-not-allowed'
+          )}
+          aria-disabled={!scheduleActions.canUndo || isViewingMode}
+        >
+          <Undo2 className="h-4 w-4" />
+          <span>Undo</span>
+        </button>
+      </Tooltip>
+      <Tooltip
+        side="bottom"
+        content={
+          isViewingMode
+            ? 'Redo disabled in viewing mode'
+            : scheduleActions.canRedo
+              ? 'Redo last undone edit'
+              : 'Nothing to redo'
+        }
+      >
+        <button
+          type="button"
+          onClick={() => {
+            if (isViewingMode || !scheduleActions.canRedo) return
+            const redone = scheduleActions.redoLastManualEdit()
+            if (redone) {
+              showActionToast('Redo', 'success', `Redid: ${redone.label}`)
+            }
+          }}
+          disabled={!scheduleActions.canRedo || isViewingMode}
+          className={cn(
+            'px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5',
+            'transition-all duration-200 border-l border-border/40',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            scheduleActions.canRedo && !isViewingMode
+              ? 'text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200/80 dark:hover:bg-slate-800/80 active:bg-muted/55'
+              : 'text-slate-400/30 dark:text-slate-600/30 cursor-not-allowed'
+          )}
+          aria-disabled={!scheduleActions.canRedo || isViewingMode}
+        >
+          <Redo2 className="h-4 w-4" />
+          <span>Redo</span>
         </button>
       </Tooltip>
     </div>
@@ -538,6 +606,11 @@ function SchedulePageContent() {
     goToStep,
     goToNextStep,
     goToPreviousStep,
+    captureUndoCheckpoint,
+    undoLastManualEdit,
+    redoLastManualEdit,
+    canUndo,
+    canRedo,
     _unsafe,
   } = scheduleActions
 
@@ -913,6 +986,31 @@ function SchedulePageContent() {
     },
     [showActionToast]
   )
+
+  const handleUndoManualEdit = useCallback(() => {
+    if (isViewingMode || !canUndo) return
+    const undone = undoLastManualEdit()
+    if (undone) {
+      showActionToast('Undo', 'success', `Undid: ${undone.label}`)
+    }
+  }, [canUndo, isViewingMode, undoLastManualEdit, showActionToast])
+
+  const handleRedoManualEdit = useCallback(() => {
+    if (isViewingMode || !canRedo) return
+    const redone = redoLastManualEdit()
+    if (redone) {
+      showActionToast('Redo', 'success', `Redid: ${redone.label}`)
+    }
+  }, [canRedo, isViewingMode, redoLastManualEdit, showActionToast])
+
+  const isEditableTarget = useCallback((target: EventTarget | null) => {
+    if (!(target instanceof HTMLElement)) return false
+    if (target.isContentEditable) return true
+    const tag = target.tagName.toLowerCase()
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return true
+    if (target.closest('[contenteditable="true"]')) return true
+    return false
+  }, [])
 
   const saveAllocationNotes = useCallback(
     async (nextDoc: any) => {
@@ -1492,6 +1590,44 @@ function SchedulePageContent() {
       window.removeEventListener('pointerdown', onPointerDown, true)
     }
   }, [bedRelievingEditWarningPopover.show])
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      if (e.altKey) return
+      if (isEditableTarget(e.target)) return
+
+      const key = e.key.toLowerCase()
+      const wantsUndo = key === 'z' && !e.shiftKey
+      const wantsRedo = (key === 'z' && e.shiftKey) || key === 'y'
+      if (!wantsUndo && !wantsRedo) return
+
+      if (wantsUndo) {
+        if (!canUndo || isViewingMode) return
+        e.preventDefault()
+        handleUndoManualEdit()
+        return
+      }
+
+      if (wantsRedo) {
+        if (!canRedo || isViewingMode) return
+        e.preventDefault()
+        handleRedoManualEdit()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [
+    canUndo,
+    canRedo,
+    isViewingMode,
+    isEditableTarget,
+    handleUndoManualEdit,
+    handleRedoManualEdit,
+  ])
   
   // PCA Drag-and-Drop state for slot transfer
   const [pcaDragState, setPcaDragState] = useState<{
@@ -6254,7 +6390,14 @@ function SchedulePageContent() {
   }
   
   // Shared function to remove therapist allocation from team (for buffer therapist and SPT slot discard)
-  const removeTherapistAllocationFromTeam = (staffId: string, sourceTeam: Team) => {
+  const removeTherapistAllocationFromTeam = (
+    staffId: string,
+    sourceTeam: Team,
+    options?: { skipUndoCheckpoint?: boolean; undoLabel?: string }
+  ) => {
+    if (!options?.skipUndoCheckpoint) {
+      captureUndoCheckpoint(options?.undoLabel ?? 'Therapist slot discard')
+    }
     setTherapistAllocations(prev => ({
       ...prev,
       [sourceTeam]: prev[sourceTeam].filter(a => a.staff_id !== staffId),
@@ -6289,7 +6432,8 @@ function SchedulePageContent() {
     
     // For SPT, slot discard removes the entire allocation from the team (like buffer therapist)
     // This is different from PCA slot discard which only removes specific slots
-    removeTherapistAllocationFromTeam(staffId, sourceTeam)
+    captureUndoCheckpoint('Therapist slot discard')
+    removeTherapistAllocationFromTeam(staffId, sourceTeam, { skipUndoCheckpoint: true })
   }
   
   // Perform slot discard (opposite of slot transfer) - for PCA
@@ -6300,6 +6444,7 @@ function SchedulePageContent() {
       .find(a => a.staff_id === staffId)
     
     if (!currentAllocation) return
+    captureUndoCheckpoint('PCA slot discard')
     
     const staffMember = staff.find(s => s.id === staffId)
     const isBufferStaff = staffMember?.status === 'buffer'
@@ -6430,6 +6575,7 @@ function SchedulePageContent() {
     
     // If no existing allocation and this is a buffer PCA being assigned for the first time
     if (!currentAllocation && isBufferStaff && bufferFTE !== undefined) {
+      captureUndoCheckpoint('PCA slot transfer')
       // Create new allocation for buffer PCA
       const newAllocation: PCAAllocation & { staff: Staff } = {
         id: `temp-${staffId}-${Date.now()}`,
@@ -6494,6 +6640,7 @@ function SchedulePageContent() {
       closeIfNeeded()
       return
     }
+    captureUndoCheckpoint('PCA slot transfer')
     
     // If sourceTeam is null but we have an allocation, use the allocation's team as source
     const effectiveSourceTeam = sourceTeam || currentAllocation.team
@@ -6625,6 +6772,7 @@ function SchedulePageContent() {
       bufferStaff.find(s => s.id === staffId)
     if (!staffMember) return
     if (staffMember.rank !== 'PCA' || !staffMember.floating) return
+    captureUndoCheckpoint('PCA slot assignment')
 
     const currentAllocation = Object.values(pcaAllocations).flat().find(a => a.staff_id === staffId)
 
@@ -7105,6 +7253,7 @@ function SchedulePageContent() {
     // Update staffOverrides with new team
     // For fixed-team staff (APPT, RPT), this is a staff override (does NOT change staff.team property)
     // For buffer staff, also update the staff.team in the database
+    captureUndoCheckpoint('Therapist slot move')
     setStaffOverrides(prev => ({
       ...prev,
       [staffId]: {
@@ -7795,6 +7944,7 @@ function SchedulePageContent() {
 
               // Buffer therapist: assign whole staff to team (override.team + DB update)
               if (staffMember.status === 'buffer' && ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)) {
+                captureUndoCheckpoint('Therapist team assignment')
                 const fte =
                   typeof staffOverrides[staffId]?.fteRemaining === 'number'
                     ? (staffOverrides[staffId]!.fteRemaining as number)
@@ -7836,6 +7986,7 @@ function SchedulePageContent() {
               nextMap[targetTeam] = (nextMap[targetTeam] ?? 0) + remaining
               const total = Object.values(nextMap).reduce((sum, v) => sum + (v ?? 0), 0)
 
+              captureUndoCheckpoint('Therapist slot assignment')
               setStaffOverrides(prev => {
                 const existing = prev[staffId]
                 const leaveType = existing?.leaveType ?? getTherapistLeaveType(staffId)
@@ -8049,6 +8200,7 @@ function SchedulePageContent() {
                   nextMap[targetTeam] = (nextMap[targetTeam] ?? 0) + fteToMove
                   const total = Object.values(nextMap).reduce((sum, v) => sum + (v ?? 0), 0)
 
+                  captureUndoCheckpoint('Therapist slot move')
                   setStaffOverrides(prev => {
                     const existing = prev[staffId]
                     const leaveType = existing?.leaveType ?? getTherapistLeaveType(staffId)
@@ -8088,6 +8240,7 @@ function SchedulePageContent() {
                   delete nextMap[sourceTeam]
                   const total = Object.values(nextMap).reduce((sum, v) => sum + (v ?? 0), 0)
 
+                  captureUndoCheckpoint('Therapist slot discard')
                   setStaffOverrides(prev => {
                     const existing = prev[staffId]
                     const leaveType = existing?.leaveType ?? getTherapistLeaveType(staffId)
@@ -8474,6 +8627,7 @@ function SchedulePageContent() {
                                   }
                                 }
 
+                                captureUndoCheckpoint('Therapist slot split')
                                 setStaffOverrides(prev => {
                                   const existing = prev[staffId]
                                   const leaveType = existing?.leaveType ?? getTherapistLeaveType(staffId)
@@ -8655,6 +8809,7 @@ function SchedulePageContent() {
 
                               const total = Object.values(nextMap).reduce((sum, v) => sum + (v ?? 0), 0)
 
+                              captureUndoCheckpoint('Therapist slot merge')
                               setStaffOverrides(prev => {
                                 const existing = prev[staffId]
                                 const leaveType = existing?.leaveType ?? getTherapistLeaveType(staffId)
@@ -8785,6 +8940,7 @@ function SchedulePageContent() {
                           const team = colorContextAction.team!
                           const selectedClassName = colorContextAction.selectedClassName
 
+                          captureUndoCheckpoint('Staff card color')
                           setStaffOverrides(prev => {
                             const current = prev[staffId]
                             // Ensure required base fields exist if we are creating a new entry.
@@ -10485,6 +10641,58 @@ function SchedulePageContent() {
                         <span className="hidden md:inline">Split</span>
                       </button>
                     </Tooltip>
+                    <Tooltip
+                      side="bottom"
+                      content={
+                        isViewingMode
+                          ? 'Undo disabled in viewing mode'
+                          : canUndo
+                            ? 'Undo last manual edit'
+                            : 'Nothing to undo'
+                      }
+                    >
+                      <button
+                        type="button"
+                        onClick={handleUndoManualEdit}
+                        disabled={!canUndo || isViewingMode}
+                        className={cn(
+                          'px-2 py-1.5 text-xs font-medium transition-colors inline-flex items-center gap-1.5 border-l border-border',
+                          canUndo && !isViewingMode
+                            ? 'text-muted-foreground hover:text-primary hover:bg-muted/60'
+                            : 'text-muted-foreground/50 cursor-not-allowed'
+                        )}
+                        aria-disabled={!canUndo || isViewingMode}
+                      >
+                        <Undo2 className="h-4 w-4" />
+                        <span className="hidden md:inline">Undo</span>
+                      </button>
+                    </Tooltip>
+                    <Tooltip
+                      side="bottom"
+                      content={
+                        isViewingMode
+                          ? 'Redo disabled in viewing mode'
+                          : canRedo
+                            ? 'Redo last undone edit'
+                            : 'Nothing to redo'
+                      }
+                    >
+                      <button
+                        type="button"
+                        onClick={handleRedoManualEdit}
+                        disabled={!canRedo || isViewingMode}
+                        className={cn(
+                          'px-2 py-1.5 text-xs font-medium transition-colors inline-flex items-center gap-1.5 border-l border-border',
+                          canRedo && !isViewingMode
+                            ? 'text-muted-foreground hover:text-primary hover:bg-muted/60'
+                            : 'text-muted-foreground/50 cursor-not-allowed'
+                        )}
+                        aria-disabled={!canRedo || isViewingMode}
+                      >
+                        <Redo2 className="h-4 w-4" />
+                        <span className="hidden md:inline">Redo</span>
+                      </button>
+                    </Tooltip>
                   </div>
                 </div>
               </div>
@@ -11332,6 +11540,7 @@ function SchedulePageContent() {
                 const shs = payload.shsBedCounts ?? null
                 const students = payload.studentPlacementBedCounts ?? null
 
+                captureUndoCheckpoint('Bed counts override')
                 setBedCountsOverridesByTeam(prev => {
                   const next = { ...prev } as any
                   const hasAny =
