@@ -50,8 +50,9 @@ import { ScheduleOverlays } from '@/components/schedule/ScheduleOverlays'
 import { ScheduleHeaderBar } from '@/components/schedule/ScheduleHeaderBar'
 import { ScheduleDialogsLayer } from '@/components/schedule/ScheduleDialogsLayer'
 import { ScheduleMainLayout } from '@/components/schedule/ScheduleMainLayout'
+import { ScheduleSaveButton } from '@/components/schedule/ScheduleSaveButton'
 import { SplitPane } from '@/components/ui/SplitPane'
-import { Save, RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, ImageDown, Undo2, Redo2 } from 'lucide-react'
+import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, ImageDown, Undo2, Redo2 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -178,6 +179,12 @@ import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
 import { createTimingCollector, type TimingReport } from '@/lib/utils/timing'
 import { getCachedSchedule, cacheSchedule, clearCachedSchedule, getCacheSize } from '@/lib/utils/scheduleCache'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
+import {
+  applySubstitutionSlotsToOverride,
+  getAllSubstitutionSlots,
+  hasAnySubstitution,
+  removeSubstitutionForTargetsFromOverride,
+} from '@/lib/utils/substitutionFor'
 import { ALLOCATION_STEPS, EMPTY_BED_ALLOCATIONS, TEAMS, WEEKDAYS, WEEKDAY_NAMES } from '@/lib/features/schedule/constants'
 import { useScheduleController } from '@/lib/features/schedule/controller/useScheduleController'
 import type { PCAAllocationErrors } from '@/lib/features/schedule/controller/useScheduleController'
@@ -3985,10 +3992,10 @@ function SchedulePageContent() {
           ? Math.min(baseFTE, baseFTERemaining)
           : baseFTERemaining
         
-        // For floating PCAs, check if they have substitutionFor and exclude those slots from availableSlots
+        // For floating PCAs, exclude slots already used for Step 2.1 substitution
         let availableSlots = override?.availableSlots
-        if (s.floating && override?.substitutionFor) {
-          const substitutionSlots = override.substitutionFor.slots
+        if (s.floating && hasAnySubstitution(override as any)) {
+          const substitutionSlots = getAllSubstitutionSlots(override as any)
           const baseAvailableSlots = availableSlots && availableSlots.length > 0
             ? availableSlots
             : [1, 2, 3, 4]
@@ -4668,7 +4675,7 @@ function SchedulePageContent() {
     const hasStep2OverrideKeys = Object.values(staffOverrides ?? {}).some((o: any) => {
       if (!o || typeof o !== 'object') return false
       if (Array.isArray(o.specialProgramOverrides) && o.specialProgramOverrides.length > 0) return true
-      if (o.substitutionFor) return true
+      if (hasAnySubstitution(o)) return true
       // Team transfer overrides (fixed-team therapist emergency move)
       if (o.team != null) return true
       return false
@@ -5009,13 +5016,10 @@ function SchedulePageContent() {
       })
     )
     Object.entries(newOverrides).forEach(([staffId, o]) => {
-      const sf = (o as any)?.substitutionFor
-      if (!sf) return
-      const tag = `${sf.team}::${sf.nonFloatingPCAId}`
-      if (targets.has(tag)) {
-        const { substitutionFor, ...rest } = o as any
-        newOverrides[staffId] = rest
-      }
+      newOverrides[staffId] = removeSubstitutionForTargetsFromOverride({
+        override: o,
+        targets,
+      })
     })
 
     // Apply all selections to staffOverrides
@@ -5037,15 +5041,13 @@ function SchedulePageContent() {
             leaveType: null,
             fteRemaining: 1.0,
           }
-          newOverrides[selection.floatingPCAId] = {
-            ...existingOverride,
-            substitutionFor: {
-              nonFloatingPCAId,
-              nonFloatingPCAName: nonFloatingPCA.name,
-              team,
-              slots: selection.slots
-            }
-          }
+          newOverrides[selection.floatingPCAId] = applySubstitutionSlotsToOverride({
+            existingOverride,
+            team,
+            nonFloatingPCAId,
+            nonFloatingPCAName: nonFloatingPCA.name,
+            slots: selection.slots,
+          })
         }
       })
 
@@ -9455,26 +9457,18 @@ function SchedulePageContent() {
                     </div>
                   }
                 >
-                  <Button 
-                    onClick={saveScheduleToDatabase} 
-                    disabled={saving || !hasUnsavedChanges}
-                    variant={hasUnsavedChanges ? "default" : "outline"}
-                    className={hasUnsavedChanges ? "bg-green-600 hover:bg-green-700" : ""}
-                  >
-                    <Save className="h-4 w-4 mr-2" />
-                    {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
-                  </Button>
+                  <ScheduleSaveButton
+                    saving={saving}
+                    hasUnsavedChanges={hasUnsavedChanges}
+                    onSave={saveScheduleToDatabase}
+                  />
                 </Tooltip>
               ) : (
-                <Button 
-                  onClick={saveScheduleToDatabase} 
-                  disabled={saving || !hasUnsavedChanges}
-                  variant={hasUnsavedChanges ? "default" : "outline"}
-                  className={hasUnsavedChanges ? "bg-green-600 hover:bg-green-700" : ""}
-                >
-                  <Save className="h-4 w-4 mr-2" />
-                  {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
-                </Button>
+                <ScheduleSaveButton
+                  saving={saving}
+                  hasUnsavedChanges={hasUnsavedChanges}
+                  onSave={saveScheduleToDatabase}
+                />
               )}
                 </>
               )}
@@ -11017,26 +11011,18 @@ function SchedulePageContent() {
                     </div>
                   }
                 >
-                  <Button 
-                    onClick={saveScheduleToDatabase} 
-                    disabled={saving || !hasUnsavedChanges}
-                    variant={hasUnsavedChanges ? "default" : "outline"}
-                    className={hasUnsavedChanges ? "bg-green-600 hover:bg-green-700" : ""}
-                  >
-                    <Save className="h-4 w-4 mr-2" />
-                    {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
-                  </Button>
+                  <ScheduleSaveButton
+                    saving={saving}
+                    hasUnsavedChanges={hasUnsavedChanges}
+                    onSave={saveScheduleToDatabase}
+                  />
                 </Tooltip>
               ) : (
-                <Button 
-                  onClick={saveScheduleToDatabase} 
-                  disabled={saving || !hasUnsavedChanges}
-                  variant={hasUnsavedChanges ? "default" : "outline"}
-                  className={hasUnsavedChanges ? "bg-green-600 hover:bg-green-700" : ""}
-                >
-                  <Save className="h-4 w-4 mr-2" />
-                  {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
-                </Button>
+                <ScheduleSaveButton
+                  saving={saving}
+                  hasUnsavedChanges={hasUnsavedChanges}
+                  onSave={saveScheduleToDatabase}
+                />
               )}
                 </>
               )}
@@ -11460,26 +11446,18 @@ function SchedulePageContent() {
                     </div>
                   }
                 >
-                  <Button 
-                    onClick={saveScheduleToDatabase} 
-                    disabled={saving || !hasUnsavedChanges}
-                    variant={hasUnsavedChanges ? "default" : "outline"}
-                    className={hasUnsavedChanges ? "bg-green-600 hover:bg-green-700" : ""}
-                  >
-                    <Save className="h-4 w-4 mr-2" />
-                    {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
-                  </Button>
+                  <ScheduleSaveButton
+                    saving={saving}
+                    hasUnsavedChanges={hasUnsavedChanges}
+                    onSave={saveScheduleToDatabase}
+                  />
                 </Tooltip>
               ) : (
-                <Button 
-                  onClick={saveScheduleToDatabase} 
-                  disabled={saving || !hasUnsavedChanges}
-                  variant={hasUnsavedChanges ? "default" : "outline"}
-                  className={hasUnsavedChanges ? "bg-green-600 hover:bg-green-700" : ""}
-                >
-                  <Save className="h-4 w-4 mr-2" />
-                  {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Schedule' : 'Saved'}
-                </Button>
+                <ScheduleSaveButton
+                  saving={saving}
+                  hasUnsavedChanges={hasUnsavedChanges}
+                  onSave={saveScheduleToDatabase}
+                />
               )}
                 </>
               )}

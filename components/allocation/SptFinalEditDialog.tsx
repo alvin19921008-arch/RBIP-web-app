@@ -33,6 +33,8 @@ const LEAVE_TYPES: Exclude<LeaveType, null>[] = [
   'others',
 ]
 
+const SPT_FULL_LEAVE_TYPES_FORCE_DISABLE = new Set<string>(['VL', 'SDO', 'TIL', 'sick leave'])
+
 type SlotMode = 'AND' | 'OR'
 type SlotModeChoice = SlotMode | null
 
@@ -201,6 +203,8 @@ export function SptFinalEditDialog(props: {
   const [cards, setCards] = React.useState<CardState[]>([])
   const [addStaffId, setAddStaffId] = React.useState<string>('')
   const [deletedInitialStaffIds, setDeletedInitialStaffIds] = React.useState<string[]>([])
+  const [moreOptionsOpenByStaffId, setMoreOptionsOpenByStaffId] = React.useState<Record<string, boolean>>({})
+  const leaveTypeAnchorRefs = React.useRef<Record<string, HTMLDivElement | null>>({})
 
   const candidateAddList = React.useMemo(() => {
     const existing = new Set(cards.map((c) => c.staffId))
@@ -278,7 +282,14 @@ export function SptFinalEditDialog(props: {
           : dashDisplayText
 
       const leaveType = existing?.leaveType ?? null
-      const leaveCost = typeof existing?.fteSubtraction === 'number' ? existing.fteSubtraction : 0
+      const forceDisableByLeave =
+        typeof leaveType === 'string' && SPT_FULL_LEAVE_TYPES_FORCE_DISABLE.has(leaveType)
+      const leaveCost =
+        typeof existing?.fteSubtraction === 'number'
+          ? existing.fteSubtraction
+          : forceDisableByLeave
+            ? dashBaseFte
+            : 0
 
       const alloc = currentAllocationByStaffId[s.id]
       const seedTeam =
@@ -300,14 +311,14 @@ export function SptFinalEditDialog(props: {
           displayText: dashDisplayText,
           baseFte: dashBaseFte,
         },
-        enabled,
-        contributesFte,
+        enabled: forceDisableByLeave ? false : enabled,
+        contributesFte: forceDisableByLeave ? false : contributesFte,
         slots,
         slotModes,
         displayText,
         leaveType,
         leaveCostInput: String(Math.max(0, leaveCost)),
-        teamChoice: seedTeam ?? 'AUTO',
+        teamChoice: forceDisableByLeave ? 'AUTO' : (seedTeam ?? 'AUTO'),
       }
     })
   }, [currentAllocationByStaffId, sptTeamsByStaffId, sptWeekdayByStaffId, staffById, staffOverrides])
@@ -317,11 +328,22 @@ export function SptFinalEditDialog(props: {
     setCards(buildInitialCards())
     setAddStaffId('')
     setDeletedInitialStaffIds([])
+    setMoreOptionsOpenByStaffId({})
   }, [open, buildInitialCards])
 
   const updateCard = (staffId: string, patch: Partial<CardState>) => {
     setCards((prev) => prev.map((c) => (c.staffId === staffId ? { ...c, ...patch } : c)))
   }
+
+  const openMoreOptionsAndScrollToLeave = React.useCallback((staffId: string) => {
+    setMoreOptionsOpenByStaffId((prev) => ({ ...prev, [staffId]: true }))
+    // Wait for <details open> + content to render, then scroll within card.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        leaveTypeAnchorRefs.current[staffId]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
+    })
+  }, [])
 
   const toggleSlot = (staffId: string, slot: number) => {
     setCards((prev) =>
@@ -435,9 +457,12 @@ export function SptFinalEditDialog(props: {
     }> = {}
 
     for (const card of cards) {
+      const forceDisableByLeave =
+        typeof card.leaveType === 'string' && SPT_FULL_LEAVE_TYPES_FORCE_DISABLE.has(card.leaveType)
+
       const slotModes = normalizeSlotModes(card.slotModes)
       const slots = uniqueSortedSlots(card.slots)
-      const { baseFte, effectiveSlots } = computeConfiguredBaseFte({
+      const { baseFte: onDayBaseFte, effectiveSlots } = computeConfiguredBaseFte({
         enabled: card.enabled,
         contributesFte: card.contributesFte,
         slots,
@@ -447,24 +472,31 @@ export function SptFinalEditDialog(props: {
       const resolvedDisplayText =
         useDetailedDisplay && effectiveSlots.total === 3 ? buildSlotDisplayText(effectiveSlots) : null
 
+      // Leave cost should be clamped against the correct "base":
+      // - Normal: on-day computed baseFte (from enabled + contributes + slots)
+      // - Full-leave types (VL/SDO/TIL/sick leave): dashboard-configured baseFte, even though we force-disable on-day.
+      const leaveBaseFte = forceDisableByLeave ? (card.dashboard.baseFte ?? 0) : onDayBaseFte
       const leaveCostRaw = parseFloat(card.leaveCostInput)
-      const leaveCost = clampLeaveCost(leaveCostRaw, baseFte)
-      const fteRemaining = Math.max(0, baseFte - leaveCost)
+      const mappedFullLeaveCost = clampLeaveCost(leaveCostRaw, leaveBaseFte)
+      const fteRemaining = Math.max(0, leaveBaseFte - mappedFullLeaveCost)
+      const shouldAllocate = !forceDisableByLeave && card.enabled
       const suggested = computeSuggestedTeam(card, fteRemaining)
-      const team = card.teamChoice === 'AUTO' ? suggested : card.teamChoice
+      const resolvedTeam: Team | undefined =
+        shouldAllocate ? (card.teamChoice === 'AUTO' ? suggested : card.teamChoice) : undefined
 
       updates[card.staffId] = {
         leaveType: card.leaveType ?? null,
-        fteSubtraction: leaveCost,
+        fteSubtraction: mappedFullLeaveCost,
         fteRemaining,
-        team,
+        ...(resolvedTeam ? { team: resolvedTeam } : {}),
         sptOnDayOverride: {
-          enabled: card.enabled,
-          contributesFte: card.contributesFte,
+          // For full-leave types, always force-disable SPT allocation on this day.
+          enabled: shouldAllocate,
+          contributesFte: shouldAllocate ? card.contributesFte : false,
           slots,
           slotModes,
           displayText: resolvedDisplayText,
-          assignedTeam: team,
+          assignedTeam: resolvedTeam ?? null,
         },
       }
     }
@@ -496,31 +528,31 @@ export function SptFinalEditDialog(props: {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
-        <DialogHeader>
+        <DialogHeader className="space-y-3">
           <DialogTitle>SPT day overrides</DialogTitle>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="text-[11px] font-semibold tracking-wide">Step 2.2</span>
+            <span aria-hidden="true">·</span>
+            <Badge
+              variant="secondary"
+              className="text-[11px] font-semibold tracking-wide uppercase"
+            >
+              {weekday.toUpperCase()}
+            </Badge>
+            <span aria-hidden="true">·</span>
+            <span>Per-day only</span>
+          </div>
           <DialogDescription>
-            <span className="block text-xs text-muted-foreground">
-              Step 2.2 ·{' '}
-              <Badge
-                variant="secondary"
-                className="ml-1 align-middle text-[11px] font-semibold tracking-wide uppercase"
-              >
-                {weekday.toUpperCase()}
-              </Badge>{' '}
-              · Per-day only
-            </span>
-            <span className="mt-1 block">
-              Review and override SPT weekday configuration for this day. This won&apos;t change dashboard settings.
-            </span>
+            Adjust SPT duty for this day. Dashboard weekday settings stay unchanged.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground pb-2 border-b">
-          <span className="px-2.5 py-1 rounded-md">2.0 Programs</span>
+        <div className="flex flex-wrap items-center justify-center gap-2 rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
+          <span className="rounded-md px-2.5 py-1">2.0 Programs</span>
           <ChevronRight className="h-3 w-3" />
-          <span className="px-2.5 py-1 rounded-md">2.1 Substitute</span>
+          <span className="rounded-md px-2.5 py-1">2.1 Substitute</span>
           <ChevronRight className="h-3 w-3" />
-          <span className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-700 font-semibold text-primary">2.2 SPT</span>
+          <span className="rounded-md bg-slate-100 px-2.5 py-1 font-semibold text-primary dark:bg-slate-700">2.2 SPT</span>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain py-4 flex flex-col">
@@ -531,15 +563,19 @@ export function SptFinalEditDialog(props: {
           ) : (
             <HorizontalCardCarousel recomputeKey={open} fill={true} showDots={false} containerClassName="h-full">
               {cards.map((card) => {
+                const forceDisableByLeave =
+                  typeof card.leaveType === 'string' && SPT_FULL_LEAVE_TYPES_FORCE_DISABLE.has(card.leaveType)
+                const effectiveEnabled = card.enabled && !forceDisableByLeave
                 const computed = computeConfiguredBaseFte({
                   enabled: card.enabled,
                   contributesFte: card.contributesFte,
                   slots: card.slots,
                   slotModes: card.slotModes,
                 })
+                const leaveBaseFte = forceDisableByLeave ? (card.dashboard.baseFte ?? 0) : computed.baseFte
                 const leaveCostRaw = parseFloat(card.leaveCostInput)
-                const leaveCost = clampLeaveCost(leaveCostRaw, computed.baseFte)
-                const fteRemaining = Math.max(0, computed.baseFte - leaveCost)
+                const leaveCost = clampLeaveCost(leaveCostRaw, leaveBaseFte)
+                const fteRemaining = Math.max(0, leaveBaseFte - leaveCost)
                 const suggestedTeam = computeSuggestedTeam(card, fteRemaining)
                 const amSlotsCount = card.slots.filter((s) => s === 1 || s === 2).length
                 const pmSlotsCount = card.slots.filter((s) => s === 3 || s === 4).length
@@ -556,6 +592,12 @@ export function SptFinalEditDialog(props: {
 
                 const teamValue = card.teamChoice === 'AUTO' ? 'AUTO' : card.teamChoice
                 const allowedTeams = (card.allowedTeams?.length ? card.allowedTeams : TEAMS).filter((t) => TEAMS.includes(t))
+                const needsSlotsWarning = effectiveEnabled && card.contributesFte && card.slots.length === 0
+                const slotsChipText = card.slots.length > 0 ? card.slots.join(', ') : '—'
+                const fteChipText =
+                  !effectiveEnabled
+                    ? '—'
+                    : formatFteShort(fteRemaining)
 
                 return (
                   <Card
@@ -566,9 +608,6 @@ export function SptFinalEditDialog(props: {
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <CardTitle>{card.staffName}</CardTitle>
-                          <div className="text-xs text-muted-foreground">
-                            Suggested team: <span className="font-medium">{suggestedTeam}</span>
-                          </div>
                         </div>
                         <div className="flex items-center gap-2">
                           {!(card.dashboard.enabled && card.dashboard.slots.length > 0) && (
@@ -594,215 +633,416 @@ export function SptFinalEditDialog(props: {
                         </div>
                       </div>
 
-                      <div className="text-xs space-y-1">
-                        <div className="text-muted-foreground">
-                          Dashboard: base FTE <span className="font-medium text-foreground">{formatFte(card.dashboard.baseFte)}</span>
-                          {card.dashboard.slots.length ? (
-                            <> · slots <span className="font-medium text-foreground">{card.dashboard.slots.join(', ')}</span></>
-                          ) : (
-                            <> · slots <span className="font-medium text-foreground">—</span></>
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        <Badge
+                          variant="secondary"
+                          className={cn(
+                            'border',
+                            effectiveEnabled
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
+                              : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-300'
                           )}
-                        </div>
-                        <div className="text-muted-foreground">
-                          On-day: base FTE <span className="font-medium text-foreground">{formatFte(computed.baseFte)}</span> · remaining{' '}
-                          <span className="font-medium text-foreground">{formatFte(fteRemaining)}</span>
-                        </div>
+                        >
+                          {effectiveEnabled ? 'On' : 'Off'}
+                        </Badge>
+
+                        {card.leaveType && !isOnDutyLeaveType(card.leaveType as any) ? (
+                          <Badge className="border border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+                            Leave: <span className="ml-1 font-medium">{String(card.leaveType)}</span>
+                          </Badge>
+                        ) : null}
+
+                        {effectiveEnabled ? (
+                          <Badge variant="secondary" className="border border-border/60">
+                            Slots: <span className="ml-1 font-medium text-foreground">{slotsChipText}</span>
+                          </Badge>
+                        ) : null}
+
+                        <Badge variant="secondary" className="border border-border/60">
+                          FTE: <span className="ml-1 font-medium text-foreground">{fteChipText}</span>
+                        </Badge>
+
+                        {effectiveEnabled ? (
+                          <Badge variant="secondary" className="border border-border/60">
+                            {card.teamChoice === 'AUTO' ? (
+                              <>
+                                Auto: <span className="ml-1 font-medium text-foreground">{suggestedTeam}</span>
+                              </>
+                            ) : (
+                              <>
+                                Team: <span className="ml-1 font-medium text-foreground">{card.teamChoice}</span>
+                              </>
+                            )}
+                          </Badge>
+                        ) : null}
+
+                        {needsSlotsWarning ? (
+                          <Badge className="border border-yellow-300 bg-yellow-50 text-yellow-900 dark:border-yellow-700 dark:bg-yellow-950/30 dark:text-yellow-200">
+                            Needs slots
+                          </Badge>
+                        ) : null}
                       </div>
+
+                      <details className="rounded-md border bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
+                        <summary className="cursor-pointer select-none font-medium text-foreground">
+                          Baseline & details
+                        </summary>
+                        <div className="mt-2 space-y-1">
+                          <div>
+                            Dashboard: base FTE{' '}
+                            <span className="font-medium text-foreground">{formatFte(card.dashboard.baseFte)}</span> · slots{' '}
+                            <span className="font-medium text-foreground">
+                              {card.dashboard.slots.length ? card.dashboard.slots.join(', ') : '—'}
+                            </span>
+                          </div>
+                          <div>
+                            On-day: base FTE{' '}
+                            <span className="font-medium text-foreground">{formatFte(computed.baseFte)}</span> · remaining{' '}
+                            <span className="font-medium text-foreground">{formatFte(fteRemaining)}</span>
+                          </div>
+                          <div>
+                            Slot display: <span className="font-medium text-foreground">{currentDisplayText}</span> · effective slots{' '}
+                            <span className="font-medium text-foreground">{computed.effectiveSlots.total}</span>
+                          </div>
+                          {card.teamChoice !== 'AUTO' ? (
+                            <div>
+                              Suggested team (if Auto): <span className="font-medium text-foreground">{suggestedTeam}</span>
+                            </div>
+                          ) : null}
+                        </div>
+                      </details>
                     </CardHeader>
 
                     <CardContent className="space-y-4">
                       <div className="flex items-center justify-between">
                         <div className="space-y-1">
                           <Label>Enabled</Label>
-                          <div className="text-xs text-muted-foreground">Include this SPT on this day</div>
+                          <div className="text-xs text-muted-foreground">
+                            {forceDisableByLeave
+                              ? 'Disabled automatically due to selected leave type'
+                              : 'Include this SPT on this day'}
+                          </div>
                         </div>
                         <Switch
-                          checked={card.enabled}
-                          onCheckedChange={(v) => updateCard(card.staffId, { enabled: v })}
+                          checked={effectiveEnabled}
+                          onCheckedChange={(v) => {
+                            if (!v) {
+                              // When disabling, clear any manual team override and prompt user to set leave (optional).
+                              updateCard(card.staffId, { enabled: false, teamChoice: 'AUTO' })
+                              openMoreOptionsAndScrollToLeave(card.staffId)
+                              return
+                            }
+                            updateCard(card.staffId, { enabled: true })
+                          }}
+                          disabled={forceDisableByLeave}
                         />
                       </div>
 
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-1">
-                          <Label>Contribute FTE</Label>
-                          <div className="text-xs text-muted-foreground">If off, base FTE becomes 0</div>
+                      {effectiveEnabled ? (
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-1">
+                            <Label>Contribute FTE</Label>
+                            <div className="text-xs text-muted-foreground">If off, base FTE becomes 0</div>
+                          </div>
+                          <Switch
+                            checked={card.contributesFte}
+                            onCheckedChange={(v) => updateCard(card.staffId, { contributesFte: v })}
+                          />
                         </div>
-                        <Switch
-                          checked={card.contributesFte}
-                          onCheckedChange={(v) => updateCard(card.staffId, { contributesFte: v })}
-                        />
-                      </div>
+                      ) : null}
 
                       <div className="space-y-2">
-                        <Label>Slots (must match configured FTE)</Label>
-                        <div className="grid grid-cols-4 gap-2">
-                          {[1, 2, 3, 4].map((slot) => {
-                            const selected = card.slots.includes(slot)
-                            return (
-                              <Button
-                                key={slot}
-                                type="button"
-                                variant="outline"
-                                className={cn(
-                                  'h-9',
-                                  selected ? 'bg-blue-600 text-white hover:bg-blue-700 border-blue-600' : 'bg-gray-100 text-gray-700'
-                                )}
-                                onClick={() => toggleSlot(card.staffId, slot)}
-                                disabled={!card.enabled}
-                              >
-                                {selected ? <Check className="h-4 w-4 mr-1" /> : null}
-                                {slot}
-                              </Button>
-                            )
-                          })}
-                        </div>
+                        <Label>Slots</Label>
 
                         <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <div className="text-xs text-muted-foreground">
-                              AM slot mode{amSlotsCount === 1 ? ' (not needed for single slot)' : ''}
+                          <div className="rounded-md border p-3 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-xs font-medium text-muted-foreground">AM (1–2)</div>
+                              {card.enabled && needsAmMode ? (
+                                <div className="flex gap-1">
+                                  {(['AND', 'OR'] as SlotMode[]).map((m) => (
+                                    <Button
+                                      key={m}
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className={cn(
+                                        'h-7 px-2 text-[11px]',
+                                        (card.slotModes.am ?? 'AND') === m
+                                          ? 'bg-blue-600 text-white hover:bg-blue-700 border-blue-600'
+                                          : 'bg-gray-100 text-gray-700'
+                                      )}
+                                      onClick={() => updateCard(card.staffId, { slotModes: { ...card.slotModes, am: m } })}
+                                      disabled={!effectiveEnabled}
+                                    >
+                                      {m}
+                                    </Button>
+                                  ))}
+                                </div>
+                              ) : null}
                             </div>
-                            <div className="flex gap-2">
-                              {(['AND', 'OR'] as SlotMode[]).map((m) => (
-                                <Button
-                                  key={m}
-                                  type="button"
-                                  variant="outline"
-                                  className={cn(
-                                    'h-8 px-3',
-                                    card.slotModes.am === m
-                                      ? 'bg-blue-600 text-white hover:bg-blue-700 border-blue-600'
-                                      : 'bg-gray-100 text-gray-700'
-                                  )}
-                                  onClick={() => updateCard(card.staffId, { slotModes: { ...card.slotModes, am: m } })}
-                                  disabled={!card.enabled || !needsAmMode}
-                                >
-                                  {m}
-                                </Button>
-                              ))}
+
+                            <div className="grid grid-cols-2 gap-2">
+                              {[1, 2].map((slot) => {
+                                const selected = card.slots.includes(slot)
+                                return (
+                                  <Button
+                                    key={slot}
+                                    type="button"
+                                    variant="outline"
+                                    className={cn(
+                                      'h-9',
+                                      selected ? 'bg-blue-600 text-white hover:bg-blue-700 border-blue-600' : 'bg-gray-100 text-gray-700'
+                                    )}
+                                    onClick={() => toggleSlot(card.staffId, slot)}
+                                    disabled={!effectiveEnabled}
+                                  >
+                                    {selected ? <Check className="h-4 w-4 mr-1" /> : null}
+                                    {slot}
+                                  </Button>
+                                )
+                              })}
                             </div>
                           </div>
-                          <div className="space-y-1">
-                            <div className="text-xs text-muted-foreground">
-                              PM slot mode{pmSlotsCount === 1 ? ' (not needed for single slot)' : ''}
+
+                          <div className="rounded-md border p-3 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-xs font-medium text-muted-foreground">PM (3–4)</div>
+                              {card.enabled && needsPmMode ? (
+                                <div className="flex gap-1">
+                                  {(['AND', 'OR'] as SlotMode[]).map((m) => (
+                                    <Button
+                                      key={m}
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className={cn(
+                                        'h-7 px-2 text-[11px]',
+                                        (card.slotModes.pm ?? 'AND') === m
+                                          ? 'bg-blue-600 text-white hover:bg-blue-700 border-blue-600'
+                                          : 'bg-gray-100 text-gray-700'
+                                      )}
+                                      onClick={() => updateCard(card.staffId, { slotModes: { ...card.slotModes, pm: m } })}
+                                      disabled={!effectiveEnabled}
+                                    >
+                                      {m}
+                                    </Button>
+                                  ))}
+                                </div>
+                              ) : null}
                             </div>
-                            <div className="flex gap-2">
-                              {(['AND', 'OR'] as SlotMode[]).map((m) => (
-                                <Button
-                                  key={m}
-                                  type="button"
-                                  variant="outline"
-                                  className={cn(
-                                    'h-8 px-3',
-                                    card.slotModes.pm === m
-                                      ? 'bg-blue-600 text-white hover:bg-blue-700 border-blue-600'
-                                      : 'bg-gray-100 text-gray-700'
-                                  )}
-                                  onClick={() => updateCard(card.staffId, { slotModes: { ...card.slotModes, pm: m } })}
-                                  disabled={!card.enabled || !needsPmMode}
-                                >
-                                  {m}
-                                </Button>
-                              ))}
+
+                            <div className="grid grid-cols-2 gap-2">
+                              {[3, 4].map((slot) => {
+                                const selected = card.slots.includes(slot)
+                                return (
+                                  <Button
+                                    key={slot}
+                                    type="button"
+                                    variant="outline"
+                                    className={cn(
+                                      'h-9',
+                                      selected ? 'bg-blue-600 text-white hover:bg-blue-700 border-blue-600' : 'bg-gray-100 text-gray-700'
+                                    )}
+                                    onClick={() => toggleSlot(card.staffId, slot)}
+                                    disabled={!effectiveEnabled}
+                                  >
+                                    {selected ? <Check className="h-4 w-4 mr-1" /> : null}
+                                    {slot}
+                                  </Button>
+                                )
+                              })}
                             </div>
                           </div>
                         </div>
+                      </div>
 
-                        <div className="text-xs text-muted-foreground flex items-center justify-between gap-2">
-                          <div>
-                            Slot display: <span className="font-medium">{currentDisplayText}</span> · Effective slots:{' '}
-                            <span className="font-medium">{computed.effectiveSlots.total}</span>
-                          </div>
-                          {showToggle ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className={cn(
-                                'h-6 px-2 text-[11px] font-medium rounded-full',
-                                'border-border/70 bg-background/90 shadow-xs',
-                                'text-muted-foreground hover:text-foreground'
-                              )}
-                              onClick={() =>
-                                updateCard(card.staffId, {
-                                  displayText: showDetailedDisplay ? null : slotDisplayText,
-                                })
-                              }
-                            >
-                              <ArrowLeftRight className="h-3 w-3 mr-1 opacity-70" />
-                              {showDetailedDisplay ? 'Simplify' : 'Detail'}
-                            </Button>
+                      <details
+                        className="rounded-md border bg-muted/10 px-3 py-2"
+                        open={!!moreOptionsOpenByStaffId[card.staffId]}
+                        onToggle={(e) => {
+                          const el = e.currentTarget
+                          setMoreOptionsOpenByStaffId((prev) => ({ ...prev, [card.staffId]: el.open }))
+                        }}
+                      >
+                        <summary className="cursor-pointer select-none text-sm font-medium">
+                          More options
+                        </summary>
+
+                        <div className="mt-3 space-y-4">
+                          {effectiveEnabled && fteRemaining > 0 ? (
+                            <div className="text-xs text-muted-foreground flex items-center justify-between gap-2">
+                              <div>
+                                Slot display: <span className="font-medium text-foreground">{currentDisplayText}</span> · effective slots:{' '}
+                                <span className="font-medium text-foreground">{computed.effectiveSlots.total}</span>
+                              </div>
+                              {showToggle ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className={cn(
+                                    'h-6 px-2 text-[11px] font-medium rounded-full',
+                                    'border-border/70 bg-background/90 shadow-xs',
+                                    'text-muted-foreground hover:text-foreground'
+                                  )}
+                                  onClick={() =>
+                                    updateCard(card.staffId, {
+                                      displayText: showDetailedDisplay ? null : slotDisplayText,
+                                    })
+                                  }
+                                >
+                                  <ArrowLeftRight className="h-3 w-3 mr-1 opacity-70" />
+                                  {showDetailedDisplay ? 'Simplify' : 'Detail'}
+                                </Button>
+                              ) : null}
+                            </div>
                           ) : null}
-                        </div>
-                      </div>
 
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-2">
-                          <Label>Leave type</Label>
-                          <Select
-                            value={card.leaveType ?? '__NONE__'}
-                            onValueChange={(v) => updateCard(card.staffId, { leaveType: v === '__NONE__' ? null : (v as any) })}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="None" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__NONE__">None</SelectItem>
-                              {LEAVE_TYPES.map((t) => (
-                                <SelectItem key={t} value={t}>
-                                  {t}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div
+                              className="space-y-2"
+                              ref={(el) => {
+                                leaveTypeAnchorRefs.current[card.staffId] = el
+                              }}
+                            >
+                              <Label>Leave type</Label>
+                              <Select
+                                value={card.leaveType ?? '__NONE__'}
+                                onValueChange={(v) => {
+                                  if (v === '__NONE__') {
+                                    const wasForced =
+                                      typeof card.leaveType === 'string' && SPT_FULL_LEAVE_TYPES_FORCE_DISABLE.has(card.leaveType)
+                                    if (wasForced) {
+                                      const dashSlots = uniqueSortedSlots(card.dashboard.slots ?? [])
+                                      const slotModes = clampSlotModeChoices({
+                                        slots: dashSlots,
+                                        slotModes: {
+                                          am: card.dashboard.slotModes?.am ?? 'AND',
+                                          pm: card.dashboard.slotModes?.pm ?? 'AND',
+                                        },
+                                      })
+                                      updateCard(card.staffId, {
+                                        leaveType: null,
+                                        leaveCostInput: '0',
+                                        enabled: !!card.dashboard.enabled,
+                                        contributesFte: !!card.dashboard.contributesFte,
+                                        slots: dashSlots,
+                                        slotModes,
+                                        displayText: card.dashboard.displayText ?? null,
+                                      })
+                                      return
+                                    }
+                                    updateCard(card.staffId, { leaveType: null, leaveCostInput: '0' })
+                                    return
+                                  }
+                                  const nextLeaveType = v as any
+                                  const shouldForceDisable =
+                                    typeof nextLeaveType === 'string' && SPT_FULL_LEAVE_TYPES_FORCE_DISABLE.has(nextLeaveType)
+                                  if (shouldForceDisable) {
+                                    updateCard(card.staffId, {
+                                      leaveType: nextLeaveType,
+                                      // Map full-leave types to dashboard-configured base FTE cost.
+                                      leaveCostInput: String(card.dashboard.baseFte ?? 0),
+                                      enabled: false,
+                                      contributesFte: false,
+                                      teamChoice: 'AUTO',
+                                    })
+                                    openMoreOptionsAndScrollToLeave(card.staffId)
+                                    return
+                                  }
+                                  updateCard(card.staffId, { leaveType: nextLeaveType })
+                                }}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="None" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__NONE__">None</SelectItem>
+                                  {LEAVE_TYPES.map((t) => (
+                                    <SelectItem key={t} value={t}>
+                                      {t}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
 
-                        <div className="space-y-2">
-                          <Label>Leave FTE cost</Label>
-                          <Input
-                            type="number"
-                            step="0.25"
-                            min={0}
-                            max={computed.baseFte}
-                            value={card.leaveCostInput}
-                            onChange={(e) => updateCard(card.staffId, { leaveCostInput: e.target.value })}
-                            onBlur={() => {
-                              const v = clampLeaveCost(parseFloat(card.leaveCostInput), computed.baseFte)
-                              updateCard(card.staffId, { leaveCostInput: String(v) })
-                            }}
-                            disabled={!card.enabled}
-                          />
-                          <div className="text-xs text-muted-foreground">
-                            Remaining: <span className="font-medium">{formatFte(fteRemaining)}</span>
+                            {card.leaveType ? (
+                              <div className="space-y-2">
+                                <Label>Leave FTE cost</Label>
+                                <Input
+                                  type="number"
+                                  step="0.25"
+                                  min={0}
+                                  max={leaveBaseFte}
+                                  value={card.leaveCostInput}
+                                  onChange={(e) => updateCard(card.staffId, { leaveCostInput: e.target.value })}
+                                  onBlur={() => {
+                                    const v = clampLeaveCost(parseFloat(card.leaveCostInput), leaveBaseFte)
+                                    updateCard(card.staffId, { leaveCostInput: String(v) })
+                                  }}
+                                />
+                                <div className="text-xs text-muted-foreground">
+                                  Remaining: <span className="font-medium">{formatFte(fteRemaining)}</span>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-xs text-muted-foreground flex items-center">
+                                Leave cost applies only when a leave type is selected.
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      </div>
 
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <Label className="shrink-0">Assign to team</Label>
-                        <Select
-                          value={teamValue}
-                          onValueChange={(v) => updateCard(card.staffId, { teamChoice: v === 'AUTO' ? 'AUTO' : (v as Team) })}
-                        >
-                          <SelectTrigger className="w-[220px] max-w-full">
-                            <SelectValue placeholder="Auto" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="AUTO">Auto (suggest)</SelectItem>
-                            {allowedTeams.map((t) => (
-                              <SelectItem key={t} value={t}>
-                                {t}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                          {effectiveEnabled ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between gap-3">
+                                <Label className="shrink-0">Manual team override</Label>
+                                <Switch
+                                  checked={card.teamChoice !== 'AUTO'}
+                                  onCheckedChange={(v) => {
+                                    if (!v) {
+                                      updateCard(card.staffId, { teamChoice: 'AUTO' })
+                                      return
+                                    }
+                                    const seed = allowedTeams.includes(suggestedTeam) ? suggestedTeam : allowedTeams[0] ?? 'FO'
+                                    updateCard(card.staffId, { teamChoice: seed })
+                                  }}
+                                />
+                              </div>
 
-                      {card.enabled && card.contributesFte && card.slots.length === 0 && (
-                        <div className="text-xs p-2 rounded border border-yellow-200 bg-yellow-50 text-yellow-900">
-                          Enabled + contributing requires at least 1 slot.
+                              {card.teamChoice === 'AUTO' ? (
+                                <div className="text-xs text-muted-foreground">
+                                  Auto assignment will use suggested team: <span className="font-medium text-foreground">{suggestedTeam}</span>
+                                </div>
+                              ) : (
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                  <Label className="shrink-0">Assign to team</Label>
+                                  <Select
+                                    value={teamValue}
+                                    onValueChange={(v) => updateCard(card.staffId, { teamChoice: v === 'AUTO' ? 'AUTO' : (v as Team) })}
+                                  >
+                                    <SelectTrigger className="w-[220px] max-w-full">
+                                      <SelectValue placeholder="Auto" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {allowedTeams.map((t) => (
+                                        <SelectItem key={t} value={t}>
+                                          {t}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-muted-foreground">
+                              Team assignment is disabled when this SPT is off.
+                            </div>
+                          )}
                         </div>
-                      )}
+                      </details>
                     </CardContent>
                   </Card>
                 )

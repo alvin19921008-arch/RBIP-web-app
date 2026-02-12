@@ -259,11 +259,12 @@ export function ScheduleCopyWizard({
   const renderStep2 = () => {
     const bufferTherapists = sourceBufferStaff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
     const bufferPCAs = sourceBufferStaff.filter(s => s.rank === 'PCA')
+    const hasDetectedBufferStaff = sourceBufferStaff.length > 0
 
     return (
       <>
         <DialogDescription className="mb-3">
-          This will copy Step 1 setup and selected Step 2 setup, but will reset later steps. SPT allocations and SPT day-specific configuration are not copied.
+          This will copy Step 1 setup and selected Step 2 setup, but will reset later steps. SPT allocations are not copied.
         </DialogDescription>
         <div className="mb-3 border border-border rounded-md p-3 text-[11px] text-muted-foreground">
           <p className="font-semibold text-foreground mb-1">What gets copied</p>
@@ -277,64 +278,62 @@ export function ScheduleCopyWizard({
             <li>Floating PCA allocations (Step 3), bed relieving (Step 4), calculations, tie-break decisions.</li>
           </ul>
         </div>
-        <DialogDescription className="mb-3">
-          Detected buffer staff for the source date ({effectiveFromDateStr}). Choose whether to keep them as buffer
-          staff in the copied schedule.
-        </DialogDescription>
         {bufferStaffLoading ? (
           <p className="text-xs text-muted-foreground mb-4">Detecting buffer staff in source schedule...</p>
-        ) : sourceBufferStaff.length === 0 ? (
-          <p className="text-xs text-muted-foreground mb-4">
-            No buffer staff found. This setting will have no effect.
-          </p>
-        ) : (
-          <div className="mb-3 space-y-2 max-h-40 overflow-y-auto border rounded-md p-2">
-            {bufferTherapists.length > 0 && (
-              <div>
-                <p className="text-[11px] font-semibold mb-1">Buffer therapists</p>
-                <ul className="text-[11px] text-muted-foreground space-y-0.5">
-                  {bufferTherapists.map(s => (
-                    <li key={s.id}>
-                      {s.name} ({s.rank}){s.team ? ` – ${s.team}` : ''}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {bufferPCAs.length > 0 && (
-              <div>
-                <p className="text-[11px] font-semibold mb-1">Buffer PCAs</p>
-                <ul className="text-[11px] text-muted-foreground space-y-0.5">
-                  {bufferPCAs.map(s => (
-                    <li key={s.id}>
-                      {s.name} ({s.rank}){s.team ? ` – ${s.team}` : ''}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-        <div className="space-y-1">
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              className="h-3 w-3"
-              checked={includeBuffer}
-              onChange={(e) => setIncludeBuffer(e.target.checked)}
-            />
-            <span>
-              Keep buffer staff in copied schedule (uncheck to convert them to{' '}
-              <Badge
-                variant="secondary"
-                className="bg-gray-400 text-white hover:bg-gray-400 px-2 py-0.5 text-[11px] font-semibold align-middle"
-              >
-                inactive
-              </Badge>{' '}
-              and hide them).
-            </span>
-          </label>
-        </div>
+        ) : hasDetectedBufferStaff ? (
+          <>
+            <DialogDescription className="mb-3">
+              Detected buffer staff for the source date ({effectiveFromDateStr}). Choose whether to keep them as buffer
+              staff in the copied schedule.
+            </DialogDescription>
+            <div className="mb-3 space-y-2 max-h-40 overflow-y-auto border rounded-md p-2">
+              {bufferTherapists.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-semibold mb-1">Buffer therapists</p>
+                  <ul className="text-[11px] text-muted-foreground space-y-0.5">
+                    {bufferTherapists.map(s => (
+                      <li key={s.id}>
+                        {s.name} ({s.rank}){s.team ? ` – ${s.team}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {bufferPCAs.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-semibold mb-1">Buffer PCAs</p>
+                  <ul className="text-[11px] text-muted-foreground space-y-0.5">
+                    {bufferPCAs.map(s => (
+                      <li key={s.id}>
+                        {s.name} ({s.rank}){s.team ? ` – ${s.team}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <div className="space-y-1">
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  className="h-3 w-3"
+                  checked={includeBuffer}
+                  onChange={(e) => setIncludeBuffer(e.target.checked)}
+                />
+                <span>
+                  Keep buffer staff in copied schedule (uncheck to convert them to{' '}
+                  <Badge
+                    variant="secondary"
+                    className="bg-gray-400 text-white hover:bg-gray-400 px-2 py-0.5 text-[11px] font-semibold align-middle"
+                  >
+                    inactive
+                  </Badge>{' '}
+                  and hide them).
+                </span>
+              </label>
+            </div>
+          </>
+        ) : null}
         {copiedUpToStep && (
           <p className="mt-3 text-[11px] text-muted-foreground">
             Note: Source schedule only has data up to <span className="font-semibold">{copiedUpToStep}</span>.
