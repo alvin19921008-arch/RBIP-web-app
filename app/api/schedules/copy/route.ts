@@ -9,6 +9,7 @@ import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
 import { createTimingCollector } from '@/lib/utils/timing'
 import { fetchGlobalHeadAtCreation } from '@/lib/features/config/globalHead'
 import { createSupabaseAdminClient } from '@/lib/supabase/admin'
+import { hasAnySubstitution } from '@/lib/utils/substitutionFor'
 
 type CopyMode = 'hybrid'
 
@@ -555,7 +556,7 @@ export async function POST(request: NextRequest) {
     )
     const substitutionStaffIds = new Set<string>()
     Object.entries(targetOverrides || {}).forEach(([staffId, override]: [string, any]) => {
-      if (override && (override as any).substitutionFor) {
+      if (hasAnySubstitution(override as any)) {
         substitutionStaffIds.add(staffId)
       }
     })

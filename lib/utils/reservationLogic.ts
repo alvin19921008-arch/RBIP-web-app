@@ -11,6 +11,7 @@ import { PCAAllocation } from '@/types/schedule'
 import { PCAPreference, SpecialProgram } from '@/types/allocation'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
+import { getAllSubstitutionSlots } from '@/lib/utils/substitutionFor'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -76,6 +77,7 @@ export function computeReservations(
   existingAllocations: PCAAllocation[],
   staffOverrides?: Record<string, {
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
+    substitutionForBySlot?: Partial<Record<1 | 2 | 3 | 4, { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team }>>
     [key: string]: any
   }>
 ): ReservationResult {
@@ -118,11 +120,9 @@ export function computeReservations(
       // Skip if this slot is being used for substitution (from Step 2)
       if (staffOverrides) {
         const override = staffOverrides[pcaId]
-        if (override?.substitutionFor) {
-          const substitutionSlots = override.substitutionFor.slots
-          if (substitutionSlots.includes(preferredSlot)) {
-            continue  // Slot is being used for substitution, not available
-          }
+        const substitutionSlots = getAllSubstitutionSlots(override as any)
+        if (substitutionSlots.includes(preferredSlot)) {
+          continue  // Slot is being used for substitution, not available
         }
       }
       

@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils'
 import { useToast } from '@/components/ui/toast-provider'
 import { useAutoHideFlag } from '@/lib/hooks/useAutoHideFlag'
 import { useIsolatedWheelScroll } from '@/lib/hooks/useIsolatedWheelScroll'
+import { normalizeSubstitutionForBySlot } from '@/lib/utils/substitutionFor'
 
 type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
 
@@ -26,6 +27,7 @@ type StaffOverridesLike = Record<
     invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
     invalidSlot?: number
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
+    substitutionForBySlot?: Partial<Record<1 | 2 | 3 | 4, { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team }>>
   }
 >
 
@@ -322,9 +324,7 @@ export function PCADedicatedScheduleTable({
       const invalids = invalidSlotByStaffId.get(s.id) ?? {}
       const programBySlot = programNameByStaffIdBySlot.get(s.id) ?? {}
       const slotTeams = slotTeamByStaffId.get(s.id) ?? { 1: null, 2: null, 3: null, 4: null }
-      const substitution = o?.substitutionFor
-      const substitutedTeam = substitution?.team
-      const substitutedSlots = new Set<number>(Array.isArray(substitution?.slots) ? substitution!.slots : [])
+      const substitutionBySlotEntry = normalizeSubstitutionForBySlot(o as any)
 
       if (!s.floating || isPreAlgo) {
         // Non-floating PCA: show 主位 for available-slot runs; NA for unavailable slots with leaveType.
@@ -450,8 +450,8 @@ export function PCADedicatedScheduleTable({
         const inv = invalids[slot]
         const prog = programBySlot[slot]
 
-        const isSubstitution =
-          !!assignedTeam && assignedTeam === substitutedTeam && substitutedSlots.has(slot)
+        const substitutionEntry = substitutionBySlotEntry[slot]
+        const isSubstitution = !!assignedTeam && !!substitutionEntry && substitutionEntry.team === assignedTeam
         substitutionBySlot[slot] = isSubstitution
 
         // Invalid slots should render even if this slot isn't assigned (displayTeam comes from paired slot).
@@ -459,8 +459,12 @@ export function PCADedicatedScheduleTable({
           const pairedSlot: RowSlot | null = slot === 1 ? 2 : slot === 2 ? 1 : slot === 3 ? 4 : slot === 4 ? 3 : null
           const pairedTeam = pairedSlot ? slotTeams[pairedSlot] : null
           const displayTeam = pairedTeam ?? assignedTeam
-          const invIsSub =
-            !!displayTeam && displayTeam === substitutedTeam && (substitutedSlots.has(slot) || (pairedSlot ? substitutedSlots.has(pairedSlot) : false))
+          const slotSubEntry = substitutionBySlotEntry[slot]
+          const pairedSubEntry = pairedSlot ? substitutionBySlotEntry[pairedSlot] : undefined
+          const invIsSub = !!displayTeam && (
+            (!!slotSubEntry && slotSubEntry.team === displayTeam) ||
+            (!!pairedSubEntry && pairedSubEntry.team === displayTeam)
+          )
 
           if (!displayTeam) {
             // No team context → show empty.

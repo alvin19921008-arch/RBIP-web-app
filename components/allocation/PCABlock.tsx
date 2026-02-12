@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDroppable, useDndContext } from '@dnd-kit/core'
 import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
+import { getSubstitutionSlotsForTeam, normalizeSubstitutionForBySlot } from '@/lib/utils/substitutionFor'
 
 interface PCABlockProps {
   team: Team
@@ -29,6 +30,7 @@ interface PCABlockProps {
     invalidSlot?: number
     invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
+    substitutionForBySlot?: Partial<Record<1 | 2 | 3 | 4, { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team }>>
   }> // Current staff overrides (leave + substitution UI)
   allPCAStaff?: Staff[] // All PCA staff (for identifying non-floating PCAs even when not in allocations)
   currentStep?: string // Current step in the workflow - substitution styling only shown in step 2+
@@ -367,8 +369,9 @@ function usePcaBlockViewModel({
     // NOTE: This can apply to BOTH:
     // - floating PCAs (classic Step 2.1 substitution)
     // - buffer non-floating PCAs that are explicitly marked as whole-day substitutes
-    if (override?.substitutionFor && override.substitutionFor.team === team) {
-      const substitutedSlots = override.substitutionFor.slots
+    const explicitSubstitutedSlots = getSubstitutionSlotsForTeam(override as any, team)
+    if (explicitSubstitutedSlots.length > 0) {
+      const substitutedSlots = explicitSubstitutedSlots
       // Treat 3+ slots as "whole-day-ish" for UI polish (underline + green border),
       // to support edge cases where a special program occupies 1 slot and the PCA substitutes the other 3.
       const isWholeDay =
@@ -407,7 +410,7 @@ function usePcaBlockViewModel({
     // - assigned regular slots in Step 3 to the same team.
     try {
       const hasAnyExplicitSubstitutionForTeam =
-        Object.values(resolvedStaffOverrides).some((o: any) => o?.substitutionFor?.team === team && Array.isArray(o?.substitutionFor?.slots) && o.substitutionFor.slots.length > 0)
+        Object.values(resolvedStaffOverrides).some((o: any) => getSubstitutionSlotsForTeam(o, team).length > 0)
 
       // If explicit substitutionFor exists for this team (from Step 2.1),
       // do NOT use heuristic inference. Otherwise we can incorrectly paint
@@ -420,9 +423,13 @@ function usePcaBlockViewModel({
       // we should NOT mark unrelated floating allocations as "substituting" for that missing PCA.
       const bufferWholeDayTargets = new Set(
         Object.values(resolvedStaffOverrides)
-          .map((o: any) => o?.substitutionFor)
-          .filter((sf: any) => sf && sf.team === team && Array.isArray(sf.slots) && sf.slots.length === 4)
-          .map((sf: any) => sf.nonFloatingPCAId)
+          .flatMap((o: any) => {
+            const bySlot = normalizeSubstitutionForBySlot(o)
+            const slotsForTeam = ([1, 2, 3, 4] as const).filter((slot) => bySlot[slot]?.team === team)
+            if (slotsForTeam.length !== 4) return []
+            const ids = new Set(slotsForTeam.map((slot) => bySlot[slot]?.nonFloatingPCAId).filter(Boolean))
+            return ids.size === 1 ? [Array.from(ids)[0] as string] : []
+          })
       )
 
       const nonFloatingStaffInTeam = resolvedAllPCAStaff.filter(s => !s.floating && s.team === team)
@@ -901,33 +908,68 @@ export const PCABlock = memo(function PCABlock({
     }
     
     // Case 2: Mixed case - some slots are substituting, some are regular
-    // This is the key case: floating PCA is both substituting AND assigned as regular
+    // Build display directly from slot numbers so AM/PM grouping never crosses substitution boundaries.
     if (substitutedSlots.length > 0 && regularSlots.length > 0) {
-      // Preserve the original displayText ordering (slot order) and only color the substituted part(s).
-      // This avoids confusing "PM, 0900-1030" reordering on step navigation.
-      const substitutedSlotTimes = new Set<string>()
-      substitutedSlots.forEach((slot) => {
-        const slotTime = getSlotTime(slot)
-        substitutedSlotTimes.add(formatTimeRange(slotTime))
-      })
-      if (substitutedSlots.includes(1) && substitutedSlots.includes(2)) substitutedSlotTimes.add('AM')
-      if (substitutedSlots.includes(3) && substitutedSlots.includes(4)) substitutedSlotTimes.add('PM')
+      const slotsInTeam = new Set(allSlotsForTeam)
+      const substitutedSet = new Set(substitutedSlots)
+      const parts: Array<{ text: string; isSubstituted: boolean }> = []
 
-      const parts = displayText.split(/(AM|PM|\d{4}-\d{4})/g)
+      const pushSlot = (slot: number) => {
+        parts.push({
+          text: formatTimeRange(getSlotTime(slot as 1 | 2 | 3 | 4)),
+          isSubstituted: substitutedSet.has(slot),
+        })
+      }
+      const pushGrouped = (label: 'AM' | 'PM', isSubstituted: boolean) => {
+        parts.push({ text: label, isSubstituted })
+      }
+
+      const hasSlot1 = slotsInTeam.has(1)
+      const hasSlot2 = slotsInTeam.has(2)
+      if (hasSlot1 && hasSlot2) {
+        const slot1Sub = substitutedSet.has(1)
+        const slot2Sub = substitutedSet.has(2)
+        if (slot1Sub === slot2Sub) {
+          pushGrouped('AM', slot1Sub)
+        } else {
+          pushSlot(1)
+          pushSlot(2)
+        }
+      } else {
+        if (hasSlot1) pushSlot(1)
+        if (hasSlot2) pushSlot(2)
+      }
+
+      const hasSlot3 = slotsInTeam.has(3)
+      const hasSlot4 = slotsInTeam.has(4)
+      if (hasSlot3 && hasSlot4) {
+        const slot3Sub = substitutedSet.has(3)
+        const slot4Sub = substitutedSet.has(4)
+        if (slot3Sub === slot4Sub) {
+          pushGrouped('PM', slot3Sub)
+        } else {
+          pushSlot(3)
+          pushSlot(4)
+        }
+      } else {
+        if (hasSlot3) pushSlot(3)
+        if (hasSlot4) pushSlot(4)
+      }
+
       const invalidSlotTimeRanges = invalidSlots.map((is) => `(${is.timeRange.start}-${is.timeRange.end})`).join('')
 
       return (
         <span>
-          {parts.map((part, index) => {
-            if (substitutedSlotTimes.has(part)) {
-              return (
-                <span key={index} className="text-green-700 font-medium">
-                  {part}
-                </span>
-              )
-            }
-            return <span key={index}>{part}</span>
-          })}
+          {parts.map((part, index) => (
+            <React.Fragment key={`${part.text}-${index}`}>
+              {index > 0 ? ', ' : null}
+              {part.isSubstituted ? (
+                <span className="text-green-700 font-medium">{part.text}</span>
+              ) : (
+                <span>{part.text}</span>
+              )}
+            </React.Fragment>
+          ))}
           {invalidSlotTimeRanges && <span className="text-blue-600">{invalidSlotTimeRanges}</span>}
         </span>
       )

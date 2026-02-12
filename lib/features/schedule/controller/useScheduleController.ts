@@ -34,6 +34,13 @@ import { fetchGlobalHeadAtCreation } from '@/lib/features/config/globalHead'
 import { cacheSchedule, clearCachedSchedule, getCachedSchedule, getCacheSize } from '@/lib/utils/scheduleCache'
 import { createTimingCollector, type TimingReport } from '@/lib/utils/timing'
 import {
+  applySubstitutionSlotsToOverride,
+  getAllSubstitutionSlots,
+  hasAnySubstitution,
+  normalizeSubstitutionForBySlot,
+  removeSubstitutionForTeamsFromOverride,
+} from '@/lib/utils/substitutionFor'
+import {
   normalizeFTE,
   prepareTherapistAllocationForDb,
   preparePCAAllocationForDb,
@@ -119,6 +126,7 @@ export type StaffOverrideState = {
   // Step 3: Manual buffer floating PCA assignments (persist across Step 3 resets)
   bufferManualSlotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null }
   substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
+  substitutionForBySlot?: Partial<Record<1 | 2 | 3 | 4, { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team }>>
   // Therapist per-team split/merge overrides (ad hoc fallback)
   therapistTeamFTEByTeam?: Partial<Record<Team, number>>
   /**
@@ -2102,6 +2110,7 @@ export function useScheduleController(params: {
 
       delete o.specialProgramOverrides
       delete o.substitutionFor
+      delete o.substitutionForBySlot
       // Step 2.2 SPT final edit overrides (per-date)
       delete o.sptOnDayOverride
 
@@ -3310,18 +3319,19 @@ export function useScheduleController(params: {
         try {
           for (const sub of subs || []) {
             const key = `${sub.team}-${sub.nonFloatingPCAId}`
-            const matches = Object.entries(overrides).filter(([, o]) => {
-              const sf = (o as any)?.substitutionFor
-              return sf?.team === sub.team && sf?.nonFloatingPCAId === sub.nonFloatingPCAId
-            })
-            if (matches.length === 0) continue
             const allowedIds = new Set((sub.availableFloatingPCAs || []).map((p: any) => p.id))
-            for (const [floatingPCAId, o] of matches) {
+            if (allowedIds.size === 0) continue
+
+            for (const [floatingPCAId, o] of Object.entries(overrides)) {
               if (!allowedIds.has(floatingPCAId)) continue
-              const sf = (o as any)?.substitutionFor as { slots: number[] } | undefined
-              if (!sf || !Array.isArray(sf.slots) || sf.slots.length === 0) continue
+              const bySlot = normalizeSubstitutionForBySlot(o as any)
+              const slots = ([1, 2, 3, 4] as const).filter((slot) => {
+                const entry = bySlot[slot]
+                return entry?.team === sub.team && entry?.nonFloatingPCAId === sub.nonFloatingPCAId
+              })
+              if (slots.length === 0) continue
               preSelections[key] = preSelections[key] ?? []
-              preSelections[key].push({ floatingPCAId, slots: sf.slots })
+              preSelections[key].push({ floatingPCAId, slots })
             }
           }
         } catch {}
@@ -3394,14 +3404,6 @@ export function useScheduleController(params: {
               return (dashIdx >= 0 ? key.slice(0, dashIdx) : key) as Team
             })
           )
-          const nextTargets = new Set(
-            Object.keys(resolvedSelections || {}).map((key) => {
-              const dashIdx = key.indexOf('-')
-              const team = (dashIdx >= 0 ? key.slice(0, dashIdx) : key) as Team
-              const nonFloatingPCAId = dashIdx >= 0 ? key.slice(dashIdx + 1) : ''
-              return `${team}::${nonFloatingPCAId}`
-            })
-          )
 
           setStaffOverrides((prev: any) => {
             const next = { ...prev }
@@ -3409,11 +3411,11 @@ export function useScheduleController(params: {
             // Clear existing substitutionFor entries for the affected teams.
             // This prevents stale "green substitution" styling from earlier runs / other non-floating keys.
             Object.entries(next).forEach(([staffId, o]) => {
-              const sf = (o as any)?.substitutionFor
-              if (!sf) return
-              if (!teamsTouched.has(sf.team as Team)) return
-              const { substitutionFor, ...rest } = o as any
-              next[staffId] = rest
+              const cleaned = removeSubstitutionForTeamsFromOverride({
+                override: o,
+                teams: teamsTouched,
+              })
+              next[staffId] = cleaned
             })
 
             // Apply new selections.
@@ -3428,15 +3430,13 @@ export function useScheduleController(params: {
                 const slots = Array.isArray(sel?.slots) ? sel.slots : []
                 if (!floatingPCAId || slots.length === 0) return
 
-                next[floatingPCAId] = {
-                  ...(next[floatingPCAId] ?? { leaveType: null, fteRemaining: 1.0 }),
-                  substitutionFor: {
-                    nonFloatingPCAId,
-                    nonFloatingPCAName: nonFloating?.name ?? '',
-                    team,
-                    slots,
-                  },
-                }
+                next[floatingPCAId] = applySubstitutionSlotsToOverride({
+                  existingOverride: next[floatingPCAId] ?? { leaveType: null, fteRemaining: 1.0 },
+                  team,
+                  nonFloatingPCAId,
+                  nonFloatingPCAName: nonFloating?.name ?? '',
+                  slots,
+                })
               })
             })
 
@@ -3479,26 +3479,19 @@ export function useScheduleController(params: {
         }))
       }
 
-      const pcaByTeam = createEmptyTeamRecordFactory<Array<PCAAllocation & { staff: Staff }>>(() => [])
       ;(pcaResult as any).allocations.forEach((alloc: any) => {
-        const staffMember = staff.find((s) => s.id === alloc.staff_id)
-        if (!staffMember) return
         const override = overrides[alloc.staff_id]
         if (override) {
           alloc.leave_type = override.leaveType
         }
-        pcaByTeam[alloc.team as Team].push({ ...alloc, staff: staffMember })
       })
 
-      // Sort: non-floating first, then floating
-      TEAMS.forEach((team) => {
-        pcaByTeam[team].sort((a, b) => {
-          const aIsNonFloating = !(a.staff?.floating ?? true)
-          const bIsNonFloating = !(b.staff?.floating ?? true)
-          if (aIsNonFloating && !bIsNonFloating) return -1
-          if (!aIsNonFloating && bIsNonFloating) return 1
-          return 0
-        })
+      const staffById = staffByIdMemo
+      const pcaByTeam = groupPcaAllocationsByTeamWithSlotTeams({
+        teams: TEAMS,
+        allocations: (pcaResult as any).allocations || [],
+        staffById,
+        sort: sortPcaNonFloatingFirstOnly,
       })
 
       setPcaAllocations(pcaByTeam)
@@ -3527,9 +3520,7 @@ export function useScheduleController(params: {
       // This ensures Step 3 knows which slots are reserved for substitution
       const autoSubstitutionUpdates: Record<
         string,
-        {
-          substitutionFor: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
-        }
+        Array<{ nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }>
       > = {}
 
       try {
@@ -3559,7 +3550,7 @@ export function useScheduleController(params: {
               item.staff.floating &&
               !item.alloc.special_program_ids?.length &&
               // Only consider allocations that don't already have substitutionFor set
-              !(overrides[item.alloc.staff_id] as any)?.substitutionFor
+              !hasAnySubstitution(overrides[item.alloc.staff_id] as any)
           )
 
           for (const nfItem of nonFloatingPCAs) {
@@ -3606,28 +3597,13 @@ export function useScheduleController(params: {
               // Check if assigned slots match missing slots (or are a subset)
               const matchingSlots = assignedSlots.filter((slot) => missingSlots.includes(slot))
               if (matchingSlots.length > 0) {
-                // This floating PCA is substituting for the non-floating PCA
-                // Set substitutionFor if not already set
-                if (!autoSubstitutionUpdates[floatStaff.id]) {
-                  autoSubstitutionUpdates[floatStaff.id] = {
-                    substitutionFor: {
-                      nonFloatingPCAId: nfStaff.id,
-                      nonFloatingPCAName: nfStaff.name,
-                      team,
-                      slots: matchingSlots,
-                    },
-                  }
-                } else {
-                  // Merge slots if multiple non-floating PCAs are being substituted
-                  const existing = autoSubstitutionUpdates[floatStaff.id].substitutionFor
-                  const mergedSlots = [...new Set([...existing.slots, ...matchingSlots])].sort()
-                  autoSubstitutionUpdates[floatStaff.id] = {
-                    substitutionFor: {
-                      ...existing,
-                      slots: mergedSlots,
-                    },
-                  }
-                }
+                autoSubstitutionUpdates[floatStaff.id] = autoSubstitutionUpdates[floatStaff.id] ?? []
+                autoSubstitutionUpdates[floatStaff.id].push({
+                  nonFloatingPCAId: nfStaff.id,
+                  nonFloatingPCAName: nfStaff.name,
+                  team,
+                  slots: matchingSlots,
+                })
                 break // Found a match, move to next non-floating PCA
               }
             }
@@ -3642,16 +3618,22 @@ export function useScheduleController(params: {
       if (Object.keys(autoSubstitutionUpdates).length > 0) {
         setStaffOverrides((prev: any) => {
           const next = { ...prev }
-          for (const [floatingPCAId, patch] of Object.entries(autoSubstitutionUpdates)) {
+          for (const [floatingPCAId, updates] of Object.entries(autoSubstitutionUpdates)) {
             const staffMember = staff.find((s) => s.id === floatingPCAId)
             const baseFTE = staffMember?.status === 'buffer' && (staffMember as any).buffer_fte !== undefined
               ? (staffMember as any).buffer_fte
               : 1.0
-            const existingOverride = next[floatingPCAId] ?? { leaveType: null, fteRemaining: baseFTE }
-            next[floatingPCAId] = {
-              ...existingOverride,
-              ...patch,
-            }
+            let existingOverride = next[floatingPCAId] ?? { leaveType: null, fteRemaining: baseFTE }
+            ;(updates || []).forEach((u) => {
+              existingOverride = applySubstitutionSlotsToOverride({
+                existingOverride,
+                team: u.team,
+                nonFloatingPCAId: u.nonFloatingPCAId,
+                nonFloatingPCAName: u.nonFloatingPCAName,
+                slots: u.slots,
+              })
+            })
+            next[floatingPCAId] = existingOverride
           }
           return next
         })
@@ -3757,8 +3739,8 @@ export function useScheduleController(params: {
           const effectiveBaseFTERemaining = isBufferStaff ? Math.min(baseFTE, baseFTERemaining) : baseFTERemaining
 
           let availableSlots = override?.availableSlots
-          if (s.floating && override?.substitutionFor) {
-            const substitutionSlots = override.substitutionFor.slots
+          if (s.floating && hasAnySubstitution(override as any)) {
+            const substitutionSlots = getAllSubstitutionSlots(override as any)
             const baseAvailableSlots =
               availableSlots && availableSlots.length > 0 ? availableSlots : [1, 2, 3, 4]
             availableSlots = baseAvailableSlots.filter((slot: number) => !substitutionSlots.includes(slot))

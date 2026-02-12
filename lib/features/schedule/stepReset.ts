@@ -2,6 +2,10 @@ import { TEAMS } from '@/lib/utils/types'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { type Team, type Staff } from '@/types/staff'
 import { type PCAAllocation } from '@/types/schedule'
+import {
+  getSubstitutionSlotsForTeam,
+  hasAnySubstitution,
+} from '@/lib/utils/substitutionFor'
 
 type OverridesByStaffId = Record<string, any>
 
@@ -113,8 +117,8 @@ export function computeStep3ResetForReentry(args: {
       if (Array.isArray(alloc.special_program_ids) && alloc.special_program_ids.length > 0) return true
 
       // Preserve Step 2.1 substitution allocations
-      const sf = args.staffOverrides?.[alloc.staff_id]?.substitutionFor
-      if (sf && sf.team === team) return true
+      const substitutionSlots = getSubstitutionSlotsForTeam(args.staffOverrides?.[alloc.staff_id], team as Team)
+      if (substitutionSlots.length > 0) return true
 
       return false
     })
@@ -197,7 +201,7 @@ export function computeStep3ResetForReentry(args: {
     }
 
     const { slotOverrides, ...rest } = cur
-    const hasSubstitutionFor = !!rest.substitutionFor
+    const hasSubstitutionFor = hasAnySubstitution(rest)
     const hasOtherKeys = Object.keys(rest).length > 0
     if (hasSubstitutionFor || hasOtherKeys) {
       cleanedStaffOverrides[pcaId] = rest
@@ -246,8 +250,8 @@ export function computeStep3ResetForReentry(args: {
       }
 
       const hasSpecial = Array.isArray(alloc.special_program_ids) && alloc.special_program_ids.length > 0
-      const sf = args.staffOverrides?.[alloc.staff_id]?.substitutionFor
-      const isSubForThisTeam = !!sf && sf.team === (team as Team)
+      const substitutionSlots = getSubstitutionSlotsForTeam(args.staffOverrides?.[alloc.staff_id], team as Team)
+      const isSubForThisTeam = substitutionSlots.length > 0
       if (hasSpecial || isSubForThisTeam) {
         preservedFloatingAssigned[team as Team] += fte
       }
