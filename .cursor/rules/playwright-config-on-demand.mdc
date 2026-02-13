@@ -1,0 +1,14 @@
+---
+description: Apply Playwright smoke guidance when editing Playwright config.
+globs: playwright.config.ts
+alwaysApply: false
+---
+
+# Playwright Config On-Demand
+
+- Keep config optimized for fast smoke checks:
+  - Chromium-only by default
+  - trace/screenshot only on failure
+  - single worker for deterministic workflow checks
+- Avoid adding heavyweight defaults unless explicitly requested.
+

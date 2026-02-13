@@ -1,0 +1,13 @@
+---
+description: Apply Playwright smoke guidance only when working on smoke tests/config.
+globs: tests/smoke/**/*.ts
+alwaysApply: false
+---
+
+# Playwright Smoke On-Demand
+
+- Use smoke tests as step-wise refactor gates, not full regression suites.
+- Prefer functional assertions over screenshot/snapshot diff.
+- Keep runs fast: Chromium only, `@smoke` grep, trace only on failure.
+- Do not load or apply this rule outside Playwright smoke test work.
+
