@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, Fragment, useCallback, Suspense, useMemo, Profiler, type ReactNode } from 'react'
+import { useState, useEffect, useRef, Fragment, useCallback, useTransition, Suspense, useMemo, Profiler, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { DndContext, DragOverlay, type DragEndEvent, type DragStartEvent, type DragMoveEvent, type Active } from '@dnd-kit/core'
 import { snapCenterToCursor } from '@dnd-kit/modifiers'
@@ -16,8 +16,6 @@ import type {
   WorkflowState,
   ScheduleStepId,
   BaselineSnapshot,
-  BaselineSnapshotStored,
-  GlobalHeadAtCreation,
   SnapshotHealthReport,
 } from '@/types/schedule'
 import { TeamColumn } from '@/components/allocation/TeamColumn'
@@ -71,8 +69,7 @@ import { computeBedsDesignatedByTeam, computeBedsForRelieving, formatWardLabel }
 import { getSptWeekdayConfigMap } from '@/lib/features/schedule/sptConfig'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
-import type { StaffData, AllocationContext } from '@/lib/algorithms/therapistAllocation'
-import type { PCAAllocationContext, PCAData, FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
+import type { PCAData, FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
 import type { BedAllocationContext } from '@/lib/algorithms/bedAllocation'
 import type { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
@@ -168,10 +165,7 @@ import { useScheduleDateParam } from '@/lib/hooks/useScheduleDateParam'
 import { resetStep2OverridesForAlgoEntry } from '@/lib/features/schedule/stepReset'
 import { applySptFinalEditToTherapistAllocations } from '@/lib/features/schedule/sptFinalEdit'
 import type { SnapshotDiffResult } from '@/lib/features/schedule/snapshotDiff'
-import {
-  fetchSnapshotDiffLiveInputs,
-  SNAPSHOT_DIFF_LIVE_INPUTS_DEFAULT_TTL_MS,
-} from '@/lib/features/schedule/snapshotDiffLiveInputs'
+import { fetchSnapshotDiffLiveInputs } from '@/lib/features/schedule/snapshotDiffLiveInputs'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
@@ -620,6 +614,7 @@ function SchedulePageContent() {
     canRedo,
     _unsafe,
   } = scheduleActions
+  const [isUiTransitionPending, startUiTransition] = useTransition()
 
   // Remaining raw setters live behind an explicit escape hatch.
   const {
@@ -3306,12 +3301,9 @@ function SchedulePageContent() {
       // First, recalculate schedule calculations (therapist-FTE/team, avg PCA/team, daily bed load)
       recalculateScheduleCalculations()
       
-      // In step 1, we should NOT run the full allocation algorithm (which triggers tie-breakers)
-      // We only recalculate schedule calculations (PT/team, avg PCA/team, daily bed load)
-      // If we have existing allocations, preserve them and only update FTE values
-      // If we don't have existing allocations, we still shouldn't run allocation - wait until step 2
-      if (currentStep === 'leave-fte') {
-        if (hasExistingAllocations) {
+      // applyStaffEditDomain() always routes edits back to Step 1.
+      // Do not run Step 2/3 algorithms here; only keep existing Step 1-safe value sync.
+      if (hasExistingAllocations) {
         
         // Update FTE values in existing allocations without redistributing
         // First, create updated allocations map
@@ -3421,480 +3413,12 @@ function SchedulePageContent() {
         })
         
         setPendingPCAFTEPerTeam(updatedPendingFTE)
-        } else {
-          // Fresh data in step 1 - don't run allocation algorithm yet
-          // Just recalculate schedule calculations (already done above)
-          // Allocation will happen in step 2 when user clicks "Initialize Algo"
-        }
       } else {
-        // Not in step 1 - run full allocation
-        await generateAllocationsWithOverrides(newOverrides)
+        // Fresh data in step 1 - don't run allocation algorithm yet.
+        // Allocation will happen in Step 2 initialize.
       }
     } catch (error) {
       console.error('Error updating allocations after staff edit:', error)
-    }
-  }
-
-  const generateAllocationsWithOverrides = async (overrides: Record<string, { leaveType: LeaveType | null; fteRemaining: number; team?: Team; fteSubtraction?: number; availableSlots?: number[]; invalidSlot?: number }>) => {
-    if (staff.length === 0) return
-
-    setLoading(true)
-    try {
-      // Check if we have existing allocations (loaded data) - if so, we're just recalculating, not doing fresh allocation
-      const hasExistingAllocations = Object.values(pcaAllocations).some(teamAllocs => teamAllocs.length > 0)
-      const weekday = getWeekday(selectedDate)
-      const sptAddonByStaffId = new Map<string, number>()
-      for (const a of sptAllocations) {
-        if (a.weekdays?.includes(weekday)) {
-          const raw = (a as any).fte_addon
-          const fte = typeof raw === 'number' ? raw : raw != null ? parseFloat(String(raw)) : NaN
-          if (Number.isFinite(fte)) sptAddonByStaffId.set(a.staff_id, fte)
-        }
-      }
-
-      // Transform staff data for algorithms, applying overrides if they exist
-      const staffData: StaffData[] = staff.map(s => {
-        const override = overrides[s.id]
-        const defaultTherapistFTE = s.rank === 'SPT' ? (sptAddonByStaffId.get(s.id) ?? 1.0) : 1.0
-        const effectiveFTE = override ? override.fteRemaining : defaultTherapistFTE
-        const isOnDuty = isOnDutyLeaveType(override?.leaveType as any)
-        const isAvailable =
-          s.rank === 'SPT'
-            ? (override
-                ? (override.fteRemaining > 0 || (override.fteRemaining === 0 && isOnDuty))
-                : effectiveFTE >= 0) // SPT can be on-duty with configured FTE=0
-            : (override ? override.fteRemaining > 0 : effectiveFTE > 0)
-        const transformed = {
-          id: s.id,
-          name: s.name,
-          rank: s.rank,
-          team: override?.team ?? s.team, // Use team from override if present, otherwise use staff's default team
-          special_program: s.special_program,
-          fte_therapist: effectiveFTE,
-          leave_type: override ? override.leaveType : null,
-          is_available: isAvailable,
-          availableSlots: override?.availableSlots,
-        }
-        return transformed
-      })
-
-      // Generate therapist allocations
-      // Skip SPT allocation in step 1 - only run in step 2 when "Initialize Algo" is clicked
-      const therapistContext: AllocationContext = {
-        date: selectedDate,
-        previousSchedule: null,
-        staff: staffData,
-        specialPrograms,
-        sptAllocations,
-        manualOverrides: {},
-        includeSPTAllocation: false, // Skip SPT allocation in step 1
-      }
-
-      const { allocateTherapists } = await import('@/lib/algorithms/therapistAllocation')
-      const therapistResult = allocateTherapists(therapistContext)
-
-      // Group therapist allocations by team and add staff info
-      const therapistByTeam: Record<Team, (TherapistAllocation & { staff: Staff })[]> = {
-        FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
-      }
-
-      therapistResult.allocations.forEach(alloc => {
-        const staffMember = staff.find(s => s.id === alloc.staff_id)
-        if (staffMember) {
-          const override = overrides[alloc.staff_id]
-          // Always update FTE, leave_type, and team from override if it exists
-          if (override) {
-            alloc.fte_therapist = override.fteRemaining
-            alloc.leave_type = override.leaveType
-            if (override.team) {
-              alloc.team = override.team
-            }
-          }
-          therapistByTeam[alloc.team].push({ ...alloc, staff: staffMember })
-        }
-      })
-      
-      // Sort therapist allocations: APPT first, then others
-      TEAMS.forEach(team => {
-        therapistByTeam[team].sort((a, b) => {
-          const aIsAPPT = a.staff?.rank === 'APPT'
-          const bIsAPPT = b.staff?.rank === 'APPT'
-          if (aIsAPPT && !bIsAPPT) return -1
-          if (!aIsAPPT && bIsAPPT) return 1
-          return 0
-        })
-      })
-
-      setTherapistAllocations(therapistByTeam)
-
-      // Generate PCA allocations, applying overrides if they exist
-      // For PCA: fte_pca = Base_FTE_remaining = 1.0 - fteSubtraction (for display and team requirement calculation)
-      // For buffer PCA: use buffer_fte as base
-      // True-FTE remaining for allocation = (availableSlots.length * 0.25) (special program FTE is handled during allocation, not in leave edit)
-      const pcaData: PCAData[] = staff
-        .filter(s => s.rank === 'PCA')
-        .map(s => {
-          const override = overrides[s.id]
-          // For buffer staff, use buffer_fte as base
-          const isBufferStaff = s.status === 'buffer'
-          const baseFTE = isBufferStaff && s.buffer_fte !== undefined ? s.buffer_fte : 1.0
-          // Calculate base_FTE_remaining = baseFTE - fteSubtraction (excluding special program subtraction)
-          // This is used for calculating averagePCAPerTeam and for display
-          const baseFTERemaining = override && override.fteSubtraction !== undefined
-            ? Math.max(0, baseFTE - override.fteSubtraction)
-            : (override ? override.fteRemaining : baseFTE) // Fallback to fteRemaining if fteSubtraction not available
-          return {
-            id: s.id,
-            name: s.name,
-            floating: s.floating || false,
-            special_program: s.special_program,
-            fte_pca: baseFTERemaining, // Base_FTE_remaining = baseFTE - fteSubtraction (for display and team requirements)
-            leave_type: override ? override.leaveType : null,
-            is_available: override ? (override.fteRemaining > 0) : true, // Use fteRemaining (includes special program) for availability check
-            team: s.team,
-            availableSlots: override?.availableSlots,
-            invalidSlot: override?.invalidSlot,
-          }
-        })
-
-      // Calculate average PCA per team based on PT FTE distribution (not equal distribution)
-      // Formula: requiredPCAPerTeam = ptPerTeam[team] * totalPCA / totalPT
-      // This ensures teams with more PT-FTE get proportionally more PCA
-      // CRITICAL: Use the same calculation as step 1 (recalculateScheduleCalculations) for consistency
-      // Use fteRemaining from staffOverrides (same as step 1), not fte_pca from pcaData
-      // This ensures avg PCA/team doesn't fluctuate between step 1 and step 2
-      const totalPCA = staff
-        .filter(s => s.rank === 'PCA')
-        .reduce((sum, s) => {
-          const overrideFTE = overrides[s.id]?.fteRemaining
-          // Use override FTE if set, otherwise default to 1.0 (full day) unless on leave
-          const isOnLeave = overrides[s.id]?.leaveType && overrides[s.id]?.fteRemaining === 0
-          const currentFTE = overrideFTE !== undefined ? overrideFTE : (isOnLeave ? 0 : 1)
-          return sum + currentFTE
-        }, 0)
-      
-      // Calculate total PT on duty and PT per team from therapist allocations
-      const ptPerTeamFromResult: Record<Team, number> = {
-        FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
-      }
-      let totalPTOnDuty = 0
-      
-      therapistResult.allocations.forEach(alloc => {
-        const staffMember = staff.find(s => s.id === alloc.staff_id)
-        if (staffMember) {
-          const isTherapist = ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)
-          const override = overrides[alloc.staff_id]
-          const fte = override ? override.fteRemaining : (alloc.fte_therapist || 0)
-          const hasFTE = fte > 0
-          if (isTherapist && hasFTE) {
-            ptPerTeamFromResult[alloc.team] += fte
-            totalPTOnDuty += fte
-          }
-        }
-      })
-      
-      // Calculate average PCA per team: ptPerTeam * totalPCA / totalPT
-      // Then round to nearest 0.25 for fair allocation
-      const averagePCAPerTeam: Record<Team, number> = {} as Record<Team, number>
-      const rawAveragePCAPerTeam: Record<Team, number> = {} as Record<Team, number>
-      TEAMS.forEach(team => {
-        if (totalPTOnDuty > 0) {
-          const requiredPCA = (ptPerTeamFromResult[team] * totalPCA) / totalPTOnDuty
-          rawAveragePCAPerTeam[team] = requiredPCA
-          averagePCAPerTeam[team] = Math.round(requiredPCA * 4) / 4 // Round to nearest 0.25
-        } else {
-          const requiredPCA = totalPCA / 8
-          rawAveragePCAPerTeam[team] = requiredPCA
-          averagePCAPerTeam[team] = requiredPCA // Fallback to equal distribution
-        }
-      })
-
-      // DRM Program: Add PCA FTE add-on to DRO team (before allocation algorithm)
-      // This is a FORCE ADD-ON (0.4 FTE) to DRO team's required PCA, not a subtraction from any PCA staff
-      // This add-on is independent of which PCA staff are assigned to DRM or DRO team
-      const drmProgram = specialPrograms.find(p => p.name === 'DRM')
-      const drmPcaFteAddon = 0.4 // Fixed add-on value for DRM program
-      
-      if (drmProgram && drmProgram.weekdays.includes(weekday)) {
-        // Add fixed 0.4 FTE to DRO team's average PCA (this is an add-on, not subtraction)
-        // This increases the required PCA for DRO team, which the allocation algorithm will consider
-        rawAveragePCAPerTeam['DRO'] += drmPcaFteAddon
-        averagePCAPerTeam['DRO'] += drmPcaFteAddon
-      }
-
-      // Step 2 does NOT trigger tie-breakers - Step 3 handles them comprehensively
-      // Use raw values (before rounding) for accurate pending calculation
-      // Rounding is only for display/fair allocation, but pending calculation needs raw values
-      const pcaContext: PCAAllocationContext = {
-        date: selectedDate,
-        totalPCAAvailable: totalPCA,
-        pcaPool: pcaData,
-        averagePCAPerTeam: rawAveragePCAPerTeam, // Use raw values for accurate pending calculation
-        specialPrograms,
-        pcaPreferences,
-        // gymSchedules removed - now comes from pcaPreferences
-        // onTieBreak removed - Step 2 does not trigger tie-breakers (handled in Step 3)
-      }
-
-      const { allocatePCA } = await import('@/lib/algorithms/pcaAllocation')
-      const pcaResult = await allocatePCA(pcaContext)
-
-      // Extract and store errors (for full allocation - includes both phases)
-      if (pcaResult.errors) {
-        setPcaAllocationErrors(pcaResult.errors)
-      } else {
-        setPcaAllocationErrors({})
-      }
-
-      // Group PCA allocations by team and add staff info
-      // For special program allocations, also add to teams where slots are assigned
-      const pcaByTeam: Record<Team, (PCAAllocation & { staff: Staff })[]> = {
-        FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
-      }
-
-      pcaResult.allocations.forEach(alloc => {
-        const staffMember = staff.find(s => s.id === alloc.staff_id)
-        if (!staffMember) return
-        
-        const override = overrides[alloc.staff_id]
-        // Always update leave_type from override if it exists
-        // Note: fte_pca in allocation is already rounded DOWN for PCA slot allocation
-        // Don't overwrite with original value - keep the rounded value used for allocation
-        if (override) {
-          alloc.leave_type = override.leaveType
-        }
-        
-        const allocationWithStaff = { ...alloc, staff: staffMember }
-        
-        // Collect all teams from slots (for both regular and special program allocations)
-          const slotTeams = new Set<Team>()
-          if (alloc.slot1) slotTeams.add(alloc.slot1)
-          if (alloc.slot2) slotTeams.add(alloc.slot2)
-          if (alloc.slot3) slotTeams.add(alloc.slot3)
-          if (alloc.slot4) slotTeams.add(alloc.slot4)
-          
-        // Add to the team specified in alloc.team (for regular allocations)
-        pcaByTeam[alloc.team].push(allocationWithStaff)
-        
-        // Also add to each team that has slots assigned (but not the original team to avoid duplicates)
-        // This ensures floating PCA slots are displayed for the correct teams
-          slotTeams.forEach(slotTeam => {
-            if (slotTeam !== alloc.team) {
-              pcaByTeam[slotTeam].push(allocationWithStaff)
-            }
-          })
-      })
-      
-      // Sort PCA allocations: non-floating first, then floating
-      TEAMS.forEach(team => {
-        pcaByTeam[team].sort((a, b) => {
-          const aIsNonFloating = !(a.staff?.floating ?? true)
-          const bIsNonFloating = !(b.staff?.floating ?? true)
-          if (aIsNonFloating && !bIsNonFloating) return -1
-          if (!aIsNonFloating && bIsNonFloating) return 1
-          return 0
-        })
-      })
-
-      setPcaAllocations(pcaByTeam)
-
-      // Store pending PCA FTE per team (used for Step 3 dialog)
-      // Apply custom rounding to initial pending values (raw values used for tie-breaking internally)
-      const roundedPendingValues: Record<Team, number> = {
-        FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
-      }
-      Object.entries(pcaResult.pendingPCAFTEPerTeam).forEach(([team, pending]) => {
-        roundedPendingValues[team as Team] = roundToNearestQuarterWithMidpoint(pending)
-      })
-      setPendingPCAFTEPerTeam(roundedPendingValues)
-
-      // Calculate total beds across all wards and teams
-      const totalBedsAllTeams = wards.reduce((sum, ward) => sum + ward.total_beds, 0)
-      
-      // Calculate total PT on duty (sum all FTE from all teams, including partial FTE)
-      // Only count therapists (SPT, APPT, RPT) with FTE > 0
-      const totalPTOnDutyAllTeams = TEAMS.reduce((sum, team) => {
-        return sum + therapistByTeam[team].reduce((teamSum, alloc) => {
-          const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-          const hasFTE = (alloc.fte_therapist || 0) > 0
-          return teamSum + (isTherapist && hasFTE ? (alloc.fte_therapist || 0) : 0)
-        }, 0)
-      }, 0)
-
-      // Generate bed allocations
-      const bedsForRelieving: Record<Team, number> = {
-        FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
-      }
-
-      // Calculate beds for relieving based on overall beds per PT ratio
-      // Overall beds per PT = total beds across all teams / total PT across all teams
-      const overallBedsPerPT = totalPTOnDutyAllTeams > 0 
-        ? totalBedsAllTeams / totalPTOnDutyAllTeams 
-        : 0
-
-      TEAMS.forEach(team => {
-        // Calculate PT per team: sum all FTE for therapists in this team (only count therapists with FTE > 0)
-        const ptPerTeam = therapistByTeam[team].reduce((sum, alloc) => {
-          const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-          const hasFTE = (alloc.fte_therapist || 0) > 0
-          return sum + (isTherapist && hasFTE ? (alloc.fte_therapist || 0) : 0)
-        }, 0)
-        
-        // Get the designated beds for this team
-        const teamWards = wards.filter(w => w.team_assignments[team] && w.team_assignments[team] > 0)
-        const bedOverride = bedCountsOverridesByTeam?.[team] as any
-        const calculatedBaseBeds = teamWards.reduce((sum, w) => {
-          const overrideVal = bedOverride?.wardBedCounts?.[w.name]
-          const effective =
-            typeof overrideVal === 'number'
-              ? Math.min(overrideVal, w.total_beds)
-              : (w.team_assignments[team] || 0)
-          return sum + effective
-        }, 0)
-        const shs = typeof bedOverride?.shsBedCounts === 'number' ? bedOverride.shsBedCounts : 0
-        const students =
-          typeof bedOverride?.studentPlacementBedCounts === 'number'
-            ? bedOverride.studentPlacementBedCounts
-            : 0
-        const safeDeductions = Math.min(calculatedBaseBeds, shs + students)
-        const totalBedsDesignated = Math.max(0, calculatedBaseBeds - safeDeductions)
-        
-        // Expected beds for this team based on overall beds per PT ratio
-        const expectedBeds = overallBedsPerPT * ptPerTeam
-        // Relieving beds = expected beds - actual designated beds
-        bedsForRelieving[team] = expectedBeds - totalBedsDesignated
-      })
-
-      const shouldComputeBeds =
-        stepStatus['bed-relieving'] === 'completed' || currentStep === 'bed-relieving' || currentStep === 'review'
-
-      if (shouldComputeBeds) {
-        const bedContext: BedAllocationContext = {
-          bedsForRelieving,
-          wards: wards.map(w => ({ name: w.name, team_assignments: w.team_assignments })),
-        }
-
-        const { allocateBeds } = await import('@/lib/algorithms/bedAllocation')
-        const bedResult = allocateBeds(bedContext)
-        setBedAllocations(bedResult.allocations)
-      } else {
-        setBedAllocations([])
-      }
-
-      // Calculate schedule calculations for each team
-      const scheduleCalculations: Record<Team, ScheduleCalculations | null> = {
-        FO: null, SMM: null, SFM: null, CPPC: null, MC: null, GMC: null, NSM: null, DRO: null
-      }
-
-      // Note: weekday, drmProgram, and drmPcaFteAddon are already defined earlier in this function (around line 1060)
-      
-      // CRITICAL: Use totalPCAOnDuty (from staff DB) for STABLE requirement calculation
-      // This ensures avg PCA/team doesn't fluctuate as floating PCAs get assigned/unassigned
-      const totalPCAOnDuty = staff
-        .filter(s => s.rank === 'PCA')
-        .reduce((sum, s) => {
-          const overrideFTE = overrides[s.id]?.fteRemaining
-          const isOnLeave = overrides[s.id]?.leaveType && overrides[s.id]?.fteRemaining === 0
-          return sum + (isOnLeave ? 0 : (overrideFTE !== undefined ? overrideFTE : 1))
-        }, 0)
-      
-      // Also calculate totalPCAFromAllocations for reference (allocated PCAs only)
-      const totalPCAFromAllocations = TEAMS.reduce((sum, team) => {
-        return sum + pcaByTeam[team].reduce((teamSum, alloc) => {
-          const overrideFTE = overrides[alloc.staff_id]?.fteRemaining
-          const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_pca || 0)
-          return teamSum + currentFTE
-        }, 0)
-      }, 0)
-
-      TEAMS.forEach(team => {
-        const teamWards = wards.filter(w => w.team_assignments[team] && w.team_assignments[team] > 0)
-        const designatedWards = teamWards.map(w => formatWardLabel(w as any, team))
-        const bedOverride = bedCountsOverridesByTeam?.[team] as any
-        const calculatedBaseBeds = teamWards.reduce((sum, w) => {
-          const overrideVal = bedOverride?.wardBedCounts?.[w.name]
-          const effective =
-            typeof overrideVal === 'number'
-              ? Math.min(overrideVal, w.total_beds)
-              : (w.team_assignments[team] || 0)
-          return sum + effective
-        }, 0)
-        const shs = typeof bedOverride?.shsBedCounts === 'number' ? bedOverride.shsBedCounts : 0
-        const students =
-          typeof bedOverride?.studentPlacementBedCounts === 'number'
-            ? bedOverride.studentPlacementBedCounts
-            : 0
-        const safeDeductions = Math.min(calculatedBaseBeds, shs + students)
-        const totalBedsDesignated = Math.max(0, calculatedBaseBeds - safeDeductions)
-        
-        // Calculate PT per team: sum all FTE for therapists in this team (only count therapists with FTE > 0)
-        const ptPerTeam = therapistByTeam[team].reduce((sum, alloc) => {
-          const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-          const hasFTE = (alloc.fte_therapist || 0) > 0
-          return sum + (isTherapist && hasFTE ? (alloc.fte_therapist || 0) : 0)
-        }, 0)
-        
-        const bedsPerPT = ptPerTeam > 0 ? totalBedsDesignated / ptPerTeam : 0
-        // Use overrides if available to get the current FTE
-        const pcaOnDuty = pcaByTeam[team].reduce((sum, alloc) => {
-          const overrideFTE = overrides[alloc.staff_id]?.fteRemaining
-          const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_pca || 0)
-          return sum + currentFTE
-        }, 0)
-        const totalPTPerPCA = pcaOnDuty > 0 ? ptPerTeam / pcaOnDuty : 0
-        
-        // Calculate averagePCAPerTeam using totalPCAOnDuty (from staff DB) for STABLE value
-        // This ensures avg PCA/team doesn't fluctuate during step transitions
-        const averagePCAPerTeam = totalPTOnDutyAllTeams > 0
-          ? (ptPerTeam * totalPCAOnDuty) / totalPTOnDutyAllTeams
-          : (totalPCAOnDuty / TEAMS.length) // Fallback to equal distribution
-
-        // Calculate (3) Expected beds for team = (total beds / total PT) * (PT per team)
-        const expectedBedsPerTeam = overallBedsPerPT * ptPerTeam
-        
-        // Calculate (4) Required PCA per team = (3) / (total beds / total PCAOnDuty)
-        // Where total beds / total PCAOnDuty = beds per PCA
-        const bedsPerPCA = totalPCAOnDuty > 0 ? totalBedsAllTeams / totalPCAOnDuty : 0
-        const requiredPCAPerTeam = bedsPerPCA > 0 ? expectedBedsPerTeam / bedsPerPCA : 0
-
-        // For DRO: store base avg PCA/team (without +0.4) separately
-        // Note: averagePCAPerTeam calculated from allocations already reflects DRM add-on effect,
-        // so for DRO with DRM, we need to subtract 0.4 to get the base value
-        const baseAveragePCAPerTeam = team === 'DRO' && drmProgram && drmProgram.weekdays.includes(weekday)
-          ? averagePCAPerTeam - drmPcaFteAddon
-          : undefined
-
-        // For DRO with DRM: average_pca_per_team should be the final value (with add-on)
-        // Since averagePCAPerTeam already reflects the add-on from allocations, use it directly
-        const finalAveragePCAPerTeam = averagePCAPerTeam
-
-        scheduleCalculations[team] = {
-          id: '',
-          schedule_id: '',
-          team,
-          designated_wards: designatedWards,
-          total_beds_designated: totalBedsDesignated,
-          total_beds: totalBedsAllTeams, // This is now total across all teams
-          total_pt_on_duty: totalPTOnDutyAllTeams, // This is now total across all teams
-          beds_per_pt: bedsPerPT,
-          pt_per_team: ptPerTeam, // Fixed: actual sum of FTE for this team
-          beds_for_relieving: bedsForRelieving[team],
-          pca_on_duty: pcaOnDuty,
-          total_pt_per_pca: totalPTPerPCA,
-          total_pt_per_team: ptPerTeam,
-          average_pca_per_team: finalAveragePCAPerTeam,
-          base_average_pca_per_team: baseAveragePCAPerTeam,
-          expected_beds_per_team: expectedBedsPerTeam,
-          required_pca_per_team: requiredPCAPerTeam,
-        }
-
-      })
-
-      setCalculations(scheduleCalculations)
-    } catch (error) {
-      console.error('Error generating allocations:', error)
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -4236,7 +3760,9 @@ function SchedulePageContent() {
    */
   const handleNextStep = async () => {
     // Only navigate, don't run algorithms
-    goToNextStep()
+    startUiTransition(() => {
+      goToNextStep()
+    })
   }
 
   const showStep2Point2_SptFinalEdit = useCallback(async (): Promise<Record<string, SptFinalEditUpdate> | null> => {
@@ -5088,7 +4614,9 @@ function SchedulePageContent() {
    * Handle going to the previous step
    */
   const handlePreviousStep = () => {
-    goToPreviousStep()
+    startUiTransition(() => {
+      goToPreviousStep()
+    })
   }
 
   /**
@@ -5219,7 +4747,7 @@ function SchedulePageContent() {
       setHighlightDateKey(formatDateForInput(toDate))
 
       // Navigate to copied schedule date and reload schedule metadata
-      beginDateTransition(toDate, { resetLoadedForDate: true, useLocalTopBar: false })
+      queueDateTransition(toDate, { resetLoadedForDate: true, useLocalTopBar: false })
       bumpTopLoadingTo(0.92)
 
       // Non-blocking refresh: optimistically mark the target date as having data,
@@ -5297,10 +4825,28 @@ function SchedulePageContent() {
     controllerBeginDateTransition(nextDate, { resetLoadedForDate: options?.resetLoadedForDate ?? true })
   }
 
+  const queueDateTransition = useCallback(
+    (nextDate: Date, options?: { resetLoadedForDate?: boolean; useLocalTopBar?: boolean }) => {
+      startUiTransition(() => {
+        beginDateTransition(nextDate, options)
+      })
+    },
+    [beginDateTransition, startUiTransition]
+  )
+
+  const handleStepClick = useCallback(
+    (stepId: string) => {
+      startUiTransition(() => {
+        goToStep(stepId as any)
+      })
+    },
+    [goToStep, startUiTransition]
+  )
+
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newDate = parseDateFromInput(e.target.value)
     if (!isNaN(newDate.getTime())) {
-      beginDateTransition(newDate)
+      queueDateTransition(newDate)
       setCalendarOpen(false) // Close calendar dialog when date is selected
     }
   }
@@ -5439,71 +4985,63 @@ function SchedulePageContent() {
   const currentHasData = datesWithData.has(selectedDateStr)
   const isToday = selectedDateStr === formatDateForInput(new Date())
 
-  // Snapshot vs Global head metadata (cheap drift gate for UI reminders).
-  const [snapshotHeadAtCreation, setSnapshotHeadAtCreation] = useState<GlobalHeadAtCreation | null>(null)
-  const [globalConfigHead, setGlobalConfigHead] = useState<GlobalHeadAtCreation | null>(null)
+  // Snapshot differences (inline inside Saved-setup popover)
+  const snapshotDiffButtonRef = useRef<HTMLButtonElement | null>(null)
+  const [savedSetupPopoverOpen, setSavedSetupPopoverOpen] = useState(false)
+  const [snapshotDiffExpanded, setSnapshotDiffExpanded] = useState(false)
+  const [snapshotDiffLoading, setSnapshotDiffLoading] = useState(false)
+  const [snapshotDiffError, setSnapshotDiffError] = useState<string | null>(null)
+  const [snapshotDiffResult, setSnapshotDiffResult] = useState<SnapshotDiffResult | null>(null)
+  const hasAnySnapshotDiff = useCallback((diff: SnapshotDiffResult | null | undefined) => {
+    if (!diff) return false
+    return (
+      (diff.staff.added.length ?? 0) > 0 ||
+      (diff.staff.removed.length ?? 0) > 0 ||
+      (diff.staff.changed.length ?? 0) > 0 ||
+      (diff.teamSettings.changed.length ?? 0) > 0 ||
+      (diff.wards.added.length ?? 0) > 0 ||
+      (diff.wards.removed.length ?? 0) > 0 ||
+      (diff.wards.changed.length ?? 0) > 0 ||
+      (diff.pcaPreferences.changed.length ?? 0) > 0 ||
+      (diff.specialPrograms.added.length ?? 0) > 0 ||
+      (diff.specialPrograms.removed.length ?? 0) > 0 ||
+      (diff.specialPrograms.changed.length ?? 0) > 0 ||
+      (diff.sptAllocations.added.length ?? 0) > 0 ||
+      (diff.sptAllocations.removed.length ?? 0) > 0 ||
+      (diff.sptAllocations.changed.length ?? 0) > 0
+    )
+  }, [])
 
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      const res = await supabase.rpc('get_config_global_head_v1')
-      if (cancelled) return
-      if (!res.error && res.data) setGlobalConfigHead(res.data as any)
-    })().catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [supabase])
+  const computeSnapshotDiffFromDbSnapshot = useCallback(async (): Promise<SnapshotDiffResult | null> => {
+    if (!currentScheduleId) return null
+    const { data: schedRow, error: schedErr } = await supabase
+      .from('daily_schedules')
+      .select('baseline_snapshot')
+      .eq('id', currentScheduleId)
+      .maybeSingle()
+    if (schedErr) throw schedErr
 
-  useEffect(() => {
-    if (!currentScheduleId) {
-      setSnapshotHeadAtCreation(null)
-      return
-    }
-    let cancelled = false
-    ;(async () => {
-      const { data, error } = await supabase
-        .from('daily_schedules')
-        .select('baseline_snapshot')
-        .eq('id', currentScheduleId)
-        .maybeSingle()
-      if (cancelled) return
-      if (error) {
-        setSnapshotHeadAtCreation(null)
-        return
-      }
-      const stored = (data as any)?.baseline_snapshot as BaselineSnapshotStored | null | undefined
-      const { envelope } = unwrapBaselineSnapshotStored(stored as any)
-      const head = (envelope as any)?.globalHeadAtCreation ?? null
-      setSnapshotHeadAtCreation(head)
-    })().catch(() => {
-      if (cancelled) return
-      setSnapshotHeadAtCreation(null)
+    const stored = (schedRow as any)?.baseline_snapshot
+    const { data: snapshotData } = unwrapBaselineSnapshotStored(stored as any)
+
+    const diffKey = `${selectedDateStr}|${currentScheduleId || ''}`
+    const liveInputs = await fetchSnapshotDiffLiveInputs({
+      supabase,
+      includeTeamSettings: true,
+      cacheKey: `schedule-snapshot-diff:${diffKey}`,
+      // Deterministic recompute: avoid stale result when dashboard config changed recently.
+      ttlMs: 0,
     })
-    return () => {
-      cancelled = true
-    }
-  }, [supabase, currentScheduleId])
 
-  const snapshotDiffersFromGlobalHead = useMemo(() => {
-    // If there is no baseline snapshot, there is no "saved setup" reminder.
-    if (!baselineSnapshot) return false
-    // If either side is missing metadata (legacy snapshots / transient load), be conservative and show the reminder.
-    if (!snapshotHeadAtCreation || !globalConfigHead) return true
+    const { diffBaselineSnapshot } = await import('@/lib/features/schedule/snapshotDiff')
+    return diffBaselineSnapshot({
+      snapshot: snapshotData as any,
+      live: liveInputs,
+    })
+  }, [currentScheduleId, selectedDateStr, supabase])
 
-    if (Number(snapshotHeadAtCreation.global_version) !== Number(globalConfigHead.global_version)) return true
-
-    const a = (snapshotHeadAtCreation.category_versions || {}) as Record<string, number>
-    const b = (globalConfigHead.category_versions || {}) as Record<string, number>
-    const keys = new Set<string>([...Object.keys(a), ...Object.keys(b)])
-    for (const k of keys) {
-      if (Number(a[k] ?? -1) !== Number(b[k] ?? -1)) return true
-    }
-    return false
-  }, [baselineSnapshot, snapshotHeadAtCreation, globalConfigHead])
-
-  // Header reminder icon should only show when snapshot settings differ from Global.
-  const showSnapshotUiReminder = !!baselineSnapshot && snapshotDiffersFromGlobalHead
+  // Header reminder icon uses the same semantic check as "Review differences".
+  const showSnapshotUiReminder = !!baselineSnapshot && hasAnySnapshotDiff(snapshotDiffResult)
 
   // Code-split dialog prefetch: keep initial bundle smaller, but hide first-open latency.
   useEffect(() => {
@@ -5615,43 +5153,13 @@ function SchedulePageContent() {
         // Version metadata may remain unchanged (e.g., during testing or when global_version hasn't bumped),
         // but users still expect to be warned when the saved snapshot differs from today's Global config.
         if (thresholdMs === 0) {
-          const diffKey = `${selectedDateStr}|${currentScheduleId || ''}`
-          const liveInputs = await fetchSnapshotDiffLiveInputs({
-            supabase,
-            includeTeamSettings: true,
-            cacheKey: `schedule-snapshot-diff:${diffKey}`,
-            ttlMs: SNAPSHOT_DIFF_LIVE_INPUTS_DEFAULT_TTL_MS,
-          })
+          const diff = await computeSnapshotDiffFromDbSnapshot()
           if (cancelled) return
-
-          const { diffBaselineSnapshot } = await import('@/lib/features/schedule/snapshotDiff')
-          const diff = diffBaselineSnapshot({
-            snapshot: baselineSnapshot as any,
-            live: liveInputs,
-          })
-
-          const hasAnyDrift =
-            (diff.staff.added.length ?? 0) > 0 ||
-            (diff.staff.removed.length ?? 0) > 0 ||
-            (diff.staff.changed.length ?? 0) > 0 ||
-            (diff.teamSettings.changed.length ?? 0) > 0 ||
-            (diff.wards.added.length ?? 0) > 0 ||
-            (diff.wards.removed.length ?? 0) > 0 ||
-            (diff.wards.changed.length ?? 0) > 0 ||
-            (diff.pcaPreferences.changed.length ?? 0) > 0 ||
-            (diff.specialPrograms.added.length ?? 0) > 0 ||
-            (diff.specialPrograms.removed.length ?? 0) > 0 ||
-            (diff.specialPrograms.changed.length ?? 0) > 0 ||
-            (diff.sptAllocations.added.length ?? 0) > 0 ||
-            (diff.sptAllocations.removed.length ?? 0) > 0 ||
-            (diff.sptAllocations.changed.length ?? 0) > 0
-
-          if (!hasAnyDrift) return
+          if (!hasAnySnapshotDiff(diff)) return
 
           if (cancelled) return
           setSnapshotDiffError(null)
-          setSnapshotDiffResult(diff)
-          lastSnapshotDiffKeyRef.current = diffKey
+          setSnapshotDiffResult(diff || null)
           showDriftNotice()
           return
         }
@@ -5685,16 +5193,19 @@ function SchedulePageContent() {
     return () => {
       cancelled = true
     }
-  }, [userRole, currentScheduleId, selectedDateStr, loading, gridLoading, baselineSnapshot, supabase, showActionToast])
+  }, [
+    userRole,
+    currentScheduleId,
+    selectedDateStr,
+    loading,
+    gridLoading,
+    baselineSnapshot,
+    supabase,
+    showActionToast,
+    computeSnapshotDiffFromDbSnapshot,
+    hasAnySnapshotDiff,
+  ])
 
-  // Snapshot differences (inline inside Saved-setup popover)
-  const snapshotDiffButtonRef = useRef<HTMLButtonElement | null>(null)
-  const [savedSetupPopoverOpen, setSavedSetupPopoverOpen] = useState(false)
-  const [snapshotDiffExpanded, setSnapshotDiffExpanded] = useState(false)
-  const [snapshotDiffLoading, setSnapshotDiffLoading] = useState(false)
-  const [snapshotDiffError, setSnapshotDiffError] = useState<string | null>(null)
-  const [snapshotDiffResult, setSnapshotDiffResult] = useState<SnapshotDiffResult | null>(null)
-  const lastSnapshotDiffKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!savedSetupPopoverOpen) return
@@ -5706,27 +5217,8 @@ function SchedulePageContent() {
     setSnapshotDiffError(null)
 
     ;(async () => {
-      const diffKey = `${selectedDateStr}|${currentScheduleId || ''}`
-      if (lastSnapshotDiffKeyRef.current === diffKey && snapshotDiffResult && !snapshotDiffError) {
-        setSnapshotDiffLoading(false)
-        return
-      }
-
-      const liveInputs = await fetchSnapshotDiffLiveInputs({
-        supabase,
-        includeTeamSettings: true,
-        cacheKey: `schedule-snapshot-diff:${diffKey}`,
-        ttlMs: SNAPSHOT_DIFF_LIVE_INPUTS_DEFAULT_TTL_MS,
-      })
-
-      const { diffBaselineSnapshot } = await import('@/lib/features/schedule/snapshotDiff')
-      const diff = diffBaselineSnapshot({
-        snapshot: baselineSnapshot,
-        live: liveInputs,
-      })
-
+      const diff = await computeSnapshotDiffFromDbSnapshot()
       if (cancelled) return
-      lastSnapshotDiffKeyRef.current = diffKey
       setSnapshotDiffResult(diff)
     })()
       .catch((e) => {
@@ -5742,8 +5234,29 @@ function SchedulePageContent() {
     return () => {
       cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [savedSetupPopoverOpen, snapshotDiffExpanded, baselineSnapshot, supabase])
+  }, [savedSetupPopoverOpen, snapshotDiffExpanded, baselineSnapshot, computeSnapshotDiffFromDbSnapshot])
+
+  // Prime diff in background so the reminder icon uses the same semantic check as "Review".
+  useEffect(() => {
+    if (!baselineSnapshot) return
+    if (!currentScheduleId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const diff = await computeSnapshotDiffFromDbSnapshot()
+        if (cancelled) return
+        setSnapshotDiffResult(diff)
+        setSnapshotDiffError(null)
+      } catch (e: any) {
+        if (cancelled) return
+        setSnapshotDiffError(e?.message || 'Failed to compute differences.')
+        setSnapshotDiffResult(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [baselineSnapshot, currentScheduleId, computeSnapshotDiffFromDbSnapshot])
 
   useEffect(() => {
     if (!savedSetupPopoverOpen && snapshotDiffExpanded) {
@@ -9163,7 +8676,7 @@ function SchedulePageContent() {
           onToggleCalendar={() => setCalendarOpen(!calendarOpen)}
           onSelectDate={(date) => {
                             setCalendarOpen(false)
-            beginDateTransition(date)
+            queueDateTransition(date)
           }}
           showSnapshotUiReminder={showSnapshotUiReminder && !isViewingMode}
           savedSetupPopoverOpen={savedSetupPopoverOpen}
@@ -9883,7 +9396,7 @@ function SchedulePageContent() {
             userRole={userRole}
             canResetToBaseline={access.can('schedule.tools.reset-to-baseline')}
             onResetToBaseline={resetToBaseline}
-            onStepClick={(stepId) => goToStep(stepId as any)}
+            onStepClick={handleStepClick}
             canNavigateToStep={(stepId) => {
               // Can always go to earlier steps
               const targetIndex = ALLOCATION_STEPS.findIndex(s => s.id === stepId)
@@ -9906,7 +9419,7 @@ function SchedulePageContent() {
             onClearStep={handleClearStep}
             showClear={showClearForCurrentStep}
             isInitialized={initializedSteps.has(currentStep)}
-            isLoading={loading}
+            isLoading={loading || isUiTransitionPending}
           />
         </div>
 
@@ -10717,7 +10230,7 @@ function SchedulePageContent() {
           onToggleCalendar={() => setCalendarOpen(!calendarOpen)}
           onSelectDate={(date) => {
                             setCalendarOpen(false)
-            beginDateTransition(date)
+            queueDateTransition(date)
           }}
           showSnapshotUiReminder={showSnapshotUiReminder && !isViewingMode}
           savedSetupPopoverOpen={savedSetupPopoverOpen}
@@ -11152,7 +10665,7 @@ function SchedulePageContent() {
           onToggleCalendar={() => setCalendarOpen(!calendarOpen)}
           onSelectDate={(date) => {
                             setCalendarOpen(false)
-            beginDateTransition(date)
+            queueDateTransition(date)
           }}
           showSnapshotUiReminder={showSnapshotUiReminder && !isViewingMode}
           savedSetupPopoverOpen={savedSetupPopoverOpen}
@@ -11876,7 +11389,7 @@ function SchedulePageContent() {
                 holidays={holidays}
                 onClose={() => setCalendarOpen(false)}
                 onDateSelect={(date) => {
-                  beginDateTransition(date)
+                  queueDateTransition(date)
                   setCalendarOpen(false)
                 }}
                 anchorRef={calendarButtonRef}

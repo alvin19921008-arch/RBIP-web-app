@@ -1,6 +1,6 @@
 'use client'
 
-import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, type ReactNode, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Staff } from '@/types/staff'
 import { StaffCard } from './StaffCard'
 import { DragValidationTooltip } from './DragValidationTooltip'
@@ -69,6 +69,14 @@ function StaffPoolComponent({
   })
   const [showFTEFilter, setShowFTEFilter] = useState(false)
   const [rankFilter, setRankFilter] = useState<'all' | 'therapist' | 'pca'>('all')
+  const deferredRankFilter = useDeferredValue(rankFilter)
+  const deferredShowFTEFilter = useDeferredValue(showFTEFilter)
+  const deferredTherapists = useDeferredValue(therapists)
+  const deferredPcas = useDeferredValue(pcas)
+  const deferredInactiveStaff = useDeferredValue(inactiveStaff)
+  const deferredBufferStaff = useDeferredValue(bufferStaff)
+  const deferredStaffOverrides = useDeferredValue(staffOverrides)
+  const deferredPcaAllocations = useDeferredValue(pcaAllocations)
 
   const updateScrollHints = useCallback(() => {
     const el = scrollRef.current
@@ -98,7 +106,7 @@ function StaffPoolComponent({
 
   const assignedSlotsByStaffId = useMemo(() => {
     const map = new Map<string, Set<number>>()
-    Object.values(pcaAllocations).forEach((teamAllocs: any[]) => {
+    Object.values(deferredPcaAllocations).forEach((teamAllocs: any[]) => {
       teamAllocs.forEach((alloc: any) => {
         const staffId = alloc?.staff_id
         if (!staffId) return
@@ -114,7 +122,7 @@ function StaffPoolComponent({
       })
     })
     return map
-  }, [pcaAllocations])
+  }, [deferredPcaAllocations])
 
   // pokeScrollbar/hideScrollbarNow are provided by useAutoHideFlag
 
@@ -168,7 +176,7 @@ function StaffPoolComponent({
 
   // Helper function to calculate Base_FTE-remaining (after leave, excluding special program)
   const getBaseFTERemaining = (staffId: string, staff?: Staff): number => {
-    const override = staffOverrides[staffId]
+    const override = deferredStaffOverrides[staffId]
 
     // Prefer explicit override.fteRemaining when present.
     // This is the Step 1 "leave & FTE" source of truth for base on-duty capacity.
@@ -276,7 +284,7 @@ function StaffPoolComponent({
 
   // Filter staff by FTE if filter is active
   const filterStaffByFTE = (staffList: Staff[]): Staff[] => {
-    if (!showFTEFilter) return staffList
+    if (!deferredShowFTEFilter) return staffList
     return staffList.filter(s => isOnLeave(s))
   }
 
@@ -290,10 +298,10 @@ function StaffPoolComponent({
       const ranksToExpand: Record<string, boolean> = { ...expandedRanks }
       
       // Check each rank for staff on leave
-      const hasSPTOnLeave = therapists.some(t => t.rank === 'SPT' && isOnLeave(t))
-      const hasAPPTOnLeave = therapists.some(t => t.rank === 'APPT' && isOnLeave(t))
-      const hasRPTOnLeave = therapists.some(t => t.rank === 'RPT' && isOnLeave(t))
-      const hasPCAOnLeave = pcas.some(p => isOnLeave(p))
+      const hasSPTOnLeave = deferredTherapists.some(t => t.rank === 'SPT' && isOnLeave(t))
+      const hasAPPTOnLeave = deferredTherapists.some(t => t.rank === 'APPT' && isOnLeave(t))
+      const hasRPTOnLeave = deferredTherapists.some(t => t.rank === 'RPT' && isOnLeave(t))
+      const hasPCAOnLeave = deferredPcas.some(p => isOnLeave(p))
       
       if (hasSPTOnLeave) ranksToExpand.SPT = true
       if (hasAPPTOnLeave) ranksToExpand.APPT = true
@@ -314,8 +322,14 @@ function StaffPoolComponent({
     })
   }
 
-  const visibleTherapists = useMemo(() => (rankFilter === 'pca' ? [] : therapists), [rankFilter, therapists])
-  const visiblePCAs = useMemo(() => (rankFilter === 'therapist' ? [] : pcas), [rankFilter, pcas])
+  const visibleTherapists = useMemo(
+    () => (deferredRankFilter === 'pca' ? [] : deferredTherapists),
+    [deferredRankFilter, deferredTherapists]
+  )
+  const visiblePCAs = useMemo(
+    () => (deferredRankFilter === 'therapist' ? [] : deferredPcas),
+    [deferredRankFilter, deferredPcas]
+  )
 
   const therapistsByRank = useMemo(() => {
     return {
@@ -323,39 +337,39 @@ function StaffPoolComponent({
     APPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'APPT'))),
     RPT: sortStaffByRank(filterStaffByFTE(visibleTherapists.filter(t => t.rank === 'RPT'))),
   }
-  }, [visibleTherapists, showFTEFilter, staffOverrides])
+  }, [visibleTherapists, deferredShowFTEFilter, deferredStaffOverrides])
 
   const visiblePCAsSorted = useMemo(() => {
     return sortStaffByRank(filterStaffByFTE(visiblePCAs))
-  }, [visiblePCAs, showFTEFilter, staffOverrides])
+  }, [visiblePCAs, deferredShowFTEFilter, deferredStaffOverrides])
 
   const visibleBufferStaff = useMemo(() => {
-    return rankFilter === 'therapist'
-      ? bufferStaff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
-      : rankFilter === 'pca'
-        ? bufferStaff.filter(s => s.rank === 'PCA')
-        : bufferStaff
-  }, [rankFilter, bufferStaff])
+    return deferredRankFilter === 'therapist'
+      ? deferredBufferStaff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
+      : deferredRankFilter === 'pca'
+        ? deferredBufferStaff.filter(s => s.rank === 'PCA')
+        : deferredBufferStaff
+  }, [deferredRankFilter, deferredBufferStaff])
 
   const visibleInactiveStaff = useMemo(() => {
-    return rankFilter === 'therapist'
-      ? inactiveStaff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
-      : rankFilter === 'pca'
-        ? inactiveStaff.filter(s => s.rank === 'PCA')
-        : inactiveStaff
-  }, [rankFilter, inactiveStaff])
+    return deferredRankFilter === 'therapist'
+      ? deferredInactiveStaff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
+      : deferredRankFilter === 'pca'
+        ? deferredInactiveStaff.filter(s => s.rank === 'PCA')
+        : deferredInactiveStaff
+  }, [deferredRankFilter, deferredInactiveStaff])
 
   const inactiveStaffOnly = useMemo(() => {
     return visibleInactiveStaff.filter(s => (s.status ?? 'active') === 'inactive')
   }, [visibleInactiveStaff])
 
   const inactiveStaffForInactivePool = useMemo(() => {
-    if (!showFTEFilter) return visibleInactiveStaff
+    if (!deferredShowFTEFilter) return visibleInactiveStaff
     return visibleInactiveStaff.filter(s => {
       const baseFTE = getBaseFTERemaining(s.id)
       return baseFTE !== 1.0
     })
-  }, [visibleInactiveStaff, showFTEFilter, staffOverrides])
+  }, [visibleInactiveStaff, deferredShowFTEFilter, deferredStaffOverrides])
 
   // Check if all ranks are expanded
   const allExpanded = expandedRanks.SPT && expandedRanks.APPT && expandedRanks.RPT && expandedRanks.PCA

@@ -27,6 +27,9 @@ interface TherapistBlockProps {
     leaveType?: any
     fteRemaining?: number
     amPmSelection?: 'AM' | 'PM'
+    sptOnDayOverride?: {
+      displayText?: string | null
+    }
     // ... other fields
   }>
   /** When true, disables drag/drop and edit affordances (for reference panes). */

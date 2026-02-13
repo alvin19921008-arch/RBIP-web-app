@@ -56,7 +56,7 @@ import {
 } from '@/lib/features/schedule/grouping'
 
 let therapistAlgoImport: Promise<typeof import('@/lib/algorithms/therapistAllocation')> | null = null
-let pcaAlgoImport: Promise<typeof import('@/lib/algorithms/pcaAllocation')> | null = null
+let pcaEngineImport: Promise<typeof import('@/lib/features/schedule/pcaAllocationEngine')> | null = null
 let bedAlgoImport: Promise<typeof import('@/lib/algorithms/bedAllocation')> | null = null
 
 function loadTherapistAlgo() {
@@ -64,9 +64,9 @@ function loadTherapistAlgo() {
   return therapistAlgoImport
 }
 
-function loadPcaAlgo() {
-  pcaAlgoImport = pcaAlgoImport ?? import('@/lib/algorithms/pcaAllocation')
-  return pcaAlgoImport
+function loadPcaEngine() {
+  pcaEngineImport = pcaEngineImport ?? import('@/lib/features/schedule/pcaAllocationEngine')
+  return pcaEngineImport
 }
 
 function loadBedAlgo() {
@@ -3516,8 +3516,8 @@ export function useScheduleController(params: {
         existingAllocations: existingAllocsForSubstitution as any,
       }
 
-      const { allocatePCA } = await loadPcaAlgo()
-      const pcaResult = await allocatePCA(pcaContext)
+      const { allocatePCAWithAdapter } = await loadPcaEngine()
+      const pcaResult = await allocatePCAWithAdapter(pcaContext)
 
       // Extract and store errors (for Step 2 - non-floating PCA + special program)
       if ((pcaResult as any).errors) {
@@ -3742,18 +3742,45 @@ export function useScheduleController(params: {
       const existingAllocations: PCAAllocation[] = []
       const addedStaffIds = new Set<string>()
 
+      // Special-program slots should NOT reduce Step 3 pending needs.
+      // We still keep the allocations, but exclude special-program slot assignments from existingTeamPCAAssigned.
+      const weekday = getWeekday(selectedDate)
+      const specialSlotsByProgramId = new Map<string, Set<number>>()
+      ;(specialPrograms || []).forEach((program: any) => {
+        let programSlots = program?.slots?.[weekday] || []
+        if (!Array.isArray(programSlots)) programSlots = []
+        if (programSlots.length === 0) {
+          if (program?.name === 'Robotic') programSlots = [1, 2, 3, 4]
+          else if (program?.name === 'CRP') programSlots = [2]
+          else programSlots = [1, 2, 3, 4]
+        }
+        specialSlotsByProgramId.set(String(program.id), new Set(programSlots))
+      })
+
       Object.entries(pcaAllocations).forEach(([team, allocs]) => {
         ;(allocs || []).forEach((alloc: any) => {
+          const specialSlotSet = (() => {
+            const ids = alloc?.special_program_ids
+            if (!Array.isArray(ids) || ids.length === 0) return null
+            const out = new Set<number>()
+            ids.forEach((id: any) => {
+              const s = specialSlotsByProgramId.get(String(id))
+              if (!s) return
+              s.forEach((slot) => out.add(slot))
+            })
+            return out.size > 0 ? out : null
+          })()
+
           let slotsInTeam = 0
-          if (alloc.slot1 === team) slotsInTeam++
-          if (alloc.slot2 === team) slotsInTeam++
-          if (alloc.slot3 === team) slotsInTeam++
-          if (alloc.slot4 === team) slotsInTeam++
+          if (alloc.slot1 === team && !(specialSlotSet?.has(1))) slotsInTeam++
+          if (alloc.slot2 === team && !(specialSlotSet?.has(2))) slotsInTeam++
+          if (alloc.slot3 === team && !(specialSlotSet?.has(3))) slotsInTeam++
+          if (alloc.slot4 === team && !(specialSlotSet?.has(4))) slotsInTeam++
 
           const invalidSlot = (alloc as any).invalid_slot
           if (invalidSlot) {
             const slotField = `slot${invalidSlot}` as keyof PCAAllocation
-            if ((alloc as any)[slotField] === team) {
+            if ((alloc as any)[slotField] === team && !(specialSlotSet?.has(invalidSlot))) {
               slotsInTeam = Math.max(0, slotsInTeam - 1)
             }
           }
@@ -3871,8 +3898,8 @@ export function useScheduleController(params: {
         userTeamOrder: args.userTeamOrder,
       }
 
-      const { allocatePCA } = await loadPcaAlgo()
-      const pcaResult = await allocatePCA(pcaContext)
+      const { allocatePCAWithAdapter } = await loadPcaEngine()
+      const pcaResult = await allocatePCAWithAdapter(pcaContext)
 
       const overrides = staffOverrides as any
       ;((pcaResult as any).allocations || []).forEach((alloc: any) => {
@@ -4009,11 +4036,11 @@ export function useScheduleController(params: {
 
   const prefetchStep2Algorithms = () => {
     void loadTherapistAlgo()
-    void loadPcaAlgo()
+    void loadPcaEngine()
   }
 
   const prefetchStep3Algorithms = () => {
-    void loadPcaAlgo()
+    void loadPcaEngine()
   }
 
   const prefetchBedAlgorithm = () => {

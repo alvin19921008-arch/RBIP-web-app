@@ -227,6 +227,65 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
   const allocations: PCAAllocation[] = phase === 'floating' && context.existingAllocations
     ? [...context.existingAllocations]
     : []
+
+  // Hot-path indexes: preserve first-match semantics of Array.find while avoiding repeated scans.
+  const teamPreferenceByTeam = new Map<Team, PCAPreference>()
+  context.pcaPreferences.forEach((pref) => {
+    if (!teamPreferenceByTeam.has(pref.team)) {
+      teamPreferenceByTeam.set(pref.team, pref)
+    }
+  })
+  const getTeamPreference = (team: Team): PCAPreference | undefined => teamPreferenceByTeam.get(team)
+
+  const specialProgramById = new Map<string, SpecialProgram>()
+  context.specialPrograms.forEach((program) => {
+    if (!specialProgramById.has(program.id)) {
+      specialProgramById.set(program.id, program)
+    }
+  })
+  const getSpecialProgramById = (programId: string): SpecialProgram | undefined =>
+    specialProgramById.get(programId)
+
+  const pcaPoolById = new Map<string, PCAData>()
+  context.pcaPool.forEach((pca) => {
+    if (!pcaPoolById.has(pca.id)) {
+      pcaPoolById.set(pca.id, pca)
+    }
+  })
+  const getPcaById = (pcaId: string): PCAData | undefined => pcaPoolById.get(pcaId)
+
+  let allocationIndexSize = -1
+  let firstAllocationByStaffId = new Map<string, PCAAllocation>()
+  let allocationsByStaffId = new Map<string, PCAAllocation[]>()
+  const refreshAllocationIndexes = () => {
+    if (allocationIndexSize === allocations.length) return
+
+    const nextFirstByStaffId = new Map<string, PCAAllocation>()
+    const nextByStaffId = new Map<string, PCAAllocation[]>()
+    allocations.forEach((allocation) => {
+      if (!nextFirstByStaffId.has(allocation.staff_id)) {
+        nextFirstByStaffId.set(allocation.staff_id, allocation)
+      }
+      const list = nextByStaffId.get(allocation.staff_id)
+      if (list) {
+        list.push(allocation)
+      } else {
+        nextByStaffId.set(allocation.staff_id, [allocation])
+      }
+    })
+
+    firstAllocationByStaffId = nextFirstByStaffId
+    allocationsByStaffId = nextByStaffId
+    allocationIndexSize = allocations.length
+  }
+  const getFirstAllocationByStaffId = (staffId: string): PCAAllocation | undefined => {
+    refreshAllocationIndexes()
+    return firstAllocationByStaffId.get(staffId)
+  }
+  const getAllocationsByStaffId = (staffId: string): PCAAllocation[] => {
+    refreshAllocationIndexes()
+    return allocationsByStaffId.get(staffId) ?? []
+  }
   
 
   let totalPCAOnDuty = context.totalPCAAvailable
@@ -248,6 +307,12 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
   const teamPCAAssigned: Record<Team, number> = phase === 'floating' && context.existingTeamPCAAssigned
     ? { ...context.existingTeamPCAAssigned }
     : { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
+
+  // Special-program slot FTE tracking (Step 2 only).
+  // Legacy behavior: special program slots are "designated work" and should NOT reduce Step 3 pending needs.
+  const teamPCASpecialProgramAssigned: Record<Team, number> = {
+    FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0,
+  }
   
   // Phase control: determine which allocation phases to run
   // - 'non-floating': only non-floating PCA team assignment
@@ -295,7 +360,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
       const availableSlots = Array.isArray(args.pca.availableSlots) && args.pca.availableSlots.length > 0
         ? args.pca.availableSlots
         : [1, 2, 3, 4]
-      const baseAllocation = allocations.find((a) => a.staff_id === args.pca.id)
+      const baseAllocation = getFirstAllocationByStaffId(args.pca.id)
       const freeRequestedSlots = args.slots.filter((slot) => {
         if (!availableSlots.includes(slot)) return false
         if (!baseAllocation) return true
@@ -402,7 +467,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
       const teamsNeedingProgram = Object.entries(context.averagePCAPerTeam)
         .filter(([team, required]) => {
           const teamKey = team as Team
-          const preference = context.pcaPreferences.find(p => p.team === teamKey)
+          const preference = getTeamPreference(teamKey)
           const gymSlot = preference?.gym_schedule ?? null
           const slotConflict = programSlots.some(slot => slot === gymSlot)
 
@@ -652,12 +717,12 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               // For special programs (Robotic/CRP), find allocation by program, not by team
               // For other programs, find by team
               const existingAllocation = (program.name === 'Robotic' || program.name === 'CRP')
-                ? allocations.find(a => a.staff_id === floatingPca.id && a.special_program_ids?.includes(program.id))
-                : allocations.find(a => a.staff_id === floatingPca.id && a.team === targetTeam)
+                ? getAllocationsByStaffId(floatingPca.id).find((a) => a.special_program_ids?.includes(program.id))
+                : getAllocationsByStaffId(floatingPca.id).find((a) => a.team === targetTeam)
               const remainingFTE = existingAllocation?.fte_remaining ?? floatingPca.fte_pca
 
               // Any allocation (including substitutions) for slot-usage checks
-              const anyAllocationForPCA = allocations.find(a => a.staff_id === floatingPca.id)
+              const anyAllocationForPCA = getFirstAllocationByStaffId(floatingPca.id)
               const anyAssignedSlots = anyAllocationForPCA
                 ? [1, 2, 3, 4].filter(slot => {
                     const slotTeam = slot === 1 ? anyAllocationForPCA.slot1 : slot === 2 ? anyAllocationForPCA.slot2 : slot === 3 ? anyAllocationForPCA.slot3 : anyAllocationForPCA.slot4
@@ -690,7 +755,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                   : Math.min(neededFTE, remainingFTE, fteForSlots, program.pca_required || fteForSlots)
 
                 // IMPORTANT: reuse the PCA's existing allocation (if any) to avoid duplicate allocations for the same staff_id
-                const baseAllocationForPCA = allocations.find(a => a.staff_id === floatingPca.id) ?? existingAllocation
+                const baseAllocationForPCA = getFirstAllocationByStaffId(floatingPca.id) ?? existingAllocation
 
                 if (baseAllocationForPCA) {
                   // Track newly assigned slots to avoid double-counting
@@ -775,8 +840,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             if (nonFloatingPca) {
               // For special programs (Robotic/CRP), find allocation by program, not by team
               const existingAllocation = (program.name === 'Robotic' || program.name === 'CRP')
-                ? allocations.find(a => a.staff_id === nonFloatingPca.id && a.special_program_ids?.includes(program.id))
-                : allocations.find(a => a.staff_id === nonFloatingPca.id && a.team === targetTeam)
+                ? getAllocationsByStaffId(nonFloatingPca.id).find((a) => a.special_program_ids?.includes(program.id))
+                : getAllocationsByStaffId(nonFloatingPca.id).find((a) => a.team === targetTeam)
               const remainingFTE = existingAllocation?.fte_remaining || 1
 
               if (remainingFTE > 0) {
@@ -870,7 +935,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           )
 
           if (fallbackFloating) {
-            const existingAllocation = allocations.find(a => a.staff_id === fallbackFloating.id && a.team === targetTeam)
+            const existingAllocation = getAllocationsByStaffId(fallbackFloating.id).find((a) => a.team === targetTeam)
             const remainingFTE = existingAllocation?.fte_remaining || 1
 
             if (remainingFTE > 0) {
@@ -960,7 +1025,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             )
 
             if (fallbackNonFloating) {
-              const existingAllocation = allocations.find(a => a.staff_id === fallbackNonFloating.id && a.team === targetTeam)
+              const existingAllocation = getAllocationsByStaffId(fallbackNonFloating.id).find((a) => a.team === targetTeam)
               const remainingFTE = existingAllocation?.fte_remaining || 1
 
               if (remainingFTE > 0) {
@@ -1126,7 +1191,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
     missingSlots: number[],
     allocations: PCAAllocation[]
   ): FloatingSubCandidate[] => {
-    const teamPref = context.pcaPreferences.find(p => p.team === team)
+    const teamPref = getTeamPreference(team)
     const preferredPCAIds = teamPref?.preferred_pca_ids || []
     const teamFloor = teamPref?.floor_pca_selection ?? null
 
@@ -1179,7 +1244,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         ? pca.availableSlots
         : [1, 2, 3, 4]
       
-      const existingAllocation = allocations.find(a => a.staff_id === pca.id)
+      const existingAllocation = getFirstAllocationByStaffId(pca.id)
       const assignedSlots: number[] = []
       if (existingAllocation) {
         if (existingAllocation.slot1 !== null) assignedSlots.push(1)
@@ -1199,7 +1264,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
       if (existingAllocation?.special_program_ids && existingAllocation.special_program_ids.length > 0) {
         const reasonBySlot = new Map<number, Set<string>>()
         for (const pid of existingAllocation.special_program_ids) {
-          const program = context.specialPrograms.find((p: any) => p?.id === pid)
+          const program = getSpecialProgramById(pid)
           if (!program) continue
           const programSlots = getProgramSlotsForWeekday(program)
           for (const slot of programSlots) {
@@ -1308,7 +1373,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
     if (!pca.team) return
     const team = pca.team  // Capture non-null team for type safety
     
-    const allocation = allocations.find(a => a.staff_id === pca.id)
+    const allocation = getFirstAllocationByStaffId(pca.id)
     if (!allocation) return
 
     // Identify missing slots (slots NOT in availableSlots)
@@ -1354,7 +1419,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         const floatingPca = floatingPCA.find(p => p.id === userSelection.floatingPCAId)
         if (!floatingPca) continue
 
-        const existingAllocation = allocations.find(a => a.staff_id === floatingPca.id)
+        const existingAllocation = getFirstAllocationByStaffId(floatingPca.id)
         let assignedCount = 0
         const slots = Array.isArray(userSelection.slots) ? userSelection.slots : []
 
@@ -1401,7 +1466,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
     } else {
       // Use automatic algorithm (original logic) - only if callback not provided or user skipped
       // Get team's PCA preferences
-      const teamPreference = context.pcaPreferences.find(p => p.team === subNeed.team)
+      const teamPreference = getTeamPreference(subNeed.team)
       const preferredPCAIds = teamPreference?.preferred_pca_ids || []
       
       // Find a floating PCA that can cover all 4 slots
@@ -1418,7 +1483,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         if (!floatingPca) continue
         
         // Check if this floating PCA already has allocations
-        const existingAllocation = allocations.find(a => a.staff_id === floatingPca.id)
+        const existingAllocation = getFirstAllocationByStaffId(floatingPca.id)
         if (existingAllocation) {
           // Check if all 4 slots are available (not already assigned)
           if (existingAllocation.slot1 !== null || existingAllocation.slot2 !== null ||
@@ -1530,7 +1595,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         const floatingPca = floatingPCA.find(p => p.id === userSelection.floatingPCAId)
         if (!floatingPca) continue
 
-        const existingAllocation = allocations.find(a => a.staff_id === floatingPca.id)
+        const existingAllocation = getFirstAllocationByStaffId(floatingPca.id)
         const slots = Array.isArray(userSelection.slots) ? userSelection.slots : []
         let assignedCount = 0
 
@@ -1579,7 +1644,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
     } else {
       // Use automatic algorithm (original logic)
       // Get team's PCA preferences
-      const teamPreference = context.pcaPreferences.find(p => p.team === subNeed.team)
+      const teamPreference = getTeamPreference(subNeed.team)
       const preferredPCAIds = teamPreference?.preferred_pca_ids || []
       
       // Track which slots couldn't be substituted
@@ -1619,7 +1684,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           const floatingPca = floatingPCA.find(pca => pca.id === preferredPcaId)
           if (!floatingPca) continue
           
-          const existingAllocation = allocations.find(a => a.staff_id === floatingPca.id)
+          const existingAllocation = getFirstAllocationByStaffId(floatingPca.id)
           if (!canPCACoverSlots(floatingPca, missingSlots, existingAllocation)) continue
           
           // Found PCA that can cover all slots - assign all at once
@@ -1688,7 +1753,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           if (!floatingPca) continue
           
           // Check if this slot is already assigned to special program
-          const existingAllocation = allocations.find(a => a.staff_id === floatingPca.id)
+          const existingAllocation = getFirstAllocationByStaffId(floatingPca.id)
           if (existingAllocation) {
             const slotField = missingSlot === 1 ? 'slot1' : missingSlot === 2 ? 'slot2' : missingSlot === 3 ? 'slot3' : 'slot4'
             // Check if slot is assigned to special program
@@ -1753,7 +1818,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         )
         
         if (nonPreferredFloating) {
-          const existingAllocation = allocations.find(a => a.staff_id === nonPreferredFloating.id)
+          const existingAllocation = getFirstAllocationByStaffId(nonPreferredFloating.id)
           
           // Check if slot is assigned to special program
           if (existingAllocation) {
@@ -1814,7 +1879,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           )
           
           if (fallbackFloating) {
-            const existingAllocation = allocations.find(a => a.staff_id === fallbackFloating.id)
+            const existingAllocation = getFirstAllocationByStaffId(fallbackFloating.id)
             
             // Check if slot is assigned to special program
             if (existingAllocation) {
@@ -1874,7 +1939,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         )
         
         if (fallbackFloating) {
-          const existingAllocation = allocations.find(a => a.staff_id === fallbackFloating.id)
+          const existingAllocation = getFirstAllocationByStaffId(fallbackFloating.id)
           
           // Check if slot is assigned to special program
           if (existingAllocation) {
@@ -1962,9 +2027,62 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
     FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
   }
   
+  // Exclude special-program slot assignments from "assigned" when computing pending needs for Step 3.
+  // Special program slots are designated work and should not satisfy per-team floating needs.
+  if (shouldDoSpecialProgram) {
+    TEAMS.forEach((t) => {
+      teamPCASpecialProgramAssigned[t] = 0
+    })
+
+    const slotsByProgramId = new Map<string, Set<number>>()
+    ;(context.specialPrograms || []).forEach((program) => {
+      let programSlots = (program as any)?.slots?.[weekday] || []
+      if (!Array.isArray(programSlots)) programSlots = []
+      if (programSlots.length === 0) {
+        if (program.name === 'Robotic') programSlots = [1, 2, 3, 4]
+        else if (program.name === 'CRP') programSlots = [2]
+        else programSlots = [1, 2, 3, 4]
+      }
+      slotsByProgramId.set(program.id, new Set(programSlots))
+    })
+
+    allocations.forEach((alloc) => {
+      const ids = (alloc as any)?.special_program_ids
+      if (!Array.isArray(ids) || ids.length === 0) return
+
+      const specialSlotSet = new Set<number>()
+      ids.forEach((id: any) => {
+        const s = slotsByProgramId.get(String(id))
+        if (!s) return
+        s.forEach((slot) => specialSlotSet.add(slot))
+      })
+      if (specialSlotSet.size === 0) return
+
+      const add = (slotNum: 1 | 2 | 3 | 4, slotTeam: Team | null) => {
+        if (!slotTeam) return
+        if (!specialSlotSet.has(slotNum)) return
+        teamPCASpecialProgramAssigned[slotTeam] += 0.25
+      }
+      add(1, (alloc as any).slot1 ?? null)
+      add(2, (alloc as any).slot2 ?? null)
+      add(3, (alloc as any).slot3 ?? null)
+      add(4, (alloc as any).slot4 ?? null)
+
+      const inv = (alloc as any)?.invalid_slot as 1 | 2 | 3 | 4 | null | undefined
+      if (inv === 1 || inv === 2 || inv === 3 || inv === 4) {
+        if (specialSlotSet.has(inv)) {
+          const invTeam = (inv === 1 ? (alloc as any).slot1 : inv === 2 ? (alloc as any).slot2 : inv === 3 ? (alloc as any).slot3 : (alloc as any).slot4) as Team | null
+          if (invTeam) {
+            teamPCASpecialProgramAssigned[invTeam] = Math.max(0, teamPCASpecialProgramAssigned[invTeam] - 0.25)
+          }
+        }
+      }
+    })
+  }
+
   Object.entries(context.averagePCAPerTeam).forEach(([team, baseRequired]) => {
     const teamKey = team as Team
-    const assigned = teamPCAAssigned[teamKey]
+    const assigned = teamPCAAssigned[teamKey] - (teamPCASpecialProgramAssigned[teamKey] || 0)
     const pending = baseRequired - assigned
     // Store RAW pending value (no rounding) - rounding happens when assigning slots
     pendingPCAFTEPerTeam[teamKey] = Math.max(0, pending)
@@ -2022,7 +2140,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
     const teamsNeedingProgram = Object.entries(context.averagePCAPerTeam)
       .filter(([team, required]) => {
         const teamKey = team as Team
-        const preference = context.pcaPreferences.find(p => p.team === teamKey)
+          const preference = getTeamPreference(teamKey)
         const gymSlot = preference?.gym_schedule ?? null
         const slotConflict = programSlots.some(slot => slot === gymSlot)
         
@@ -2233,13 +2351,13 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           if (floatingPca) {
             // For special programs (Robotic/CRP), find allocation by program, not by team
             // For other programs, find by team
-            const existingAllocation = (program.name === 'Robotic' || program.name === 'CRP')
-              ? allocations.find(a => a.staff_id === floatingPca.id && a.special_program_ids?.includes(program.id))
-              : allocations.find(a => a.staff_id === floatingPca.id && a.team === targetTeam)
+              const existingAllocation = (program.name === 'Robotic' || program.name === 'CRP')
+                ? getAllocationsByStaffId(floatingPca.id).find((a) => a.special_program_ids?.includes(program.id))
+                : getAllocationsByStaffId(floatingPca.id).find((a) => a.team === targetTeam)
             const remainingFTE = existingAllocation?.fte_remaining ?? floatingPca.fte_pca
 
             // Any allocation (including substitutions) for slot-usage checks
-            const anyAllocationForPCA = allocations.find(a => a.staff_id === floatingPca.id)
+            const anyAllocationForPCA = getFirstAllocationByStaffId(floatingPca.id)
             const anyAssignedSlots = anyAllocationForPCA
               ? [1, 2, 3, 4].filter(slot => {
                   const slotTeam = slot === 1 ? anyAllocationForPCA.slot1 : slot === 2 ? anyAllocationForPCA.slot2 : slot === 3 ? anyAllocationForPCA.slot3 : anyAllocationForPCA.slot4
@@ -2271,7 +2389,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                 : Math.min(neededFTE, remainingFTE, fteForSlots, program.pca_required || fteForSlots)
               
               // IMPORTANT: reuse the PCA's existing allocation (if any) to avoid duplicate allocations for the same staff_id
-              const baseAllocationForPCA = allocations.find(a => a.staff_id === floatingPca.id) ?? existingAllocation
+              const baseAllocationForPCA = getFirstAllocationByStaffId(floatingPca.id) ?? existingAllocation
 
               if (baseAllocationForPCA) {
                 // Track newly assigned slots to avoid double-counting
@@ -2356,8 +2474,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           if (nonFloatingPca) {
             // For special programs (Robotic/CRP), find allocation by program, not by team
             const existingAllocation = (program.name === 'Robotic' || program.name === 'CRP')
-              ? allocations.find(a => a.staff_id === nonFloatingPca.id && a.special_program_ids?.includes(program.id))
-              : allocations.find(a => a.staff_id === nonFloatingPca.id && a.team === targetTeam)
+              ? getAllocationsByStaffId(nonFloatingPca.id).find((a) => a.special_program_ids?.includes(program.id))
+              : getAllocationsByStaffId(nonFloatingPca.id).find((a) => a.team === targetTeam)
             const remainingFTE = existingAllocation?.fte_remaining || 1
             
             if (remainingFTE > 0) {
@@ -2451,7 +2569,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         )
         
         if (fallbackFloating) {
-          const existingAllocation = allocations.find(a => a.staff_id === fallbackFloating.id && a.team === targetTeam)
+          const existingAllocation = getAllocationsByStaffId(fallbackFloating.id).find((a) => a.team === targetTeam)
           const remainingFTE = existingAllocation?.fte_remaining || 1
           
           if (remainingFTE > 0) {
@@ -2541,7 +2659,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           )
           
           if (fallbackNonFloating) {
-            const existingAllocation = allocations.find(a => a.staff_id === fallbackNonFloating.id && a.team === targetTeam)
+            const existingAllocation = getAllocationsByStaffId(fallbackNonFloating.id).find((a) => a.team === targetTeam)
             const remainingFTE = existingAllocation?.fte_remaining || 1
             
             if (remainingFTE > 0) {
@@ -2670,7 +2788,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         const pca = floatingPCA.find(p => p.id === pcaId && p.is_available)
         if (!pca) return
 
-        const existingAllocation = allocations.find(a => a.staff_id === pcaId)
+        const existingAllocation = getFirstAllocationByStaffId(pcaId)
         if (existingAllocation && existingAllocation.fte_remaining <= 0) return
 
         if (neededFTE > 0) {
@@ -2749,7 +2867,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             )
 
             if (alternativePCA) {
-              const altAllocation = allocations.find(a => a.staff_id === alternativePCA.id)
+              const altAllocation = getFirstAllocationByStaffId(alternativePCA.id)
               const altRemainingFTE = altAllocation?.fte_remaining || 1
               const stillNeededFTE = requiredFTE - teamPCAAssigned[pref.team]
               const fteForAlt = Math.min(stillNeededFTE, altRemainingFTE, 0.25 * unassignedSlots.length)
@@ -2809,7 +2927,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
       )
 
       if (availablePCA) {
-        const existingAllocation = allocations.find(a => a.staff_id === availablePCA.id)
+        const existingAllocation = getFirstAllocationByStaffId(availablePCA.id)
         const remainingFTE = existingAllocation?.fte_remaining || 1
         const fteToAssign = Math.min(neededFTE, remainingFTE, 0.25 * prefSlots.length)
 
@@ -2876,7 +2994,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
   // Priority 3 & 4: Fill remaining needs using highest-pending-first strategy
   const remainingFloatingPCA = floatingPCA.filter(
     pca => {
-      const allocation = allocations.find(a => a.staff_id === pca.id)
+      const allocation = getFirstAllocationByStaffId(pca.id)
       if (!allocation) {
         // No allocation yet - PCA is fully available
         return true
@@ -2967,7 +3085,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
     
     // Fill this team completely (until pending = 0)
     // Get team's preferences to guide PCA selection
-    const targetPreference = context.pcaPreferences.find(p => p.team === targetTeam)
+    const targetPreference = getTeamPreference(targetTeam)
     const preferredPCAIds = targetPreference?.preferred_pca_ids || []
     const preferredSlots = targetPreference?.preferred_slots || []
     const gymSlot = targetPreference?.gym_schedule ?? null
@@ -3000,7 +3118,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           const pca = remainingFloatingPCA[i]
           if (!preferredPCAIds.includes(pca.id)) continue
           
-    const allocation = allocations.find(a => a.staff_id === pca.id)
+    const allocation = getFirstAllocationByStaffId(pca.id)
     const remainingFTE = allocation?.fte_remaining || 1
 
           if (remainingFTE <= 0) continue
@@ -3054,7 +3172,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         
         for (let i = 0; i < remainingFloatingPCA.length; i++) {
           const pca = remainingFloatingPCA[i]
-          const allocation = allocations.find(a => a.staff_id === pca.id)
+          const allocation = getFirstAllocationByStaffId(pca.id)
           const remainingFTE = allocation?.fte_remaining || 1
           
           if (remainingFTE <= 0) continue
@@ -3104,7 +3222,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         break // Exit inner loop, outer loop will try next team
       }
       
-      const allocation = allocations.find(a => a.staff_id === pcaToAssign!.id)
+      const allocation = getFirstAllocationByStaffId(pcaToAssign!.id)
       const remainingFTE = allocation?.fte_remaining || 1
       
       if (allocation) {
@@ -3119,7 +3237,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         const slotsTakenByOtherFloating: number[] = []
         allocations.forEach(alloc => {
           if (alloc.staff_id === pcaToAssign!.id) return // Skip self
-          const allocStaff = context.pcaPool.find(p => p.id === alloc.staff_id)
+          const allocStaff = getPcaById(alloc.staff_id)
           if (allocStaff?.floating) {
             if (alloc.slot1 === targetTeam) slotsTakenByOtherFloating.push(1)
             if (alloc.slot2 === targetTeam) slotsTakenByOtherFloating.push(2)
@@ -3199,7 +3317,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         // This prevents assigning multiple floating PCAs to the same slot for substitution
         const slotsTakenByOtherFloating: number[] = []
         allocations.forEach(alloc => {
-          const allocStaff = context.pcaPool.find(p => p.id === alloc.staff_id)
+          const allocStaff = getPcaById(alloc.staff_id)
           if (allocStaff?.floating) {
             // Check each slot - if assigned to target team, it's taken
             if (alloc.slot1 === targetTeam) slotsTakenByOtherFloating.push(1)
@@ -3290,7 +3408,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
       }
       
       // Remove PCA from available list if fully allocated
-      const updatedAllocation = allocations.find(a => a.staff_id === pcaToAssign.id)
+      const updatedAllocation = getFirstAllocationByStaffId(pcaToAssign.id)
       if (updatedAllocation && updatedAllocation.fte_remaining <= 0) {
         remainingFloatingPCA.splice(pcaIndex, 1)
       }
@@ -3302,7 +3420,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
   floatingPCA.forEach((pca) => {
     if (pca.invalidSlot === undefined || pca.invalidSlot === null) return
     
-    const allocation = allocations.find(a => a.staff_id === pca.id)
+    const allocation = getFirstAllocationByStaffId(pca.id)
     if (!allocation) return
     
     // Find neighboring slot in same half-day
@@ -3446,6 +3564,23 @@ export async function allocateFloatingPCA_v2(
   // Clone allocations and pending FTE to avoid mutating originals
   const allocations = existingAllocations.map(a => ({ ...a }))
   const pendingFTE = { ...initialPendingFTE }
+
+  // Hot-path index for repeated allocation lookup by staff ID.
+  let allocationIndexSize = -1
+  let allocationByStaffId = new Map<string, PCAAllocation>()
+  const getAllocationByStaffId = (staffId: string): PCAAllocation | undefined => {
+    if (allocationIndexSize !== allocations.length) {
+      const next = new Map<string, PCAAllocation>()
+      allocations.forEach((allocation) => {
+        if (!next.has(allocation.staff_id)) {
+          next.set(allocation.staff_id, allocation)
+        }
+      })
+      allocationByStaffId = next
+      allocationIndexSize = allocations.length
+    }
+    return allocationByStaffId.get(staffId)
+  }
   
   // Initialize tracker
   const tracker = createEmptyTracker()
@@ -3494,7 +3629,7 @@ export async function allocateFloatingPCA_v2(
     // Check if all PCAs have no available slots
     const anyPCAHasSlots = pcaPool.some(pca => {
       if (pca.fte_pca <= 0) return false
-      const alloc = allocations.find(a => a.staff_id === pca.id)
+      const alloc = getAllocationByStaffId(pca.id)
       if (!alloc) return true // No allocation yet, has slots
       return alloc.fte_remaining > 0
     })
@@ -3645,12 +3780,19 @@ function applyInvalidSlotPairingForDisplay(allocations: PCAAllocation[], pcaPool
     if (slot === 4) alloc.slot4 = team
   }
 
+  const allocationByStaffId = new Map<string, PCAAllocation>()
+  allocations.forEach((allocation) => {
+    if (!allocationByStaffId.has(allocation.staff_id)) {
+      allocationByStaffId.set(allocation.staff_id, allocation)
+    }
+  })
+
   for (const pca of pcaPool) {
     const invalidSlot = (pca as any)?.invalidSlot as number | null | undefined
     if (invalidSlot == null) continue
     if (![1, 2, 3, 4].includes(invalidSlot)) continue
 
-    const alloc = allocations.find((a) => a.staff_id === pca.id)
+    const alloc = allocationByStaffId.get(pca.id)
     if (!alloc) continue
 
     const pairedSlot = invalidSlot === 1 ? 2 : invalidSlot === 2 ? 1 : invalidSlot === 3 ? 4 : 3
@@ -4531,10 +4673,17 @@ async function processCycle3Cleanup(
   tracker: AllocationTracker,
   recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void
 ): Promise<void> {
+  const allocationByStaffId = new Map<string, PCAAllocation>()
+  allocations.forEach((allocation) => {
+    if (!allocationByStaffId.has(allocation.staff_id)) {
+      allocationByStaffId.set(allocation.staff_id, allocation)
+    }
+  })
+
   // Find PCAs with unassigned slots
   const pcasWithSlots = pcaPool.filter(pca => {
     if (pca.fte_pca <= 0) return false
-    const alloc = allocations.find(a => a.staff_id === pca.id)
+    const alloc = allocationByStaffId.get(pca.id)
     if (!alloc) return true  // No allocation yet = all slots available
     return alloc.fte_remaining > 0
   })

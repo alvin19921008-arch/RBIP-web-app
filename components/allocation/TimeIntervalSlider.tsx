@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, type MouseEvent } from 'react'
+import { useState, useEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react'
 
 interface TimeIntervalSliderProps {
   slot: number
@@ -64,7 +64,7 @@ export function TimeIntervalSlider({
     return Math.max(0, Math.min(intervals.length - 1, idx))
   }
 
-  const handleTrackMouseDown = (e: MouseEvent<HTMLDivElement>) => {
+  const handleTrackMouseDown = (e: ReactMouseEvent<HTMLDivElement>) => {
     // Allow click-to-jump anywhere on the track (including the blue selected bar).
     // Move the *nearest* handle to the clicked position.
     const idx = indexFromClientX(e.clientX)
@@ -142,7 +142,7 @@ export function TimeIntervalSlider({
               e.stopPropagation()
               if (!trackRef.current) return
               
-              const startDrag = (moveEvent: MouseEvent) => {
+              const startDrag = (moveEvent: globalThis.MouseEvent) => {
                 if (!trackRef.current) return
                 const rect = trackRef.current.getBoundingClientRect()
                 const x = moveEvent.clientX - rect.left
@@ -173,7 +173,7 @@ export function TimeIntervalSlider({
               e.stopPropagation()
               if (!trackRef.current) return
               
-              const startDrag = (moveEvent: MouseEvent) => {
+              const startDrag = (moveEvent: globalThis.MouseEvent) => {
                 if (!trackRef.current) return
                 const rect = trackRef.current.getBoundingClientRect()
                 const x = moveEvent.clientX - rect.left

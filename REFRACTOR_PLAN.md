@@ -74,7 +74,7 @@ This phase follows the refactoring-specialist guideline:
 - Risk control:
   - Keep existing sync path behind feature flag as fallback
   - Compare worker vs sync outputs on fixed fixtures before enabling by default
-- Status: Planned
+- Status: Done (worker adapter + sync fallback feature flag + optional parity shadow-compare)
 
 #### P2.2 Consolidate Duplicate Allocation Execution Paths
 - Scope:
@@ -86,7 +86,7 @@ This phase follows the refactoring-specialist guideline:
 - Risk control:
   - Preserve current action entry points and toasts/messages
   - Validate all step transitions and rollback/back behavior
-- Status: Planned
+- Status: Done (removed page-level legacy allocation execution path; controller step runners remain authority)
 
 #### P2.3 Algorithm Hot-Path Data Structures
 - Scope:
@@ -98,7 +98,7 @@ This phase follows the refactoring-specialist guideline:
 - Risk control:
   - Fixture-based output parity checks (before/after)
   - Tie-break determinism checks
-- Status: Planned
+- Status: Done (precomputed team/program/allocation indexes in PCA hot paths; preserved decision/tie-break order)
 
 #### P2.4 React 19 Concurrency for Perceived Responsiveness
 - Scope:
@@ -109,7 +109,7 @@ This phase follows the refactoring-specialist guideline:
 - Risk control:
   - No mutation semantics change in this sub-phase
   - Keep existing error handling/loading states
-- Status: Planned
+- Status: Done (useTransition for step/date UI transitions; useDeferredValue for StaffPool filter-heavy derivations)
 
 #### P2.5 Virtualize Heavy Lists/Tables (Conditional, Data-Driven)
 - Priority:

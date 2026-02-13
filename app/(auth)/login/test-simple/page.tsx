@@ -4,6 +4,8 @@ import { useToast } from '@/components/ui/toast-provider'
 
 export default function TestSimplePage() {
   const isDev = process.env.NODE_ENV !== 'production'
+  const toast = useToast()
+
   if (!isDev) {
     return (
       <div className="p-8">
@@ -11,8 +13,6 @@ export default function TestSimplePage() {
       </div>
     )
   }
-
-  const toast = useToast()
 
   const handleClick = () => {
     console.log('=== SIMPLE TEST CLICKED ===')

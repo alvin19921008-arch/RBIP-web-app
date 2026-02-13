@@ -1,36 +1,17 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 export default function DebugPage() {
   const isDev = process.env.NODE_ENV !== 'production'
-  if (!isDev) {
-    return (
-      <div className="container mx-auto p-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Not Found</CardTitle>
-          </CardHeader>
-        </Card>
-      </div>
-    )
-  }
-
   const [session, setSession] = useState<any>(null)
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const supabase = createClientComponentClient()
+  const supabase = useMemo(() => createClientComponentClient(), [])
 
-  useEffect(() => {
-    console.log('Debug page mounted, checking session...')
-    console.log('Supabase URL:', process.env.NEXT_PUBLIC_SUPABASE_URL)
-    console.log('Supabase key exists:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
-    checkSession()
-  }, [])
-
-  const checkSession = async () => {
+  const checkSession = useCallback(async () => {
     setLoading(true)
     try {
       console.log('Calling getSession...')
@@ -60,6 +41,25 @@ export default function DebugPage() {
       console.log('Setting loading to false')
       setLoading(false)
     }
+  }, [supabase])
+
+  useEffect(() => {
+    console.log('Debug page mounted, checking session...')
+    console.log('Supabase URL:', process.env.NEXT_PUBLIC_SUPABASE_URL)
+    console.log('Supabase key exists:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+    void checkSession()
+  }, [checkSession])
+
+  if (!isDev) {
+    return (
+      <div className="container mx-auto p-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>Not Found</CardTitle>
+          </CardHeader>
+        </Card>
+      </div>
+    )
   }
 
   return (

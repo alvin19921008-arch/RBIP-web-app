@@ -8,9 +8,17 @@
 ### Added
 - **Playwright smoke testing scaffold**: Chromium-only Playwright setup for fast refactor safety gates, including `playwright.config.ts`, `tests/smoke/*`, and npm scripts (`test:smoke`, `test:smoke:headed`, `test:smoke:debug`). Smoke tests prefer localhost dev auto-login and fall back to env credentials when needed.
 - **Cursor on-demand smoke skill/rules**: Project skill `.cursor/skills/playwright-smoke-rbip` plus scoped rules (`playwright-smoke-on-demand`, `playwright-config-on-demand`) so smoke-test guidance is loaded only when editing smoke test/config files (token-efficient).
+- **Phase 2.1 – PCA allocation off main thread**: Web Worker adapter for heavy PCA allocation (`lib/features/schedule/pcaAllocation.worker.ts`, `pcaAllocationEngine.ts`, `pcaAllocationWorkerTypes.ts`). Request/response shape unchanged; optional env flags `NEXT_PUBLIC_SCHEDULE_PCA_WORKER` and `NEXT_PUBLIC_SCHEDULE_PCA_WORKER_SHADOW_COMPARE`; sync fallback when worker is disabled or fails.
 
 ### Changed
 - **Refactor plan (Phase 2)**: Added Phase 2 high-ROI refactor plan and smoke test gates; virtualization was downgraded to a conditional, profiler-triggered item (deferred by default).
+- **Phase 2.2 – Single allocation authority**: Removed legacy page-level full allocation path from schedule page; controller step runners are the only place that run therapist/PCA/bed algorithms. Staff-edit flow no longer triggers in-page full allocation; Step 2/3/4 run only via controller and step UI.
+- **Phase 2.3 – Algorithm hot-path indexes**: Precomputed maps/indexes in PCA allocation (team preference by team, special program by id, pca pool by id, allocation by staff_id) to replace repeated `find`/`filter` in hot loops; decision order and tie-break behavior unchanged.
+- **Phase 2.4 – React 19 concurrency**: `useTransition` for non-urgent step and date transitions (next/previous step, step click, date change); `useDeferredValue` in StaffPool for filter-heavy derived lists (rank filter, FTE filter, staff/overrides/allocations) so UI stays responsive during filter changes.
+- **Login debug/test pages**: React hooks (useState, useEffect, useToast) moved above early returns so hook order is stable (fixes rules-of-hooks lint errors).
+- **TherapistBlock**: `staffOverrides` prop type extended with `sptOnDayOverride.displayText` for SPT display text.
+- **TimeIntervalSlider**: Document listener callbacks use `globalThis.MouseEvent` to fix React vs DOM MouseEvent type mismatch in build.
+- **PCA allocation worker**: Worker scope typed without `DedicatedWorkerGlobalScope` for build compatibility.
 
 ## [Unreleased] - 2026-02-08
 
