@@ -53,6 +53,7 @@ import { SplitPane } from '@/components/ui/SplitPane'
 import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, ImageDown, Undo2, Redo2, CircleHelp } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { useAccessControl } from '@/lib/access/useAccessControl'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
@@ -183,7 +184,7 @@ import { ALLOCATION_STEPS, EMPTY_BED_ALLOCATIONS, TEAMS, WEEKDAYS, WEEKDAY_NAMES
 import { useScheduleController } from '@/lib/features/schedule/controller/useScheduleController'
 import type { PCAAllocationErrors } from '@/lib/features/schedule/controller/useScheduleController'
 import { AllocationExportView } from '@/components/schedule/AllocationExportView'
-import { downloadBlobAsFile, renderElementToPngBlob } from '@/lib/utils/exportPng'
+import { downloadBlobAsFile, renderElementToImageBlob, shareImageBlob } from '@/lib/utils/exportPng'
 import { HelpCenterDialog } from '@/components/help/HelpCenterDialog'
 import { HELP_TOUR_PENDING_KEY } from '@/lib/help/tours'
 import { startHelpTourWithRetry } from '@/lib/help/startTour'
@@ -837,6 +838,7 @@ function SchedulePageContent() {
     useActionToast()
   const [exportPngLayerOpen, setExportPngLayerOpen] = useState(false)
   const [exportingPng, setExportingPng] = useState(false)
+  const [isLikelyMobileDevice, setIsLikelyMobileDevice] = useState(false)
   const exportPngRootRef = useRef<HTMLDivElement | null>(null)
   const highlightTimerRef = useRef<any>(null)
   const [highlightDateKey, setHighlightDateKey] = useState<string | null>(null)
@@ -860,6 +862,20 @@ function SchedulePageContent() {
   >({})
   const lastPerfTickAtRef = useRef(0)
   const [perfTick, setPerfTick] = useState(0)
+
+  useEffect(() => {
+    const detectMobile = () => {
+      const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
+      const uaMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua)
+      const narrowViewport = typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches
+      const coarsePointer = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
+      setIsLikelyMobileDevice(uaMobile || (narrowViewport && coarsePointer))
+    }
+
+    detectMobile()
+    window.addEventListener('resize', detectMobile)
+    return () => window.removeEventListener('resize', detectMobile)
+  }, [])
 
   const onPerfRender = useCallback(
     (
@@ -4668,12 +4684,15 @@ function SchedulePageContent() {
     }
   }
 
-  const exportAllocationToPng = async () => {
+  const exportAllocationImage = async (mode: 'download' | 'share') => {
     if (exportingPng) return
     setExportingPng(true)
 
     const dateKey = toDateKey(selectedDate)
-    const filename = `RBIP-allocation-${dateKey}.png`
+    const useJpeg = isLikelyMobileDevice
+    const format = useJpeg ? 'jpeg' : 'png'
+    const extension = useJpeg ? 'jpg' : 'png'
+    const filename = `RBIP-allocation-${dateKey}.${extension}`
 
     const toastId = showActionToast('Exporting allocation…', 'info', 'Preparing layout…', {
       persistUntilDismissed: true,
@@ -4690,7 +4709,7 @@ function SchedulePageContent() {
       exportPngRootRef.current = null
       await nextPaint()
 
-      updateActionToast(toastId, { description: 'Rendering PNG…', progress: { kind: 'indeterminate' } })
+      updateActionToast(toastId, { description: 'Rendering image…', progress: { kind: 'indeterminate' } })
 
       const el = exportPngRootRef.current
       if (!el) throw new Error('Export view not ready')
@@ -4699,16 +4718,55 @@ function SchedulePageContent() {
       await nextPaint()
 
       const bg = window.getComputedStyle(el).backgroundColor
-      const blob = await renderElementToPngBlob(el, { pixelRatio: 2, backgroundColor: bg })
+      const blob = await renderElementToImageBlob(el, {
+        format,
+        quality: useJpeg ? 0.9 : undefined,
+        pixelRatio: useJpeg ? 1.35 : 2,
+        backgroundColor: bg,
+      })
 
-      updateActionToast(toastId, { description: 'Downloading…', progress: { kind: 'indeterminate' } })
-      downloadBlobAsFile(blob, filename)
+      if (mode === 'share') {
+        updateActionToast(toastId, { description: 'Opening share sheet…', progress: { kind: 'indeterminate' } })
+        try {
+          const shared = await shareImageBlob(blob, filename, {
+            title: `RBIP Allocation ${dateKey}`,
+          })
 
-      updateActionToast(
-        toastId,
-        { title: 'Downloaded', variant: 'success', description: filename, progress: undefined },
-        { persistUntilDismissed: false, durationMs: 2500 }
-      )
+          if (shared) {
+            updateActionToast(
+              toastId,
+              { title: 'Shared', variant: 'success', description: `You can now save ${filename} as a photo.`, progress: undefined },
+              { persistUntilDismissed: false, durationMs: 2800 }
+            )
+          } else {
+            updateActionToast(toastId, { description: 'Share unavailable, downloading…', progress: { kind: 'indeterminate' } })
+            downloadBlobAsFile(blob, filename)
+            updateActionToast(
+              toastId,
+              { title: 'Downloaded', variant: 'success', description: filename, progress: undefined },
+              { persistUntilDismissed: false, durationMs: 2500 }
+            )
+          }
+        } catch (shareError) {
+          if ((shareError as { name?: string } | null)?.name === 'AbortError') {
+            updateActionToast(
+              toastId,
+              { title: 'Share cancelled', variant: 'info', description: 'No file was saved.', progress: undefined },
+              { persistUntilDismissed: false, durationMs: 2500 }
+            )
+            return
+          }
+          throw shareError
+        }
+      } else {
+        updateActionToast(toastId, { description: 'Downloading…', progress: { kind: 'indeterminate' } })
+        downloadBlobAsFile(blob, filename)
+        updateActionToast(
+          toastId,
+          { title: 'Downloaded', variant: 'success', description: filename, progress: undefined },
+          { persistUntilDismissed: false, durationMs: 2500 }
+        )
+      }
     } catch (e) {
       const msg = (e as any)?.message || 'Export failed'
       updateActionToast(
@@ -4720,6 +4778,69 @@ function SchedulePageContent() {
       setExportPngLayerOpen(false)
       setExportingPng(false)
     }
+  }
+
+  const renderExportAction = () => {
+    const disabled = exportingPng || copying || saving
+    const label = exportingPng ? 'Exporting…' : 'Export'
+
+    if (isLikelyMobileDevice) {
+      return (
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" type="button" disabled={disabled} className="flex items-center">
+              <ImageDown className="h-4 w-4 mr-2" />
+              {label}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            side="bottom"
+            className="w-44 rounded-md border border-border bg-background p-1 shadow-lg"
+          >
+            <PopoverClose asChild>
+              <button
+                type="button"
+                className="w-full rounded-sm px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  void exportAllocationImage('download')
+                }}
+                disabled={disabled}
+              >
+                Download
+              </button>
+            </PopoverClose>
+            <PopoverClose asChild>
+              <button
+                type="button"
+                className="w-full rounded-sm px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  void exportAllocationImage('share')
+                }}
+                disabled={disabled}
+              >
+                Save as image
+              </button>
+            </PopoverClose>
+          </PopoverContent>
+        </Popover>
+      )
+    }
+
+    return (
+      <Tooltip side="bottom" content="Export Blocks 1–6 + PCA Dedicated Schedule as an image.">
+        <Button
+          variant="outline"
+          type="button"
+          onClick={() => void exportAllocationImage('download')}
+          disabled={disabled}
+          className="flex items-center"
+        >
+          <ImageDown className="h-4 w-4 mr-2" />
+          {label}
+        </Button>
+      </Tooltip>
+    )
   }
 
   // Handle confirmed copy from ScheduleCopyWizard by calling the copy API
@@ -8929,21 +9050,7 @@ function SchedulePageContent() {
                   </div>
                 )}
               </div>
-              <Tooltip
-                side="bottom"
-                content="Export Blocks 1–6 + PCA Dedicated Schedule as a PNG (downloads via your browser)."
-              >
-                <Button
-                  variant="outline"
-                  type="button"
-                  onClick={exportAllocationToPng}
-                  disabled={exportingPng || copying || saving}
-                  className="flex items-center"
-                >
-                  <ImageDown className="h-4 w-4 mr-2" />
-                  {exportingPng ? 'Exporting…' : 'Export PNG'}
-                </Button>
-              </Tooltip>
+              {renderExportAction()}
               {access.can('schedule.diagnostics.save') ? (
                 <Tooltip
                   side="bottom"
@@ -10493,21 +10600,7 @@ function SchedulePageContent() {
                   </div>
                 )}
               </div>
-              <Tooltip
-                side="bottom"
-                content="Export Blocks 1–6 + PCA Dedicated Schedule as a PNG (downloads via your browser)."
-              >
-                <Button
-                  variant="outline"
-                  type="button"
-                  onClick={exportAllocationToPng}
-                  disabled={exportingPng || copying || saving}
-                  className="flex items-center"
-                >
-                  <ImageDown className="h-4 w-4 mr-2" />
-                  {exportingPng ? 'Exporting…' : 'Export PNG'}
-                </Button>
-              </Tooltip>
+              {renderExportAction()}
               {access.can('schedule.diagnostics.save') ? (
                 <Tooltip
                   side="bottom"
@@ -10938,21 +11031,7 @@ function SchedulePageContent() {
                   </div>
                 )}
               </div>
-              <Tooltip
-                side="bottom"
-                content="Export Blocks 1–6 + PCA Dedicated Schedule as a PNG (downloads via your browser)."
-              >
-                <Button
-                  variant="outline"
-                  type="button"
-                  onClick={exportAllocationToPng}
-                  disabled={exportingPng || copying || saving}
-                  className="flex items-center"
-                >
-                  <ImageDown className="h-4 w-4 mr-2" />
-                  {exportingPng ? 'Exporting…' : 'Export PNG'}
-                </Button>
-              </Tooltip>
+              {renderExportAction()}
               {access.can('schedule.diagnostics.save') ? (
                 <Tooltip
                   side="bottom"
