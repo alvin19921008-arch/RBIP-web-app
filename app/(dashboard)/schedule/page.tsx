@@ -4369,6 +4369,7 @@ function SchedulePageContent() {
                 therapistId?: string
                 pcaId?: string
                 slots?: number[]
+                requiredSlots?: number[]
                 therapistFTESubtraction?: number
                 pcaFTESubtraction?: number
                 drmAddOn?: number

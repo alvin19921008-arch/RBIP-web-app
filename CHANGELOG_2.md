@@ -19,6 +19,7 @@
 ### Changed
 - **Step-wise workflow**: Step buttons 2–4 are clickable after editing staff leave/FTE in Step 1 (no longer require clicking “Next” first).
 - **Step 2.0 Special Program Override**: Therapist and PCA selection use in-place Radix-style dropdowns (Select) instead of a separate selection box after “Edit”.
+- **Step 2.0 Special Program Override (special program PCA coverage)**: Special program required slots are treated as the source of truth and can be covered by **multiple PCAs** (slot-atomic). The dialog supports partial-FTE/partial-slot availability, a hybrid “find one PCA to cover all remaining slots → else slot-by-slot” substitution flow, streamlined per-slot coverage display (PCA name under slot button with hover-only remove), and dialog-level scrolling for long days.
 - **Step 2.1 Non-Floating PCA Substitution**: Team name in dialog title and navigation shown with a badge; added two more color theme sets. Revamped selection grid header now shows non-floating name in caption, FTE + missing slots inline. Covered status replaces paragraph with minimalist animated icon inline. Navigation buttons unified: footer always holds confirm action; no duplicate Next/Confirm in header. CTA button style refreshed (hover: gentle lift & soft sheen, no aggressive scale/glow).
 - Schedule cold-load now resolves the initial schedule date before rendering (prevents “today → last schedule” flicker).
 - “Leave edit + draft” in Leave Sim auto-scrolls to draft patches and shows a larger draft viewport.

@@ -86,6 +86,7 @@ export type SpecialProgramOverrideEntry = {
   therapistId?: string
   pcaId?: string
   slots?: number[]
+  requiredSlots?: number[]
   therapistFTESubtraction?: number
   pcaFTESubtraction?: number
   drmAddOn?: number
@@ -3069,25 +3070,47 @@ export function useScheduleController(params: {
 
       // Apply special program overrides:
       // - Therapists: add substituted therapists to program.staff_ids + fte_subtraction for this weekday
-      // - PCAs: force the user-selected PCA to the front of pca_preference_order so Step 2 respects the override
+      // - PCAs: allow manual slot coverage split across multiple PCA staff (Step 2.0 enhanced flow)
       const modifiedSpecialPrograms: SpecialProgram[] = (specialPrograms || []).map((program: any) => {
         const programOverrides: Array<{ therapistId?: string; therapistFTESubtraction?: number }> = []
-        const pcaOverrides: Array<{ pcaId: string }> = []
+        const pcaOverrides: Array<{ pcaId: string; slots: number[] }> = []
+        let requiredSlotsOverride: number[] | undefined
 
         Object.values(overrides).forEach((override) => {
           const list = (override as any)?.specialProgramOverrides as any[] | undefined
           if (!Array.isArray(list)) return
-          const spOverride = list.find((spo) => spo?.programId === program.id)
-          if (!spOverride) return
-          if (spOverride.therapistId) {
-            programOverrides.push({
-              therapistId: spOverride.therapistId,
-              therapistFTESubtraction: spOverride.therapistFTESubtraction,
-            })
-          }
-          if (spOverride.pcaId && program.name !== 'DRM') {
-            pcaOverrides.push({ pcaId: spOverride.pcaId })
-          }
+          const programEntries = list.filter((spo) => spo?.programId === program.id)
+          if (programEntries.length === 0) return
+
+          programEntries.forEach((spOverride) => {
+            if (!spOverride || typeof spOverride !== 'object') return
+
+            if (spOverride.therapistId) {
+              programOverrides.push({
+                therapistId: spOverride.therapistId,
+                therapistFTESubtraction: spOverride.therapistFTESubtraction,
+              })
+            }
+
+            const requiredSlots = Array.isArray(spOverride.requiredSlots)
+              ? spOverride.requiredSlots.filter((slot: any) => [1, 2, 3, 4].includes(slot)).sort((a: number, b: number) => a - b)
+              : []
+            if (requiredSlots.length > 0) {
+              requiredSlotsOverride = Array.from(new Set([...(requiredSlotsOverride ?? []), ...requiredSlots])).sort((a, b) => a - b)
+            }
+
+            if (spOverride.pcaId && program.name !== 'DRM') {
+              const pcaSlots = Array.isArray(spOverride.slots)
+                ? spOverride.slots.filter((slot: any) => [1, 2, 3, 4].includes(slot)).sort((a: number, b: number) => a - b)
+                : []
+              const existing = pcaOverrides.find((x) => x.pcaId === spOverride.pcaId)
+              if (existing) {
+                existing.slots = Array.from(new Set([...existing.slots, ...pcaSlots])).sort((a, b) => a - b)
+              } else {
+                pcaOverrides.push({ pcaId: spOverride.pcaId, slots: pcaSlots })
+              }
+            }
+          })
         })
 
         if (programOverrides.length === 0 && pcaOverrides.length === 0) return program
@@ -3107,14 +3130,40 @@ export function useScheduleController(params: {
           }
         })
 
+        if (!requiredSlotsOverride) {
+          const slotsFromPcaCovers = Array.from(new Set(pcaOverrides.flatMap((o) => o.slots))).sort((a, b) => a - b)
+          if (slotsFromPcaCovers.length > 0) {
+            requiredSlotsOverride = slotsFromPcaCovers
+          }
+        }
+
+        if (program.name !== 'DRM' && requiredSlotsOverride && requiredSlotsOverride.length > 0) {
+          modifiedProgram.slots = {
+            ...(modifiedProgram.slots ?? {}),
+            [weekday]: requiredSlotsOverride,
+          }
+        }
+
         if (pcaOverrides.length > 0) {
-          const chosenPcaId = pcaOverrides[0]?.pcaId
-          if (chosenPcaId) {
-            const existing = modifiedProgram.pca_preference_order as string[] | undefined
-            modifiedProgram.pca_preference_order = [
-              chosenPcaId,
-              ...((Array.isArray(existing) ? existing : []).filter((id) => id !== chosenPcaId)),
-            ]
+          const prioritizedPcaIds = pcaOverrides.map((o) => o.pcaId)
+          const existing = modifiedProgram.pca_preference_order as string[] | undefined
+          modifiedProgram.pca_preference_order = [
+            ...prioritizedPcaIds,
+            ...((Array.isArray(existing) ? existing : []).filter((id) => !prioritizedPcaIds.includes(id))),
+          ]
+
+          // Carry manual slot-to-PCA coverage into algorithm for Step 2.0 split coverage.
+          const effectiveRequiredSlots = requiredSlotsOverride ?? []
+          const manualPcaCovers = pcaOverrides
+            .map((entry) => ({
+              pcaId: entry.pcaId,
+              slots: (entry.slots.length > 0 ? entry.slots : effectiveRequiredSlots)
+                .filter((slot) => [1, 2, 3, 4].includes(slot))
+                .sort((a, b) => a - b),
+            }))
+            .filter((entry) => entry.slots.length > 0)
+          if (manualPcaCovers.length > 0) {
+            modifiedProgram.__manualPcaCovers = manualPcaCovers
           }
         }
 
