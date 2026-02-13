@@ -140,7 +140,7 @@ const prefetchNonFloatingSubstitutionDialog = () => import('@/components/allocat
 const prefetchScheduleCalendarPopover = () => import('@/components/schedule/ScheduleCalendarPopover')
 
 const STAFF_SELECT_FIELDS =
-  'id,name,rank,special_program,team,floating,floor_pca,status,buffer_fte,active'
+  'id,name,rank,special_program,team,floating,floor_pca,status,buffer_fte'
 const WARDS_SELECT_FIELDS =
   'id,name,total_beds,team_assignments,team_assignment_portions'
 const PCA_PREFS_SELECT_FIELDS =
@@ -2420,72 +2420,69 @@ function SchedulePageContent() {
   }
 
   const loadStaff = async () => {
+    const mapRowsToState = (rows: Staff[]) => {
+      const normalizedRows = rows.map((row) => {
+        const rawStatus = (row as any)?.status
+        const hasSupportedStatus =
+          rawStatus === 'active' || rawStatus === 'inactive' || rawStatus === 'buffer'
+
+        if (hasSupportedStatus) return row
+
+        // Legacy compatibility: old schemas only store [active] boolean (no [status]/[buffer]).
+        const legacyActive = (row as any)?.active
+        const normalizedStatus = typeof legacyActive === 'boolean'
+          ? (legacyActive ? 'active' : 'inactive')
+          : 'active'
+
+        return {
+          ...row,
+          status: normalizedStatus,
+        } as Staff
+      })
+
+      const activeRows = normalizedRows.filter((s) => s.status === 'active' || s.status == null)
+      const inactiveRows = normalizedRows.filter((s) => s.status === 'inactive')
+      const bufferRows = normalizedRows.filter((s) => s.status === 'buffer')
+
+      setInactiveStaff(inactiveRows)
+      setBufferStaff(bufferRows)
+      // Include buffer staff in main staff array for allocation algorithms.
+      setStaff([...activeRows, ...bufferRows])
+    }
+
     const attempt = await supabase
       .from('staff')
       .select(STAFF_SELECT_FIELDS)
-      .in('status', ['active', 'inactive', 'buffer'])
       .order('rank', { ascending: true })
       .order('name', { ascending: true })
 
-    if (attempt.error) {
-      console.error('Error loading staff:', attempt.error)
-
-      // Fallback: try loading with old 'active' column if status column doesn't exist
-      if (attempt.error.message?.includes('column') || attempt.error.code === 'PGRST116' || attempt.error.code === '42703') {
-        const [activeRes, inactiveRes] = await Promise.all([
-          supabase
-            .from('staff')
-            .select('*')
-            .eq('active', true)
-            .order('rank', { ascending: true })
-            .order('name', { ascending: true }),
-          supabase
-            .from('staff')
-            .select('*')
-            .eq('active', false)
-            .order('rank', { ascending: true })
-            .order('name', { ascending: true }),
-        ])
-
-        if (activeRes.data) {
-          const mappedActive = activeRes.data.map(s => ({
-            ...s,
-            status: s.active ? 'active' : 'inactive',
-          }))
-          setStaff(mappedActive)
-        } else {
-          setStaff([])
-        }
-
-        if (inactiveRes.data) {
-          const mappedInactive = inactiveRes.data.map(s => ({
-            ...s,
-            status: 'inactive',
-          }))
-          setInactiveStaff(mappedInactive)
-        } else {
-          setInactiveStaff([])
-        }
-
-        setBufferStaff([])
-      }
+    if (!attempt.error) {
+      mapRowsToState(((attempt.data || []) as Staff[]))
       return
     }
 
-    const allRows = (attempt.data || []) as Staff[]
-    const activeRows = allRows.filter((s) => s.status === 'active' || s.status == null)
-    const inactiveRows = allRows.filter((s) => s.status === 'inactive')
-    const bufferRows = allRows.filter((s) => s.status === 'buffer')
+    const isColumnFallbackCandidate =
+      attempt.error.message?.includes('column') ||
+      attempt.error.code === '42703'
 
-    setInactiveStaff(inactiveRows)
-    setBufferStaff(bufferRows)
-
-    // Include buffer staff in main staff array for allocation algorithms
-    if (bufferRows.length > 0) {
-      setStaff([...activeRows, ...bufferRows])
-    } else {
-      setStaff(activeRows)
+    if (!isColumnFallbackCandidate) {
+      console.error('Error loading staff (status query):', attempt.error)
+      return
     }
+
+    // Generic fallback: load all columns, then normalize status from either [status] or legacy [active].
+    const fallback = await supabase
+      .from('staff')
+      .select('*')
+      .order('rank', { ascending: true })
+      .order('name', { ascending: true })
+
+    if (fallback.error) {
+      console.error('Error loading staff (fallback query):', fallback.error)
+      return
+    }
+
+    mapRowsToState(((fallback.data || []) as Staff[]))
   }
 
   const loadSpecialPrograms = async () => {

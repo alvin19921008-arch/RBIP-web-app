@@ -1410,6 +1410,13 @@ export function SpecialProgramOverrideDialog({
                     const availableTherapists = getAvailableTherapists(program.name)
                     const availablePCAs = getAvailablePCAs(program.name)
                     const primaryPcaId = override.primaryPcaId ?? override.pcaId
+                    const primaryPcaStaff = primaryPcaId
+                      ? allStaff.find((s) => s.id === primaryPcaId)
+                      : null
+                    const primaryPcaOptions =
+                      primaryPcaStaff && !availablePCAs.some((candidate) => candidate.id === primaryPcaStaff.id)
+                        ? [primaryPcaStaff, ...availablePCAs]
+                        : availablePCAs
                     const rawCoverage = { ...(override.pcaCoverageBySlot ?? {}) } as Partial<Record<SpecialProgramSlot, string>>
                     const normalizedCoverageBySlot = currentSlots.reduce((acc, slot) => {
                       const pcaId = rawCoverage[slot]
@@ -1643,20 +1650,26 @@ export function SpecialProgramOverrideDialog({
                                 <SelectValue placeholder="Select PCA" />
                               </SelectTrigger>
                               <SelectContent>
-                                {availablePCAs.map((candidate) => {
+                                {primaryPcaOptions.map((candidate) => {
                                   const coverable = getCoverableSlotsForPCA(candidate.id, currentSlots)
                                   const coverableCount = coverable.length
                                   const coverableLabel =
                                     coverableCount > 0 && coverableCount < currentSlots.length
                                       ? ` — can cover: ${coverable.join(', ')}`
                                       : ''
+                                  const statusLabel =
+                                    candidate.status === 'inactive'
+                                      ? 'Inactive'
+                                      : candidate.status === 'buffer'
+                                        ? 'Buffer'
+                                        : null
                                   return (
                                     <SelectItem
                                       key={candidate.id}
                                       value={candidate.id}
                                       disabled={coverableCount === 0}
                                     >
-                                      {candidate.name} ({candidate.status === 'buffer' ? 'Buffer ' : ''}{candidate.floating ? 'Floating' : 'Non-floating'}){coverableLabel}
+                                      {candidate.name} ({statusLabel ? `${statusLabel} ` : ''}{candidate.floating ? 'Floating' : 'Non-floating'}){coverableLabel}
                                     </SelectItem>
                                   )
                                 })}

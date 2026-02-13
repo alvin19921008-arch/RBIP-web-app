@@ -1,7 +1,6 @@
 'use client'
 
 import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { List, type RowComponentProps } from 'react-window'
 import { Staff } from '@/types/staff'
 import { StaffCard } from './StaffCard'
 import { DragValidationTooltip } from './DragValidationTooltip'
@@ -35,9 +34,6 @@ interface StaffPoolProps {
   disableDragging?: boolean
   snapshotNotice?: string
 }
-
-const PCA_ROW_HEIGHT = 48
-const PCA_LIST_MAX_HEIGHT = 320
 
 function StaffPoolComponent({
   therapists,
@@ -333,10 +329,6 @@ function StaffPoolComponent({
     return sortStaffByRank(filterStaffByFTE(visiblePCAs))
   }, [visiblePCAs, showFTEFilter, staffOverrides])
 
-  const shouldVirtualizePCAs =
-    rankFilter === 'pca' && visiblePCAsSorted.length * PCA_ROW_HEIGHT > PCA_LIST_MAX_HEIGHT
-  const pcaListHeight = Math.min(visiblePCAsSorted.length * PCA_ROW_HEIGHT, PCA_LIST_MAX_HEIGHT)
-
   const visibleBufferStaff = useMemo(() => {
     return rankFilter === 'therapist'
       ? bufferStaff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
@@ -469,20 +461,6 @@ function StaffPoolComponent({
 
     return staffCard
   }
-
-  type PcaRowProps = {
-    items: Staff[]
-    renderPcaCard: (pca: Staff) => ReactNode
-  }
-
-  const PcaRow = useCallback(
-    ({ index, style, items, renderPcaCard }: RowComponentProps<PcaRowProps>) => {
-      const pca = items[index]
-      if (!pca) return null
-      return <div style={style}>{renderPcaCard(pca)}</div>
-    },
-    []
-  )
 
   // If collapsed, show only a button to expand
   if (!isExpanded) {
@@ -740,23 +718,7 @@ function StaffPoolComponent({
               <CardContent className="space-y-1 p-1">
                 {expandedRanks.PCA && (
                   <div className="space-y-1 ml-4">
-                    {shouldVirtualizePCAs ? (
-                      <List<PcaRowProps>
-                        defaultHeight={pcaListHeight}
-                        rowCount={visiblePCAsSorted.length}
-                        rowHeight={PCA_ROW_HEIGHT}
-                        rowComponent={PcaRow}
-                        rowProps={{ items: visiblePCAsSorted, renderPcaCard }}
-                        overscanCount={2}
-                        style={{ height: pcaListHeight, width: '100%' }}
-                        onWheel={(event) => {
-                          // Allow the virtualized list to handle its own scroll.
-                          event.stopPropagation()
-                        }}
-                      />
-                    ) : (
-                      visiblePCAsSorted.map((pca) => renderPcaCard(pca))
-                    )}
+                    {visiblePCAsSorted.map((pca) => renderPcaCard(pca))}
                   </div>
                 )}
               </CardContent>
