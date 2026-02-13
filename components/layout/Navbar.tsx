@@ -18,6 +18,7 @@ import {
   KeyRound,
   ChevronDown,
   UserRoundCog,
+  CircleHelp,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { ChangePasswordDialog } from '@/components/auth/ChangePasswordDialog'
@@ -55,6 +56,7 @@ export function Navbar() {
     { href: '/schedule', label: 'Schedule', icon: CalendarDays },
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/history', label: 'History', icon: History },
+    { href: '/help', label: 'Help', icon: CircleHelp },
   ]
 
   useEffect(() => {

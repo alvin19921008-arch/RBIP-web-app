@@ -766,7 +766,7 @@ export const BedBlock = React.memo(function BedBlock({
   }
 
   return (
-    <Card ref={cardRef}>
+    <Card ref={cardRef} data-tour="bed-relieving">
       <CardContent className="p-2 pt-1">
         <div className="space-y-1">
           {receiving.length > 0 && (

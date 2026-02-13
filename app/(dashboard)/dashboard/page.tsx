@@ -2,10 +2,14 @@
 
 import { useState, useEffect, useRef, type ComponentType } from 'react'
 import dynamic from 'next/dynamic'
+import { CircleHelp } from 'lucide-react'
 import { DashboardSidebar, DASHBOARD_CATEGORIES, type CategoryId } from '@/components/dashboard/DashboardSidebar'
 import { useAccessControl } from '@/lib/access/useAccessControl'
 import type { FeatureId } from '@/lib/access/types'
 import { Button } from '@/components/ui/button'
+import { HelpCenterDialog } from '@/components/help/HelpCenterDialog'
+import { HELP_TOUR_PENDING_KEY } from '@/lib/help/tours'
+import { startHelpTourWithRetry } from '@/lib/help/startTour'
 
 type PanelKey = Exclude<CategoryId, null>
 
@@ -95,6 +99,7 @@ const PANEL_CONFIG: Record<
 export default function DashboardPage() {
   const access = useAccessControl()
   const [activePanel, setActivePanel] = useState<CategoryId>(null)
+  const [helpDialogOpen, setHelpDialogOpen] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [topLoadingVisible, setTopLoadingVisible] = useState(false)
   const [topLoadingProgress, setTopLoadingProgress] = useState(0)
@@ -190,6 +195,19 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePanel, access.role, access.settings])
 
+  useEffect(() => {
+    try {
+      const pending = window.localStorage.getItem(HELP_TOUR_PENDING_KEY)
+      if (pending !== 'dashboard-admin') return
+      window.localStorage.removeItem(HELP_TOUR_PENDING_KEY)
+      window.setTimeout(() => {
+        void startHelpTourWithRetry('dashboard-admin')
+      }, 220)
+    } catch {
+      // ignore pending-tour errors
+    }
+  }, [])
+
   return (
     <div className="flex h-[calc(100vh-4rem)]">
       {/* Thin top loading bar */}
@@ -210,13 +228,19 @@ export default function DashboardPage() {
       />
       <div className="flex-1 overflow-auto p-6" style={{ scrollBehavior: 'smooth' as const }}>
         {/* Header section - dynamic based on selection */}
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold mb-2">
-            {activePanel ? CATEGORY_LABELS[activePanel] : 'Dashboard'}
-          </h1>
-          <p className="text-muted-foreground">
-            {activePanel ? activePanelConfig?.description : 'Configure system settings and preferences'}
-          </p>
+        <div className="mb-6 flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-bold mb-2">
+              {activePanel ? CATEGORY_LABELS[activePanel] : 'Dashboard'}
+            </h1>
+            <p className="text-muted-foreground">
+              {activePanel ? activePanelConfig?.description : 'Configure system settings and preferences'}
+            </p>
+          </div>
+          <Button variant="outline" type="button" onClick={() => setHelpDialogOpen(true)} data-tour="dashboard-help">
+            <CircleHelp className="h-4 w-4 mr-1.5" />
+            Help
+          </Button>
         </div>
 
         {/* Content area with smooth scroll - panels handle their own loading states */}
@@ -249,6 +273,7 @@ export default function DashboardPage() {
             )}
           </div>
         )}
+        <HelpCenterDialog open={helpDialogOpen} onOpenChange={setHelpDialogOpen} />
       </div>
     </div>
   )

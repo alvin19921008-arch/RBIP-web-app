@@ -12,6 +12,7 @@ interface CalendarGridProps {
   datesWithData?: Set<string> // Set of date strings in YYYY-MM-DD format
   holidays?: Map<string, string> // Map of date strings to holiday names
   isDateDisabled?: (date: Date) => boolean
+  emphasizeDatesWithData?: boolean
 }
 
 export function CalendarGrid({
@@ -20,6 +21,7 @@ export function CalendarGrid({
   datesWithData = new Set(),
   holidays = new Map(),
   isDateDisabled,
+  emphasizeDatesWithData = false,
 }: CalendarGridProps) {
   const [currentMonth, setCurrentMonth] = useState(selectedDate.getMonth())
   const [currentYear, setCurrentYear] = useState(selectedDate.getFullYear())
@@ -204,6 +206,12 @@ export function CalendarGrid({
 
           if (disabled && !selected) {
             buttonClasses += ' opacity-35 cursor-not-allowed hover:bg-transparent'
+          }
+
+          // Optional UI mode: emphasize dates that have data using regular foreground color
+          // (used by snapshot picker so available dates are clearly visible/clickable).
+          if (emphasizeDatesWithData && hasData && !disabled && !selected) {
+            buttonClasses += ' text-foreground opacity-100'
           }
           
           // Wrap in Tooltip if it's a holiday

@@ -69,6 +69,7 @@ export function StepIndicator({
 
   return (
     <div
+      data-tour="step-indicator"
       className={cn(
         "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 shadow-xs",
         className
@@ -125,6 +126,7 @@ export function StepIndicator({
                   <div key={step.id} className="flex items-center flex-shrink-0">
                     <button
                       type="button"
+                      data-tour={`step-${step.number}`}
                       onClick={() => onStepClick?.(step.id)}
                       disabled={!canNavigate}
                       aria-current={isCurrent ? 'step' : undefined}

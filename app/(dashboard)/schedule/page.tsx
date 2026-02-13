@@ -50,7 +50,7 @@ import { ScheduleDialogsLayer } from '@/components/schedule/ScheduleDialogsLayer
 import { ScheduleMainLayout } from '@/components/schedule/ScheduleMainLayout'
 import { ScheduleSaveButton } from '@/components/schedule/ScheduleSaveButton'
 import { SplitPane } from '@/components/ui/SplitPane'
-import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, ImageDown, Undo2, Redo2 } from 'lucide-react'
+import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, ImageDown, Undo2, Redo2, CircleHelp } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -184,6 +184,9 @@ import { useScheduleController } from '@/lib/features/schedule/controller/useSch
 import type { PCAAllocationErrors } from '@/lib/features/schedule/controller/useScheduleController'
 import { AllocationExportView } from '@/components/schedule/AllocationExportView'
 import { downloadBlobAsFile, renderElementToPngBlob } from '@/lib/utils/exportPng'
+import { HelpCenterDialog } from '@/components/help/HelpCenterDialog'
+import { HELP_TOUR_PENDING_KEY } from '@/lib/help/tours'
+import { startHelpTourWithRetry } from '@/lib/help/startTour'
 
 
 function SchedulePageContent() {
@@ -828,6 +831,7 @@ function SchedulePageContent() {
   })
   const gridLoadingUsesLocalBarRef = useRef(false)
   const [userRole, setUserRole] = useState<'developer' | 'admin' | 'user'>('user')
+  const [helpDialogOpen, setHelpDialogOpen] = useState(false)
   const [devLeaveSimOpen, setDevLeaveSimOpen] = useState(false)
   const { actionToast, actionToastContainerRef, showActionToast, updateActionToast, dismissActionToast, handleToastExited } =
     useActionToast()
@@ -905,6 +909,20 @@ function SchedulePageContent() {
     },
     [onPerfRender, userRole]
   )
+
+  useEffect(() => {
+    try {
+      const pending = window.localStorage.getItem(HELP_TOUR_PENDING_KEY)
+      if (!pending) return
+      if (pending !== 'schedule-core' && pending !== 'dashboard-admin') return
+      window.localStorage.removeItem(HELP_TOUR_PENDING_KEY)
+      window.setTimeout(() => {
+        void startHelpTourWithRetry(pending)
+      }, 220)
+    } catch {
+      // ignore pending-tour errors
+    }
+  }, [])
   const [navToScheduleTiming, setNavToScheduleTiming] = useState<{
     targetHref: string
     startMs: number
@@ -8693,6 +8711,16 @@ function SchedulePageContent() {
           onToggleStepIndicatorCollapsed={() => setStepIndicatorCollapsed((v) => !v)}
           rightActions={
             <>
+              <Button
+                data-tour="schedule-help"
+                variant="outline"
+                type="button"
+                onClick={() => setHelpDialogOpen(true)}
+                disabled={saving || copying}
+              >
+                <CircleHelp className="h-4 w-4 mr-1.5" />
+                Help
+              </Button>
               {isViewingMode ? null : (
                 <>
               {userRole === 'developer' ? (
@@ -8712,7 +8740,7 @@ function SchedulePageContent() {
               ) : null}
 
               {/* Copy dropdown button */}
-              <div className="relative">
+              <div data-tour="schedule-copy" className="relative">
                 {access.can('schedule.diagnostics.copy') || access.can('schedule.diagnostics.snapshot-health') ? (
                   <Tooltip
                     side="bottom"
@@ -10247,6 +10275,16 @@ function SchedulePageContent() {
           onToggleStepIndicatorCollapsed={() => setStepIndicatorCollapsed((v) => !v)}
           rightActions={
             <>
+              <Button
+                data-tour="schedule-help"
+                variant="outline"
+                type="button"
+                onClick={() => setHelpDialogOpen(true)}
+                disabled={saving || copying}
+              >
+                <CircleHelp className="h-4 w-4 mr-1.5" />
+                Help
+              </Button>
               {isViewingMode ? null : (
                 <>
               {userRole === 'developer' ? (
@@ -10266,7 +10304,7 @@ function SchedulePageContent() {
               ) : null}
 
               {/* Copy dropdown button */}
-              <div className="relative">
+              <div data-tour="schedule-copy" className="relative">
                 {access.can('schedule.diagnostics.copy') || access.can('schedule.diagnostics.snapshot-health') ? (
                   <Tooltip
                     side="bottom"
@@ -10682,6 +10720,16 @@ function SchedulePageContent() {
           onToggleStepIndicatorCollapsed={() => setStepIndicatorCollapsed((v) => !v)}
           rightActions={
             <>
+              <Button
+                data-tour="schedule-help"
+                variant="outline"
+                type="button"
+                onClick={() => setHelpDialogOpen(true)}
+                disabled={saving || copying}
+              >
+                <CircleHelp className="h-4 w-4 mr-1.5" />
+                Help
+              </Button>
               {isViewingMode ? null : (
                 <>
               {userRole === 'developer' ? (
@@ -10701,7 +10749,7 @@ function SchedulePageContent() {
               ) : null}
 
               {/* Copy dropdown button */}
-              <div className="relative">
+              <div data-tour="schedule-copy" className="relative">
                 {access.can('schedule.diagnostics.copy') || access.can('schedule.diagnostics.snapshot-health') ? (
                   <Tooltip
                     side="bottom"
@@ -11398,6 +11446,7 @@ function SchedulePageContent() {
             ) : null
           }
         />
+        <HelpCenterDialog open={helpDialogOpen} onOpenChange={setHelpDialogOpen} />
       </div>
     </DndContext>
   )

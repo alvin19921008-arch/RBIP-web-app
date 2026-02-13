@@ -503,6 +503,7 @@ function StaffPoolComponent({
 
   return (
     <div
+      data-tour="staff-pool"
       className="w-40 flex flex-col gap-2 min-h-0 h-full"
       onMouseEnter={pokeScrollbar}
       onMouseMove={pokeScrollbar}

@@ -5,6 +5,10 @@
 
 ## [Unreleased] - 2026-02-13
 
+### Added
+- **Onboarding and Help Center**: Manual-only guided tours (Driver.js) and text-only FAQ. Help available from Schedule and Dashboard (Help button) and from a dedicated `/help` page (navbar link). Two tours: **Schedule Core** (copy, staff pool, step flow, bed adjustments, summary box, bed relieving, Step 3 interactions) and **Dashboard Admin** (Special Programs, PCA Preferences, SPT Allocations, Sync / Publish). Tour popovers support Previous/Next and step progress (e.g. 6/12) with themed styling; close (X) and Done correctly destroy the tour. FAQ is grouped by category with accordion (details/summary) and category icons (CalendarDays, Building2, LayoutList, Settings). Pending-tour handoff via `localStorage` when starting a tour from `/help` while on another page. Role-gated: admin tour and admin FAQ section visible only to admin/developer.
+- **Dashboard Sync / Publish – snapshot date picker**: Replaced the snapshot date dropdown with a calendar date picker (Popover + CalendarGrid). Only dates with a saved `baseline_snapshot` are selectable; available snapshot dates are shown in black (emphasized); popover uses card-style background and border. Normalized date keys from DB for reliable selection.
+
 ### Changed
 - **Snapshot diff (schedule page)**: Alert icon and “Review differences” now use the same semantic check (field-level diff from DB snapshot). Diff is computed deterministically from `daily_schedules.baseline_snapshot` and live config (no TTL cache for this path) so the table and icon stay in sync; staff status changes appear in the diff when snapshot and live differ.
 - **Step 2 wizard stepper (2.1 & 2.2)**: Step 2.1 (Non-Floating Substitute) and Step 2.2 (SPT) dialogs now use the same stepper style as Step 2.0: dot separators (·), no border or divider, same chip classes (`mb-2 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground`). Removed ChevronRight separators and 2.1’s `border-b`, 2.2’s bordered container.

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "driver.js/dist/driver.css";
 
 /* Force dark mode to be class-based (NOT prefers-color-scheme).
    This keeps the app light by default until we implement a theme toggle. */
@@ -191,6 +192,47 @@
       filter: none;
     }
   }
+}
+
+/* Driver.js tour styling aligned with app theme tokens. */
+.driver-popover {
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.28);
+}
+
+.driver-popover-title {
+  color: hsl(var(--foreground));
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.driver-popover-description {
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.driver-popover-progress-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border: 1px solid hsl(var(--border));
+  font-weight: 700;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.driver-popover-prev-btn,
+.driver-popover-next-btn,
+.driver-popover-close-btn {
+  border-radius: 8px;
 }
 
 @keyframes rbip-spin-once {

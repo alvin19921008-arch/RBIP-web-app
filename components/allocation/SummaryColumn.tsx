@@ -63,7 +63,7 @@ export function SummaryColumn({
   const hasShsOrStudentsBreakdown = shsBeds > 0 || studentBeds > 0
 
   return (
-    <Card className="bg-slate-50 border-slate-300 w-fit inline-block">
+    <Card data-tour="summary-box" className="bg-slate-50 border-slate-300 w-fit inline-block">
       <CardContent className="p-1.5 space-y-0.5 text-[11px] leading-tight whitespace-nowrap">
         <div>
           <span className="font-semibold">Total bed counts:</span> {totalBeds}

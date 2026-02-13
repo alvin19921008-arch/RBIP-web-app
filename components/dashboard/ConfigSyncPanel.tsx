@@ -1,15 +1,20 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { Calendar } from 'lucide-react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useToast } from '@/components/ui/toast-provider'
 import { useRouter } from 'next/navigation'
+import { CalendarGrid } from '@/components/ui/calendar-grid'
+import { formatDateForInput, parseDateFromInput } from '@/lib/features/schedule/date'
+import { formatDateDisplay } from '@/lib/utils/dateHelpers'
 import type { BaselineSnapshot, BaselineSnapshotStored, GlobalHeadAtCreation } from '@/types/schedule'
 import { unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { diffBaselineSnapshot } from '@/lib/features/schedule/snapshotDiff'
@@ -38,6 +43,14 @@ const CATEGORY_LABELS: Record<CategoryKey, string> = {
 
 type ThresholdUnit = 'days' | 'weeks' | 'months'
 type ThresholdMode = 'off' | 'always' | 'custom'
+
+function normalizeDateKey(value: unknown): string | null {
+  const raw = typeof value === 'string' ? value.trim() : String(value ?? '').trim()
+  if (!raw) return null
+  // Accept exact date keys and timestamp-like strings by extracting leading YYYY-MM-DD.
+  const m = raw.match(/^(\d{4}-\d{2}-\d{2})/)
+  return m ? m[1] : null
+}
 
 function getThresholdMode(value: number, unit: ThresholdUnit): ThresholdMode {
   if (Number.isFinite(value) && value === 0) return 'always'
@@ -80,6 +93,7 @@ export function ConfigSyncPanel() {
   const [loading, setLoading] = useState(false)
   const [availableDates, setAvailableDates] = useState<string[]>([])
   const [selectedDate, setSelectedDate] = useState<string>('')
+  const [snapshotDatePickerOpen, setSnapshotDatePickerOpen] = useState(false)
 
   const [globalHead, setGlobalHead] = useState<any>(null)
 
@@ -135,15 +149,21 @@ export function ConfigSyncPanel() {
       setLoading(true)
       try {
         const [{ data: schedRows, error: schedErr }] = await Promise.all([
-          supabase.from('daily_schedules').select('date').order('date', { ascending: false }).limit(120),
+          supabase
+            .from('daily_schedules')
+            .select('date, baseline_snapshot')
+            .order('date', { ascending: false })
+            .limit(240),
         ])
         if (schedErr) throw schedErr
         const dates = (schedRows || [])
-          .map((r: any) => String(r.date ?? ''))
-          .filter(Boolean)
+          .filter((r: any) => (r?.baseline_snapshot ?? null) != null)
+          .map((r: any) => normalizeDateKey(r?.date))
+          .filter((d): d is string => Boolean(d))
+        const uniqueDates = Array.from(new Set(dates))
         if (!cancelled) {
-          setAvailableDates(dates)
-          setSelectedDate((prev) => prev || dates[0] || '')
+          setAvailableDates(uniqueDates)
+          setSelectedDate((prev) => (prev && uniqueDates.includes(prev) ? prev : (uniqueDates[0] || '')))
         }
 
         await reloadGlobalHead()
@@ -376,6 +396,7 @@ export function ConfigSyncPanel() {
   const globalUpdatedAt = formatFriendlyDateTime(globalHead?.global_updated_at)
   const snapshotCreatedAt = formatFriendlyDateTime(snapshotEnvelope?.createdAt)
   const snapshotGlobalUpdatedAt = formatFriendlyDateTime(snapshotHead?.global_updated_at)
+  const availableSnapshotDateSet = useMemo(() => new Set(availableDates), [availableDates])
 
   return (
     <div className="space-y-4">
@@ -422,18 +443,46 @@ export function ConfigSyncPanel() {
                 <Label htmlFor="snapshotDate" className="text-sm">
                   Date
                 </Label>
-                <select
-                  id="snapshotDate"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                >
-                  {availableDates.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
+                <Popover open={snapshotDatePickerOpen} onOpenChange={setSnapshotDatePickerOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      id="snapshotDate"
+                      variant="outline"
+                      size="sm"
+                      className="min-w-[170px] justify-between font-normal"
+                      aria-label="Choose snapshot date"
+                      disabled={availableDates.length === 0}
+                    >
+                      <span>
+                        {selectedDate ? formatDateDisplay(selectedDate) : 'No snapshots'}
+                      </span>
+                      <Calendar className="ml-2 h-4 w-4 opacity-70" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="z-[70] w-auto rounded-lg border border-border bg-background p-0 shadow-lg"
+                    align="start"
+                    sideOffset={8}
+                  >
+                    <CalendarGrid
+                      selectedDate={
+                        selectedDate
+                          ? parseDateFromInput(selectedDate)
+                          : (availableDates[0] ? parseDateFromInput(availableDates[0]) : new Date())
+                      }
+                      onDateSelect={(date) => {
+                        setSelectedDate(formatDateForInput(date))
+                        setSnapshotDatePickerOpen(false)
+                      }}
+                      datesWithData={availableSnapshotDateSet}
+                      emphasizeDatesWithData
+                      isDateDisabled={(date) => {
+                        const key = formatDateForInput(date)
+                        return !availableSnapshotDateSet.has(key)
+                      }}
+                    />
+                  </PopoverContent>
+                </Popover>
               </div>
               <div className="text-sm text-muted-foreground">
                 Snapshot created: <span className="font-medium text-foreground">{snapshotCreatedAt}</span>

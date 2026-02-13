@@ -66,7 +66,7 @@ export const CalculationBlock = memo(function CalculationBlock({
           <span className="font-semibold">Wards:</span>{' '}
           {calculations.designated_wards.join(', ') || 'None'}
         </div>
-        <div>
+        <div data-tour="bed-adjustments">
           <span className="font-semibold">Total beds:</span>{' '}
           <span
             className="inline-flex items-center gap-1"
