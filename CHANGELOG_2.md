@@ -5,6 +5,10 @@
 
 ## [Unreleased] - 2026-02-13
 
+### Changed
+- **Snapshot diff (schedule page)**: Alert icon and “Review differences” now use the same semantic check (field-level diff from DB snapshot). Diff is computed deterministically from `daily_schedules.baseline_snapshot` and live config (no TTL cache for this path) so the table and icon stay in sync; staff status changes appear in the diff when snapshot and live differ.
+- **Step 2 wizard stepper (2.1 & 2.2)**: Step 2.1 (Non-Floating Substitute) and Step 2.2 (SPT) dialogs now use the same stepper style as Step 2.0: dot separators (·), no border or divider, same chip classes (`mb-2 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground`). Removed ChevronRight separators and 2.1’s `border-b`, 2.2’s bordered container.
+
 ### Added
 - **Playwright smoke testing scaffold**: Chromium-only Playwright setup for fast refactor safety gates, including `playwright.config.ts`, `tests/smoke/*`, and npm scripts (`test:smoke`, `test:smoke:headed`, `test:smoke:debug`). Smoke tests prefer localhost dev auto-login and fall back to env credentials when needed.
 - **Cursor on-demand smoke skill/rules**: Project skill `.cursor/skills/playwright-smoke-rbip` plus scoped rules (`playwright-smoke-on-demand`, `playwright-config-on-demand`) so smoke-test guidance is loaded only when editing smoke test/config files (token-efficient).

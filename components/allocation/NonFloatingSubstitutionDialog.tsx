@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, ArrowRight, ChevronRight } from 'lucide-react'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getTeamFloor, isFloorPCAForTeam, getTeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
@@ -339,11 +339,11 @@ export function NonFloatingSubstitutionDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground pb-2 border-b">
+        <div className="mb-2 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
           <span className="px-2.5 py-1 rounded-md">2.0 Programs</span>
-          <ChevronRight className="h-3 w-3" />
+          <span aria-hidden="true">·</span>
           <span className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-700 font-semibold text-primary">2.1 Substitute</span>
-          <ChevronRight className="h-3 w-3" />
+          <span aria-hidden="true">·</span>
           <span className="px-2.5 py-1 rounded-md">2.2 SPT</span>
         </div>
 
