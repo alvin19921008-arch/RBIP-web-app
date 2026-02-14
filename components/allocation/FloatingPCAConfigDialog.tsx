@@ -1218,9 +1218,7 @@ export function FloatingPCAConfigDialog({
                   ? 'Preview is preparing…'
                   : step31Preview.status === 'error'
                   ? 'Preview unavailable today (you can still continue).'
-                  : step31Preview.status === 'ready' && step31Preview.standardZeroTeams.length >= 1
-                    ? `Risk detected: running Standard now may leave ${step31Preview.standardZeroTeams.length} team(s) with 0 floating PCA. Consider switching to Balanced, or reorder tie groups.`
-                    : maxTieGroupSize >= 3 || maxRoundedPending >= 0.75
+                  : maxTieGroupSize >= 3 || maxRoundedPending >= 0.75
                       ? 'Consider manual adjustment when many teams are tied or the top pending is high.'
                       : 'No obvious risk detected from the preview today.'}
             </span>
