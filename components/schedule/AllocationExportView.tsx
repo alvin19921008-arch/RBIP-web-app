@@ -57,12 +57,14 @@ export type AllocationExportViewProps = {
   initializedSteps: Set<string>
 
   allPCAStaff: Staff[]
+  includePcaDedicatedTable?: boolean
 
   className?: string
 }
 
 export const AllocationExportView = React.forwardRef<HTMLDivElement, AllocationExportViewProps>(
   function AllocationExportView(props, ref) {
+    const includePcaDedicatedTable = props.includePcaDedicatedTable ?? true
     const canShowBeds =
       props.stepStatus?.['bed-relieving'] === 'completed' ||
       props.currentStep === 'bed-relieving' ||
@@ -111,17 +113,19 @@ export const AllocationExportView = React.forwardRef<HTMLDivElement, AllocationE
           initializedSteps={props.initializedSteps}
         />
 
-        <PCADedicatedScheduleTable
-          allPCAStaff={props.allPCAStaff}
-          pcaAllocationsByTeam={props.pcaAllocationsByTeam}
-          staffOverrides={props.staffOverrides}
-          specialPrograms={props.specialPrograms}
-          weekday={props.weekday as any}
-          stepStatus={props.stepStatus}
-          initializedSteps={props.initializedSteps}
-          renderMode="export"
-          maxColumnsPerChunk={10}
-        />
+        {includePcaDedicatedTable ? (
+          <PCADedicatedScheduleTable
+            allPCAStaff={props.allPCAStaff}
+            pcaAllocationsByTeam={props.pcaAllocationsByTeam}
+            staffOverrides={props.staffOverrides}
+            specialPrograms={props.specialPrograms}
+            weekday={props.weekday as any}
+            stepStatus={props.stepStatus}
+            initializedSteps={props.initializedSteps}
+            renderMode="export"
+            maxColumnsPerChunk={10}
+          />
+        ) : null}
       </div>
     )
   }
