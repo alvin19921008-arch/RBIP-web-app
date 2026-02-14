@@ -184,7 +184,7 @@ import { ALLOCATION_STEPS, EMPTY_BED_ALLOCATIONS, TEAMS, WEEKDAYS, WEEKDAY_NAMES
 import { useScheduleController } from '@/lib/features/schedule/controller/useScheduleController'
 import type { PCAAllocationErrors } from '@/lib/features/schedule/controller/useScheduleController'
 import { AllocationExportView } from '@/components/schedule/AllocationExportView'
-import { downloadBlobAsFile, renderElementToImageBlob, shareImageBlob } from '@/lib/utils/exportPng'
+import { downloadBlobAsFile, renderElementToImageBlob } from '@/lib/utils/exportPng'
 import { HelpCenterDialog } from '@/components/help/HelpCenterDialog'
 import { HELP_TOUR_PENDING_KEY } from '@/lib/help/tours'
 import { startHelpTourWithRetry } from '@/lib/help/startTour'
@@ -839,6 +839,9 @@ function SchedulePageContent() {
   const [exportPngLayerOpen, setExportPngLayerOpen] = useState(false)
   const [exportingPng, setExportingPng] = useState(false)
   const [isLikelyMobileDevice, setIsLikelyMobileDevice] = useState(false)
+  const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false)
+  const [mobilePreviewUrl, setMobilePreviewUrl] = useState<string | null>(null)
+  const [mobilePreviewFilename, setMobilePreviewFilename] = useState('')
   const exportPngRootRef = useRef<HTMLDivElement | null>(null)
   const highlightTimerRef = useRef<any>(null)
   const [highlightDateKey, setHighlightDateKey] = useState<string | null>(null)
@@ -4684,7 +4687,22 @@ function SchedulePageContent() {
     }
   }
 
-  const exportAllocationImage = async (mode: 'download' | 'share') => {
+  const closeMobilePreview = useCallback(() => {
+    setMobilePreviewOpen(false)
+    if (mobilePreviewUrl) {
+      URL.revokeObjectURL(mobilePreviewUrl)
+      setMobilePreviewUrl(null)
+    }
+    setMobilePreviewFilename('')
+  }, [mobilePreviewUrl])
+
+  useEffect(() => {
+    return () => {
+      if (mobilePreviewUrl) URL.revokeObjectURL(mobilePreviewUrl)
+    }
+  }, [mobilePreviewUrl])
+
+  const exportAllocationImage = async (mode: 'download' | 'save-image') => {
     if (exportingPng) return
     setExportingPng(true)
 
@@ -4720,44 +4738,22 @@ function SchedulePageContent() {
       const bg = window.getComputedStyle(el).backgroundColor
       const blob = await renderElementToImageBlob(el, {
         format,
-        quality: useJpeg ? 0.9 : undefined,
-        pixelRatio: useJpeg ? 1.35 : 2,
+        quality: useJpeg ? 0.82 : undefined,
+        pixelRatio: useJpeg ? 1.1 : 2,
         backgroundColor: bg,
       })
 
-      if (mode === 'share') {
-        updateActionToast(toastId, { description: 'Opening share sheet…', progress: { kind: 'indeterminate' } })
-        try {
-          const shared = await shareImageBlob(blob, filename, {
-            title: `RBIP Allocation ${dateKey}`,
-          })
-
-          if (shared) {
-            updateActionToast(
-              toastId,
-              { title: 'Shared', variant: 'success', description: `You can now save ${filename} as a photo.`, progress: undefined },
-              { persistUntilDismissed: false, durationMs: 2800 }
-            )
-          } else {
-            updateActionToast(toastId, { description: 'Share unavailable, downloading…', progress: { kind: 'indeterminate' } })
-            downloadBlobAsFile(blob, filename)
-            updateActionToast(
-              toastId,
-              { title: 'Downloaded', variant: 'success', description: filename, progress: undefined },
-              { persistUntilDismissed: false, durationMs: 2500 }
-            )
-          }
-        } catch (shareError) {
-          if ((shareError as { name?: string } | null)?.name === 'AbortError') {
-            updateActionToast(
-              toastId,
-              { title: 'Share cancelled', variant: 'info', description: 'No file was saved.', progress: undefined },
-              { persistUntilDismissed: false, durationMs: 2500 }
-            )
-            return
-          }
-          throw shareError
-        }
+      if (mode === 'save-image') {
+        if (mobilePreviewUrl) URL.revokeObjectURL(mobilePreviewUrl)
+        const previewUrl = URL.createObjectURL(blob)
+        setMobilePreviewUrl(previewUrl)
+        setMobilePreviewFilename(filename)
+        setMobilePreviewOpen(true)
+        updateActionToast(
+          toastId,
+          { title: 'Preview ready', variant: 'success', description: 'Long press the image to save to Photos.', progress: undefined },
+          { persistUntilDismissed: false, durationMs: 3200 }
+        )
       } else {
         updateActionToast(toastId, { description: 'Downloading…', progress: { kind: 'indeterminate' } })
         downloadBlobAsFile(blob, filename)
@@ -4815,7 +4811,7 @@ function SchedulePageContent() {
                 type="button"
                 className="w-full rounded-sm px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground"
                 onClick={() => {
-                  void exportAllocationImage('share')
+                  void exportAllocationImage('save-image')
                 }}
                 disabled={disabled}
               >
@@ -7730,6 +7726,7 @@ function SchedulePageContent() {
                 title="Move slot"
                 selectedTeam={pcaContextAction.targetTeam}
                 onSelectTeam={(t) => setPcaContextAction(prev => ({ ...prev, targetTeam: t }))}
+                disabledTeams={pcaContextAction.sourceTeam ? [pcaContextAction.sourceTeam] : []}
                 onClose={closePcaContextAction}
                 confirmDisabled={
                   !pcaContextAction.targetTeam ||
@@ -7827,6 +7824,7 @@ function SchedulePageContent() {
                 title="Move slot"
                 selectedTeam={therapistContextAction.targetTeam}
                 onSelectTeam={(t) => setTherapistContextAction(prev => ({ ...prev, targetTeam: t }))}
+                disabledTeams={therapistContextAction.sourceTeam ? [therapistContextAction.sourceTeam] : []}
                 onClose={closeTherapistContextAction}
                 confirmDisabled={
                   !therapistContextAction.targetTeam ||
@@ -7924,21 +7922,25 @@ function SchedulePageContent() {
                 title="Split slot"
                 selectedTeam={therapistContextAction.targetTeam}
                 onSelectTeam={(t) => setTherapistContextAction(prev => ({ ...prev, targetTeam: t }))}
+                disabledTeams={therapistContextAction.sourceTeam ? [therapistContextAction.sourceTeam] : []}
                 onClose={closeTherapistContextAction}
                 confirmDisabled={
                   !therapistContextAction.targetTeam ||
                   therapistContextAction.targetTeam === therapistContextAction.sourceTeam
                 }
                 onConfirm={() => {
-                  if (!therapistContextAction.targetTeam) return
+                  const targetTeam = therapistContextAction.targetTeam
+                  if (!targetTeam) return
+                  if (targetTeam === therapistContextAction.sourceTeam) return
                   setTherapistContextAction(prev => ({ ...prev, phase: 'splitFte' }))
                 }}
                 position={therapistContextAction.position}
                 hint="Pick the destination team for the moved portion."
                 pageIndicator={{ current: 1, total: 2 }}
                 onNextPage={() => {
-                  if (!therapistContextAction.targetTeam) return
-                  if (therapistContextAction.targetTeam === therapistContextAction.sourceTeam) return
+                  const targetTeam = therapistContextAction.targetTeam
+                  if (!targetTeam) return
+                  if (targetTeam === therapistContextAction.sourceTeam) return
                   setTherapistContextAction(prev => ({ ...prev, phase: 'splitFte' }))
                 }}
                 onPrevPage={() => {}}
@@ -8796,6 +8798,7 @@ function SchedulePageContent() {
                 ...staff.filter((s) => s.rank === 'PCA'),
                 ...bufferStaff.filter((s) => s.rank === 'PCA'),
               ]}
+              includePcaDedicatedTable={!isLikelyMobileDevice}
             />
           </div>
         ) : null}
@@ -11525,6 +11528,71 @@ function SchedulePageContent() {
             ) : null
           }
         />
+        <Dialog
+          open={mobilePreviewOpen}
+          onOpenChange={(open) => {
+            if (open) {
+              setMobilePreviewOpen(true)
+              return
+            }
+            closeMobilePreview()
+          }}
+        >
+          <DialogContent className="w-[95vw] max-w-[95vw] sm:max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Save as image</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Long press the image below, then tap Save to Photos.
+              </p>
+              {mobilePreviewUrl ? (
+                <div className="rounded-md border border-border overflow-hidden bg-background">
+                  <img
+                    src={mobilePreviewUrl}
+                    alt="Export preview"
+                    className="block w-full h-auto"
+                    loading="eager"
+                  />
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">Preview unavailable.</div>
+              )}
+            </div>
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  if (!mobilePreviewUrl) return
+                  const opened = window.open(mobilePreviewUrl, '_blank', 'noopener,noreferrer')
+                  if (!opened) {
+                    showActionToast('Popup blocked. Long press the preview image instead.', 'info')
+                  }
+                }}
+              >
+                Open in new tab
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  if (!mobilePreviewUrl) return
+                  const a = document.createElement('a')
+                  a.href = mobilePreviewUrl
+                  a.download = mobilePreviewFilename || 'RBIP-allocation.jpg'
+                  a.rel = 'noopener'
+                  a.click()
+                }}
+              >
+                Download copy
+              </Button>
+              <Button type="button" onClick={closeMobilePreview}>
+                Done
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         <HelpCenterDialog open={helpDialogOpen} onOpenChange={setHelpDialogOpen} />
       </div>
     </DndContext>

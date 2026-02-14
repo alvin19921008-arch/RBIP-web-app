@@ -5,6 +5,7 @@ import { Team } from '@/types/staff'
 import { cn } from '@/lib/utils'
 import { Check, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
+import { Badge } from '@/components/ui/badge'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -22,6 +23,7 @@ interface TeamPickerPopoverProps {
   onNextPage?: () => void
   prevDisabled?: boolean
   nextDisabled?: boolean
+  disabledTeams?: Team[]
 }
 
 export function TeamPickerPopover({
@@ -38,7 +40,9 @@ export function TeamPickerPopover({
   onNextPage,
   prevDisabled = false,
   nextDisabled = false,
+  disabledTeams = [],
 }: TeamPickerPopoverProps) {
+  const disabledTeamSet = new Set(disabledTeams)
   return (
     <div
       className="absolute z-[10002] bg-white dark:bg-slate-800 rounded-lg shadow-xl border-2 border-amber-500 p-2.5 w-[220px]"
@@ -70,21 +74,34 @@ export function TeamPickerPopover({
         </div>
       ) : null}
 
+      {selectedTeam ? (
+        <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
+          <span>Destination</span>
+          <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+            {selectedTeam}
+          </Badge>
+        </div>
+      ) : null}
+
       <div className="mt-2 grid grid-cols-4 gap-1">
         {TEAMS.map((t) => {
           const active = t === selectedTeam
+          const disabled = disabledTeamSet.has(t)
           return (
             <button
               key={t}
               type="button"
+              disabled={disabled}
               className={cn(
                 'px-2 py-1 rounded text-xs font-medium border transition-colors',
+                disabled && 'opacity-45 cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-700',
                 active
                   ? 'bg-amber-100 dark:bg-amber-900/40 border-amber-500 text-amber-800 dark:text-amber-200'
                   : 'bg-slate-50 dark:bg-slate-700 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600'
               )}
               onClick={(e) => {
                 e.stopPropagation()
+                if (disabled) return
                 onSelectTeam(t)
               }}
             >

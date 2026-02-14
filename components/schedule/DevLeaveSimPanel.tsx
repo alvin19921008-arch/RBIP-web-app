@@ -378,6 +378,18 @@ export function DevLeaveSimPanel(props: {
 
     if (mode === 'clean') {
       props.clearDomainFromStep('leave-fte')
+      // Applying harness patches should immediately unlock Step 2 via step-flow gating.
+      props.setHasSavedAllocations(false)
+      props.setStep2Result(null)
+      props.setInitializedSteps(new Set())
+      props.setStepStatus({
+        'leave-fte': 'modified',
+        'therapist-pca': 'pending',
+        'floating-pca': 'pending',
+        'bed-relieving': 'pending',
+        review: 'pending',
+      })
+      props.goToStep('leave-fte')
     } else {
       // Merge mode still invalidates downstream steps.
       props.setHasSavedAllocations(false)

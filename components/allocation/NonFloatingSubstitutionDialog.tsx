@@ -418,6 +418,21 @@ export function NonFloatingSubstitutionDialog({
 
               return (
                 <div key={sub.nonFloatingPCAId} className="border rounded-lg p-4 space-y-4">
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className="font-semibold">{sub.nonFloatingPCAName}</span>
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        'select-none px-2 py-0.5 text-[11px] font-medium',
+                        currentTheme.badge
+                      )}
+                    >
+                      {currentTeam}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      Missing slots: {sub.missingSlots.join(', ')}
+                    </span>
+                  </div>
                   {availablePCAs.length === 0 ? (
                     <div className="text-sm text-muted-foreground py-2">
                       No available floating PCAs found for substitution.
