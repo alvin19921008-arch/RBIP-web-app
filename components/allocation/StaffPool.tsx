@@ -9,7 +9,8 @@ import { InactiveStaffPool } from './InactiveStaffPool'
 import { BufferStaffPool } from './BufferStaffPool'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { ChevronRight, ChevronDown, ChevronLeft, ChevronUp, AlertCircle } from 'lucide-react'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ChevronRight, ChevronDown, ChevronLeft, ChevronUp, AlertCircle, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAutoHideFlag } from '@/lib/hooks/useAutoHideFlag'
 import { useIsolatedWheelScroll } from '@/lib/hooks/useIsolatedWheelScroll'
@@ -33,6 +34,53 @@ interface StaffPoolProps {
   onBufferStaffCreated?: () => void
   disableDragging?: boolean
   snapshotNotice?: string
+}
+
+function LegendDemoCard(props: {
+  label: string
+  borderClassName?: string
+  showBattery?: boolean
+  batteryBaseRatio?: number
+  batteryTrueRatio?: number
+  fteLabel?: string
+}) {
+  const baseRatio = Math.max(0, Math.min(1, props.batteryBaseRatio ?? 1))
+  const trueRatio = Math.max(0, Math.min(baseRatio, props.batteryTrueRatio ?? baseRatio))
+
+  return (
+    <div
+      className={cn(
+        'relative w-[132px] max-w-full rounded-md border-2 bg-card p-1 text-[11px] text-foreground pointer-events-none select-none',
+        props.borderClassName ?? 'border-border',
+        props.showBattery && 'overflow-hidden'
+      )}
+    >
+      {props.showBattery ? (
+        <div className="relative w-full">
+          <div
+            className="absolute top-0 left-0 h-full rounded-sm border border-blue-300 dark:border-blue-400"
+            style={{ width: `${baseRatio * 100}%` }}
+          >
+            {trueRatio > 0 ? (
+              <div
+                className="absolute top-0 left-0 h-full rounded-sm bg-blue-50 dark:bg-blue-950/30"
+                style={{ width: baseRatio > 0 ? `${(trueRatio / baseRatio) * 100}%` : '0%' }}
+              />
+            ) : null}
+          </div>
+          <div className="relative z-10 flex items-center justify-between gap-1">
+            <span className="font-medium">{props.label}</span>
+            {props.fteLabel ? <span className="text-muted-foreground">{props.fteLabel}</span> : null}
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-1">
+          <span className="font-medium">{props.label}</span>
+          {props.fteLabel ? <span className="text-muted-foreground">{props.fteLabel}</span> : null}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function StaffPoolComponent({
@@ -511,42 +559,80 @@ function StaffPoolComponent({
     >
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between gap-1">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setIsExpanded(false)}
-          className="h-6 w-6 p-0"
-          title="Hide Staff Pool"
-        >
-          <ChevronLeft className="h-3 w-3" />
-        </Button>
-        <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 min-w-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsExpanded(false)}
+              className="h-6 w-6 p-0 flex-shrink-0"
+              title="Hide Staff Pool"
+            >
+              <ChevronLeft className="h-3 w-3" />
+            </Button>
+            <span className="text-xs font-medium truncate">Staff Pool</span>
+          </div>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 p-0 text-muted-foreground flex-shrink-0"
+                title="Staff card color guide"
+                aria-label="Staff card color guide"
+              >
+                <Info className="h-3.5 w-3.5" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              side="right"
+              align="start"
+              className="w-72 rounded-md border border-amber-200 bg-amber-50/95 p-3"
+            >
+              <div className="space-y-2">
+                <div className="text-xs font-semibold text-amber-950">Staff card color guide</div>
+                <div className="flex flex-col items-start space-y-1">
+                  <LegendDemoCard label="PCA (non-floating)" borderClassName="border-green-700" />
+                  <LegendDemoCard
+                    label="PCA (floating)"
+                    showBattery={true}
+                    batteryBaseRatio={0.75}
+                    batteryTrueRatio={0.5}
+                    fteLabel="0.5"
+                  />
+                  <LegendDemoCard label="APPT" borderClassName="border-[#e7cc32]" />
+                  <LegendDemoCard label="SPT" borderClassName="border-[#d38e25]" />
+                </div>
+                <ul className="list-disc pl-4 text-[11px] leading-snug text-amber-950 space-y-0.5">
+                  <li>PCA with green border means non-floating PCA.</li>
+                  <li>PCA with blue thin border and light blue fill shows remaining floating PCA FTE.</li>
+                  <li>APPT uses yellow border; SPT uses brownish-yellow border.</li>
+                </ul>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        <div className="grid grid-cols-2 gap-1">
           <Button
-            variant={showFTEFilter ? "default" : "outline"}
+            variant={showFTEFilter ? 'default' : 'outline'}
             size="sm"
             onClick={handleFTEFilterToggle}
-            className={cn(
-              'text-xs h-6 px-2',
-              !showFTEFilter && 'bg-muted/60 hover:bg-muted'
-            )}
+            className={cn('text-xs h-6 px-2', !showFTEFilter && 'bg-muted/60 hover:bg-muted')}
           >
             On leave
-        </Button>
-        <Button
-            variant={allExpanded ? "default" : "outline"}
-          size="sm"
-          onClick={handleShowAll}
-          disabled={rankFilter !== 'all'}
-          className={cn(
-            'text-xs h-6 px-2',
-            !allExpanded && 'bg-muted/60 hover:bg-muted'
-          )}
-          title={rankFilter !== 'all' ? 'Show All is disabled when filtering to Therapist/PCA.' : undefined}
-        >
-          Show All
-        </Button>
+          </Button>
+          <Button
+            variant={allExpanded ? 'default' : 'outline'}
+            size="sm"
+            onClick={handleShowAll}
+            disabled={rankFilter !== 'all'}
+            className={cn('text-xs h-6 px-2', !allExpanded && 'bg-muted/60 hover:bg-muted')}
+            title={rankFilter !== 'all' ? 'Show All is disabled when filtering to Therapist/PCA.' : undefined}
+          >
+            Show All
+          </Button>
         </div>
-      </div>
 
         {/* Rank filters (mutually exclusive; can overlap with On leave) */}
         <div className="grid grid-cols-2 gap-1">

@@ -39,6 +39,7 @@ import { Badge } from '@/components/ui/badge'
 import { ActionToast } from '@/components/ui/action-toast'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
 import { StepIndicator } from '@/components/allocation/StepIndicator'
+import { PcaAllocationLegendPopover } from '@/components/allocation/PcaAllocationLegendPopover'
 import dynamic from 'next/dynamic'
 import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopover'
 import { StaffContextMenu } from '@/components/allocation/StaffContextMenu'
@@ -9973,7 +9974,10 @@ function SchedulePageContent() {
                 
                 {/* Block 2: PCA Allocation */}
                 <div ref={pcaAllocationBlockRef} className="mb-4">
-                  <h3 className="text-xs font-semibold text-center mb-2">PCA Allocation</h3>
+                  <div className="mb-2 flex items-center justify-center gap-1">
+                    <h3 className="text-xs font-semibold">PCA Allocation</h3>
+                    <PcaAllocationLegendPopover />
+                  </div>
                   <div className="grid grid-cols-8 gap-2">
                     {TEAMS.map((team) => (
                       <Fragment key={`pca-${team}`}>

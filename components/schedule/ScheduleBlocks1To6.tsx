@@ -23,6 +23,7 @@ import { BedBlock } from '@/components/allocation/BedBlock'
 import { LeaveBlock } from '@/components/allocation/LeaveBlock'
 import { CalculationBlock } from '@/components/allocation/CalculationBlock'
 import { PCACalculationBlock } from '@/components/allocation/PCACalculationBlock'
+import { PcaAllocationLegendPopover } from '@/components/allocation/PcaAllocationLegendPopover'
 
 type StaffOverrides = Record<
   string,
@@ -198,7 +199,10 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
 
         {/* Block 2: PCA Allocation */}
         <div className={blockWrapClass}>
-          <h3 className={titleClass}>PCA Allocation</h3>
+          <div className={cn('mb-2 flex items-center justify-center gap-1', isCompact && 'mb-1')}>
+            <h3 className="text-xs font-semibold">PCA Allocation</h3>
+            <PcaAllocationLegendPopover />
+          </div>
           <div className="grid grid-cols-8 gap-2">
             {TEAMS.map((team) => (
               <PCABlock

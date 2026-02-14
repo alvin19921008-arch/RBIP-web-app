@@ -89,6 +89,12 @@ export const HELP_FAQ_SECTIONS: FaqSection[] = [
           'Resolve therapist and non-floating PCA assignments first so Step 3 floating PCA starts from correct inputs.',
       },
       {
+        id: 'staff-card-color-legend',
+        question: 'What do the staff card border and fill colors mean?',
+        answer:
+          'In Staff Pool: non-floating PCA uses a green border; floating PCA uses a blue thin border + light blue fill to indicate remaining FTE; APPT uses a yellow border; SPT uses a brownish-yellow border.',
+      },
+      {
         id: 'step3-focus',
         question: 'What are the most important Step 3 interactions?',
         answer:
