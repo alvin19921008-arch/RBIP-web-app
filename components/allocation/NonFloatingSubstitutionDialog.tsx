@@ -326,7 +326,7 @@ export function NonFloatingSubstitutionDialog({
 
   return (
     <Dialog open={open} onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="flex h-[calc(100dvh-16px)] w-[calc(100vw-16px)] max-w-4xl flex-col overflow-hidden sm:h-auto sm:w-full sm:max-h-[90dvh]">
         <DialogHeader>
           <DialogTitle>Choose substitutes</DialogTitle>
           <DialogDescription>
@@ -339,58 +339,59 @@ export function NonFloatingSubstitutionDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="mb-2 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
-          <span className="px-2.5 py-1 rounded-md">2.0 Programs</span>
-          <span aria-hidden="true">·</span>
-          <span className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-700 font-semibold text-primary">2.1 Substitute</span>
-          <span aria-hidden="true">·</span>
-          <span className="px-2.5 py-1 rounded-md">2.2 SPT</span>
-        </div>
+        <div className="min-h-0 flex-1 overflow-auto overscroll-contain pr-1">
+          <div className="mb-2 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
+            <span className="px-2.5 py-1 rounded-md">2.0 Programs</span>
+            <span aria-hidden="true">·</span>
+            <span className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-700 font-semibold text-primary">2.1 Substitute</span>
+            <span aria-hidden="true">·</span>
+            <span className="px-2.5 py-1 rounded-md">2.2 SPT</span>
+          </div>
 
-        {/* Navigation - only show for wizard mode */}
-        {isWizardMode && (
-          <div className="flex items-center justify-between py-4 border-b">
-            <Button
-              variant="outline"
-              onClick={handlePrevious}
-              disabled={isFirstTeam}
-              className="flex items-center gap-2"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Previous
-            </Button>
-            <div className="text-sm font-medium">
-              <span className="inline-flex items-center gap-2">
-                <span>
-                  Team {currentTeamIndex + 1} of {teams.length}:
-                </span>
-                <Badge
-                  variant="outline"
-                  className={cn('select-none px-2 py-0.5 text-[11px] font-medium', currentTheme.badge)}
-                >
-                  {currentTeam}
-                </Badge>
-              </span>
-            </div>
-            {!isLastTeam ? (
+          {/* Navigation - only show for wizard mode */}
+          {isWizardMode && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b py-4">
               <Button
                 variant="outline"
-                onClick={handleNext}
-                disabled={!isCurrentTeamComplete}
+                onClick={handlePrevious}
+                disabled={isFirstTeam}
                 className="flex items-center gap-2"
               >
-                Next
-                <ArrowRight className="h-4 w-4" />
+                <ArrowLeft className="h-4 w-4" />
+                Previous
               </Button>
-            ) : (
-              // Keep layout stable (footer has confirm action).
-              <div className="w-[104px]" />
-            )}
-          </div>
-        )}
+              <div className="text-sm font-medium">
+                <span className="inline-flex items-center gap-2">
+                  <span>
+                    Team {currentTeamIndex + 1} of {teams.length}:
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className={cn('select-none px-2 py-0.5 text-[11px] font-medium', currentTheme.badge)}
+                  >
+                    {currentTeam}
+                  </Badge>
+                </span>
+              </div>
+              {!isLastTeam ? (
+                <Button
+                  variant="outline"
+                  onClick={handleNext}
+                  disabled={!isCurrentTeamComplete}
+                  className="flex items-center gap-2"
+                >
+                  Next
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              ) : (
+                // Keep layout stable (footer has confirm action).
+                <div className="hidden w-[104px] sm:block" />
+              )}
+            </div>
+          )}
 
-        {/* Content */}
-        <div className="space-y-6 py-4">
+          {/* Content */}
+          <div className="space-y-6 py-4">
           {currentSubstitutions.length === 0 ? (
             <div className="text-center text-muted-foreground py-8">
               No non-floating PCAs need substitution for this team.
@@ -784,20 +785,21 @@ export function NonFloatingSubstitutionDialog({
               )
             })
           )}
+          </div>
         </div>
 
-        <DialogFooter className="flex justify-between">
+        <DialogFooter className="sticky bottom-0 z-10 mt-4 flex-row flex-wrap items-center gap-2 border-t bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:justify-between sm:px-0">
           {onBack ? (
-            <Button variant="outline" onClick={onBack}>
+            <Button variant="outline" onClick={onBack} className="mr-auto max-w-full whitespace-normal">
               <ArrowLeft className="mr-2 h-4 w-4" /> Back to 2.0
             </Button>
           ) : (
-            <div />
+            <div className="hidden sm:block" />
           )}
 
-          <div className="flex gap-2">
-            <div className="relative inline-block group">
-              <Button variant="outline" onClick={onSkip}>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="relative group">
+              <Button variant="outline" onClick={onSkip} className="max-w-full whitespace-normal">
                 {isWizardMode ? 'Skip All' : 'Skip'}
               </Button>
               <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-80 p-3 bg-popover border border-border rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none whitespace-normal">
@@ -811,15 +813,15 @@ export function NonFloatingSubstitutionDialog({
                 </ul>
               </div>
             </div>
-            <Button variant="outline" onClick={onCancel}>
+            <Button variant="outline" onClick={onCancel} className="max-w-full whitespace-normal">
               Cancel
             </Button>
             {!isWizardMode ? (
-              <Button onClick={handleConfirm} disabled={!isCurrentTeamComplete}>
+              <Button onClick={handleConfirm} disabled={!isCurrentTeamComplete} className="max-w-full whitespace-normal">
                 Confirm
               </Button>
             ) : (
-              <Button onClick={handleConfirm} disabled={!isAllTeamsComplete}>
+              <Button onClick={handleConfirm} disabled={!isAllTeamsComplete} className="max-w-full whitespace-normal">
                 Confirm All
               </Button>
             )}

@@ -1356,6 +1356,7 @@ export function FloatingPCAConfigDialog({
       <div className="py-4">
         <DndContext
           sensors={sensors}
+          autoScroll={false}
           collisionDetection={closestCenter}
           onDragEnd={handleDragEnd}
         >
@@ -1526,12 +1527,12 @@ export function FloatingPCAConfigDialog({
         </div>
       </div>
       
-      <DialogFooter className="flex justify-between">
-        <Button variant="outline" onClick={handleResetToOriginal}>
+      <DialogFooter className="sticky bottom-0 z-10 mt-4 flex-row flex-wrap items-center gap-2 border-t bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:justify-between sm:px-0">
+        <Button variant="outline" onClick={handleResetToOriginal} className="mr-auto max-w-full whitespace-normal">
           Reset
         </Button>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={onCancel}>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="outline" onClick={onCancel} className="max-w-full whitespace-normal">
             Cancel
           </Button>
           {allocationMode === 'balanced' ? (
@@ -1540,18 +1541,19 @@ export function FloatingPCAConfigDialog({
               onClick={handleRunBalancedNow}
               disabled={isRunningAlgorithm}
               title="Balanced mode runs the allocation directly (skips Step 3.2 and 3.3)"
+              className="max-w-full whitespace-normal"
             >
               Run Balanced now
             </Button>
           ) : (
             step31Flow.tooltip ? (
-              <Tooltip content={step31Flow.tooltip} side="top" zIndex={120000}>
-                <Button onClick={handleProceedToStep32}>
+              <Tooltip content={step31Flow.tooltip} side="top" zIndex={120000} wrapperClassName="max-w-full">
+                <Button onClick={handleProceedToStep32} className="max-w-full whitespace-normal">
                   {step31Flow.nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               </Tooltip>
             ) : (
-              <Button onClick={handleProceedToStep32}>
+              <Button onClick={handleProceedToStep32} className="max-w-full whitespace-normal">
                 {step31Flow.nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             )
@@ -1599,28 +1601,29 @@ export function FloatingPCAConfigDialog({
         )}
       </div>
       
-      <DialogFooter className="flex justify-between">
-        <Button variant="outline" onClick={handleBackToStep31}>
+      <DialogFooter className="sticky bottom-0 z-10 mt-4 flex-row flex-wrap items-center gap-2 border-t bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:justify-between sm:px-0">
+        <Button variant="outline" onClick={handleBackToStep31} className="mr-auto max-w-full whitespace-normal">
           <ArrowLeft className="mr-2 h-4 w-4" /> Back to 3.1
         </Button>
-        <div className="flex gap-2">
-          <Tooltip content={step32Flow.skipTooltip} side="top" zIndex={120000}>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Tooltip content={step32Flow.skipTooltip} side="top" zIndex={120000} wrapperClassName="max-w-full">
             <Button
               variant="outline"
               onClick={handleSkipStep32}
               title={step32Flow.skipTooltip}
+              className="max-w-full whitespace-normal"
             >
               {step32Flow.skipLabel}
             </Button>
           </Tooltip>
           {step32Flow.tooltip ? (
-            <Tooltip content={step32Flow.tooltip} side="top" zIndex={120000}>
-              <Button onClick={handleProceedToStep33}>
+            <Tooltip content={step32Flow.tooltip} side="top" zIndex={120000} wrapperClassName="max-w-full">
+              <Button onClick={handleProceedToStep33} className="max-w-full whitespace-normal">
                 {step32Flow.nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             </Tooltip>
           ) : (
-            <Button onClick={handleProceedToStep33}>
+            <Button onClick={handleProceedToStep33} className="max-w-full whitespace-normal">
               {step32Flow.nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
           )}
@@ -1669,19 +1672,20 @@ export function FloatingPCAConfigDialog({
         )}
       </div>
       
-      <DialogFooter className="flex justify-between">
-        <Button variant="outline" onClick={handleBackToStep32}>
+      <DialogFooter className="sticky bottom-0 z-10 mt-4 flex-row flex-wrap items-center gap-2 border-t bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:justify-between sm:px-0">
+        <Button variant="outline" onClick={handleBackToStep32} className="mr-auto max-w-full whitespace-normal">
           <ArrowLeft className="mr-2 h-4 w-4" /> Back to 3.2
         </Button>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <Button 
             variant="outline" 
             onClick={handleSkipStep33}
             title="Skip adjacent slot assignments and proceed to final allocation"
+            className="max-w-full whitespace-normal"
           >
             Skip Assignments
           </Button>
-          <Button onClick={() => handleFinalSave('standard')} disabled={isRunningAlgorithm}>
+          <Button onClick={() => handleFinalSave('standard')} disabled={isRunningAlgorithm} className="max-w-full whitespace-normal">
             Complete (Standard)
           </Button>
         </div>
@@ -1691,7 +1695,7 @@ export function FloatingPCAConfigDialog({
   
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onCancel()}>
-      <DialogContent className="max-w-4xl max-h-[calc(100vh-96px)] overflow-y-auto overscroll-contain">
+      <DialogContent className="flex h-[calc(100dvh-16px)] w-[calc(100vw-16px)] max-w-4xl flex-col overflow-hidden sm:h-auto sm:w-full sm:max-h-[calc(100dvh-96px)]">
         <DialogHeader>
           <DialogTitle>Floating PCA allocation</DialogTitle>
           <DialogDescription>
@@ -1710,48 +1714,50 @@ export function FloatingPCAConfigDialog({
           </DialogDescription>
         </DialogHeader>
         
-        {/* Step indicator */}
-        {currentMiniStep !== '3.0' && (
-          <div className="flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground mb-2">
-            {(() => {
-              const steps: Array<{ id: MiniStep; label: string }> = [{ id: '3.1', label: '3.1 Adjust' }]
-              const showStep32InIndicator =
-                step31Flow.showStep32 || currentMiniStep === '3.2' || currentMiniStep === '3.3'
-              const showStep33InIndicator =
-                currentMiniStep === '3.3'
-                  ? true
-                  : currentMiniStep === '3.2'
-                    ? step32Flow.showStep33
-                    : step31Flow.showStep33
+        <div className="min-h-0 flex-1 overflow-auto overscroll-contain pr-1">
+          {/* Step indicator */}
+          {currentMiniStep !== '3.0' && (
+            <div className="mb-2 flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground">
+              {(() => {
+                const steps: Array<{ id: MiniStep; label: string }> = [{ id: '3.1', label: '3.1 Adjust' }]
+                const showStep32InIndicator =
+                  step31Flow.showStep32 || currentMiniStep === '3.2' || currentMiniStep === '3.3'
+                const showStep33InIndicator =
+                  currentMiniStep === '3.3'
+                    ? true
+                    : currentMiniStep === '3.2'
+                      ? step32Flow.showStep33
+                      : step31Flow.showStep33
 
-              if (showStep32InIndicator) steps.push({ id: '3.2', label: '3.2 Preferred' })
-              if (showStep33InIndicator) steps.push({ id: '3.3', label: '3.3 Adjacent' })
+                if (showStep32InIndicator) steps.push({ id: '3.2', label: '3.2 Preferred' })
+                if (showStep33InIndicator) steps.push({ id: '3.3', label: '3.3 Adjacent' })
 
-              return steps.map((s, idx) => (
-                <Fragment key={s.id}>
-                  <span
-                    className={cn(
-                      'px-3 py-1.5 rounded-lg transition-colors',
-                      currentMiniStep === s.id ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
-                    )}
-                  >
-                    {s.label}
-                  </span>
-                  {idx < steps.length - 1 ? (
-                    <span className="text-muted-foreground/70" aria-hidden="true">
-                      ·
+                return steps.map((s, idx) => (
+                  <Fragment key={s.id}>
+                    <span
+                      className={cn(
+                        'rounded-lg px-3 py-1.5 transition-colors',
+                        currentMiniStep === s.id ? 'bg-slate-100 font-bold text-primary dark:bg-slate-700' : ''
+                      )}
+                    >
+                      {s.label}
                     </span>
-                  ) : null}
-                </Fragment>
-              ))
-            })()}
-          </div>
-        )}
-        
-        {currentMiniStep === '3.0' && renderStep30()}
-        {currentMiniStep === '3.1' && renderStep31()}
-        {currentMiniStep === '3.2' && renderStep32()}
-        {currentMiniStep === '3.3' && renderStep33()}
+                    {idx < steps.length - 1 ? (
+                      <span className="text-muted-foreground/70" aria-hidden="true">
+                        ·
+                      </span>
+                    ) : null}
+                  </Fragment>
+                ))
+              })()}
+            </div>
+          )}
+
+          {currentMiniStep === '3.0' && renderStep30()}
+          {currentMiniStep === '3.1' && renderStep31()}
+          {currentMiniStep === '3.2' && renderStep32()}
+          {currentMiniStep === '3.3' && renderStep33()}
+        </div>
       </DialogContent>
     </Dialog>
   )

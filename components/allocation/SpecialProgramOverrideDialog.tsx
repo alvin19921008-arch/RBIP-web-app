@@ -1876,12 +1876,12 @@ export function SpecialProgramOverrideDialog({
             )}
           </div>
 
-          <DialogFooter className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <DialogFooter className="sticky bottom-0 z-10 mt-4 flex-row flex-wrap items-center justify-end gap-2 border-t bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:px-0">
+            <Button variant="outline" onClick={() => onOpenChange(false)} className="max-w-full whitespace-normal">
               Cancel
             </Button>
-            <div className="relative inline-block group">
-              <Button variant="outline" onClick={onSkip}>
+            <div className="relative group">
+              <Button variant="outline" onClick={onSkip} className="max-w-full whitespace-normal">
                 Skip
               </Button>
               <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-80 p-3 bg-popover border border-border rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none whitespace-normal">
@@ -1895,7 +1895,7 @@ export function SpecialProgramOverrideDialog({
                 </ul>
               </div>
             </div>
-            <Button onClick={handleConfirm}>
+            <Button onClick={handleConfirm} className="max-w-full whitespace-normal">
               Confirm
             </Button>
           </DialogFooter>

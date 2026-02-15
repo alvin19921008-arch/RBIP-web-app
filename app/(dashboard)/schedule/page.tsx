@@ -7681,6 +7681,7 @@ function SchedulePageContent() {
   return (
     <DndContext
       sensors={sensors}
+      autoScroll={false}
       onDragStart={handleDragStart}
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}

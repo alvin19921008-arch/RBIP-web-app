@@ -1057,7 +1057,7 @@ export function SptFinalEditDialog(props: {
             <Label>Add SPT not configured on this day</Label>
 
             <div className="flex flex-wrap items-center gap-2">
-              <div className="w-[280px] max-w-full">
+            <div className="w-[180px] max-w-[180px]">
                 <Select value={addStaffId || '__NONE__'} onValueChange={(v) => setAddStaffId(v === '__NONE__' ? '' : v)}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select SPT" />
@@ -1086,26 +1086,26 @@ export function SptFinalEditDialog(props: {
             </div>
 
             <div className="text-xs text-muted-foreground">
-              Add an on-duty SPT who is not configured for this weekday (ad hoc help). You’ll then pick slots and contribute-FTE.
+              Add an on-duty SPT who is not configured for this weekday (ad hoc help).
             </div>
           </div>
         </div>
 
-        <DialogFooter className="flex justify-between">
+        <DialogFooter className="sticky bottom-0 z-10 mt-4 flex-row flex-wrap items-center gap-2 border-t bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:justify-between sm:px-0">
           {onBack ? (
-            <Button variant="outline" onClick={onBack}>
+            <Button variant="outline" onClick={onBack} className="mr-auto max-w-full whitespace-normal">
               <ArrowLeft className="mr-2 h-4 w-4" /> Back to 2.1
             </Button>
           ) : (
-            <div />
+            <div className="hidden sm:block" />
           )}
 
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)} className="max-w-full whitespace-normal">
               Cancel
             </Button>
-            <div className="relative inline-block group">
-              <Button variant="outline" onClick={onSkip}>
+            <div className="relative group">
+              <Button variant="outline" onClick={onSkip} className="max-w-full whitespace-normal">
                 Skip
               </Button>
               <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-80 p-3 bg-popover border border-border rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none whitespace-normal">
@@ -1122,6 +1122,7 @@ export function SptFinalEditDialog(props: {
             <Button
               onClick={handleConfirm}
               disabled={cards.some((c) => c.enabled && c.contributesFte && c.slots.length === 0)}
+              className="max-w-full whitespace-normal"
             >
               Confirm
             </Button>
