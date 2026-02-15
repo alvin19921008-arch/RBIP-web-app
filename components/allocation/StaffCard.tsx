@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, ReactNode } from 'react'
+import React, { useCallback, useEffect, useRef, useState, ReactNode } from 'react'
 import { Staff } from '@/types/staff'
 import { TherapistAllocation } from '@/types/schedule'
 import { useDraggable } from '@dnd-kit/core'
@@ -74,6 +74,8 @@ function wrapTimeRangesInNode(node: ReactNode): ReactNode {
 }
 
 export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDisplay, headerRight, onEdit, onOpenContextMenu, onConvertToInactive, draggable = true, nameColor, borderColor, fillColorClassName, dragTeam, baseFTE, trueFTE, isFloatingPCA, showFTE, currentStep, initializedSteps, useDragOverlay = false }: StaffCardProps) {
+  const LONG_PRESS_MS = 420
+  const LONG_PRESS_MOVE_TOLERANCE = 8
   // Use composite ID to ensure each team's instance has a unique draggable id
   // This prevents drag styling from applying to the same staff card in other teams
   // Use '::' as separator (unlikely to appear in UUIDs)
@@ -89,12 +91,65 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
   // Conditionally apply drag functionality based on draggable prop
   const effectiveAttributes = draggable ? attributes : {}
   const effectiveListeners = draggable ? listeners : {}
-  const effectiveSetNodeRef = draggable ? setNodeRef : undefined
+  const cardRef = useRef<HTMLDivElement | null>(null)
+  const longPressTimerRef = useRef<number | null>(null)
+  const longPressPulseResetRef = useRef<number | null>(null)
+  const longPressStartRef = useRef<{ x: number; y: number } | null>(null)
+  const longPressPointerIdRef = useRef<number | null>(null)
+  const [longPressPulseActive, setLongPressPulseActive] = useState(false)
+
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }, [])
+
+  const clearLongPressPulseReset = useCallback(() => {
+    if (longPressPulseResetRef.current !== null) {
+      window.clearTimeout(longPressPulseResetRef.current)
+      longPressPulseResetRef.current = null
+    }
+  }, [])
+
+  const triggerHaptic = useCallback((pattern: number | number[] = 10) => {
+    if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return
+    try {
+      navigator.vibrate(pattern)
+    } catch {
+      // Ignore unsupported/browser-blocked vibration.
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      clearLongPressTimer()
+      clearLongPressPulseReset()
+    }
+  }, [clearLongPressPulseReset, clearLongPressTimer])
+
+  useEffect(() => {
+    if (!isDragging) return
+    // Guard against delayed long-press firing while a drag is already active.
+    clearLongPressTimer()
+    clearLongPressPulseReset()
+    setLongPressPulseActive(false)
+    longPressPointerIdRef.current = null
+    longPressStartRef.current = null
+  }, [isDragging, clearLongPressPulseReset, clearLongPressTimer])
+
+  const setCardNodeRef = useCallback((node: HTMLDivElement | null) => {
+    cardRef.current = node
+    if (draggable) setNodeRef(node)
+  }, [draggable, setNodeRef])
 
   const shouldApplyTransform = !!transform && !(useDragOverlay && isDragging)
-  const style = shouldApplyTransform
-    ? { transform: `translate3d(${transform!.x}px, ${transform!.y}px, 0)` }
-    : undefined
+  const style = {
+    WebkitTouchCallout: 'none' as const,
+    WebkitUserSelect: 'none' as const,
+    userSelect: 'none' as const,
+    ...(shouldApplyTransform ? { transform: `translate3d(${transform!.x}px, ${transform!.y}px, 0)` } : {}),
+  }
 
   // Display name (FTE will be shown separately on the right)
   // Add "*" suffix for buffer staff
@@ -134,18 +189,74 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
   const showBattery = isFloatingPCA && baseFTE !== undefined && trueFTE !== undefined
   const renderedSlotDisplay = slotDisplay ? wrapTimeRangesInNode(slotDisplay) : null
 
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!onOpenContextMenu) return
+    if (e.pointerType !== 'touch') return
+    if ((e.target as HTMLElement).closest('button')) return
+
+    clearLongPressTimer()
+    longPressPointerIdRef.current = e.pointerId
+    longPressStartRef.current = { x: e.clientX, y: e.clientY }
+
+    longPressTimerRef.current = window.setTimeout(() => {
+      const node = cardRef.current
+      const start = longPressStartRef.current
+      if (!node || !start || isDragging) return
+
+      triggerHaptic(12)
+      clearLongPressPulseReset()
+      setLongPressPulseActive(true)
+      longPressPulseResetRef.current = window.setTimeout(() => {
+        setLongPressPulseActive(false)
+        longPressPulseResetRef.current = null
+      }, 180)
+
+      // Reuse the existing onContextMenu path so schedule/staff-pool menus stay consistent.
+      node.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          clientX: start.x,
+          clientY: start.y,
+        })
+      )
+      clearLongPressTimer()
+    }, LONG_PRESS_MS)
+  }, [LONG_PRESS_MS, clearLongPressTimer, onOpenContextMenu, triggerHaptic])
+
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType !== 'touch') return
+    if (longPressPointerIdRef.current !== e.pointerId) return
+    if (!longPressStartRef.current) return
+
+    const dx = Math.abs(e.clientX - longPressStartRef.current.x)
+    const dy = Math.abs(e.clientY - longPressStartRef.current.y)
+    if (dx > LONG_PRESS_MOVE_TOLERANCE || dy > LONG_PRESS_MOVE_TOLERANCE) {
+      clearLongPressTimer()
+    }
+  }, [LONG_PRESS_MOVE_TOLERANCE, clearLongPressTimer])
+
+  const handlePointerEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType !== 'touch') return
+    if (longPressPointerIdRef.current !== e.pointerId) return
+    clearLongPressTimer()
+    longPressPointerIdRef.current = null
+    longPressStartRef.current = null
+  }, [clearLongPressTimer])
+
   return (
     <div
-      ref={effectiveSetNodeRef}
+      ref={setCardNodeRef}
       style={style}
       {...(draggable && !isHoveringEdit && !isHoveringConvert ? { ...effectiveListeners, ...effectiveAttributes } : {})}
       className={cn(
-        "relative p-1 border-2 rounded-md bg-card hover:bg-accent transition-colors",
+        "relative p-1 border-2 rounded-md bg-card hover:bg-accent transition-colors select-none",
         borderColorClass,
         fillColorClassName,
         draggable && !isHoveringEdit && !isHoveringConvert && "cursor-move",
         isDragging && "opacity-50",
-        showBattery && "overflow-hidden"
+        showBattery && "overflow-hidden",
+        longPressPulseActive && "ring-2 ring-primary/40 scale-[1.02]"
       )}
       onMouseEnter={() => setIsHoveringCard(true)}
       onMouseLeave={() => {
@@ -153,10 +264,14 @@ export function StaffCard({ staff, allocation, fteRemaining, sptDisplay, slotDis
         setIsHoveringEdit(false)
         setIsHoveringConvert(false)
       }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerEnd}
+      onPointerCancel={handlePointerEnd}
       onContextMenu={(e) => {
-        if (!onOpenContextMenu) return
         e.preventDefault()
         e.stopPropagation()
+        if (!onOpenContextMenu) return
         onOpenContextMenu(e)
       }}
     >

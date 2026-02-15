@@ -2,7 +2,18 @@
 
 import { useState, useEffect, useRef, Fragment, useCallback, useTransition, Suspense, useMemo, Profiler, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { DndContext, DragOverlay, type DragEndEvent, type DragStartEvent, type DragMoveEvent, type Active } from '@dnd-kit/core'
+import {
+  DndContext,
+  DragOverlay,
+  MouseSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+  type DragMoveEvent,
+  type Active,
+} from '@dnd-kit/core'
 import { snapCenterToCursor } from '@dnd-kit/modifiers'
 import type { Team, Weekday, LeaveType, Staff } from '@/types/staff'
 import type {
@@ -230,6 +241,24 @@ function SchedulePageContent() {
   const splitRatio = splitRatioParam
   const isSplitSwapped = splitSwapParam
   const [stepIndicatorCollapsed, setStepIndicatorCollapsed] = useState(false)
+  const lastHapticDropZoneRef = useRef<string | null>(null)
+
+  const triggerHaptic = useCallback((pattern: number | number[] = 10) => {
+    const coarsePointer = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
+    if (!coarsePointer) return
+    if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return
+    try {
+      navigator.vibrate(pattern)
+    } catch {
+      // Ignore unsupported/browser-blocked vibration.
+    }
+  }, [])
+
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    // Mobile: require a brief hold + small movement tolerance to reduce accidental drag during scroll.
+    useSensor(TouchSensor, { activationConstraint: { delay: 240, tolerance: 10 } })
+  )
   const [refPortalHost, setRefPortalHost] = useState<HTMLDivElement | null>(null)
 
   // Auto-collapse step indicator when entering split mode
@@ -5661,6 +5690,12 @@ function SchedulePageContent() {
 
   // Handle drag start - detect if it's a PCA being dragged
   const handleDragStart = (event: DragStartEvent) => {
+    // Mobile touch path can produce long-press menu and drag back-to-back.
+    // Always close context menus once a drag starts so they never stay stuck open.
+    closeStaffContextMenu()
+    closeStaffPoolContextMenu()
+    lastHapticDropZoneRef.current = null
+
     const { active } = event
     const activeId = active.id as string
     
@@ -5897,11 +5932,17 @@ function SchedulePageContent() {
   // Handle drag move - detect when PCA leaves source team zone
   const handleDragMove = (event: DragMoveEvent) => {
     const { over, active } = event
+    if (staffContextMenu.show) closeStaffContextMenu()
+    if (staffPoolContextMenu.show) closeStaffPoolContextMenu()
+    const overId = over?.id?.toString() || ''
+    if ((overId.startsWith('pca-') || overId.startsWith('therapist-')) && overId !== lastHapticDropZoneRef.current) {
+      triggerHaptic(8)
+      lastHapticDropZoneRef.current = overId
+    }
     
     // Validate therapist drag: only allowed in step 2
     // This applies to all therapists (SPT, APPT, RPT) including fixed-team staff
     if (therapistDragState.isActive && therapistDragState.sourceTeam) {
-      const overId = over?.id?.toString() || ''
       const isOverDifferentTeam = overId.startsWith('therapist-') && overId !== `therapist-${therapistDragState.sourceTeam}`
       
       // Don't show popover when user drags out of source team after step 2
@@ -5923,7 +5964,6 @@ function SchedulePageContent() {
     if (!pcaDragState.isActive || !pcaDragState.staffId || pcaDragState.isDraggingFromPopover) return
     
     // Check if we've left the source team zone (over a different drop target)
-    const overId = over?.id?.toString() || ''
     const isOverDifferentTeam = overId.startsWith('pca-') && overId !== `pca-${pcaDragState.sourceTeam}`
     
     // Validate: Floating PCA slot transfer is only allowed in step 3
@@ -6542,6 +6582,7 @@ function SchedulePageContent() {
   // Handle drag and drop for therapist staff cards (RPT and SPT only) AND PCA slot transfers
   const handleDragEnd = (event: DragEndEvent) => {
     setActiveDragStaffForOverlay(null)
+    lastHapticDropZoneRef.current = null
     const { active, over } = event
     const activeId = active.id as string
     // Extract staff ID from composite ID (format: staffId or staffId::team)
@@ -7419,6 +7460,7 @@ function SchedulePageContent() {
 
   return (
     <DndContext
+      sensors={sensors}
       onDragStart={handleDragStart}
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
@@ -8730,9 +8772,19 @@ function SchedulePageContent() {
       {/* DragOverlay for regular card drags */}
       <DragOverlay modifiers={[snapCenterToCursor]}>
         {!pcaDragState.isDraggingFromPopover && activeDragStaffForOverlay ? (
-          <div className="pointer-events-none select-none">
-            <div className="bg-white dark:bg-slate-800 rounded-md shadow-lg border border-slate-300 dark:border-slate-600 px-2 py-1">
-              <div className="text-sm font-medium text-slate-800 dark:text-slate-200 whitespace-nowrap">
+          <div
+            className={cn(
+              'pointer-events-none select-none',
+              isLikelyMobileDevice && 'origin-center scale-125 translate-y-3'
+            )}
+          >
+            <div
+              className={cn(
+                'bg-white dark:bg-slate-800 rounded-md shadow-lg border border-slate-300 dark:border-slate-600 px-2 py-1',
+                isLikelyMobileDevice && 'ring-2 ring-primary/30 shadow-2xl'
+              )}
+            >
+              <div className={cn('text-sm font-medium text-slate-800 dark:text-slate-200 whitespace-nowrap', isLikelyMobileDevice && 'text-base')}>
                 {activeDragStaffForOverlay.name}
                 {activeDragStaffForOverlay.status === 'buffer' ? '*' : ''}
               </div>
