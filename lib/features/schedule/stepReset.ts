@@ -211,7 +211,7 @@ export function computeStep3ResetForReentry(args: {
   })
 
   // 3) Recompute pending from cleaned allocations:
-  // pending = avg - nonFloating - preservedFloating - bufferFloating, then round.
+  // pending = avg - nonFloating - preservedFloating - bufferFloating, then round to quarter.
   const nonFloatingAssigned: Record<Team, number> = createEmptyByTeam<number>() as any
   const preservedFloatingAssigned: Record<Team, number> = createEmptyByTeam<number>() as any
   const bufferFloatingAssigned: Record<Team, number> = createEmptyByTeam<number>() as any
@@ -226,16 +226,30 @@ export function computeStep3ResetForReentry(args: {
       const staffMember = staffById.get(alloc.staff_id)
       if (!staffMember) return
 
-      let slotsInTeam = 0
-      if (alloc.slot1 === team) slotsInTeam++
-      if (alloc.slot2 === team) slotsInTeam++
-      if (alloc.slot3 === team) slotsInTeam++
-      if (alloc.slot4 === team) slotsInTeam++
+      const hasSpecial = Array.isArray(alloc.special_program_ids) && alloc.special_program_ids.length > 0
+      const substitutionSlots = getSubstitutionSlotsForTeam(args.staffOverrides?.[alloc.staff_id], team as Team)
+      const isSubForThisTeam = substitutionSlots.length > 0
 
-      const invalidSlot = (alloc as any).invalid_slot as number | undefined
-      if (invalidSlot) {
-        const slotField = `slot${invalidSlot}` as keyof PCAAllocation
-        if ((alloc as any)[slotField] === team) slotsInTeam = Math.max(0, slotsInTeam - 1)
+      let slotsInTeam = 0
+      if (hasSpecial) {
+        // Special-program slots should not reduce pending (legacy).
+        // If this staff also has substitution slots, count ONLY those substitution slots.
+        const slotFieldMatches = (slot: number) => {
+          const slotField = `slot${slot}` as keyof PCAAllocation
+          return (alloc as any)[slotField] === team
+        }
+        slotsInTeam = (substitutionSlots || []).filter((slot) => slotFieldMatches(slot)).length
+      } else {
+        if (alloc.slot1 === team) slotsInTeam++
+        if (alloc.slot2 === team) slotsInTeam++
+        if (alloc.slot3 === team) slotsInTeam++
+        if (alloc.slot4 === team) slotsInTeam++
+
+        const invalidSlot = (alloc as any).invalid_slot as number | undefined
+        if (invalidSlot) {
+          const slotField = `slot${invalidSlot}` as keyof PCAAllocation
+          if ((alloc as any)[slotField] === team) slotsInTeam = Math.max(0, slotsInTeam - 1)
+        }
       }
 
       const fte = slotsInTeam * 0.25
@@ -249,10 +263,9 @@ export function computeStep3ResetForReentry(args: {
         return
       }
 
-      const hasSpecial = Array.isArray(alloc.special_program_ids) && alloc.special_program_ids.length > 0
-      const substitutionSlots = getSubstitutionSlotsForTeam(args.staffOverrides?.[alloc.staff_id], team as Team)
-      const isSubForThisTeam = substitutionSlots.length > 0
-      if (hasSpecial || isSubForThisTeam) {
+      // Legacy behavior: special-program slots should NOT reduce Step 3 pending needs.
+      // Only count substitution slots as "already assigned" against pending.
+      if (isSubForThisTeam) {
         preservedFloatingAssigned[team as Team] += fte
       }
     })

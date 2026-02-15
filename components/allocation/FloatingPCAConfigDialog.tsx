@@ -7,6 +7,7 @@ import { PCAPreference, SpecialProgram } from '@/types/allocation'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import { TeamPendingCard, TIE_BREAKER_COLORS } from './TeamPendingCard'
 import { TeamReservationCard } from './TeamReservationCard'
 import { TeamAdjacentSlotCard } from './TeamAdjacentSlotCard'
@@ -777,6 +778,94 @@ export function FloatingPCAConfigDialog({
     
     setTeamOrder(arrayMove(teamOrder, oldIndex, newIndex))
   }
+
+  const evaluateAdjacentAvailability = useCallback(
+    (pendingFTE: Record<Team, number>, allocations: PCAAllocation[]) => {
+      return computeAdjacentSlotReservations(
+        pendingFTE,
+        allocations,
+        floatingPCAs,
+        specialPrograms
+      )
+    },
+    [floatingPCAs, specialPrograms]
+  )
+
+  const evaluateStep31Path = useCallback(() => {
+    const reservations = computeReservations(
+      pcaPreferences,
+      adjustedFTE,
+      floatingPCAs,
+      existingAllocations,
+      staffOverrides
+    )
+
+    const adjacent = evaluateAdjacentAvailability(adjustedFTE, existingAllocations)
+
+    const next =
+      reservations.hasAnyReservations ? ('3.2' as const)
+      : adjacent.hasAnyAdjacentReservations ? ('3.3' as const)
+      : ('final' as const)
+
+    return { reservations, adjacent, next }
+  }, [
+    pcaPreferences,
+    adjustedFTE,
+    floatingPCAs,
+    existingAllocations,
+    staffOverrides,
+    evaluateAdjacentAvailability,
+  ])
+
+  const evaluateStep32Path = useCallback((assignments: SlotAssignment[]) => {
+    const execution = executeSlotAssignments(
+      assignments,
+      currentPendingFTE,
+      updatedAllocations,
+      floatingPCAs
+    )
+
+    const adjacent = evaluateAdjacentAvailability(
+      execution.updatedPendingFTE,
+      execution.updatedAllocations
+    )
+
+    const next = adjacent.hasAnyAdjacentReservations ? ('3.3' as const) : ('final' as const)
+    return { execution, adjacent, next }
+  }, [currentPendingFTE, updatedAllocations, floatingPCAs, evaluateAdjacentAvailability])
+
+  const step31Flow = useMemo(() => {
+    const { reservations, adjacent, next } = evaluateStep31Path()
+    return {
+      showStep32: reservations.hasAnyReservations,
+      showStep33: adjacent.hasAnyAdjacentReservations,
+      next,
+      nextLabel:
+        next === '3.2' ? 'Continue to 3.2' : next === '3.3' ? 'Continue to 3.3' : 'Run final allocation',
+      tooltip:
+        next === 'final'
+          ? 'No Step 3.2 / 3.3 actions available today; continuing will run the final allocation and close this dialog.'
+          : null,
+    }
+  }, [evaluateStep31Path])
+
+  const step32Flow = useMemo(() => {
+    const { next, adjacent } = evaluateStep32Path(slotSelections)
+    return {
+      showStep33: adjacent.hasAnyAdjacentReservations,
+      next,
+      nextLabel: next === '3.3' ? 'Assign & Continue' : 'Run final allocation',
+      skipLabel: next === '3.3' ? 'Skip to 3.3' : 'Run final allocation',
+      tooltip:
+        next === 'final'
+          ? 'No Step 3.3 adjacent-slot actions available after Step 3.2 selections; continuing will run the final allocation and close this dialog.'
+          : null,
+      skipTooltip:
+        next === '3.3'
+          ? 'Skip Step 3.2 reservations and continue to Step 3.3 adjacent-slot actions.'
+          : 'No Step 3.3 adjacent-slot actions available; skipping will run the final allocation and close this dialog.',
+    }
+  }, [evaluateStep32Path, slotSelections])
   
   // Handle proceeding from Step 3.1 to Step 3.2
   const handleProceedToStep32 = () => {
@@ -787,44 +876,28 @@ export function FloatingPCAConfigDialog({
     // Store existing allocations for later updates
     setUpdatedAllocations([...existingAllocations])
     
-    // Compute reservations based on Step 3.1 output
-    // Pass staffOverrides to exclude substitution slots from available slots
-    const result = computeReservations(
-      pcaPreferences,
-      adjustedFTE,
-      floatingPCAs,
-      existingAllocations,
-      staffOverrides
-    )
+    // Compute route from Step 3.1 using shared preview logic.
+    const { reservations, adjacent, next } = evaluateStep31Path()
     
-    setTeamReservations(result.teamReservations)
-    setPCASlotReservations(result.pcaSlotReservations)
+    setTeamReservations(reservations.teamReservations)
+    setPCASlotReservations(reservations.pcaSlotReservations)
     setSlotSelections([])
     
-    // If no reservations, check for adjacent slots or skip to final algorithm
-    if (!result.hasAnyReservations) {
-      // Check if there are adjacent slots available
-      const adjacentResult = computeAdjacentSlotReservations(
-        adjustedFTE,
-        existingAllocations,
-        floatingPCAs,
-        specialPrograms
-      )
-      
-      if (adjacentResult.hasAnyAdjacentReservations) {
-        setAdjacentReservations(adjacentResult.adjacentReservations)
-        setCurrentMiniStep('3.3')
-      } else {
-        // No reservations and no adjacent slots - run final algorithm directly
-        // Need to set empty assignments and then call handleFinalSave
-        setStep32Assignments([])
-        setStep33Selections([])
-        // Use setTimeout to ensure state is updated before calling handleFinalSave
-        setTimeout(() => handleFinalSave(), 0)
-      }
-    } else {
+    if (next === '3.2') {
       setCurrentMiniStep('3.2')
+      return
     }
+
+    if (next === '3.3') {
+      setAdjacentReservations(adjacent.adjacentReservations)
+      setCurrentMiniStep('3.3')
+      return
+    }
+
+    // No 3.2/3.3 actions available -> run final directly.
+    setStep32Assignments([])
+    setStep33Selections([])
+    setTimeout(() => handleFinalSave(), 0)
   }
   
   // Handle going back from Step 3.2 to Step 3.1
@@ -853,31 +926,17 @@ export function FloatingPCAConfigDialog({
     // Save 3.2 assignments
     setStep32Assignments([...slotSelections])
     
-    // Execute 3.2 assignments to get updated state
-    const result = executeSlotAssignments(
-      slotSelections,
-      currentPendingFTE,
-      updatedAllocations,
-      floatingPCAs
-    )
+    // Execute 3.2 assignments and compute 3.3 availability with shared logic.
+    const { execution, adjacent, next } = evaluateStep32Path(slotSelections)
     
     // Update state with 3.2 results
-    setCurrentPendingFTE(result.updatedPendingFTE)
-    setUpdatedAllocations(result.updatedAllocations)
+    setCurrentPendingFTE(execution.updatedPendingFTE)
+    setUpdatedAllocations(execution.updatedAllocations)
     
-    // Compute adjacent slot reservations based on updated state
-    const adjacentResult = computeAdjacentSlotReservations(
-      result.updatedPendingFTE,
-      result.updatedAllocations,
-      floatingPCAs,
-      specialPrograms
-    )
-    
-    setAdjacentReservations(adjacentResult.adjacentReservations)
+    setAdjacentReservations(adjacent.adjacentReservations)
     setStep33Selections([])
     
-    // Skip 3.3 if no adjacent slots available
-    if (!adjacentResult.hasAnyAdjacentReservations) {
+    if (next === 'final') {
       // Finalize with 3.2 assignments only - run final algorithm
       setTimeout(() => handleFinalSave(), 0)
     } else {
@@ -1039,17 +1098,10 @@ export function FloatingPCAConfigDialog({
   
   // Handle skip assignments in Step 3.2 (skip to 3.3 or final)
   const handleSkipStep32 = () => {
-    // Execute with empty assignments to check for adjacent slots
-    const adjacentResult = computeAdjacentSlotReservations(
-      currentPendingFTE,
-      updatedAllocations,
-      floatingPCAs,
-      specialPrograms
-    )
-    
-    if (adjacentResult.hasAnyAdjacentReservations) {
+    const { adjacent, next } = evaluateStep32Path([])
+    if (next === '3.3') {
       setStep32Assignments([])
-      setAdjacentReservations(adjacentResult.adjacentReservations)
+      setAdjacentReservations(adjacent.adjacentReservations)
       setStep33Selections([])
       setCurrentMiniStep('3.3')
     } else {
@@ -1491,9 +1543,17 @@ export function FloatingPCAConfigDialog({
               Run Balanced now
             </Button>
           ) : (
-            <Button onClick={handleProceedToStep32}>
-              Continue to 3.2 <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
+            step31Flow.tooltip ? (
+              <Tooltip content={step31Flow.tooltip} side="top" zIndex={120000}>
+                <Button onClick={handleProceedToStep32}>
+                  {step31Flow.nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
+                </Button>
+              </Tooltip>
+            ) : (
+              <Button onClick={handleProceedToStep32}>
+                {step31Flow.nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            )
           )}
         </div>
       </DialogFooter>
@@ -1543,16 +1603,26 @@ export function FloatingPCAConfigDialog({
           <ArrowLeft className="mr-2 h-4 w-4" /> Back to 3.1
         </Button>
         <div className="flex gap-2">
-          <Button 
-            variant="outline" 
-            onClick={handleSkipStep32}
-            title="Skip to check for adjacent slots or final allocation"
-          >
-            Skip Assignments
-          </Button>
-          <Button onClick={handleProceedToStep33}>
-            Assign & Continue <ArrowRight className="ml-2 h-4 w-4" />
-          </Button>
+          <Tooltip content={step32Flow.skipTooltip} side="top" zIndex={120000}>
+            <Button
+              variant="outline"
+              onClick={handleSkipStep32}
+              title={step32Flow.skipTooltip}
+            >
+              {step32Flow.skipLabel}
+            </Button>
+          </Tooltip>
+          {step32Flow.tooltip ? (
+            <Tooltip content={step32Flow.tooltip} side="top" zIndex={120000}>
+              <Button onClick={handleProceedToStep33}>
+                {step32Flow.nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </Tooltip>
+          ) : (
+            <Button onClick={handleProceedToStep33}>
+              {step32Flow.nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          )}
         </div>
       </DialogFooter>
     </>
@@ -1642,36 +1712,38 @@ export function FloatingPCAConfigDialog({
         {/* Step indicator */}
         {currentMiniStep !== '3.0' && (
           <div className="flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground mb-2">
-            <span
-              className={cn(
-                'px-3 py-1.5 rounded-lg transition-colors',
-                currentMiniStep === '3.1' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
-              )}
-            >
-              3.1 Adjust
-            </span>
-            <span className="text-muted-foreground/70" aria-hidden="true">
-              ·
-            </span>
-            <span
-              className={cn(
-                'px-3 py-1.5 rounded-lg transition-colors',
-                currentMiniStep === '3.2' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
-              )}
-            >
-              3.2 Preferred
-            </span>
-            <span className="text-muted-foreground/70" aria-hidden="true">
-              ·
-            </span>
-            <span
-              className={cn(
-                'px-3 py-1.5 rounded-lg transition-colors',
-                currentMiniStep === '3.3' ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
-              )}
-            >
-              3.3 Adjacent
-            </span>
+            {(() => {
+              const steps: Array<{ id: MiniStep; label: string }> = [{ id: '3.1', label: '3.1 Adjust' }]
+              const showStep32InIndicator =
+                step31Flow.showStep32 || currentMiniStep === '3.2' || currentMiniStep === '3.3'
+              const showStep33InIndicator =
+                currentMiniStep === '3.3'
+                  ? true
+                  : currentMiniStep === '3.2'
+                    ? step32Flow.showStep33
+                    : step31Flow.showStep33
+
+              if (showStep32InIndicator) steps.push({ id: '3.2', label: '3.2 Preferred' })
+              if (showStep33InIndicator) steps.push({ id: '3.3', label: '3.3 Adjacent' })
+
+              return steps.map((s, idx) => (
+                <Fragment key={s.id}>
+                  <span
+                    className={cn(
+                      'px-3 py-1.5 rounded-lg transition-colors',
+                      currentMiniStep === s.id ? 'bg-slate-100 dark:bg-slate-700 font-bold text-primary' : ''
+                    )}
+                  >
+                    {s.label}
+                  </span>
+                  {idx < steps.length - 1 ? (
+                    <span className="text-muted-foreground/70" aria-hidden="true">
+                      ·
+                    </span>
+                  ) : null}
+                </Fragment>
+              ))
+            })()}
           </div>
         )}
         

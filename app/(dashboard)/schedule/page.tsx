@@ -62,7 +62,7 @@ import { ScheduleDialogsLayer } from '@/components/schedule/ScheduleDialogsLayer
 import { ScheduleMainLayout } from '@/components/schedule/ScheduleMainLayout'
 import { ScheduleSaveButton } from '@/components/schedule/ScheduleSaveButton'
 import { SplitPane } from '@/components/ui/SplitPane'
-import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, ImageDown, Undo2, Redo2, CircleHelp } from 'lucide-react'
+import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, ImageDown, Undo2, Redo2, CircleHelp, Info } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -70,6 +70,7 @@ import { cn } from '@/lib/utils'
 import { useAccessControl } from '@/lib/access/useAccessControl'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
 import { getWeekday, formatDateDDMMYYYY, formatDateForInput, parseDateFromInput } from '@/lib/features/schedule/date'
+import { computeDrmAddOnFte, computeReservedSpecialProgramPcaFte } from '@/lib/utils/specialProgramPcaCapacity'
 import {
   buildStaffByIdMap,
   groupTherapistAllocationsByTeam,
@@ -242,6 +243,8 @@ function SchedulePageContent() {
   const isSplitSwapped = splitSwapParam
   const [stepIndicatorCollapsed, setStepIndicatorCollapsed] = useState(false)
   const lastHapticDropZoneRef = useRef<string | null>(null)
+  const calcStaleRepairAttemptedDateRef = useRef<string | null>(null)
+  const avgPcaTargetRepairAttemptedDateRef = useRef<string | null>(null)
 
   const triggerHaptic = useCallback((pattern: number | number[] = 10) => {
     const coarsePointer = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
@@ -2997,9 +3000,9 @@ function SchedulePageContent() {
   }
 
   // Helper function to recalculate schedule calculations using current staffOverrides
-  const recalculateScheduleCalculations = useCallback(() => {
+  const recalculateScheduleCalculations = useCallback((opts?: { allowDuringHydration?: boolean }) => {
     // Prevent recalculation churn during initial hydration if we already loaded stored calculations.
-    if (hasLoadedStoredCalculations && isHydratingSchedule) {
+    if (hasLoadedStoredCalculations && isHydratingSchedule && !opts?.allowDuringHydration) {
       return
     }
     // In step 1, we need to recalculate even without allocations to show updated PT/team, avg PCA/team, bed/team
@@ -3123,6 +3126,29 @@ function SchedulePageContent() {
     }, 0)
     // Use totalPCAOnDuty (from staff DB) for consistent requirements
     const bedsPerPCA = totalPCAOnDuty > 0 ? totalBedsEffectiveAllTeams / totalPCAOnDuty : 0
+
+    // Excel semantics: Avg PCA/team uses the PCA pool *after* reserving special-program slots.
+    // Important: derive reserved FTE from required slots (incl. Step 2.0 overrides), not from allocations.
+    const weekdayKey = getWeekday(selectedDate)
+    const reservedSpecialProgramPcaFte = computeReservedSpecialProgramPcaFte({
+      specialPrograms,
+      weekday: weekdayKey,
+      staffOverrides,
+    })
+    const drmAddOnFte = computeDrmAddOnFte({
+      specialPrograms,
+      weekday: weekdayKey,
+      staffOverrides,
+      defaultAddOn: 0.4,
+    })
+
+    // DRM add-on is intended as "earmarked capacity" (Excel semantics):
+    // - take it out of the base pool before distributing Avg PCA/team across teams
+    // - then add it back to DRO as "Final PCA/team"
+    const effectiveTotalPCAForAvg = Math.max(
+      0,
+      totalPCAOnDuty - reservedSpecialProgramPcaFte - drmAddOnFte
+    )
     
     const scheduleCalcs: Record<Team, ScheduleCalculations | null> = {
       FO: null, SMM: null, SFM: null, CPPC: null, MC: null, GMC: null, NSM: null, DRO: null
@@ -3153,28 +3179,20 @@ function SchedulePageContent() {
       }, 0)
       const totalPTPerPCA = pcaOnDuty > 0 ? ptPerTeam / pcaOnDuty : 0
       
-      // Use totalPCAOnDuty for consistent requirement calculation
-      const averagePCAPerTeam = totalPTOnDutyAllTeams > 0
-        ? (ptPerTeam * totalPCAOnDuty) / totalPTOnDutyAllTeams
-        : (totalPCAOnDuty / TEAMS.length)
+      // Avg PCA/team is based on the effective PCA pool after reserving special-program slots.
+      const baseAveragePCAPerTeam = totalPTOnDutyAllTeams > 0
+        ? (ptPerTeam * effectiveTotalPCAForAvg) / totalPTOnDutyAllTeams
+        : (effectiveTotalPCAForAvg / TEAMS.length)
       
       const expectedBedsPerTeam = totalPTOnDutyAllTeams > 0 
         ? (totalBedsEffectiveAllTeams / totalPTOnDutyAllTeams) * ptPerTeam 
         : 0
       const requiredPCAPerTeam = bedsPerPCA > 0 ? expectedBedsPerTeam / bedsPerPCA : 0
       
-      // For DRO: check if DRM is active and calculate base avg PCA/team (without +0.4)
-      const weekday = getWeekday(selectedDate)
-      const drmProgram = specialPrograms.find(p => p.name === 'DRM')
-      const drmPcaFteAddon = 0.4
-      // Note: averagePCAPerTeam calculated from allocations already reflects DRM add-on effect,
-      // so for DRO with DRM, we need to subtract 0.4 to get the base value
-      const baseAveragePCAPerTeam = team === 'DRO' && drmProgram && drmProgram.weekdays.includes(weekday)
-        ? averagePCAPerTeam - drmPcaFteAddon
-        : undefined
-      // For DRO with DRM: average_pca_per_team should be the final value (with add-on)
-      // Since averagePCAPerTeam already reflects the add-on from allocations, use it directly
-      const finalAveragePCAPerTeam = averagePCAPerTeam
+      // DRM: add-on applies to DRO only (final = base + add-on).
+      const isDrmActive = team === 'DRO' && drmAddOnFte > 0
+      const finalAveragePCAPerTeam =
+        team === 'DRO' ? baseAveragePCAPerTeam + drmAddOnFte : baseAveragePCAPerTeam
       
       scheduleCalcs[team] = {
         id: '',
@@ -3191,7 +3209,7 @@ function SchedulePageContent() {
         total_pt_per_pca: totalPTPerPCA,
         total_pt_per_team: ptPerTeam,
         average_pca_per_team: finalAveragePCAPerTeam,
-        base_average_pca_per_team: baseAveragePCAPerTeam,
+        base_average_pca_per_team: isDrmActive ? baseAveragePCAPerTeam : undefined,
         expected_beds_per_team: expectedBedsPerTeam,
         required_pca_per_team: requiredPCAPerTeam,
       }
@@ -3228,6 +3246,123 @@ function SchedulePageContent() {
       recalculateScheduleCalculations()
     }
   }, [therapistAllocations, pcaAllocations, recalculateScheduleCalculations, hasLoadedStoredCalculations, isHydratingSchedule])
+
+  // Guardrail: persisted calculations can occasionally be stale (all expected_beds_per_team = 0)
+  // while live PT and effective beds are non-zero. Recompute once per date to repair Block 6.
+  useEffect(() => {
+    if (!hasLoadedStoredCalculations) return
+    if (isHydratingSchedule || loading) return
+    if (!selectedDate) return
+
+    const dateKey = formatDateForInput(selectedDate)
+    if (calcStaleRepairAttemptedDateRef.current === dateKey) return
+
+    const allExpectedBedsZero = TEAMS.every((team) => {
+      const v = calculations[team]?.expected_beds_per_team
+      return typeof v !== 'number' || v === 0
+    })
+    if (!allExpectedBedsZero) return
+
+    const hasAnyTherapistOnDuty = TEAMS.some((team) =>
+      therapistAllocations[team].some((alloc) => {
+        if (!['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)) return false
+        const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
+        const fte = overrideFTE !== undefined ? overrideFTE : (alloc.fte_therapist || 0)
+        return fte > 0
+      })
+    )
+    if (!hasAnyTherapistOnDuty) return
+
+    const hasAnyPcaAllocations = Object.values(pcaAllocations).some((arr) => Array.isArray(arr) && arr.length > 0)
+    if (!hasAnyPcaAllocations && currentStep !== 'leave-fte') return
+
+    const { totalBedsEffectiveAllTeams } = computeBedsDesignatedByTeam({
+      teams: TEAMS,
+      wards: wards as any,
+      bedCountsOverridesByTeam: bedCountsOverridesByTeam as any,
+    })
+    if (!(totalBedsEffectiveAllTeams > 0)) return
+
+    calcStaleRepairAttemptedDateRef.current = dateKey
+    recalculateScheduleCalculations({ allowDuringHydration: true })
+  }, [
+    hasLoadedStoredCalculations,
+    isHydratingSchedule,
+    loading,
+    selectedDate,
+    calculations,
+    therapistAllocations,
+    staffOverrides,
+    wards,
+    bedCountsOverridesByTeam,
+    recalculateScheduleCalculations,
+    currentStep,
+    pcaAllocations,
+  ])
+
+  // Guardrail: older persisted calculations may have computed Avg PCA/team using the full PCA pool
+  // (without reserving special-program slot FTE). This breaks the conservation check and Step 3 pending math.
+  // Recompute once per date to align Avg PCA/team with Excel semantics:
+  // effectivePCA = totalPCAOnDuty - reservedSpecialProgramSlotsFTE; then add DRM add-on (DRO only).
+  useEffect(() => {
+    if (!hasLoadedStoredCalculations) return
+    if (isHydratingSchedule || loading) return
+    if (!selectedDate) return
+
+    const dateKey = formatDateForInput(selectedDate)
+    if (avgPcaTargetRepairAttemptedDateRef.current === dateKey) return
+
+    const weekdayKey = getWeekday(selectedDate)
+    const reservedSpecialProgramPcaFte = computeReservedSpecialProgramPcaFte({
+      specialPrograms,
+      weekday: weekdayKey,
+      staffOverrides,
+    })
+    if (!(reservedSpecialProgramPcaFte > 1e-6)) return
+
+    const totalPCAOnDuty = staff
+      .filter((s) => s.rank === 'PCA')
+      .reduce((sum, s) => {
+        const overrideFTE = staffOverrides[s.id]?.fteRemaining
+        const isBufferStaff = s.status === 'buffer'
+        const baseFTE = isBufferStaff && (s as any).buffer_fte !== undefined ? (s as any).buffer_fte : 1.0
+        const isOnLeave = staffOverrides[s.id]?.leaveType && staffOverrides[s.id]?.fteRemaining === 0
+        const currentFTE = overrideFTE !== undefined ? overrideFTE : isOnLeave ? 0 : baseFTE
+        return sum + currentFTE
+      }, 0)
+
+    const drmAddOnFte = computeDrmAddOnFte({
+      specialPrograms,
+      weekday: weekdayKey,
+      staffOverrides,
+      defaultAddOn: 0.4,
+    })
+    const effectiveTotalPCAForAvg = Math.max(
+      0,
+      totalPCAOnDuty - reservedSpecialProgramPcaFte - drmAddOnFte
+    )
+
+    // Sum of targets should equal (totalPCAOnDuty - reservedSpecialProgramPcaFte)
+    // since DRM is taken out then added back to DRO.
+    const expectedSum = effectiveTotalPCAForAvg + drmAddOnFte
+    const observedSum = TEAMS.reduce((sum, team) => sum + ((calculations[team]?.average_pca_per_team as any) ?? 0), 0)
+
+    const mismatch = Math.abs(observedSum - expectedSum)
+    if (mismatch < 0.2) return
+
+    avgPcaTargetRepairAttemptedDateRef.current = dateKey
+    recalculateScheduleCalculations({ allowDuringHydration: true })
+  }, [
+    hasLoadedStoredCalculations,
+    isHydratingSchedule,
+    loading,
+    selectedDate,
+    staff,
+    staffOverrides,
+    specialPrograms,
+    calculations,
+    recalculateScheduleCalculations,
+  ])
 
   // Recalculate beds + relieving beds when bed-count overrides change.
   useEffect(() => {
@@ -5687,6 +5822,60 @@ function SchedulePageContent() {
     
     return [...new Set(specialProgramSlots)] // Remove duplicates
   }
+
+  const pcaBalanceSanity = useMemo(() => {
+    const teamBalances: Array<{ team: Team; assigned: number; target: number; balance: number }> = []
+    let positiveSum = 0
+    let negativeAbsSum = 0
+
+    for (const team of TEAMS) {
+      const allocationsForTeam = (pcaAllocations[team] || []) as Array<PCAAllocation & { staff: Staff }>
+      let assignedRaw = 0
+
+      allocationsForTeam.forEach((alloc) => {
+        const slotsForTeam = getSlotsForTeam(alloc, team)
+        if (slotsForTeam.length === 0) return
+
+        const override = staffOverrides?.[alloc.staff_id] as any
+        const invalidSlotFromArray =
+          Array.isArray(override?.invalidSlots) && override.invalidSlots.length > 0
+            ? override.invalidSlots[0]?.slot
+            : undefined
+        const invalidSlot =
+          typeof (alloc as any).invalid_slot === 'number'
+            ? (alloc as any).invalid_slot
+            : typeof override?.invalidSlot === 'number'
+              ? override.invalidSlot
+              : invalidSlotFromArray
+
+        const validSlotsForTeam = invalidSlot ? slotsForTeam.filter((s) => s !== invalidSlot) : slotsForTeam
+        const specialProgramSlots = getSpecialProgramSlotsForTeam(alloc, team)
+        const regularSlotsForTeam = validSlotsForTeam.filter((slot) => !specialProgramSlots.includes(slot))
+        assignedRaw += regularSlotsForTeam.length * 0.25
+      })
+
+      const assigned = roundToNearestQuarterWithMidpoint(assignedRaw)
+      const target = calculations[team]?.average_pca_per_team ?? 0
+      const balance = assigned - target
+      if (balance > 0) positiveSum += balance
+      if (balance < 0) negativeAbsSum += Math.abs(balance)
+
+      teamBalances.push({ team, assigned, target, balance })
+    }
+
+    const netDiff = positiveSum - negativeAbsSum
+    const perTeamText = teamBalances
+      .map((x) => `${x.team} ${x.balance >= 0 ? '+' : ''}${x.balance.toFixed(2)}`)
+      .join(' | ')
+
+    return {
+      teamBalances,
+      positiveSum,
+      negativeAbsSum,
+      netDiff,
+      perTeamText,
+    }
+  }, [calculations, pcaAllocations, staffOverrides, specialPrograms, selectedDate])
 
   // Handle drag start - detect if it's a PCA being dragged
   const handleDragStart = (event: DragStartEvent) => {
@@ -10204,7 +10393,85 @@ function SchedulePageContent() {
                 
                 {/* Block 6: PCA Calculations */}
                 <div className="mb-4">
-                  <h3 className="text-xs font-semibold text-center mb-2">PCA Calculations</h3>
+                  <div className="text-xs font-semibold text-center mb-2 flex items-center justify-center gap-1">
+                    <span>PCA Calculations</span>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-5 w-5 p-0 text-muted-foreground"
+                          aria-label="How Avg PCA/team is calculated"
+                        >
+                          <Info className="h-3.5 w-3.5" aria-hidden="true" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="center"
+                        side="top"
+                        className="w-[420px] rounded-md border border-amber-200 bg-amber-50/95 p-3"
+                      >
+                        <div className="space-y-2 text-xs leading-snug">
+                          <div className="font-semibold">Avg PCA/team formula</div>
+                          <div className="text-muted-foreground">
+                            We follow the legacy Excel semantics: special program PCA slots are treated as reserved
+                            capacity and do not count toward “Assigned” fulfillment.
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="font-semibold">1) Reserve special program slots</div>
+                            <div className="text-muted-foreground">
+                              <span className="font-mono">reservedSpecialProgramSlotsFTE</span> = sum of required program
+                              slots for this weekday (incl. Step 2.0 overrides, excludes DRM) × 0.25
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="font-semibold">2) Base pool (earmark DRM first)</div>
+                            <div className="text-muted-foreground font-mono">
+                              basePool = totalPCAOnDuty − reservedSpecialProgramSlotsFTE − drmAddOnFte
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="font-semibold">3) Distribute base Avg PCA/team</div>
+                            <div className="text-muted-foreground font-mono">
+                              baseAvg[team] = (PT[team] / totalPT) × basePool
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="font-semibold">4) DRO special handling (DRM)</div>
+                            <div className="text-muted-foreground">
+                              <span className="font-mono">finalAvg[DRO]</span> ={' '}
+                              <span className="font-mono">baseAvg[DRO]</span> + <span className="font-mono">drmAddOnFte</span>{' '}
+                              (from Step 2.0 override, default 0.4)
+                            </div>
+                          </div>
+
+                          <div className="border-t pt-2 space-y-1">
+                            <div className="font-semibold">Sanity check</div>
+                            <div className="text-muted-foreground">
+                              For each team, compute <span className="font-mono">balance = Assigned − Target</span>. Use{' '}
+                              <span className="font-mono">finalAvg[DRO]</span> as DRO’s target on DRM days (otherwise use
+                              base Avg). Then:
+                            </div>
+                            <div className="text-muted-foreground font-mono">
+                              +ve sum: {pcaBalanceSanity.positiveSum.toFixed(2)} | -ve abs sum:{' '}
+                              {pcaBalanceSanity.negativeAbsSum.toFixed(2)} | net: {pcaBalanceSanity.netDiff.toFixed(2)}
+                            </div>
+                            <div className="text-muted-foreground text-[11px]">
+                              Team balances (today): {pcaBalanceSanity.perTeamText}
+                            </div>
+                            <div className="text-muted-foreground text-[11px]">
+                              Small drift can happen due to quarter-slot rounding and 2-decimal display.
+                            </div>
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
                   <div className="grid grid-cols-8 gap-2">
                     {TEAMS.map((team) => (
                       <PCACalculationBlock

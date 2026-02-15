@@ -12,14 +12,40 @@ interface TooltipProps {
   className?: string
   wrapperClassName?: string
   zIndex?: number
+  enableOnTouch?: boolean
 }
 
-export function Tooltip({ children, content, side = 'right', className, wrapperClassName, zIndex }: TooltipProps) {
+export function Tooltip({
+  children,
+  content,
+  side = 'right',
+  className,
+  wrapperClassName,
+  zIndex,
+  enableOnTouch = false,
+}: TooltipProps) {
   const [isVisible, setIsVisible] = React.useState(false)
+  const [isTouchDevice, setIsTouchDevice] = React.useState(false)
   const anchorRef = React.useRef<HTMLDivElement>(null)
   const tooltipRef = React.useRef<HTMLDivElement>(null)
   const [anchorRect, setAnchorRect] = React.useState<DOMRect | null>(null)
   const [portalPos, setPortalPos] = React.useState<{ left: number; top: number } | null>(null)
+  const tooltipDisabled = isTouchDevice && !enableOnTouch
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const media = window.matchMedia('(pointer: coarse), (hover: none)')
+    const update = () => setIsTouchDevice(media.matches)
+    update()
+
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', update)
+      return () => media.removeEventListener('change', update)
+    }
+
+    media.addListener(update)
+    return () => media.removeListener(update)
+  }, [])
 
   const computeAndClamp = React.useCallback(() => {
     const a = anchorRef.current?.getBoundingClientRect()
@@ -90,17 +116,26 @@ export function Tooltip({ children, content, side = 'right', className, wrapperC
     <div
       ref={anchorRef}
       className={cn('relative', wrapperClassName ?? 'inline-block')}
+      onPointerDown={() => {
+        if (tooltipDisabled && isVisible) {
+          setIsVisible(false)
+          setPortalPos(null)
+        }
+      }}
       onMouseEnter={() => {
+        if (tooltipDisabled) return
         setIsVisible(true)
         setPortalPos(null)
       }}
       onMouseLeave={() => {
+        if (tooltipDisabled) return
         setIsVisible(false)
         setPortalPos(null)
       }}
     >
       {children}
-      {isVisible &&
+      {!tooltipDisabled &&
+        isVisible &&
         anchorRect &&
         typeof document !== 'undefined' &&
         createPortal(

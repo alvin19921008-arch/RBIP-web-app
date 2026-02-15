@@ -21,6 +21,7 @@ import { ALLOCATION_STEPS, TEAMS } from '@/lib/features/schedule/constants'
 import { formatDateForInput, getWeekday } from '@/lib/features/schedule/date'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
+import { computeDrmAddOnFte, computeReservedSpecialProgramPcaFte } from '@/lib/utils/specialProgramPcaCapacity'
 import type { StaffData, AllocationContext } from '@/lib/algorithms/therapistAllocation'
 import type { PCAAllocationContext, PCAData } from '@/lib/algorithms/pcaAllocation'
 import type { BedAllocationContext } from '@/lib/algorithms/bedAllocation'
@@ -3309,15 +3310,35 @@ export function useScheduleController(params: {
           }
         })
 
-      // Calculate average PCA per team (keep same logic as page)
+      // Calculate average PCA per team (keep same logic as schedule page):
+      // - total PCA comes from staff DB + staffOverrides (buffer_fte supported)
+      // - Avg PCA/team uses the effective PCA pool after reserving special-program slots
       const totalPCA = staff
         .filter((s) => s.rank === 'PCA')
         .reduce((sum, s) => {
           const overrideFTE = overrides[s.id]?.fteRemaining
+          const isBufferStaff = (s as any).status === 'buffer'
+          const baseFTE = isBufferStaff && (s as any).buffer_fte !== undefined ? (s as any).buffer_fte : 1.0
           const isOnLeave = overrides[s.id]?.leaveType && overrides[s.id]?.fteRemaining === 0
-          const currentFTE = overrideFTE !== undefined ? overrideFTE : isOnLeave ? 0 : 1
+          const currentFTE = overrideFTE !== undefined ? overrideFTE : isOnLeave ? 0 : baseFTE
           return sum + currentFTE
         }, 0)
+
+      const reservedSpecialProgramPcaFte = computeReservedSpecialProgramPcaFte({
+        specialPrograms: (specialPrograms || []) as any,
+        weekday,
+        staffOverrides: overrides as any,
+      })
+      const drmAddOnFte = computeDrmAddOnFte({
+        specialPrograms: (specialPrograms || []) as any,
+        weekday,
+        staffOverrides: overrides as any,
+        defaultAddOn: 0.4,
+      })
+
+      // Excel semantics: DRM add-on is earmarked capacity.
+      // Take it out before distributing base avg across teams, then add it back to DRO.
+      const effectiveTotalPCAForAvg = Math.max(0, totalPCA - reservedSpecialProgramPcaFte - drmAddOnFte)
 
       const ptPerTeamFromResult = createEmptyTeamRecord<number>(0)
       let totalPTOnDuty = 0
@@ -3335,13 +3356,12 @@ export function useScheduleController(params: {
 
       const rawAveragePCAPerTeam = createEmptyTeamRecord<number>(0)
       TEAMS.forEach((team) => {
-        rawAveragePCAPerTeam[team] = totalPTOnDuty > 0 ? (ptPerTeamFromResult[team] * totalPCA) / totalPTOnDuty : totalPCA / 8
+        rawAveragePCAPerTeam[team] = totalPTOnDuty > 0
+          ? (ptPerTeamFromResult[team] * effectiveTotalPCAForAvg) / totalPTOnDuty
+          : effectiveTotalPCAForAvg / 8
       })
 
-      const drmProgram = (specialPrograms || []).find((p: any) => p.name === 'DRM')
-      if (drmProgram && (drmProgram as any).weekdays?.includes(weekday)) {
-        rawAveragePCAPerTeam.DRO += 0.4
-      }
+      if (drmAddOnFte > 0) rawAveragePCAPerTeam.DRO += drmAddOnFte
 
       // Build "existing allocations" (unique per staff_id) from current state for substitution inference.
       const existingAllocationsRaw: PCAAllocation[] = []

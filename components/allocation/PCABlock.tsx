@@ -12,6 +12,7 @@ import { useDroppable, useDndContext } from '@dnd-kit/core'
 import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { getSubstitutionSlotsForTeam, normalizeSubstitutionForBySlot } from '@/lib/utils/substitutionFor'
+import { computeDrmAddOnFte } from '@/lib/utils/specialProgramPcaCapacity'
 
 interface PCABlockProps {
   team: Team
@@ -783,11 +784,16 @@ export const PCABlock = memo(function PCABlock({
 
   // DRO only: if this is a DRM weekday, we can derive base Avg PCA/team even when legacy/stored calculations
   // did not persist `base_average_pca_per_team`.
-  const isDrmActive =
-    team === 'DRO' &&
-    !!weekday &&
-    specialPrograms.some((p) => p.name === 'DRM' && p.weekdays.includes(weekday))
-  const drmPcaFteAddon = 0.4
+  const drmPcaFteAddon =
+    !!weekday
+      ? computeDrmAddOnFte({
+          specialPrograms,
+          weekday,
+          staffOverrides: staffOverrides as any,
+          defaultAddOn: 0.4,
+        })
+      : 0
+  const isDrmActive = team === 'DRO' && !!weekday && drmPcaFteAddon > 0
   const derivedBaseAveragePCAPerTeam =
     isDrmActive && typeof averagePCAPerTeam === 'number' ? averagePCAPerTeam - drmPcaFteAddon : undefined
   const effectiveBaseAveragePCAPerTeam =
@@ -1215,11 +1221,11 @@ export const PCABlock = memo(function PCABlock({
             {isDrmActive && (
               <div className="flex justify-between items-center mb-1">
                 <div className="text-xs text-red-600 font-medium">DRM</div>
-                <div className="text-xs text-red-600 font-medium">+0.4</div>
+                <div className="text-xs text-red-600 font-medium">+{drmPcaFteAddon.toFixed(2)}</div>
               </div>
             )}
             {/* Average PCA per team (calculated requirement) */}
-            {/* For DRO+DRM: show base avg PCA/team (without +0.4) if available (or derivable), otherwise show regular avg */}
+            {/* For DRO+DRM: show base avg PCA/team (without DRM add-on) if available (or derivable) */}
             {team === 'DRO' && effectiveBaseAveragePCAPerTeam !== undefined && effectiveBaseAveragePCAPerTeam > 0 ? (
               <div className="text-xs text-black font-medium">
                 Avg PCA/team: {effectiveBaseAveragePCAPerTeam.toFixed(2)}
@@ -1229,7 +1235,7 @@ export const PCABlock = memo(function PCABlock({
                 Avg PCA/team: {averagePCAPerTeam.toFixed(2)}
               </div>
             ) : null}
-            {/* Final PCA/team for DRO team (with +0.4) */}
+            {/* Final PCA/team for DRO team (with DRM add-on) */}
             {team === 'DRO' &&
               isDrmActive &&
               averagePCAPerTeam !== undefined &&
