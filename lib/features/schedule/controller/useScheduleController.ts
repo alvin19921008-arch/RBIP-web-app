@@ -127,6 +127,13 @@ export type StaffOverrideState = {
   slotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null }
   // Step 3: Manual buffer floating PCA assignments (persist across Step 3 resets)
   bufferManualSlotOverrides?: { slot1?: Team | null; slot2?: Team | null; slot3?: Team | null; slot4?: Team | null }
+  /**
+   * Step 3.4 (optional): marks which assigned slots are "extra coverage"
+   * (assigned after all pending requirements are fulfilled).
+   *
+   * Stored in staffOverrides so the UI can persistently style these slots.
+   */
+  extraCoverageBySlot?: Partial<Record<1 | 2 | 3 | 4, true>>
   substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
   substitutionForBySlot?: Partial<Record<1 | 2 | 3 | 4, { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team }>>
   // Therapist per-team split/merge overrides (ad hoc fallback)

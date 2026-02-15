@@ -28,6 +28,7 @@ type StaffOverridesLike = Record<
     invalidSlot?: number
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
     substitutionForBySlot?: Partial<Record<1 | 2 | 3 | 4, { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team }>>
+    extraCoverageBySlot?: Partial<Record<1 | 2 | 3 | 4, true>>
   }
 >
 
@@ -51,10 +52,10 @@ interface PCADedicatedScheduleTableProps {
 
 type CellKind =
   | { kind: 'empty' }
-  | { kind: 'team'; team: Team; isSubstitution?: boolean }
-  | { kind: 'teamAndProgram'; team: Team; programName: string; isSubstitution?: boolean }
+  | { kind: 'team'; team: Team; isSubstitution?: boolean; isExtraCoverage?: boolean }
+  | { kind: 'teamAndProgram'; team: Team; programName: string; isSubstitution?: boolean; isExtraCoverage?: boolean }
   | { kind: 'naLeave'; leaveType: string }
-  | { kind: 'invalidSlot'; team: Team; timeRange: { start: string; end: string }; isSubstitution?: boolean }
+  | { kind: 'invalidSlot'; team: Team; timeRange: { start: string; end: string }; isSubstitution?: boolean; isExtraCoverage?: boolean }
   | { kind: 'mainPost'; team: Team }
 
 type RowSlot = 1 | 2 | 3 | 4
@@ -449,6 +450,7 @@ export function PCADedicatedScheduleTable({
         const assignedTeam = slotTeams[slot]
         const inv = invalids[slot]
         const prog = programBySlot[slot]
+        const isExtraCoverage = !!(o as any)?.extraCoverageBySlot?.[slot]
 
         const substitutionEntry = substitutionBySlotEntry[slot]
         const isSubstitution = !!assignedTeam && !!substitutionEntry && substitutionEntry.team === assignedTeam
@@ -470,7 +472,7 @@ export function PCADedicatedScheduleTable({
             // No team context → show empty.
             baseCells[slot] = { kind: 'empty' }
           } else {
-            baseCells[slot] = { kind: 'invalidSlot', team: displayTeam, timeRange: inv, isSubstitution: invIsSub }
+            baseCells[slot] = { kind: 'invalidSlot', team: displayTeam, timeRange: inv, isSubstitution: invIsSub, isExtraCoverage }
           }
           continue
         }
@@ -486,9 +488,9 @@ export function PCADedicatedScheduleTable({
         }
 
         if (prog) {
-          baseCells[slot] = { kind: 'teamAndProgram', team: assignedTeam, programName: prog, isSubstitution }
+          baseCells[slot] = { kind: 'teamAndProgram', team: assignedTeam, programName: prog, isSubstitution, isExtraCoverage }
         } else {
-          baseCells[slot] = { kind: 'team', team: assignedTeam, isSubstitution }
+          baseCells[slot] = { kind: 'team', team: assignedTeam, isSubstitution, isExtraCoverage }
         }
       }
 
@@ -612,7 +614,12 @@ export function PCADedicatedScheduleTable({
       const teamLabel = cell.isSubstitution ? `${cell.team} 替位` : cell.team
       return (
         <div className="flex flex-col items-center justify-center px-1">
-          <div className={`${commonLine1} ${teamClass}`}>{teamLabel}</div>
+          <div className={`${commonLine1} ${teamClass}`}>
+            {teamLabel}
+            {cell.isExtraCoverage ? (
+              <span className="ml-1 text-[10px] font-semibold text-purple-700 dark:text-purple-300">Extra</span>
+            ) : null}
+          </div>
           <div className={`${commonLine2} text-blue-600 text-xs`}>
             ({cell.timeRange.start}-{cell.timeRange.end})
           </div>
@@ -625,7 +632,12 @@ export function PCADedicatedScheduleTable({
       const teamLabel = cell.isSubstitution ? `${cell.team} 替位` : cell.team
       return (
         <div className="flex flex-col items-center justify-center px-1">
-          <div className={`${commonLine1} ${teamClass}`}>{teamLabel}</div>
+          <div className={`${commonLine1} ${teamClass}`}>
+            {teamLabel}
+            {cell.isExtraCoverage ? (
+              <span className="ml-1 text-[10px] font-semibold text-purple-700 dark:text-purple-300">Extra</span>
+            ) : null}
+          </div>
           <div className={`${commonLine2} text-red-600 text-xs font-medium`}>{cell.programName}</div>
         </div>
       )
@@ -636,7 +648,12 @@ export function PCADedicatedScheduleTable({
       const teamLabel = cell.isSubstitution ? `${cell.team} 替位` : cell.team
       return (
         <div className="flex items-center justify-center px-1">
-          <div className={`${commonLine1} ${teamClass}`}>{teamLabel}</div>
+          <div className={`${commonLine1} ${teamClass}`}>
+            {teamLabel}
+            {cell.isExtraCoverage ? (
+              <span className="ml-1 text-[10px] font-semibold text-purple-700 dark:text-purple-300">Extra</span>
+            ) : null}
+          </div>
         </div>
       )
     }

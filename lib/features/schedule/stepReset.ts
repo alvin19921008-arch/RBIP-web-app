@@ -3,6 +3,7 @@ import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { type Team, type Staff } from '@/types/staff'
 import { type PCAAllocation } from '@/types/schedule'
 import {
+  getAllSubstitutionSlots,
   getSubstitutionSlotsForTeam,
   hasAnySubstitution,
 } from '@/lib/utils/substitutionFor'
@@ -102,25 +103,95 @@ export function computeStep3ResetForReentry(args: {
     allStaff.filter((s) => s.rank === 'PCA' && s.floating && s.status === 'buffer').map((s) => s.id)
   )
 
+  const getSpecialProgramSlotNumbers = (alloc: PCAAllocation): Array<1 | 2 | 3 | 4> => {
+    const staffId = String((alloc as any)?.staff_id ?? '')
+    const spIdsRaw = (alloc as any)?.special_program_ids
+    const spIds = Array.isArray(spIdsRaw) ? spIdsRaw.map((x: any) => String(x)) : []
+    if (spIds.length === 0) return []
+
+    const override = args.staffOverrides?.[staffId]
+    const entries = Array.isArray((override as any)?.specialProgramOverrides) ? (override as any).specialProgramOverrides : []
+    const out = new Set<1 | 2 | 3 | 4>()
+
+    for (const e of entries) {
+      if (!e || typeof e !== 'object') continue
+      const programId = String((e as any).programId ?? '')
+      if (!programId || !spIds.includes(programId)) continue
+      const slots = Array.isArray((e as any).slots) ? (e as any).slots : []
+      const required = Array.isArray((e as any).requiredSlots) ? (e as any).requiredSlots : []
+      for (const s of [...slots, ...required]) {
+        if (s === 1 || s === 2 || s === 3 || s === 4) out.add(s)
+      }
+    }
+
+    // Fallback: preserve only slots that match the allocation's primary team.
+    // (Avoid preserving Step 3 slots assigned to other teams.)
+    if (out.size === 0) {
+      const primaryTeam = (alloc as any)?.team as Team | null | undefined
+      if (primaryTeam && TEAMS.includes(primaryTeam)) {
+        if ((alloc as any).slot1 === primaryTeam) out.add(1)
+        if ((alloc as any).slot2 === primaryTeam) out.add(2)
+        if ((alloc as any).slot3 === primaryTeam) out.add(3)
+        if ((alloc as any).slot4 === primaryTeam) out.add(4)
+      }
+    }
+
+    return Array.from(out).sort((a, b) => a - b)
+  }
+
+  const sanitizePreservedFloatingAlloc = (args2: { alloc: PCAAllocation; team: Team }): PCAAllocation | null => {
+    const alloc = args2.alloc
+    const staffId = String((alloc as any)?.staff_id ?? '')
+    const override = args.staffOverrides?.[staffId]
+    const substitutionSlots = getAllSubstitutionSlots(override as any).filter((s): s is 1 | 2 | 3 | 4 => s === 1 || s === 2 || s === 3 || s === 4)
+    const specialSlots = getSpecialProgramSlotNumbers(alloc)
+
+    const allowed = new Set<1 | 2 | 3 | 4>([...substitutionSlots, ...specialSlots])
+    if (allowed.size === 0) return alloc
+
+    const next: PCAAllocation = { ...(alloc as any) }
+    if (!allowed.has(1)) (next as any).slot1 = null
+    if (!allowed.has(2)) (next as any).slot2 = null
+    if (!allowed.has(3)) (next as any).slot3 = null
+    if (!allowed.has(4)) (next as any).slot4 = null
+
+    // If no slots remain for this team, drop from this team's view-model.
+    const hasSlotForTeam =
+      (next as any).slot1 === args2.team ||
+      (next as any).slot2 === args2.team ||
+      (next as any).slot3 === args2.team ||
+      (next as any).slot4 === args2.team
+    if (!hasSlotForTeam) return null
+
+    // Normalize slot_assigned + fte_remaining to keep Step 3 capacity accurate after reset.
+    const slotCount = [(next as any).slot1, (next as any).slot2, (next as any).slot3, (next as any).slot4].filter(Boolean).length
+    const ftePca = typeof (next as any).fte_pca === 'number' ? (next as any).fte_pca : 1.0
+    ;(next as any).slot_assigned = slotCount * 0.25
+    ;(next as any).fte_remaining = Math.max(0, ftePca - (next as any).slot_assigned)
+
+    return next
+  }
+
   // 1) Clean allocations: keep non-floating + special-program floating + substitutions + buffer manual floating
   const cleanedPcaAllocations = createEmptyByTeam<PCAAllocation & { staff: Staff }>()
   TEAMS.forEach((team) => {
-    cleanedPcaAllocations[team] = (args.pcaAllocations?.[team] ?? []).filter((alloc) => {
+    cleanedPcaAllocations[team] = (args.pcaAllocations?.[team] ?? []).flatMap((alloc) => {
       const staffMember = staffById.get(alloc.staff_id)
-      if (!staffMember) return false
-      if (!staffMember.floating) return true
+      if (!staffMember) return []
+      if (!staffMember.floating) return [alloc]
 
       // Preserve buffer floating PCA (manual assignments before/within Step 3.0/3.1)
-      if (bufferFloatingIds.has(staffMember.id)) return true
+      if (bufferFloatingIds.has(staffMember.id)) return [alloc]
 
-      // Preserve Step 2 special program allocations
-      if (Array.isArray(alloc.special_program_ids) && alloc.special_program_ids.length > 0) return true
-
-      // Preserve Step 2.1 substitution allocations
+      // Preserve Step 2 special program allocations / Step 2.1 substitutions, but strip any Step 3-added slots.
+      const hasSpecial = Array.isArray((alloc as any).special_program_ids) && (alloc as any).special_program_ids.length > 0
       const substitutionSlots = getSubstitutionSlotsForTeam(args.staffOverrides?.[alloc.staff_id], team as Team)
-      if (substitutionSlots.length > 0) return true
+      if (hasSpecial || substitutionSlots.length > 0) {
+        const sanitized = sanitizePreservedFloatingAlloc({ alloc, team: team as Team })
+        return sanitized ? [sanitized as any] : []
+      }
 
-      return false
+      return []
     })
   })
 
@@ -200,7 +271,7 @@ export function computeStep3ResetForReentry(args: {
       return
     }
 
-    const { slotOverrides, ...rest } = cur
+    const { slotOverrides, extraCoverageBySlot, ...rest } = cur as any
     const hasSubstitutionFor = hasAnySubstitution(rest)
     const hasOtherKeys = Object.keys(rest).length > 0
     if (hasSubstitutionFor || hasOtherKeys) {

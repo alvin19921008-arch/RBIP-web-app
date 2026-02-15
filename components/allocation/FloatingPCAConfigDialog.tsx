@@ -1006,6 +1006,7 @@ export function FloatingPCAConfigDialog({
       pcaPool: floatingPCAs,
       pcaPreferences: pcaPreferences,
       specialPrograms: specialPrograms,
+      extraCoverageMode: 'round-robin-team-order',
     })
 
     // Add Step 3.2 and 3.3 assignments to the tracker for visibility.

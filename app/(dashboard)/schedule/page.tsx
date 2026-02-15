@@ -4619,6 +4619,17 @@ function SchedulePageContent() {
     const allAssignments = [...step32Assignments, ...step33Assignments]
     
     const newOverrides = { ...staffOverrides }
+
+    // Step 3.4 extra coverage markers are recomputed each run; clear previous markers for floating PCAs.
+    for (const pca of floatingPCAs) {
+      const cur = (newOverrides as any)?.[pca.id]
+      if (!cur || typeof cur !== 'object') continue
+      if (!('extraCoverageBySlot' in cur)) continue
+      const { extraCoverageBySlot: _extra, ...rest } = cur as any
+      // Keep object compact
+      if (Object.keys(rest).length > 0) (newOverrides as any)[pca.id] = rest
+      else delete (newOverrides as any)[pca.id]
+    }
     for (const assignment of allAssignments) {
       const pca = floatingPCAs.find(p => p.id === assignment.pcaId)
       if (pca) {
@@ -4647,6 +4658,28 @@ function SchedulePageContent() {
         }
       }
     }
+
+    // Persist extra coverage slot markers (display + export).
+    const extraByStaff = (result as any)?.extraCoverageByStaffId as Record<string, Array<1 | 2 | 3 | 4>> | undefined
+    if (extraByStaff && typeof extraByStaff === 'object') {
+      for (const [staffId, slots] of Object.entries(extraByStaff)) {
+        if (!Array.isArray(slots) || slots.length === 0) continue
+        const alloc = result.allocations.find((a) => a.staff_id === staffId)
+        if (!alloc) continue
+        const bySlot: Partial<Record<1 | 2 | 3 | 4, true>> = {}
+        for (const s of slots) {
+          if (s !== 1 && s !== 2 && s !== 3 && s !== 4) continue
+          const slotTeam = s === 1 ? alloc.slot1 : s === 2 ? alloc.slot2 : s === 3 ? alloc.slot3 : alloc.slot4
+          if (!slotTeam) continue
+          bySlot[s] = true
+        }
+        if (Object.keys(bySlot).length === 0) continue
+        newOverrides[staffId] = {
+          ...(newOverrides as any)[staffId],
+          extraCoverageBySlot: bySlot,
+        } as any
+      }
+    }
     setStaffOverrides(newOverrides)
     
     // Update PCA allocations state with all new slot assignments
@@ -4667,9 +4700,7 @@ function SchedulePageContent() {
 
       // Remove this staff from all teams first (slots may have moved).
       ;(Object.keys(updatedPcaAllocations) as Team[]).forEach((t) => {
-        const arr = updatedPcaAllocations[t]
-        const idx = arr.findIndex((a) => a.staff_id === alloc.staff_id)
-        if (idx >= 0) arr.splice(idx, 1)
+        updatedPcaAllocations[t] = (updatedPcaAllocations[t] || []).filter((a) => a.staff_id !== alloc.staff_id)
       })
       
       // Find which team(s) this PCA is now assigned to

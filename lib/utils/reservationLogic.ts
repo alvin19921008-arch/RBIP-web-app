@@ -208,7 +208,7 @@ export function executeSlotAssignments(
         team: team,  // Primary team (first assigned)
         fte_pca: pca?.fte_pca || 1,
         fte_remaining: (pca?.fte_pca || 1) - 0.25,
-        slot_assigned: 1,
+        slot_assigned: 0.25,
         slot_whole: null,
         slot1: slot === 1 ? team : null,
         slot2: slot === 2 ? team : null,
@@ -229,7 +229,7 @@ export function executeSlotAssignments(
       
       // Update FTE remaining
       allocation.fte_remaining = Math.max(0, allocation.fte_remaining - 0.25)
-      allocation.slot_assigned = (allocation.slot_assigned || 0) + 1
+      allocation.slot_assigned = (allocation.slot_assigned || 0) + 0.25
     }
     
     // Track PCA FTE change

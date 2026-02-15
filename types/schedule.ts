@@ -140,7 +140,7 @@ export interface SlotAssignmentLog {
   cycle?: 1 | 2 | 3              // Which cycle (only for step34)
   condition?: 'A' | 'B' | 'C' | 'D'  // Which condition (only for step34 cycle 1)
   allocationOrder?: number        // Order in which this team was allocated (1st, 2nd, etc.)
-  assignmentTag?: 'remaining'     // Short tag for display (e.g. 'remaining' slots from same PCA)
+  assignmentTag?: 'remaining' | 'extra'     // Short tag for display (e.g. 'remaining' slots from same PCA)
   
   // Decision factors
   wasPreferredSlot?: boolean      // Was this the team's preferred slot?

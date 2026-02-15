@@ -3510,6 +3510,7 @@ import {
   getTeamExistingSlots,
   assignOneSlotAndUpdatePending,
   assignUpToPendingAndUpdatePending,
+  assignSlotsToTeam,
   getAvailableSlotsForTeam,
   TeamPreferenceInfo,
 } from '@/lib/utils/floatingPCAHelpers'
@@ -3527,6 +3528,11 @@ export interface FloatingPCAAllocationContextV2 {
   pcaPreferences: PCAPreference[]  // Team preferences
   specialPrograms: SpecialProgram[]  // Special programs (for context only)
   mode?: FloatingPCAAllocationMode // Step 3.4 allocation mode
+  /**
+   * Optional: after ALL pending requirements are fulfilled, continue assigning remaining PCA slots
+   * as "extra coverage" using a deterministic policy.
+   */
+  extraCoverageMode?: 'none' | 'round-robin-team-order'
 }
 
 /**
@@ -3536,6 +3542,8 @@ export interface FloatingPCAAllocationResultV2 {
   allocations: PCAAllocation[]
   pendingPCAFTEPerTeam: Record<Team, number>
   tracker: AllocationTracker
+  /** Which slots were assigned as "extra coverage" (display-only marker; persisted via staffOverrides). */
+  extraCoverageByStaffId?: Record<string, Array<1 | 2 | 3 | 4>>
   errors?: {
     preferredSlotUnassigned?: string[]
   }
@@ -3559,11 +3567,13 @@ export async function allocateFloatingPCA_v2(
     existingAllocations,
     pcaPool,
     pcaPreferences,
+    extraCoverageMode = 'none',
   } = context
 
   // Clone allocations and pending FTE to avoid mutating originals
   const allocations = existingAllocations.map(a => ({ ...a }))
   const pendingFTE = { ...initialPendingFTE }
+  const extraCoverageByStaffId: Record<string, Array<1 | 2 | 3 | 4>> = {}
 
   // Hot-path index for repeated allocation lookup by staff ID.
   let allocationIndexSize = -1
@@ -3620,6 +3630,95 @@ export async function allocateFloatingPCA_v2(
     teamPrefs[team] = getTeamPreferenceInfo(team, pcaPreferences)
   }
 
+  const applyExtraCoverageRoundRobin = () => {
+    if (extraCoverageMode !== 'round-robin-team-order') return
+
+    // Only start extra coverage once ALL teams are satisfied at slot granularity.
+    const allSatisfied = TEAMS.every((t) => (pendingFTE[t] ?? 0) < 0.25)
+    if (!allSatisfied) return
+
+    const zeroPending: Record<Team, number> = {} as any
+    TEAMS.forEach((t) => (zeroPending[t] = 0))
+
+    const preferredOfOtherTeams = new Map<string, Team[]>() // none; extra coverage ignores preferred reservations
+
+    let madeProgress = true
+    while (madeProgress) {
+      madeProgress = false
+
+      for (const team of teamOrder) {
+        const pref = teamPrefs[team]
+        const candidates = findAvailablePCAs({
+          pcaPool,
+          team,
+          teamFloor: pref.teamFloor,
+          floorMatch: 'any',
+          excludePreferredOfOtherTeams: false,
+          preferredPCAIdsOfOtherTeams: preferredOfOtherTeams,
+          pendingFTEPerTeam: zeroPending,
+          existingAllocations: allocations,
+          gymSlot: pref.gymSlot ?? null,
+          avoidGym: pref.avoidGym ?? false,
+        })
+
+        if (candidates.length === 0) continue
+
+        // Deterministic tie-break: fte remaining desc, then staff id asc.
+        const sorted = [...candidates].sort((a, b) => {
+          const aAlloc = getAllocationByStaffId(a.id)
+          const bAlloc = getAllocationByStaffId(b.id)
+          const aFte = (aAlloc?.fte_remaining ?? a.fte_pca) as number
+          const bFte = (bAlloc?.fte_remaining ?? b.fte_pca) as number
+          if (bFte !== aFte) return bFte - aFte
+          return String(a.id).localeCompare(String(b.id))
+        })
+        const pca = sorted[0]
+
+        const allocation = getOrCreateAllocation(
+          pca.id,
+          pca.name,
+          pca.fte_pca,
+          pca.leave_type,
+          team,
+          allocations
+        )
+
+        const teamExistingSlots = getTeamExistingSlots(team, allocations)
+        const res = assignSlotsToTeam({
+          pca,
+          allocation,
+          team,
+          pendingFTE: 0.25,
+          teamExistingSlots,
+          gymSlot: pref.gymSlot ?? null,
+          avoidGym: pref.avoidGym ?? false,
+        })
+
+        if (res.slotsAssigned.length === 0) continue
+
+        madeProgress = true
+
+        for (const slot of res.slotsAssigned) {
+          if (slot === 1 || slot === 2 || slot === 3 || slot === 4) {
+            const list = extraCoverageByStaffId[pca.id] ?? []
+            list.push(slot)
+            extraCoverageByStaffId[pca.id] = list
+          }
+
+          recordAssignment(tracker, team, {
+            slot,
+            pcaId: pca.id,
+            pcaName: pca.name,
+            assignedIn: 'step34',
+            cycle: 3,
+            assignmentTag: 'extra',
+            wasFloorPCA: isFloorPCAForTeam(pca as any, pref.teamFloor),
+          })
+        }
+      }
+    }
+  }
+
   // Helper to check if allocation is complete
   const isAllocationComplete = () => {
     // Check if all teams have pendingFTE = 0
@@ -3654,6 +3753,7 @@ export async function allocateFloatingPCA_v2(
       isAllocationComplete,
     })
 
+    applyExtraCoverageRoundRobin()
     applyInvalidSlotPairingForDisplay(allocations, pcaPool)
     finalizeTrackerSummary(tracker)
 
@@ -3661,6 +3761,7 @@ export async function allocateFloatingPCA_v2(
       allocations,
       pendingPCAFTEPerTeam: pendingFTE,
       tracker,
+      extraCoverageByStaffId: Object.keys(extraCoverageByStaffId).length > 0 ? extraCoverageByStaffId : undefined,
       errors: undefined,
     }
   }
@@ -3740,6 +3841,8 @@ export async function allocateFloatingPCA_v2(
     await processCycle3Cleanup(allocations, pendingFTE, pcaPool, pcaPreferences, teamPrefs, tracker, recordAssignmentWithOrder)
   }
   
+  applyExtraCoverageRoundRobin()
+
   // Ensure invalid slots are paired for display (does NOT consume FTE / pending).
   applyInvalidSlotPairingForDisplay(allocations, pcaPool)
 
@@ -3750,6 +3853,7 @@ export async function allocateFloatingPCA_v2(
     allocations,
     pendingPCAFTEPerTeam: pendingFTE,
     tracker,
+    extraCoverageByStaffId: Object.keys(extraCoverageByStaffId).length > 0 ? extraCoverageByStaffId : undefined,
     errors: Object.keys(errors).length > 0 ? errors : undefined,
   }
 }

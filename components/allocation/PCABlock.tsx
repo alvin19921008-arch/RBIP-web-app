@@ -32,6 +32,7 @@ interface PCABlockProps {
     invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
     substitutionForBySlot?: Partial<Record<1 | 2 | 3 | 4, { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team }>>
+    extraCoverageBySlot?: Partial<Record<1 | 2 | 3 | 4, true>>
   }> // Current staff overrides (leave + substitution UI)
   allPCAStaff?: Staff[] // All PCA staff (for identifying non-floating PCAs even when not in allocations)
   currentStep?: string // Current step in the workflow - substitution styling only shown in step 2+
@@ -1112,6 +1113,18 @@ export const PCABlock = memo(function PCABlock({
                 allocation={allocation as any}
                 fteRemaining={undefined}
                 slotDisplay={slotDisplayNode}
+                headerRight={(() => {
+                  const o: any = (staffOverrides as any)?.[allocation.staff_id]
+                  const flags: any = o?.extraCoverageBySlot
+                  if (!flags || typeof flags !== 'object') return null
+                  const hasExtra =
+                    (allocation.slot1 === team && !!flags[1]) ||
+                    (allocation.slot2 === team && !!flags[2]) ||
+                    (allocation.slot3 === team && !!flags[3]) ||
+                    (allocation.slot4 === team && !!flags[4])
+                  if (!hasExtra) return null
+                  return <span className="text-[10px] font-semibold text-purple-700 dark:text-purple-300 whitespace-nowrap">Extra</span>
+                })()}
                 onEdit={readOnly ? undefined : (e) => onEditStaff?.(allocation.staff_id, e)}
                 onOpenContextMenu={readOnly ? undefined : (e) => onEditStaff?.(allocation.staff_id, e)}
                 fillColorClassName={(staffOverrides as any)?.[allocation.staff_id]?.cardColorByTeam?.[team]}

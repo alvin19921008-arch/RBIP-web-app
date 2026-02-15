@@ -508,7 +508,7 @@ export function assignSlotsToTeam(options: AssignSlotsOptions): AssignSlotsResul
     slotsAssigned.push(slot)
     remainingPendingFTE = Math.max(0, remainingPendingFTE - 0.25)
     allocation.fte_remaining = Math.max(0, allocation.fte_remaining - 0.25)
-    allocation.slot_assigned = (allocation.slot_assigned || 0) + 1
+    allocation.slot_assigned = (allocation.slot_assigned || 0) + 0.25
   }
   
   // Check if AM/PM balance was achieved
