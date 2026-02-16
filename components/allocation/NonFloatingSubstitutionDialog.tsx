@@ -350,44 +350,87 @@ export function NonFloatingSubstitutionDialog({
 
           {/* Navigation - only show for wizard mode */}
           {isWizardMode && (
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b py-4">
-              <Button
-                variant="outline"
-                onClick={handlePrevious}
-                disabled={isFirstTeam}
-                className="flex items-center gap-2"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Previous
-              </Button>
-              <div className="text-sm font-medium">
-                <span className="inline-flex items-center gap-2">
-                  <span>
-                    Team {currentTeamIndex + 1} of {teams.length}:
+            <>
+              {/* Mobile: Compact layout */}
+              <div className="flex items-center justify-between gap-2 border-b py-3 sm:hidden">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handlePrevious}
+                  disabled={isFirstTeam}
+                  className="h-8 w-8 p-0"
+                  aria-label="Previous team"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </Button>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-muted-foreground">
+                    {currentTeamIndex + 1}/{teams.length}
                   </span>
                   <Badge
                     variant="outline"
-                    className={cn('select-none px-2 py-0.5 text-[11px] font-medium', currentTheme.badge)}
+                    className={cn('select-none px-1.5 py-0.5 text-[11px] font-medium', currentTheme.badge)}
                   >
                     {currentTeam}
                   </Badge>
-                </span>
+                </div>
+
+                {!isLastTeam ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleNext}
+                    disabled={!isCurrentTeamComplete}
+                    className="h-8 w-8 p-0"
+                    aria-label="Next team"
+                  >
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
+                ) : (
+                  <div className="w-8" aria-hidden="true" />
+                )}
               </div>
-              {!isLastTeam ? (
+
+              {/* Desktop: Full layout */}
+              <div className="hidden sm:flex flex-wrap items-center justify-between gap-2 border-b py-4">
                 <Button
                   variant="outline"
-                  onClick={handleNext}
-                  disabled={!isCurrentTeamComplete}
+                  onClick={handlePrevious}
+                  disabled={isFirstTeam}
                   className="flex items-center gap-2"
                 >
-                  Next
-                  <ArrowRight className="h-4 w-4" />
+                  <ArrowLeft className="h-4 w-4" />
+                  Previous
                 </Button>
-              ) : (
-                // Keep layout stable (footer has confirm action).
-                <div className="hidden w-[104px] sm:block" />
-              )}
-            </div>
+                <div className="text-sm font-medium">
+                  <span className="inline-flex items-center gap-2">
+                    <span>
+                      Team {currentTeamIndex + 1} of {teams.length}:
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className={cn('select-none px-2 py-0.5 text-[11px] font-medium', currentTheme.badge)}
+                    >
+                      {currentTeam}
+                    </Badge>
+                  </span>
+                </div>
+                {!isLastTeam ? (
+                  <Button
+                    variant="outline"
+                    onClick={handleNext}
+                    disabled={!isCurrentTeamComplete}
+                    className="flex items-center gap-2"
+                  >
+                    Next
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
+                ) : (
+                  <div className="w-[104px]" aria-hidden="true" />
+                )}
+              </div>
+            </>
           )}
 
           {/* Content */}
