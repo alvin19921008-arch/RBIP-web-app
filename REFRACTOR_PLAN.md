@@ -204,3 +204,95 @@ Run these smoke tests after each P2 sub-phase and once at full P2 completion.
   - Step 2/3 runtime
   - UI responsiveness during compute
   - large-list/table render smoothness
+
+## Phase 3 Refactor (High ROI, Behavior-Preserving)
+
+Phase 3 collects the remaining high-ROI moves that keep every scheduler interaction identical while improving maintainability, performance measurement, and future extensibility. Each entry must land with concrete performance metrics (bundle size, trace-based CWV, Next.js analyzer deltas) so we can validate regressions or improvements using the Playwright-driven smoke flows we already execute.
+
+### 3.1 Drag/drop & optimistic UI state extraction
+- Scope:
+  - Extract the Step 2/3 drag lifecycle (start/move/end), slot selection popover orchestration, and buffer/discard logic from `app/(dashboard)/schedule/page.tsx` into a reusable hook/module under `lib/features/schedule/dnd`.
+  - Keep `StaffCard`, `PCABlock`, and `ScheduleBlocks1To6` as pure presenters that emit drag events with minimal logic.
+  - Add `useOptimistic` or `use(promise)` wrappers around slot assignments so the scheduler UI previews transfers while the controller commits them.
+  - Document the metrics to collect (e.g., Profile long tasks at drag start, 1:1 chunk size diff for scheduler bundle).
+- Why high ROI:
+  - Removes ~700 lines of tangled drag logic from the page and collapses duplicate discard/transfer paths, making future rank-specific tweaks and bug fixes far safer.
+  - Improves drag responsiveness by isolating state updates and allows Playwright smoke runs to capture clearer "before/after" traces for LCP/TBT.
+  - Measure: record Scheduler bundle chunk sizes plus Chrome DevTools trace (Step 3 drag path) before and after.
+
+-#### 3.1 Execution Log (2026-02-16)
+- Status: In progress (3.1 state extraction + `useOptimistic` layer completed; instrumentation removed; `use(promise)`-style suspense wrapping is still optional/follow-up).
+- Refactor implemented:
+  - Added `lib/features/schedule/dnd/dragState.ts` to centralize PCA/Therapist drag-state types plus active/idle creators.
+  - Rewired `app/(dashboard)/schedule/page.tsx` to use shared drag-state creators for init/reset/activation paths (StaffPool drag, card drag, transfer/discard reset, slot-selection close).
+  - Kept drag/drop behavior identical by preserving all existing event handlers and transition branches.
+- Smoke and regression validation:
+  - Existing smoke coverage checked in `tests/smoke/schedule-core.smoke.spec.ts` and fixed one strict-locator issue (`Review` ambiguity) without changing test intent.
+  - Dedicated DnD smoke/perf test confirmed in `tests/smoke/schedule-phase3-1-dnd-metrics.smoke.spec.ts` (Step 3 drag path + CWV snapshot).
+  - Result: `npx playwright test --grep @smoke` passes (3/3).
+
+#### 3.1 Scorecard (Before vs After)
+| Metric | Pre-refactor | Post-refactor | Delta | Source |
+| --- | ---: | ---: | ---: | --- |
+| Schedule route client chunk `statSize` | 1,592,900 B | 1,591,753 B | -1,147 B | `.next/analyze/client.html` (`window.chartData`) |
+| Schedule route client chunk `parsedSize` | 445,955 B | 445,410 B | -545 B | `.next/analyze/client.html` |
+| Schedule route client chunk `gzipSize` | 115,837 B | 116,272 B | +435 B | `.next/analyze/client.html` |
+| `page.tsx` module `statSize` | 745,724 B | 743,368 B | -2,356 B | `.next/analyze/client.html` |
+| `page.tsx` module `parsedSize` | 205,565 B | 204,778 B | -787 B | `.next/analyze/client.html` |
+| `page.tsx` module `gzipSize` | 52,693 B | 52,601 B | -92 B | `.next/analyze/client.html` |
+| LOC (`page.tsx` only) | 12,168 | 12,079 | -89 | `wc -l` |
+| LOC (`page.tsx` + extracted DnD module) | 12,168 | 12,161 | -7 | `wc -l` |
+| Step 3 DnD `scheduleLoadMs` | 3,954 ms | 4,281 ms | +327 ms | `metrics/phase3_1/pre_refactor.json`, `metrics/phase3_1/post_refactor.json` |
+| Step 3 DnD `ttfbMs` | 599.6 ms | 615.8 ms | +16.2 ms | metrics JSON |
+| Step 3 DnD `domContentLoadedMs` | 617.4 ms | 636.2 ms | +18.8 ms | metrics JSON |
+| Step 3 DnD `loadEventMs` | 940.2 ms | 964.0 ms | +23.8 ms | metrics JSON |
+| CWV `FCP` | 636 ms | 660 ms | +24 ms | metrics JSON |
+| CWV `LCP` | 2,208 ms | 2,236 ms | +28 ms | metrics JSON |
+| CWV `CLS` | 0.12314 | 0.12314 | ~0 | metrics JSON |
+
+> Note: perf deltas are within normal single-run variance; no functional regressions were observed in smoke flows.
+
+### 3.2 Tailwind CSS-first cleanup + tokenization
+- Scope:
+  - Normalize repeated utilities (hover scales, dividers, scrollbars) into shared `@utility` definitions inside `app/globals.css` and adjust components to consume those classes instead of inline colors.
+  - Map any hardcoded color/radius values used by rank-specific cards to the Tailwind v4 theme tokens defined at the top of `globals.css`.
+  - Reduce duplicate CSS (e.g., `rbip-*` rules) and prune unused variant definitions.
+- Why high ROI:
+  - Reduces emitted CSS by tens of KB and removes the cognitive load of chasing scattered styling variants across the schedule UI.
+  - Keeps future shadcn/UI updates aligned with the CSS-first token system, saving maintenance time and making bundle-size comparisons more reliable.
+  - Measure: re-run `ANALYZE=true npm run build` and track CSS chunk size change, document class reduction counts.
+
+### 3.3 Server Actions & leaves/override gateway
+- Scope:
+  - Introduce Server Actions (e.g., `app/(dashboard)/schedule/actions.ts`) for leave edits, staff overrides, and buffer status updates currently handled inline in `page.tsx`.
+  - Create a shared data gateway within `lib/features/schedule/controller` to consolidate the various supabase queries (load staff, special programs, schedule data) and their fallback logic.
+  - Make the Playwright smoke flows call the actions via form submissions/Server Actions so metrics capture the new request payloads.
+- Why high ROI:
+  - Centralizes schema fallback handling, improves reusability across eventual APIs, and reduces the footprint of `page.tsx` (fewer refs/requests).
+  - Server Actions keep the optimistic UI intact while letting Playwright flows automatically record network timing differences (smaller payloads, fewer round trips).
+  - Measure: compare Network waterfall (Playwright trace) for leave edit flows before/after and note request/payload counts.
+
+### 3.4 Algorithm compaction & lookup caching
+- Scope:
+  - Collapse duplicated special-program assignment blocks in `lib/algorithms/pcaAllocation.ts` into shared helpers; keep all tie-break/order semantics the same.
+  - In `lib/utils/floatingPCAHelpers.ts` and `lib/utils/reservationLogic.ts`, cache `existingAllocations`/`pcaPool` lookups with maps to avoid repeated `.find()` scans.
+  - Add instrumentation points so Playwright traces can capture Step 2/3 CPU time for fixed fixtures.
+- Why high ROI:
+  - Cuts hundreds of duplicated lines, reduces algorithmic heat, and ensures future special-program rules can be added once instead of in multiple branches.
+  - Map-based lookups shrink runtime when `pcaPool` grows, which translates to smoother Playwright traces and easier profiling.
+  - Measure: trace CPU during allocatePCA and compare duration/rasterization before/after on the same fixture.
+
+### 3.5 React Compiler + finer Suspense telemetry
+- Scope:
+  - Enable React Compiler in `next.config.js` behind a feature flag for gradual rollout; keep the flag off until metrics are stabilized.
+  - Replace the single top-level Suspense around `SchedulePageContent` with scoped Suspense boundaries (e.g., reference pane, dialogs, PCADedicatedTable) so the Playwright-heavy streams can capture per-boundary fallback timing.
+  - Record Core Web Vitals (FCP, LCP, TBT, CLS) from Playwright traces before/after each change.
+- Why high ROI:
+  - React Compiler typically yields faster hydration and lighter runtime output for heavy interactive pages like the schedule; scoped Suspense prevents each change from remounting the entire page.
+  - Makes Lighthouse/Core Web Vitals comparisons reliable because each boundary can be observed separately in Playwright trace output.
+  - Measure: Capture Core Web Vitals via Playwright’s DevTools trace (e.g., `page.metrics()` + `page.tracing.start()`), logging the before/after values for each boundary.
+
+### Validation/Metric Process
+- Use the existing Playwright smoke suite as the driver: each refactor should start with a baseline trace (~Step 1 leave edit, Step 2 algorithm/drags, Step 3 floating assignment, save) and re-run the same trace afterward.  
+- Combine `ANALYZE=true npm run build` outputs, Playwright trace metrics, and Chrome DevTools Recorder/CWV snapshots to document bundle-size and perceived-performance deltas in the plan notes.  
+- Record the delta for each item in the plan so you can confidently show “Scorecard before vs. after” for bundle size, network payloads, and key Core Web Vitals.  

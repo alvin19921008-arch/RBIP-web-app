@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, Fragment, useCallback, useTransition, Suspense, useMemo, Profiler, type ReactNode } from 'react'
+import { useState, useEffect, useRef, Fragment, useCallback, useTransition, Suspense, useMemo, Profiler, useOptimistic, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
   DndContext,
@@ -201,6 +201,16 @@ import { downloadBlobAsFile, renderElementToImageBlob } from '@/lib/utils/export
 import { HelpCenterDialog } from '@/components/help/HelpCenterDialog'
 import { HELP_TOUR_PENDING_KEY } from '@/lib/help/tours'
 import { startHelpTourWithRetry } from '@/lib/help/startTour'
+import {
+  applyPcaOptimisticAction,
+  createActivePcaDragState,
+  createActiveTherapistDragState,
+  createIdlePcaDragState,
+  createIdleTherapistDragState,
+  type PcaOptimisticAction,
+  type PcaDragState,
+  type TherapistDragState,
+} from '@/lib/features/schedule/dnd/dragState'
 
 
 function SchedulePageContent() {
@@ -652,6 +662,13 @@ function SchedulePageContent() {
     _unsafe,
   } = scheduleActions
   const [isUiTransitionPending, startUiTransition] = useTransition()
+  const [optimisticPcaAllocations, queueOptimisticPcaAction] = useOptimistic<
+    typeof pcaAllocations,
+    PcaOptimisticAction
+  >(pcaAllocations, (currentAllocations, action) =>
+    applyPcaOptimisticAction(currentAllocations as any, action) as typeof pcaAllocations
+  )
+  const pcaAllocationsForUi = optimisticPcaAllocations
 
   // Remaining raw setters live behind an explicit escape hatch.
   const {
@@ -1353,15 +1370,7 @@ function SchedulePageContent() {
   })
   
   // Therapist drag state for validation
-  const [therapistDragState, setTherapistDragState] = useState<{
-    isActive: boolean
-    staffId: string | null
-    sourceTeam: Team | null
-  }>({
-    isActive: false,
-    staffId: null,
-    sourceTeam: null,
-  })
+  const [therapistDragState, setTherapistDragState] = useState<TherapistDragState>(createIdleTherapistDragState())
   
   // Warning popover for therapist drag after step 2
   const [therapistTransferWarningPopover, setTherapistTransferWarningPopover] = useState<{
@@ -1702,33 +1711,7 @@ function SchedulePageContent() {
   ])
   
   // PCA Drag-and-Drop state for slot transfer
-  const [pcaDragState, setPcaDragState] = useState<{
-    isActive: boolean
-    isDraggingFromPopover: boolean // True when user started drag from the popover preview card
-    staffId: string | null
-    staffName: string | null
-    sourceTeam: Team | null
-    availableSlots: number[]  // Slots available for this PCA in the source team
-    selectedSlots: number[]   // Slots user has selected to move
-    showSlotSelection: boolean // Whether to show slot selection popover
-    popoverPosition: { x: number; y: number } | null // Fixed position near source team
-    inferredTargetTeam?: Team | null // Drop-zone inferred target team (DnD multi-slot flow)
-    isDiscardMode?: boolean // True when discarding slots (opposite of transfer)
-    isBufferStaff?: boolean // True if the dragged PCA is buffer staff
-  }>({
-    isActive: false,
-    isDraggingFromPopover: false,
-    staffId: null,
-    staffName: null,
-    sourceTeam: null,
-    availableSlots: [],
-    selectedSlots: [],
-    showSlotSelection: false,
-    popoverPosition: null,
-    inferredTargetTeam: null,
-    isDiscardMode: false,
-    isBufferStaff: false,
-  })
+  const [pcaDragState, setPcaDragState] = useState<PcaDragState>(createIdlePcaDragState())
   
   // Ref to track mouse position for popover drag
   const mousePositionRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -5185,7 +5168,10 @@ function SchedulePageContent() {
   const currentWeekday = getWeekday(selectedDate)
   const weekdayName = WEEKDAY_NAMES[WEEKDAYS.indexOf(currentWeekday)]
 
-  const allPCAAllocationsFlat = useMemo(() => Object.values(pcaAllocations).flat(), [pcaAllocations])
+  const allPCAAllocationsFlat = useMemo(
+    () => Object.values(pcaAllocationsForUi).flat(),
+    [pcaAllocationsForUi]
+  )
 
   // Step 3.1 "final" order (after user adjustments) for tooltip/display.
   const step3OrderPositionByTeam = useMemo(() => {
@@ -5279,7 +5265,9 @@ function SchedulePageContent() {
     const next: Record<Team, Record<string, any>> = createEmptyTeamRecord<Record<string, any>>({})
 
     for (const team of TEAMS) {
-      const ids = Array.from(new Set((pcaAllocations[team] || []).map((a: any) => a.staff_id).filter(Boolean))).sort()
+      const ids = Array.from(
+        new Set((pcaAllocationsForUi[team] || []).map((a: any) => a.staff_id).filter(Boolean))
+      ).sort()
       const idsKey = ids.join('|')
 
       const cached = prev[team]
@@ -5307,7 +5295,7 @@ function SchedulePageContent() {
 
     overridesSliceCacheRef.current.pca = prev
     return next
-  }, [pcaAllocations, staffOverrides])
+  }, [pcaAllocationsForUi, staffOverrides])
 
   // ---------------------------------------------------------------------------
   // Copy button helpers (dynamic labels and source/target resolution)
@@ -5960,17 +5948,9 @@ function SchedulePageContent() {
       // For buffer therapists without a team, allow dragging from StaffPool
       if (!currentTeam && staffMember.status === 'buffer') {
         // Buffer therapist not yet assigned - will be assigned on drop
-        setTherapistDragState({
-          isActive: true,
-          staffId: staffId,
-          sourceTeam: null, // No source team yet
-        })
+        setTherapistDragState(createActiveTherapistDragState({ staffId, sourceTeam: null }))
       } else if (currentTeam) {
-        setTherapistDragState({
-          isActive: true,
-          staffId: staffId,
-          sourceTeam: currentTeam,
-        })
+        setTherapistDragState(createActiveTherapistDragState({ staffId, sourceTeam: currentTeam }))
       }
     }
     
@@ -6077,19 +6057,17 @@ function SchedulePageContent() {
       const popoverPosition = activeRect ? calculatePopoverPosition(activeRect, 150) : null
       
       // Set up drag state for StaffPool drag
-      setPcaDragState({
-        isActive: true,
-        isDraggingFromPopover: false,
-        staffId: staffId,
-        staffName: staffMember.name,
-        sourceTeam: sourceTeam,
-        availableSlots: availableSlots,
-        selectedSlots: availableSlots.length === 1 ? availableSlots : [], // Auto-select if only one slot
-        showSlotSelection: false,
-        popoverPosition: popoverPosition,
-        inferredTargetTeam: null,
-        isBufferStaff: isBufferStaff,
-      })
+      setPcaDragState(
+        createActivePcaDragState({
+          staffId,
+          staffName: staffMember.name,
+          sourceTeam,
+          availableSlots,
+          selectedSlots: availableSlots.length === 1 ? availableSlots : [], // Auto-select if only one slot
+          popoverPosition,
+          isBufferStaff,
+        })
+      )
       
       return
     }
@@ -6134,19 +6112,17 @@ function SchedulePageContent() {
     
     // Initialize PCA drag state
     const isBufferStaff = staffMember.status === 'buffer'
-    setPcaDragState({
-      isActive: true,
-      isDraggingFromPopover: false,
-      staffId: staffId,
-      staffName: staffMember.name,
-      sourceTeam: sourceTeam,
-      availableSlots: availableSlots,
-      selectedSlots: availableSlots.length === 1 ? availableSlots : [], // Auto-select if single slot
-      showSlotSelection: false, // Will be shown when leaving team zone
-      popoverPosition: popoverPosition,
-      inferredTargetTeam: null,
-      isBufferStaff: isBufferStaff,
-    })
+    setPcaDragState(
+      createActivePcaDragState({
+        staffId,
+        staffName: staffMember.name,
+        sourceTeam,
+        availableSlots,
+        selectedSlots: availableSlots.length === 1 ? availableSlots : [], // Auto-select if single slot
+        popoverPosition,
+        isBufferStaff,
+      })
+    )
   }
 
   // Handle drag move - detect when PCA leaves source team zone
@@ -6170,11 +6146,7 @@ function SchedulePageContent() {
       // Fixed-team staff (APPT, RPT) will show warning tooltip when dragging
       if (isOverDifferentTeam && currentStep !== 'therapist-pca') {
         // Reset therapist drag state
-        setTherapistDragState({
-          isActive: false,
-          staffId: null,
-          sourceTeam: null,
-        })
+        setTherapistDragState(createIdleTherapistDragState())
         
         return
       }
@@ -6190,19 +6162,7 @@ function SchedulePageContent() {
     // Don't show popover (tooltip handles the reminder)
     // Just reset drag state to prevent the transfer
     if (isOverDifferentTeam && currentStep !== 'floating-pca') {
-      setPcaDragState({
-        isActive: false,
-        isDraggingFromPopover: false,
-        staffId: null,
-        staffName: null,
-        sourceTeam: null,
-        availableSlots: [],
-        selectedSlots: [],
-        showSlotSelection: false,
-        popoverPosition: null,
-        isDiscardMode: false,
-        isBufferStaff: false,
-      })
+      setPcaDragState(createIdlePcaDragState())
       
       return
     }
@@ -6239,38 +6199,12 @@ function SchedulePageContent() {
 
   // Close the slot selection popover
   const handleCloseSlotSelection = () => {
-    setPcaDragState({
-      isActive: false,
-      isDraggingFromPopover: false,
-      staffId: null,
-      staffName: null,
-      sourceTeam: null,
-      availableSlots: [],
-      selectedSlots: [],
-      showSlotSelection: false,
-      popoverPosition: null,
-      inferredTargetTeam: null,
-      isDiscardMode: false,
-      isBufferStaff: false,
-    })
+    setPcaDragState(createIdlePcaDragState())
   }
   
   // Reset PCA drag state completely
   const resetPcaDragState = () => {
-    setPcaDragState({
-      isActive: false,
-      isDraggingFromPopover: false,
-      staffId: null,
-      staffName: null,
-      sourceTeam: null,
-      availableSlots: [],
-      selectedSlots: [],
-      showSlotSelection: false,
-      popoverPosition: null,
-      inferredTargetTeam: null,
-      isDiscardMode: false,
-      isBufferStaff: false,
-    })
+    setPcaDragState(createIdlePcaDragState())
   }
   
   // Start drag from the popover preview card (or perform discard if in discard mode)
@@ -6351,9 +6285,14 @@ function SchedulePageContent() {
     
     const currentAllocation = Object.values(pcaAllocations).flat()
       .find(a => a.staff_id === staffId)
-    
+
     if (!currentAllocation) return
     captureUndoCheckpoint('PCA slot discard')
+    queueOptimisticPcaAction({
+      type: 'discard',
+      staffId,
+      slotsToDiscard,
+    })
     
     const staffMember = staff.find(s => s.id === staffId)
     const isBufferStaff = staffMember?.status === 'buffer'
@@ -6550,6 +6489,12 @@ function SchedulePageContent() {
       return
     }
     captureUndoCheckpoint('PCA slot transfer')
+    queueOptimisticPcaAction({
+      type: 'transfer',
+      staffId,
+      selectedSlots,
+      targetTeam,
+    })
     
     // If sourceTeam is null but we have an allocation, use the allocation's team as source
     const effectiveSourceTeam = sourceTeam || currentAllocation.team
@@ -7046,11 +6991,7 @@ function SchedulePageContent() {
     }
     
     // Reset therapist drag state on drag end
-    setTherapistDragState({
-      isActive: false,
-      staffId: null,
-      sourceTeam: null,
-    })
+    setTherapistDragState(createIdleTherapistDragState())
     
     // Handle therapist drag (existing logic)
     if (!over) {
@@ -7075,11 +7016,7 @@ function SchedulePageContent() {
             // For SPT, slot discard removes the entire allocation (like buffer therapist)
             // No need to show slot selection - just remove the allocation immediately
             performTherapistSlotDiscard(staffId, sourceTeam, assignedSlots)
-            setTherapistDragState({
-              isActive: false,
-              staffId: null,
-              sourceTeam: null,
-            })
+            setTherapistDragState(createIdleTherapistDragState())
             return
           }
         }
@@ -9991,7 +9928,7 @@ function SchedulePageContent() {
               const pcaAllocatedFteById = new Map<string, number>()
               const pcaStaffById = new Map<string, any>()
               for (const team of TEAMS) {
-                for (const alloc of pcaAllocations[team] || []) {
+                for (const alloc of pcaAllocationsForUi[team] || []) {
                   const staffId = (alloc as any).staff_id
                   if (!staffId) continue
                   const s = (alloc as any).staff
@@ -10143,18 +10080,17 @@ function SchedulePageContent() {
                     // Update drag state and perform transfer
                     const staffMember = staff.find(s => s.id === staffId)
                     const isBufferStaff = staffMember?.status === 'buffer'
-                    setPcaDragState({
-                      isActive: true,
-                      isDraggingFromPopover: false,
-                      staffId,
-                      staffName: staffMember?.name || null,
-                      sourceTeam,
-                      availableSlots: staffOverrides[staffId]?.availableSlots || [1, 2, 3, 4],
-                      selectedSlots: slots,
-                      showSlotSelection: false,
-                      popoverPosition: null,
-                      isBufferStaff: isBufferStaff || false,
-                    })
+                    setPcaDragState(
+                      createActivePcaDragState({
+                        staffId,
+                        staffName: staffMember?.name || null,
+                        sourceTeam,
+                        availableSlots: staffOverrides[staffId]?.availableSlots || [1, 2, 3, 4],
+                        selectedSlots: slots,
+                        popoverPosition: null,
+                        isBufferStaff: isBufferStaff || false,
+                      })
+                    )
                     performSlotTransfer(targetTeam as Team)
                   }
                   }}
@@ -10256,7 +10192,7 @@ function SchedulePageContent() {
                       <Fragment key={`pca-${team}`}>
                         <PCABlock
                           team={team}
-                          allocations={pcaAllocations[team]}
+                          allocations={pcaAllocationsForUi[team]}
                           onEditStaff={onEditPcaByTeam[team]}
                           requiredPCA={calculations[team]?.required_pca_per_team}
                           averagePCAPerTeam={calculations[team]?.average_pca_per_team}
@@ -11579,7 +11515,7 @@ function SchedulePageContent() {
             if (currentLeaveType === null && currentFTERemaining === 1.0) {
               // Find all PCA allocations for this staff member across all teams
               const allPcaAllocations = TEAMS.flatMap(team => 
-                pcaAllocations[team].filter(a => a.staff_id === editingStaffId)
+                pcaAllocationsForUi[team].filter(a => a.staff_id === editingStaffId)
               )
               
               if (allPcaAllocations.length > 0) {

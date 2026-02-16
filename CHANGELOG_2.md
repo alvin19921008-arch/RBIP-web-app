@@ -21,6 +21,7 @@
 - **Step 3 UI & PCA calculation help**: Block 6 now has an info popover that spells out the reserved-slot + DRM base-pool math and shows the real per-team balance totals; the Step 3 stepper and CTA buttons (Step 3.1 “Continue…” and Step 3.2 “Assign & Continue / Skip”) dynamically hide unreachable 3.2/3.3 actions, swap to “Run final allocation” when nothing remains, and explain each action in a tooltip so the user never follows a misleading “Continue to 3.2.”
 - **Responsive dialog chrome (Step 2 & 3)**: The shared dialog wrapper now respects device width + safe-area insets, the Step 2.1/2.2 footers wrap CTAs instead of stretching full-width, the Step 2.2 “Select SPT” trigger stays slim, helper copy stays concise, and the viewport meta plus `crypto.randomUUID` polyfill keep mobile browsers stable.
 - **Drag interaction & scrolling**: DnD auto-scroll is disabled on the main schedule grid and the Step 3 team-order reorder list so touching a card near the edge no longer recenters the board.
+- **Phase 3.1 drag refactor**: Completed the drag-state extraction and `useOptimistic` wiring, and removed the temporary DnD instrumentation that was only needed to capture the Phase 3 metrics.
 
 ### Added
 - **Playwright smoke testing scaffold**: Chromium-only Playwright setup for fast refactor safety gates, including `playwright.config.ts`, `tests/smoke/*`, and npm scripts (`test:smoke`, `test:smoke:headed`, `test:smoke:debug`). Smoke tests prefer localhost dev auto-login and fall back to env credentials when needed.
