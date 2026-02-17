@@ -191,6 +191,9 @@ CREATE TABLE schedule_calculations (
   total_pt_per_pca DECIMAL NOT NULL,
   total_pt_per_team DECIMAL NOT NULL,
   average_pca_per_team DECIMAL NOT NULL,
+  base_average_pca_per_team DECIMAL NOT NULL DEFAULT 0,
+  expected_beds_per_team DECIMAL NOT NULL DEFAULT 0,
+  required_pca_per_team DECIMAL NOT NULL DEFAULT 0,
   UNIQUE(schedule_id, team)
 );
 

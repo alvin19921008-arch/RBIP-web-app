@@ -11,6 +11,9 @@
 ### Reverted
 - **Step 2.1 UI**: Reverted experimental UI changes; restored original navigation for NonFloatingSubstitutionDialog.
 
+### Changed
+- **Legacy schema fallback removal**: Dropped the old `select('*')` / missing-column fallbacks across the schedule controller, gateway helpers, history page, copy route, and buffer-staff route now that the Supabase schema includes all modern columns (`status`, `buffer_fte`, `team_assignment_portions`, `config_by_weekday`, `base_average_pca_per_team`, `expected_beds_per_team`, `required_pca_per_team`, etc.). Added `supabase/verify_modern_schema_pre_legacy_cleanup.sql` so future cleanups can verify DB compatibility before pruning fallbacks.
+
 ## [Unreleased] - 2026-02-13
 
 ### Added
