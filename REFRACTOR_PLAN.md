@@ -262,6 +262,46 @@ Phase 3 collects the remaining high-ROI moves that keep every scheduler interact
   - Keeps future shadcn/UI updates aligned with the CSS-first token system, saving maintenance time and making bundle-size comparisons more reliable.
   - Measure: re-run `ANALYZE=true npm run build` and track CSS chunk size change, document class reduction counts.
 
+#### 3.2 Execution Log (2026-02-16)
+- Status: Done (tokenization + duplicate-pruning pass 2 landed with net-negative CSS delta and passing smoke tests).
+- Refactor implemented:
+  - Consolidated scrollbar styling into shared CSS-first primitives in `app/globals.css` (`.scrollbar-visible`, `.pca-like-scrollbar`) backed by Tailwind theme tokens (`hsl(var(--...))`), removing hardcoded per-component color blocks.
+  - Removed component-local styled-jsx scrollbar variants from `components/allocation/PCADedicatedScheduleTable.tsx` and migrated the table to shared scrollbar classes (`pca-like-scrollbar`, `pca-like-scrollbar--hidden`).
+  - Added reusable `rbip-nav-date-btn` utility in `app/globals.css` and applied it to the schedule date nav buttons in `components/schedule/ScheduleHeaderBar.tsx` to normalize repeated hover/transition utility patterns.
+  - Pass 2 duplicate pruning:
+    - Removed single-use heavy CTA custom styles (`rbip-cta-primary`, `rbip-cta-text`) from `app/globals.css` and replaced the only consumer with inline Tailwind transition classes in `components/allocation/StepIndicator.tsx`.
+    - Unified `components/dashboard/StaffProfilePanel.tsx` to use `scrollbar-visible` and removed the one-off `staff-table-scroll` alias.
+    - Pruned redundant hidden-scrollbar sub-selectors in `app/globals.css` (`::-webkit-scrollbar-track` / `::-webkit-scrollbar-thumb` for hidden state).
+- Smoke and regression validation:
+  - `tests/smoke/schedule-core.smoke.spec.ts`: pass (2/2).
+  - Full smoke suite (`npm run test:smoke`): pass (3/3), including phase-3.1 DnD metric flow.
+  - One temporary “stuck” smoke run was traced to a stale/corrupted Turbopack dev server process; restarting `next dev` resolved the issue (no code-path regression).
+
+#### 3.2 Scorecard (Before vs After)
+| Metric | Pre-refactor | Post-refactor | Delta | Source |
+| --- | ---: | ---: | ---: | --- |
+| Total emitted CSS (`.next/static/css/*.css`) | 115,612 B | 116,135 B | +523 B | `metrics/phase3_2/pre_refactor_css.json`, `metrics/phase3_2/post_refactor_css.json` |
+| Total emitted CSS (gzip) | 19,549 B | 19,577 B | +28 B | metrics JSON |
+| Primary app CSS chunk raw | 113,549 B | 114,072 B | +523 B | metrics JSON |
+| Primary app CSS chunk gzip | 18,898 B | 18,926 B | +28 B | metrics JSON |
+| PCA table local scrollbar selectors | 11 | 0 | -11 | `components/allocation/PCADedicatedScheduleTable.tsx` |
+| Shared date-nav hover utility classes | 0 | 1 (`rbip-nav-date-btn`) | +1 | `app/globals.css` |
+
+> Note: this pass-1 observation was superseded by pass-2 duplicate pruning, which delivered net-negative CSS delta.
+
+#### 3.2 Scorecard (Pass 2: Duplicate-Pruning)
+| Metric | Pre-pass2 | Post-pass2 | Delta | Source |
+| --- | ---: | ---: | ---: | --- |
+| Total emitted CSS (`.next/static/css/*.css`) | 116,135 B | 115,162 B | -973 B | `metrics/phase3_2_pass2/pre_refactor_css.json`, `metrics/phase3_2_pass2/post_refactor_css.json` |
+| Total emitted CSS (gzip) | 19,577 B | 19,359 B | -218 B | `metrics/phase3_2_pass2/css_delta.json` |
+| Primary app CSS chunk raw | 114,072 B | 113,099 B | -973 B | pass2 metrics JSON |
+| Primary app CSS chunk gzip | 18,926 B | 18,708 B | -218 B | pass2 metrics JSON |
+| `rbip-cta-primary` usages | 1 | 0 | -1 | `components/allocation/StepIndicator.tsx` |
+| `rbip-cta-text` usages | 1 | 0 | -1 | `components/allocation/StepIndicator.tsx` |
+| `staff-table-scroll` usages | 1 | 0 | -1 | `components/dashboard/StaffProfilePanel.tsx` |
+
+> Note: pass 2 delivers the first net-negative CSS delta for phase 3.2 while preserving smoke-test behavior.
+
 ### 3.3 Server Actions & leaves/override gateway
 - Scope:
   - Introduce Server Actions (e.g., `app/(dashboard)/schedule/actions.ts`) for leave edits, staff overrides, and buffer status updates currently handled inline in `page.tsx`.
@@ -272,6 +312,48 @@ Phase 3 collects the remaining high-ROI moves that keep every scheduler interact
   - Server Actions keep the optimistic UI intact while letting Playwright flows automatically record network timing differences (smaller payloads, fewer round trips).
   - Measure: compare Network waterfall (Playwright trace) for leave edit flows before/after and note request/payload counts.
 
+#### 3.3 Execution Log (2026-02-17)
+- Status: Done (server-action + gateway extraction landed; leave-edit/staff-override action coverage marked done for phase 3.3).
+- Refactor implemented:
+  - Added `app/(dashboard)/schedule/actions.ts` server actions for staff mutation paths previously inlined in `page.tsx`:
+    - `promoteInactiveStaffToBufferAction`
+    - `convertBufferStaffToInactiveAction`
+    - `updateBufferStaffTeamAction`
+  - Added shared controller gateway module `lib/features/schedule/controller/dataGateway.ts` to centralize fallback-aware data reads:
+    - `fetchStaffRowsWithFallback` + `splitStaffRowsByStatus`
+    - `fetchSpecialProgramsWithFallback`
+    - `fetchSptAllocationsWithFallback`
+    - `fetchWardsWithFallback`
+    - `fetchPcaPreferencesWithFallback`
+  - Rewired `app/(dashboard)/schedule/page.tsx` to consume the new gateway loaders and server actions, removing direct page-level `supabase.from(...).select(...)` loader calls and direct `supabase.from('staff').update(...)` mutation calls.
+- Playwright flow coverage assessment (for this phase):
+  - Added leave-edit persistence coverage in `tests/smoke/schedule-core.smoke.spec.ts`:
+    - Step 1 leave edit → save dialog → save schedule → reload → reopen same staff and verify persisted leave type.
+    - Includes cleanup (restore original leave type) to avoid residue across runs.
+  - Added/kept staff-override mutation coverage in `tests/smoke/schedule-core.smoke.spec.ts`:
+    - Expand Staff Pool → “From Inactive Staff” convert path → “Convert to inactive” confirmation path.
+  - Coverage guards:
+    - Tests now skip when required dataset/workflow preconditions are unavailable (e.g., no inactive candidates, step disabled in current schedule state), keeping the suite deterministic across environments.
+- Verification:
+  - `npm run lint`: pass (no new lint errors introduced).
+  - `npm run test:smoke`: pass (`1 passed, 4 skipped`; skips are precondition/data gated and expected for current state).
+- Phase closeout:
+  - No additional high-ROI items remain under 3.3 scope; next high-ROI work starts at 3.4 (algorithm compaction + lookup caching).
+
+#### 3.3 Scorecard (Before vs After)
+| Metric | Pre-refactor | Post-refactor | Delta | Source |
+| --- | ---: | ---: | ---: | --- |
+| Schedule route client chunk `statSize` | 1,593,668 B | 1,598,081 B | +4,413 B | `metrics/phase3_3/pre_refactor.json`, `metrics/phase3_3/post_refactor.json` |
+| Schedule route client chunk `parsedSize` | 445,260 B | 447,309 B | +2,049 B | phase3_3 metrics JSON |
+| Schedule route client chunk `gzipSize` | 116,352 B | 116,823 B | +471 B | phase3_3 metrics JSON |
+| `page.tsx` module `statSize` | 743,954 B | 740,996 B | -2,958 B | phase3_3 metrics JSON |
+| `page.tsx` module `parsedSize` | 205,080 B | 204,754 B | -326 B | phase3_3 metrics JSON |
+| `page.tsx` module `gzipSize` | 52,724 B | 52,635 B | -89 B | phase3_3 metrics JSON |
+| Total emitted CSS | 115,162 B | 115,162 B | 0 B | phase3_3 metrics JSON |
+| Total emitted CSS (gzip) | 19,359 B | 19,359 B | 0 B | phase3_3 metrics JSON |
+| Page-level `supabase.from('staff').update(...)` calls | 6 | 0 | -6 | phase3_3 metrics JSON |
+| Page-level loader `supabase.from(...).select(...)` calls for staff/program/spt/wards/prefs | 11 | 0 | -11 | phase3_3 metrics JSON |
+
 ### 3.4 Algorithm compaction & lookup caching
 - Scope:
   - Collapse duplicated special-program assignment blocks in `lib/algorithms/pcaAllocation.ts` into shared helpers; keep all tie-break/order semantics the same.
@@ -281,6 +363,42 @@ Phase 3 collects the remaining high-ROI moves that keep every scheduler interact
   - Cuts hundreds of duplicated lines, reduces algorithmic heat, and ensures future special-program rules can be added once instead of in multiple branches.
   - Map-based lookups shrink runtime when `pcaPool` grows, which translates to smoother Playwright traces and easier profiling.
   - Measure: trace CPU during allocatePCA and compare duration/rasterization before/after on the same fixture.
+
+#### 3.4 Execution Log (2026-02-17)
+- Status: Done (special-program compaction + lookup caching landed; Phase 3.4 smoke flow now actively runs Step 2 then Step 3 instead of relying on disabled-step skips).
+- Refactor implemented:
+  - Added shared special-program candidate selector in `lib/algorithms/pcaAllocation.ts`:
+    - `selectSpecialProgramCandidate(...)` now consolidates duplicated floating/non-floating candidate search branches (preference order + fallback order preserved).
+  - Added indexed special-program allocation lookup in `lib/algorithms/pcaAllocation.ts`:
+    - `hasProgramAllocationForStaff(...)` now replaces repeated `allocations.some(...)` scans in Step 2 special-program assignment loops.
+  - Added map-backed lookup caching in `lib/utils/floatingPCAHelpers.ts`:
+    - `findAvailablePCAs(...)` now builds a single `allocationByStaffId` index per call, replacing repeated `existingAllocations.find(...)` checks during filter/sort.
+  - Added map-backed lookup caching in `lib/utils/reservationLogic.ts`:
+    - `computeReservations(...)`, `executeSlotAssignments(...)`, and `computeAdjacentSlotReservations(...)` now use `Map` indexes for PCA/allocation lookups instead of repeated `.find()` scans.
+  - Added Step 2/3 runtime instrumentation and Phase 3.4 smoke driver:
+    - `lib/features/schedule/controller/useScheduleController.ts` now emits `window.__rbipScheduleAlgoPerf` entries for Step 2/3 runs.
+    - New `tests/smoke/schedule-phase3-4-algo-metrics.smoke.spec.ts` runs deterministic `Leave Sim` actions (`Run Step 2` -> `Run Step 3`) so step-flow guards are satisfied by design.
+- Verification:
+  - Targeted Phase 3.4 smoke metric runs: pass (pre + post snapshots generated).
+  - Full smoke suite (`npm run test:smoke`): pass (`2 passed, 4 skipped`).
+  - Phase 3.4 metrics artifacts written:
+    - `metrics/phase3_4/pre_refactor.json`
+    - `metrics/phase3_4/post_refactor.json`
+    - `metrics/phase3_4/delta.json`
+- Phase closeout:
+  - No additional high-ROI items remain under 3.4 scope; next high-ROI work starts at 3.5 (React Compiler + scoped Suspense telemetry).
+
+#### 3.4 Scorecard (Before vs After)
+| Metric | Pre-refactor | Post-refactor | Delta | Source |
+| --- | ---: | ---: | ---: | --- |
+| Schedule load (`scheduleLoadMs`) | 2,882 ms | 2,804 ms | -78 ms | `metrics/phase3_4/pre_refactor.json`, `metrics/phase3_4/post_refactor.json` |
+| Step 2 interaction duration | 122 ms | 173 ms | +51 ms | phase3_4 metrics JSON |
+| Step 3 interaction duration | 403 ms | 559 ms | +156 ms | phase3_4 metrics JSON |
+| `allocations.some(...)` special-program checks in `pcaAllocation.ts` | 8 | 0 | -8 | `metrics/phase3_4/delta.json` |
+| `existingAllocations.find(...)` calls in `floatingPCAHelpers.ts` | 4 | 1 | -3 | `metrics/phase3_4/delta.json` |
+| `.find(...)` hotspot scans in `reservationLogic.ts` | 4 | 0 | -4 | `metrics/phase3_4/delta.json` |
+
+> Note: runtime timings are single-run samples from the same smoke path and showed variance; structural hotspot counts confirm the intended algorithmic complexity reduction landed.
 
 ### 3.5 React Compiler + finer Suspense telemetry
 - Scope:

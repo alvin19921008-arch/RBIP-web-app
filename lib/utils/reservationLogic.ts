@@ -86,6 +86,20 @@ export function computeReservations(
     FO: null, SMM: null, SFM: null, CPPC: null, MC: null, GMC: null, NSM: null, DRO: null
   }
   const pcaSlotReservations: PCASlotReservations = {}
+
+  const floatingPcaById = new Map<string, PCAData>()
+  floatingPCAs.forEach((pca) => {
+    if (!floatingPcaById.has(pca.id)) {
+      floatingPcaById.set(pca.id, pca)
+    }
+  })
+
+  const allocationByStaffId = new Map<string, PCAAllocation>()
+  existingAllocations.forEach((allocation) => {
+    if (!allocationByStaffId.has(allocation.staff_id)) {
+      allocationByStaffId.set(allocation.staff_id, allocation)
+    }
+  })
   
   // Process each team's preferences
   for (const pref of pcaPreferences) {
@@ -105,13 +119,13 @@ export function computeReservations(
     
     // Check each preferred PCA
     for (const pcaId of pref.preferred_pca_ids) {
-      const pca = floatingPCAs.find(p => p.id === pcaId)
+      const pca = floatingPcaById.get(pcaId)
       
       // Skip if PCA not found or not on duty (FTE <= 0)
       if (!pca || pca.fte_pca <= 0) continue
       
       // Skip if this slot is already assigned in previous steps
-      const existingAlloc = existingAllocations.find(a => a.staff_id === pcaId)
+      const existingAlloc = allocationByStaffId.get(pcaId)
       if (existingAlloc) {
         const slotOwner = getSlotTeam(existingAlloc, preferredSlot)
         if (slotOwner !== null) continue  // Slot already taken
@@ -185,6 +199,20 @@ export function executeSlotAssignments(
   
   // Clone existing allocations
   const updatedAllocations = existingAllocations.map(a => ({ ...a }))
+
+  const allocationByStaffId = new Map<string, PCAAllocation>()
+  updatedAllocations.forEach((allocation) => {
+    if (!allocationByStaffId.has(allocation.staff_id)) {
+      allocationByStaffId.set(allocation.staff_id, allocation)
+    }
+  })
+
+  const floatingPcaById = new Map<string, PCAData>()
+  floatingPCAs.forEach((pca) => {
+    if (!floatingPcaById.has(pca.id)) {
+      floatingPcaById.set(pca.id, pca)
+    }
+  })
   
   // Track FTE changes for PCAs
   const pcaFTEChanges: Record<string, number> = {}
@@ -196,11 +224,11 @@ export function executeSlotAssignments(
     updatedPendingFTE[team] = Math.max(0, (updatedPendingFTE[team] || 0) - 0.25)
     
     // Find or create allocation for this PCA
-    let allocation = updatedAllocations.find(a => a.staff_id === pcaId)
+    let allocation = allocationByStaffId.get(pcaId)
     
     if (!allocation) {
       // Create new allocation
-      const pca = floatingPCAs.find(p => p.id === pcaId)
+      const pca = floatingPcaById.get(pcaId)
       allocation = {
         id: crypto.randomUUID(),
         schedule_id: '',  // Will be set when saving
@@ -218,6 +246,7 @@ export function executeSlotAssignments(
         special_program_ids: null,
       }
       updatedAllocations.push(allocation)
+      allocationByStaffId.set(pcaId, allocation)
     } else {
       // Update existing allocation - assign the slot to this team
       switch (slot) {
@@ -401,6 +430,13 @@ export function computeAdjacentSlotReservations(
   const adjacentReservations: AdjacentSlotReservations = {
     FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
   }
+
+  const floatingPcaById = new Map<string, PCAData>()
+  floatingPCAs.forEach((pca) => {
+    if (!floatingPcaById.has(pca.id)) {
+      floatingPcaById.set(pca.id, pca)
+    }
+  })
   
   // Find allocations that were assigned via special program
   const specialProgramAllocations = existingAllocations.filter(
@@ -408,7 +444,7 @@ export function computeAdjacentSlotReservations(
   )
   
   for (const allocation of specialProgramAllocations) {
-    const pca = floatingPCAs.find(p => p.id === allocation.staff_id)
+    const pca = floatingPcaById.get(allocation.staff_id)
     const pcaName = pca?.name || 'Unknown PCA'
     
     // Find the special program name

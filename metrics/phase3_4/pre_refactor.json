@@ -1,0 +1,23 @@
+{
+  "label": "phase3_4_pre",
+  "collectedAt": "2026-02-17T03:27:28.805Z",
+  "selectedDate": null,
+  "scheduleLoadMs": 2882,
+  "navigation": {
+    "ttfbMs": 515,
+    "domContentLoadedMs": 533.2000000011176,
+    "loadEventMs": 835.7000000011176,
+    "durationMs": 835.7000000011176
+  },
+  "interactions": {
+    "runStep2ActionMs": 122,
+    "runStep3ActionMs": 403
+  },
+  "algorithms": {
+    "step2DurationMs": 122,
+    "step3DurationMs": 403,
+    "source": "interaction-fallback",
+    "step2Details": null,
+    "step3Details": null
+  }
+}

@@ -217,6 +217,65 @@ function updatePendingValues(
   })
 }
 
+type SpecialProgramCandidateSelection = {
+  pcaToAssign: PCAData | null
+  assignedPCAId: string | null
+}
+
+function selectSpecialProgramCandidate(args: {
+  program: SpecialProgram
+  floatingPCA: PCAData[]
+  nonFloatingPCA: PCAData[]
+  allocations: PCAAllocation[]
+}): SpecialProgramCandidateSelection {
+  const { program, floatingPCA, nonFloatingPCA, allocations } = args
+
+  const assignedToProgram = new Set<string>()
+  allocations.forEach((allocation) => {
+    if (allocation.special_program_ids?.includes(program.id)) {
+      assignedToProgram.add(allocation.staff_id)
+    }
+  })
+
+  const isEligible = (pca: PCAData, requireProgramTag: boolean) => {
+    if (!pca.is_available) return false
+    if (requireProgramTag && !pca.special_program?.includes(program.name)) return false
+    if (assignedToProgram.has(pca.id)) return false
+    return true
+  }
+
+  const findById = (pcaId: string, requireProgramTag: boolean): PCAData | null => {
+    const floatingMatch = floatingPCA.find((pca) => pca.id === pcaId && isEligible(pca, requireProgramTag))
+    if (floatingMatch) return floatingMatch
+    const nonFloatingMatch = nonFloatingPCA.find((pca) => pca.id === pcaId && isEligible(pca, requireProgramTag))
+    return nonFloatingMatch ?? null
+  }
+
+  const findAny = (requireProgramTag: boolean): PCAData | null => {
+    const floatingMatch = floatingPCA.find((pca) => isEligible(pca, requireProgramTag))
+    if (floatingMatch) return floatingMatch
+    const nonFloatingMatch = nonFloatingPCA.find((pca) => isEligible(pca, requireProgramTag))
+    return nonFloatingMatch ?? null
+  }
+
+  const preferredIds = program.pca_preference_order || []
+  if (preferredIds.length > 0) {
+    for (const preferredPcaId of preferredIds) {
+      // Preserve legacy behavior: preference-list matching always requires program-tagged PCA.
+      const candidate = findById(preferredPcaId, true)
+      if (candidate) {
+        return { pcaToAssign: candidate, assignedPCAId: preferredPcaId }
+      }
+    }
+
+    const fallbackCandidate = findAny(program.name !== 'DRM')
+    return { pcaToAssign: fallbackCandidate, assignedPCAId: null }
+  }
+
+  const candidate = findAny(program.name !== 'DRM')
+  return { pcaToAssign: candidate, assignedPCAId: null }
+}
+
 export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAllocationResult> {
   const phase = context.phase || 'all' // Default to 'all' for backward compatibility
   
@@ -285,6 +344,14 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
   const getAllocationsByStaffId = (staffId: string): PCAAllocation[] => {
     refreshAllocationIndexes()
     return allocationsByStaffId.get(staffId) ?? []
+  }
+  const hasProgramAllocationForStaff = (staffId: string, programId: string, targetTeam?: Team): boolean => {
+    const staffAllocations = getAllocationsByStaffId(staffId)
+    return staffAllocations.some((allocation) => {
+      if (!allocation.special_program_ids?.includes(programId)) return false
+      if (targetTeam == null) return true
+      return allocation.team === targetTeam
+    })
   }
   
 
@@ -488,137 +555,13 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
 
       
 
-      // Use PCA preference order if available, otherwise use any available PCA
-      let pcaToAssign: PCAData | null = null
-      let assignedPCAId: string | null = null
-
-      if (program.pca_preference_order && program.pca_preference_order.length > 0) {
-        // Try preference order first
-        for (const preferredPcaId of program.pca_preference_order) {
-          // Check floating PCA first (as per requirement: floating first)
-          const floatingPca = floatingPCA.find(
-            pca => pca.id === preferredPcaId &&
-            pca.special_program?.includes(program.name) &&
-            pca.is_available &&
-            !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-          )
-
-          if (floatingPca) {
-            pcaToAssign = floatingPca
-            assignedPCAId = preferredPcaId
-            break
-          }
-
-          // Check non-floating PCA (if floating not found)
-          const nonFloatingPca = nonFloatingPCA.find(
-            pca => pca.id === preferredPcaId &&
-            pca.special_program?.includes(program.name) &&
-            pca.is_available &&
-            !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-          )
-
-          if (nonFloatingPca) {
-            pcaToAssign = nonFloatingPca
-            assignedPCAId = preferredPcaId
-            break
-          }
-        }
-
-        // If all in preference list are unavailable, fall back to any available PCA
-        if (!pcaToAssign) {
-          // For DRM, use any available floating PCA (no special program requirement)
-          // For other programs, use PCA with the special program
-          if (program.name === 'DRM') {
-            // Try floating PCA first (any available floating PCA)
-            const fallbackFloating = floatingPCA.find(
-              pca => pca.is_available &&
-              !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-            )
-
-            if (fallbackFloating) {
-              pcaToAssign = fallbackFloating
-            } else {
-              // Try non-floating PCA
-              const fallbackNonFloating = nonFloatingPCA.find(
-                pca => pca.is_available &&
-                !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-              )
-
-              if (fallbackNonFloating) {
-                pcaToAssign = fallbackNonFloating
-              }
-            }
-          } else {
-            // Other programs: use PCA with the special program
-            const fallbackFloating = floatingPCA.find(
-              pca => pca.special_program?.includes(program.name) &&
-              pca.is_available &&
-              !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-            )
-
-            if (fallbackFloating) {
-              pcaToAssign = fallbackFloating
-            } else {
-              // Try non-floating PCA
-              const fallbackNonFloating = nonFloatingPCA.find(
-                pca => pca.special_program?.includes(program.name) &&
-                pca.is_available &&
-                !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-              )
-
-              if (fallbackNonFloating) {
-                pcaToAssign = fallbackNonFloating
-              }
-            }
-          }
-        }
-      } else {
-        // No preference order - for DRM, use ANY available floating PCA (not just those with DRM in special_program)
-        // For other programs, use PCA with the special program
-        if (program.name === 'DRM') {
-          // DRM: Use any available floating PCA (no special program requirement)
-          const availableFloatingPCA = floatingPCA.find(
-            pca => pca.is_available &&
-            !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-          )
-
-          if (availableFloatingPCA) {
-            pcaToAssign = availableFloatingPCA
-          } else {
-            // Fall back to non-floating PCA if no floating available
-            const availableNonFloatingPCA = nonFloatingPCA.find(
-              pca => pca.is_available &&
-              !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-            )
-
-            if (availableNonFloatingPCA) {
-              pcaToAssign = availableNonFloatingPCA
-            }
-          }
-        } else {
-          // Other programs: use PCA with the special program (existing logic)
-          const availableFloatingPCA = floatingPCA.find(
-            pca => pca.special_program?.includes(program.name) &&
-            pca.is_available &&
-            !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-          )
-
-          if (availableFloatingPCA) {
-            pcaToAssign = availableFloatingPCA
-          } else {
-            // Fall back to non-floating PCA
-            const availableNonFloatingPCA = nonFloatingPCA.find(
-              pca => pca.special_program?.includes(program.name) &&
-              pca.is_available &&
-              !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-            )
-
-            if (availableNonFloatingPCA) {
-              pcaToAssign = availableNonFloatingPCA
-            }
-          }
-        }
-      }
+      // Use PCA preference order first, then fallback (floating first in all cases).
+      const { pcaToAssign } = selectSpecialProgramCandidate({
+        program,
+        floatingPCA,
+        nonFloatingPCA,
+        allocations,
+      })
 
       // For special programs, determine target teams based on program type
       // Robotic: slots go to SMM (1-2) and SFM (3-4), so we need to check if SMM or SFM need PCA
@@ -709,8 +652,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               pca.special_program?.includes(program.name) &&
               pca.is_available &&
               (program.name === 'Robotic' || program.name === 'CRP'
-                ? !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-                : !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id) && a.team === targetTeam))
+                ? !hasProgramAllocationForStaff(pca.id, program.id)
+                : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
             )
 
             if (floatingPca) {
@@ -833,8 +776,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               pca.special_program?.includes(program.name) &&
               pca.is_available &&
               (program.name === 'Robotic' || program.name === 'CRP'
-                ? !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-                : !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id) && a.team === targetTeam))
+                ? !hasProgramAllocationForStaff(pca.id, program.id)
+                : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
             )
 
             if (nonFloatingPca) {
@@ -930,8 +873,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             pca => pca.special_program?.includes(program.name) &&
             pca.is_available &&
             (program.name === 'Robotic' || program.name === 'CRP'
-              ? !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-              : !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id) && a.team === targetTeam))
+              ? !hasProgramAllocationForStaff(pca.id, program.id)
+              : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
           )
 
           if (fallbackFloating) {
@@ -1020,8 +963,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               pca => pca.special_program?.includes(program.name) &&
               pca.is_available &&
               (program.name === 'Robotic' || program.name === 'CRP'
-                ? !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-                : !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id) && a.team === targetTeam))
+                ? !hasProgramAllocationForStaff(pca.id, program.id)
+                : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
             )
 
             if (fallbackNonFloating) {
@@ -2159,137 +2102,13 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
 
     if (teamsNeedingProgram.length === 0) return
 
-    // Use PCA preference order if available, otherwise use any available PCA
-    let pcaToAssign: PCAData | null = null
-    let assignedPCAId: string | null = null
-
-    if (program.pca_preference_order && program.pca_preference_order.length > 0) {
-      // Try preference order first
-      for (const preferredPcaId of program.pca_preference_order) {
-        // Check floating PCA first (as per requirement: floating first)
-        const floatingPca = floatingPCA.find(
-          pca => pca.id === preferredPcaId &&
-          pca.special_program?.includes(program.name) &&
-          pca.is_available &&
-          !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-        )
-        
-        if (floatingPca) {
-          pcaToAssign = floatingPca
-          assignedPCAId = preferredPcaId
-          break
-        }
-        
-        // Check non-floating PCA (if floating not found)
-        const nonFloatingPca = nonFloatingPCA.find(
-          pca => pca.id === preferredPcaId &&
-          pca.special_program?.includes(program.name) &&
-          pca.is_available &&
-          !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-        )
-        
-        if (nonFloatingPca) {
-          pcaToAssign = nonFloatingPca
-          assignedPCAId = preferredPcaId
-          break
-        }
-      }
-      
-      // If all in preference list are unavailable, fall back to any available PCA
-      if (!pcaToAssign) {
-        // For DRM, use any available floating PCA (no special program requirement)
-        // For other programs, use PCA with the special program
-        if (program.name === 'DRM') {
-          // Try floating PCA first (any available floating PCA)
-          const fallbackFloating = floatingPCA.find(
-            pca => pca.is_available &&
-            !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-          )
-          
-          if (fallbackFloating) {
-            pcaToAssign = fallbackFloating
-          } else {
-            // Try non-floating PCA
-            const fallbackNonFloating = nonFloatingPCA.find(
-              pca => pca.is_available &&
-              !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-            )
-            
-            if (fallbackNonFloating) {
-              pcaToAssign = fallbackNonFloating
-            }
-          }
-        } else {
-          // Other programs: use PCA with the special program
-          const fallbackFloating = floatingPCA.find(
-            pca => pca.special_program?.includes(program.name) &&
-            pca.is_available &&
-            !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-          )
-          
-          if (fallbackFloating) {
-            pcaToAssign = fallbackFloating
-          } else {
-            // Try non-floating PCA
-            const fallbackNonFloating = nonFloatingPCA.find(
-              pca => pca.special_program?.includes(program.name) &&
-              pca.is_available &&
-              !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-            )
-            
-            if (fallbackNonFloating) {
-              pcaToAssign = fallbackNonFloating
-            }
-          }
-        }
-      }
-    } else {
-      // No preference order - for DRM, use ANY available floating PCA (not just those with DRM in special_program)
-      // For other programs, use PCA with the special program
-      if (program.name === 'DRM') {
-        // DRM: Use any available floating PCA (no special program requirement)
-        const availableFloatingPCA = floatingPCA.find(
-          pca => pca.is_available &&
-          !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-        )
-        
-        if (availableFloatingPCA) {
-          pcaToAssign = availableFloatingPCA
-        } else {
-          // Fall back to non-floating PCA if no floating available
-          const availableNonFloatingPCA = nonFloatingPCA.find(
-            pca => pca.is_available &&
-            !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-          )
-          
-          if (availableNonFloatingPCA) {
-            pcaToAssign = availableNonFloatingPCA
-          }
-        }
-      } else {
-        // Other programs: use PCA with the special program (existing logic)
-        const availableFloatingPCA = floatingPCA.find(
-          pca => pca.special_program?.includes(program.name) &&
-          pca.is_available &&
-          !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-        )
-        
-        if (availableFloatingPCA) {
-          pcaToAssign = availableFloatingPCA
-        } else {
-          // Fall back to non-floating PCA
-          const availableNonFloatingPCA = nonFloatingPCA.find(
-            pca => pca.special_program?.includes(program.name) &&
-            pca.is_available &&
-            !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-          )
-          
-          if (availableNonFloatingPCA) {
-            pcaToAssign = availableNonFloatingPCA
-          }
-        }
-      }
-    }
+    // Use PCA preference order first, then fallback (floating first in all cases).
+    const { pcaToAssign } = selectSpecialProgramCandidate({
+      program,
+      floatingPCA,
+      nonFloatingPCA,
+      allocations,
+    })
 
     // For special programs, determine target teams based on program type
     // Robotic: slots go to SMM (1-2) and SFM (3-4), so we need to check if SMM or SFM need PCA
@@ -2344,8 +2163,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             pca.special_program?.includes(program.name) &&
             pca.is_available &&
             (program.name === 'Robotic' || program.name === 'CRP'
-              ? !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-              : !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id) && a.team === targetTeam))
+              ? !hasProgramAllocationForStaff(pca.id, program.id)
+              : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
           )
           
           if (floatingPca) {
@@ -2467,8 +2286,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             pca.special_program?.includes(program.name) &&
             pca.is_available &&
             (program.name === 'Robotic' || program.name === 'CRP'
-              ? !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-              : !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id) && a.team === targetTeam))
+              ? !hasProgramAllocationForStaff(pca.id, program.id)
+              : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
           )
           
           if (nonFloatingPca) {
@@ -2564,8 +2383,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           pca => pca.special_program?.includes(program.name) &&
           pca.is_available &&
           (program.name === 'Robotic' || program.name === 'CRP'
-            ? !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-            : !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id) && a.team === targetTeam))
+            ? !hasProgramAllocationForStaff(pca.id, program.id)
+            : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
         )
         
         if (fallbackFloating) {
@@ -2654,8 +2473,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             pca => pca.special_program?.includes(program.name) &&
             pca.is_available &&
             (program.name === 'Robotic' || program.name === 'CRP'
-              ? !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id))
-              : !allocations.some(a => a.staff_id === pca.id && a.special_program_ids?.includes(program.id) && a.team === targetTeam))
+              ? !hasProgramAllocationForStaff(pca.id, program.id)
+              : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
           )
           
           if (fallbackNonFloating) {

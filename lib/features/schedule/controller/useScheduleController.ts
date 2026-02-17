@@ -60,6 +60,23 @@ let therapistAlgoImport: Promise<typeof import('@/lib/algorithms/therapistAlloca
 let pcaEngineImport: Promise<typeof import('@/lib/features/schedule/pcaAllocationEngine')> | null = null
 let bedAlgoImport: Promise<typeof import('@/lib/algorithms/bedAllocation')> | null = null
 
+type ScheduleAlgoPerfEntry = {
+  phase: 'step2' | 'step3'
+  status: 'ok' | 'error'
+  durationMs: number
+  timestamp: string
+  selectedDate: string
+  details?: Record<string, unknown>
+}
+
+function recordScheduleAlgoPerf(entry: ScheduleAlgoPerfEntry) {
+  if (typeof window === 'undefined') return
+  const globalWindow = window as typeof window & { __rbipScheduleAlgoPerf?: ScheduleAlgoPerfEntry[] }
+  const prev = Array.isArray(globalWindow.__rbipScheduleAlgoPerf) ? globalWindow.__rbipScheduleAlgoPerf : []
+  globalWindow.__rbipScheduleAlgoPerf = [...prev, entry].slice(-100)
+  console.info(`[schedule-algo-metric] ${JSON.stringify(entry)}`)
+}
+
 function loadTherapistAlgo() {
   therapistAlgoImport = therapistAlgoImport ?? import('@/lib/algorithms/therapistAllocation')
   return therapistAlgoImport
@@ -2963,6 +2980,10 @@ export function useScheduleController(params: {
   }): Promise<Record<Team, (PCAAllocation & { staff: Staff })[]>> => {
     if (staff.length === 0) return createEmptyTeamRecord<Array<PCAAllocation & { staff: Staff }>>([])
 
+    const perfStart = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    let perfStatus: 'ok' | 'error' = 'ok'
+    let perfDetails: Record<string, unknown> = {}
+
     clearUndoRedoHistory()
     const toast = args.toast ?? (() => {})
     setLoading(true)
@@ -3729,6 +3750,10 @@ export function useScheduleController(params: {
         return next
       })
       toast('Step 2 allocation completed.', 'success', 'Therapist & non-floating PCA allocations updated.')
+      perfDetails = {
+        therapistAllocations: (therapistResult.allocations || []).length,
+        pcaAllocations: ((pcaResult as any).allocations || []).length,
+      }
 
       return pcaByTeam
     } catch (error) {
@@ -3738,11 +3763,22 @@ export function useScheduleController(params: {
       }
       // User navigated back from Step 2.1 wizard: let UI return to Step 2.0.
       if ((error as any)?.code === 'wizard_back' || String((error as any)?.message ?? '').includes('wizard_back')) {
+        perfStatus = 'error'
         throw error
       }
+      perfStatus = 'error'
       console.error('Error in Step 2:', error)
       return createEmptyTeamRecord<Array<PCAAllocation & { staff: Staff }>>([])
     } finally {
+      const perfEnd = typeof performance !== 'undefined' ? performance.now() : Date.now()
+      recordScheduleAlgoPerf({
+        phase: 'step2',
+        status: perfStatus,
+        durationMs: Math.max(0, perfEnd - perfStart),
+        timestamp: new Date().toISOString(),
+        selectedDate: formatDateForInput(selectedDate),
+        details: perfDetails,
+      })
       setLoading(false)
     }
   }
@@ -3760,6 +3796,10 @@ export function useScheduleController(params: {
       console.error('Step 2 must be completed before Step 3')
       return
     }
+
+    const perfStart = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    let perfStatus: 'ok' | 'error' = 'ok'
+    let perfDetails: Record<string, unknown> = {}
 
     clearUndoRedoHistory()
     setLoading(true)
@@ -3953,9 +3993,22 @@ export function useScheduleController(params: {
         next.add('floating-pca')
         return next
       })
+      perfDetails = {
+        pcaAllocations: ((pcaResult as any).allocations || []).length,
+      }
     } catch (error) {
+      perfStatus = 'error'
       console.error('Error in Step 3:', error)
     } finally {
+      const perfEnd = typeof performance !== 'undefined' ? performance.now() : Date.now()
+      recordScheduleAlgoPerf({
+        phase: 'step3',
+        status: perfStatus,
+        durationMs: Math.max(0, perfEnd - perfStart),
+        timestamp: new Date().toISOString(),
+        selectedDate: formatDateForInput(selectedDate),
+        details: perfDetails,
+      })
       setLoading(false)
     }
   }

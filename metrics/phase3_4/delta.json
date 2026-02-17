@@ -1,0 +1,40 @@
+{
+  "label": "phase3_4_delta",
+  "computedAt": "2026-02-17T03:31:00.000Z",
+  "runtime": {
+    "source": "tests/smoke/schedule-phase3-4-algo-metrics.smoke.spec.ts",
+    "note": "Instrumentation storage was unavailable in this run; deltas use interaction-fallback timings.",
+    "pre": {
+      "scheduleLoadMs": 2882,
+      "runStep2ActionMs": 122,
+      "runStep3ActionMs": 403
+    },
+    "post": {
+      "scheduleLoadMs": 2804,
+      "runStep2ActionMs": 173,
+      "runStep3ActionMs": 559
+    },
+    "delta": {
+      "scheduleLoadMs": -78,
+      "runStep2ActionMs": 51,
+      "runStep3ActionMs": 156
+    }
+  },
+  "codeHotspotCounts": {
+    "pre": {
+      "specialProgramAllocationSomeChecksInPcaAllocation": 8,
+      "existingAllocationsFindCallsInFloatingHelpers": 4,
+      "findScansInReservationLogic": 4
+    },
+    "post": {
+      "specialProgramAllocationSomeChecksInPcaAllocation": 0,
+      "existingAllocationsFindCallsInFloatingHelpers": 1,
+      "findScansInReservationLogic": 0
+    },
+    "delta": {
+      "specialProgramAllocationSomeChecksInPcaAllocation": -8,
+      "existingAllocationsFindCallsInFloatingHelpers": -3,
+      "findScansInReservationLogic": -4
+    }
+  }
+}

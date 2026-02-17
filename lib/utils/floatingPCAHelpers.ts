@@ -176,6 +176,14 @@ export function findAvailablePCAs(options: FindAvailablePCAsOptions): (PCAData &
     avoidGym,
   } = options
 
+  // Build a first-allocation index once per call to avoid repeated O(n) scans in filter/sort.
+  const allocationByStaffId = new Map<string, PCAAllocation>()
+  for (const allocation of existingAllocations) {
+    if (!allocationByStaffId.has(allocation.staff_id)) {
+      allocationByStaffId.set(allocation.staff_id, allocation)
+    }
+  }
+
   return pcaPool
     .filter(pca => {
       // 1. Must be floating and on duty
@@ -206,7 +214,7 @@ export function findAvailablePCAs(options: FindAvailablePCAsOptions): (PCAData &
       const pcaAvail = getNormalizedPcaAvailableSlots(pca)
 
       // 4. Get or create allocation for this PCA
-      const allocation = existingAllocations.find(a => a.staff_id === pca.id)
+      const allocation = allocationByStaffId.get(pca.id)
       
       // 5. Check if required slot is available (if specified)
       if (requiredSlot !== undefined) {
@@ -244,8 +252,8 @@ export function findAvailablePCAs(options: FindAvailablePCAsOptions): (PCAData &
     })
     .sort((a, b) => {
       // Sort by FTE remaining (highest first)
-      const aAlloc = existingAllocations.find(alloc => alloc.staff_id === a.id)
-      const bAlloc = existingAllocations.find(alloc => alloc.staff_id === b.id)
+      const aAlloc = allocationByStaffId.get(a.id)
+      const bAlloc = allocationByStaffId.get(b.id)
       const aFTE = aAlloc?.fte_remaining ?? a.fte_pca
       const bFTE = bAlloc?.fte_remaining ?? b.fte_pca
       return bFTE - aFTE
