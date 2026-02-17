@@ -1,0 +1,21 @@
+{
+  "label": "phase3_1_1771257536849",
+  "collectedAt": "2026-02-16T15:58:56.849Z",
+  "scheduleLoadMs": 3813,
+  "navigation": {
+    "ttfbMs": 481.69999980926514,
+    "domContentLoadedMs": 494.19999980926514,
+    "loadEventMs": 803.4000000953674,
+    "durationMs": 803.4000000953674
+  },
+  "webVitals": {
+    "fcpMs": 516,
+    "lcpMs": 1948,
+    "cls": 0.12314081255594889
+  },
+  "interaction": {
+    "sourceTeam": "FO",
+    "targetTeam": "SMM",
+    "popoverShown": false
+  }
+}

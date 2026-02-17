@@ -1,0 +1,21 @@
+{
+  "label": "pre_optimistic",
+  "collectedAt": "2026-02-16T14:49:55.008Z",
+  "scheduleLoadMs": 4888,
+  "navigation": {
+    "ttfbMs": 538.5999999046326,
+    "domContentLoadedMs": 561.3999996185303,
+    "loadEventMs": 874.3999996185303,
+    "durationMs": 874.3999996185303
+  },
+  "webVitals": {
+    "fcpMs": 580,
+    "lcpMs": 2764,
+    "cls": 0.12314081255594889
+  },
+  "interaction": {
+    "sourceTeam": "FO",
+    "targetTeam": "SMM",
+    "popoverShown": false
+  }
+}

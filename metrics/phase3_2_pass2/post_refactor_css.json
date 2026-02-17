@@ -1,0 +1,17 @@
+{
+  "label": "post_refactor_pass2",
+  "total_bytes": 115162,
+  "total_gzip_bytes": 19359,
+  "files": [
+    {
+      "file": "2e980c04d0c82fef.css",
+      "bytes": 113099,
+      "gzip_bytes": 18708
+    },
+    {
+      "file": "7e7d96b1e6991756.css",
+      "bytes": 2063,
+      "gzip_bytes": 651
+    }
+  ]
+}

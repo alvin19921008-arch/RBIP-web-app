@@ -1,0 +1,21 @@
+{
+  "label": "pre_refactor",
+  "collectedAt": "2026-02-16T14:21:49.940Z",
+  "scheduleLoadMs": 3954,
+  "navigation": {
+    "ttfbMs": 599.6000003814697,
+    "domContentLoadedMs": 617.4000000953674,
+    "loadEventMs": 940.2000002861023,
+    "durationMs": 940.2000002861023
+  },
+  "webVitals": {
+    "fcpMs": 636,
+    "lcpMs": 2208,
+    "cls": 0.12314081255594889
+  },
+  "interaction": {
+    "sourceTeam": "FO",
+    "targetTeam": "SMM",
+    "popoverShown": false
+  }
+}

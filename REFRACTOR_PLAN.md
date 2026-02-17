@@ -221,7 +221,7 @@ Phase 3 collects the remaining high-ROI moves that keep every scheduler interact
   - Measure: record Scheduler bundle chunk sizes plus Chrome DevTools trace (Step 3 drag path) before and after.
 
 -#### 3.1 Execution Log (2026-02-16)
-- Status: In progress (3.1 state extraction + `useOptimistic` layer completed; instrumentation removed; `use(promise)`-style suspense wrapping is still optional/follow-up).
+- Status: Done (3.1 state extraction + `useOptimistic` layer completed; instrumentation removed; `use(promise)` suspense wrapping intentionally deferred due low measurable ROI for current Step 3 DnD flow).
 - Refactor implemented:
   - Added `lib/features/schedule/dnd/dragState.ts` to centralize PCA/Therapist drag-state types plus active/idle creators.
   - Rewired `app/(dashboard)/schedule/page.tsx` to use shared drag-state creators for init/reset/activation paths (StaffPool drag, card drag, transfer/discard reset, slot-selection close).
@@ -251,6 +251,8 @@ Phase 3 collects the remaining high-ROI moves that keep every scheduler interact
 | CWV `CLS` | 0.12314 | 0.12314 | ~0 | metrics JSON |
 
 > Note: perf deltas are within normal single-run variance; no functional regressions were observed in smoke flows.
+
+> Verification note (2026-02-17): Slot transfer/discard paths are local synchronous state updates (`setPcaAllocations`, `setStaffOverrides`, `setPendingPCAFTEPerTeam`) with `useOptimistic` already applied for UI preview. Current phase-3.1 metrics do not show a bottleneck that `use(promise)` would directly remove, so additional suspense wrapping is not expected to produce high ROI at this stage.
 
 ### 3.2 Tailwind CSS-first cleanup + tokenization
 - Scope:
@@ -375,8 +377,7 @@ Phase 3 collects the remaining high-ROI moves that keep every scheduler interact
     - `findAvailablePCAs(...)` now builds a single `allocationByStaffId` index per call, replacing repeated `existingAllocations.find(...)` checks during filter/sort.
   - Added map-backed lookup caching in `lib/utils/reservationLogic.ts`:
     - `computeReservations(...)`, `executeSlotAssignments(...)`, and `computeAdjacentSlotReservations(...)` now use `Map` indexes for PCA/allocation lookups instead of repeated `.find()` scans.
-  - Added Step 2/3 runtime instrumentation and Phase 3.4 smoke driver:
-    - `lib/features/schedule/controller/useScheduleController.ts` now emits `window.__rbipScheduleAlgoPerf` entries for Step 2/3 runs.
+  - Added Phase 3.4 smoke driver (the temporary Step 2/3 runtime instrumentation used for metric capture was removed after phase closeout):
     - New `tests/smoke/schedule-phase3-4-algo-metrics.smoke.spec.ts` runs deterministic `Leave Sim` actions (`Run Step 2` -> `Run Step 3`) so step-flow guards are satisfied by design.
 - Verification:
   - Targeted Phase 3.4 smoke metric runs: pass (pre + post snapshots generated).

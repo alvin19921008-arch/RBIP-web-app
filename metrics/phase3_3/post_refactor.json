@@ -1,0 +1,37 @@
+{
+  "label": "post_refactor_phase3_3",
+  "schedule_chunk": {
+    "label": "static/chunks/app/(dashboard)/schedule/page-393b72d4e83a71e7.js",
+    "statSize": 1598081,
+    "parsedSize": 447309,
+    "gzipSize": 116823
+  },
+  "page_module": {
+    "path": "./app/(dashboard)/schedule/page.tsx + 42 modules (concatenated)/app/(dashboard)/schedule/page.tsx",
+    "statSize": 740996,
+    "parsedSize": 204754,
+    "gzipSize": 52635
+  },
+  "css_total_bytes": 115162,
+  "css_total_gzip_bytes": 19359,
+  "css_files": [
+    {
+      "file": "2e980c04d0c82fef.css",
+      "bytes": 113099,
+      "gzip_bytes": 18708
+    },
+    {
+      "file": "7e7d96b1e6991756.css",
+      "bytes": 2063,
+      "gzip_bytes": 651
+    }
+  ],
+  "page_inline_staff_update_calls": 0,
+  "page_loader_query_calls": {
+    "staff_select_calls": 0,
+    "special_programs_select_calls": 0,
+    "spt_allocations_select_calls": 0,
+    "wards_select_calls": 0,
+    "pca_preferences_select_calls": 0
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "schedule_chunk_stat_delta": 4413,
+  "schedule_chunk_parsed_delta": 2049,
+  "schedule_chunk_gzip_delta": 471,
+  "page_module_stat_delta": -2958,
+  "page_module_parsed_delta": -326,
+  "page_module_gzip_delta": -89,
+  "css_total_bytes_delta": 0,
+  "css_total_gzip_bytes_delta": 0,
+  "page_inline_staff_update_calls_delta": -6,
+  "page_loader_query_calls_delta": {
+    "staff_select_calls": -2,
+    "special_programs_select_calls": -2,
+    "spt_allocations_select_calls": -2,
+    "wards_select_calls": -3,
+    "pca_preferences_select_calls": -2
+  }
+}

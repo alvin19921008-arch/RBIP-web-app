@@ -1,0 +1,17 @@
+{
+  "label": "pre_refactor",
+  "total_bytes": 115612,
+  "total_gzip_bytes": 19549,
+  "files": [
+    {
+      "file": "7a3f518dfb6ac73d.css",
+      "bytes": 113549,
+      "gzip_bytes": 18898
+    },
+    {
+      "file": "7e7d96b1e6991756.css",
+      "bytes": 2063,
+      "gzip_bytes": 651
+    }
+  ]
+}

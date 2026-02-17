@@ -211,6 +211,19 @@ import {
   type PcaDragState,
   type TherapistDragState,
 } from '@/lib/features/schedule/dnd/dragState'
+import {
+  fetchPcaPreferencesWithFallback,
+  fetchSpecialProgramsWithFallback,
+  fetchSptAllocationsWithFallback,
+  fetchStaffRowsWithFallback,
+  fetchWardsWithFallback,
+  splitStaffRowsByStatus,
+} from '@/lib/features/schedule/controller/dataGateway'
+import {
+  convertBufferStaffToInactiveAction,
+  promoteInactiveStaffToBufferAction,
+  updateBufferStaffTeamAction,
+} from './actions'
 
 
 function SchedulePageContent() {
@@ -2468,128 +2481,69 @@ function SchedulePageContent() {
   }
 
   const loadStaff = async () => {
-    const mapRowsToState = (rows: Staff[]) => {
-      const normalizedRows = rows.map((row) => {
-        const rawStatus = (row as any)?.status
-        const hasSupportedStatus =
-          rawStatus === 'active' || rawStatus === 'inactive' || rawStatus === 'buffer'
-
-        if (hasSupportedStatus) return row
-
-        // Legacy compatibility: old schemas only store [active] boolean (no [status]/[buffer]).
-        const legacyActive = (row as any)?.active
-        const normalizedStatus = typeof legacyActive === 'boolean'
-          ? (legacyActive ? 'active' : 'inactive')
-          : 'active'
-
-        return {
-          ...row,
-          status: normalizedStatus,
-        } as Staff
-      })
-
-      const activeRows = normalizedRows.filter((s) => s.status === 'active' || s.status == null)
-      const inactiveRows = normalizedRows.filter((s) => s.status === 'inactive')
-      const bufferRows = normalizedRows.filter((s) => s.status === 'buffer')
-
-      setInactiveStaff(inactiveRows)
-      setBufferStaff(bufferRows)
-      // Include buffer staff in main staff array for allocation algorithms.
-      setStaff([...activeRows, ...bufferRows])
-    }
-
-    const attempt = await supabase
-      .from('staff')
-      .select(STAFF_SELECT_FIELDS)
-      .order('rank', { ascending: true })
-      .order('name', { ascending: true })
-
-    if (!attempt.error) {
-      mapRowsToState(((attempt.data || []) as Staff[]))
+    const result = await fetchStaffRowsWithFallback({
+      supabase,
+      selectFields: STAFF_SELECT_FIELDS,
+    })
+    if (!result.data) {
+      console.error(result.error || 'Error loading staff.')
       return
     }
 
-    const isColumnFallbackCandidate =
-      attempt.error.message?.includes('column') ||
-      attempt.error.code === '42703'
-
-    if (!isColumnFallbackCandidate) {
-      console.error('Error loading staff (status query):', attempt.error)
-      return
-    }
-
-    // Generic fallback: load all columns, then normalize status from either [status] or legacy [active].
-    const fallback = await supabase
-      .from('staff')
-      .select('*')
-      .order('rank', { ascending: true })
-      .order('name', { ascending: true })
-
-    if (fallback.error) {
-      console.error('Error loading staff (fallback query):', fallback.error)
-      return
-    }
-
-    mapRowsToState(((fallback.data || []) as Staff[]))
+    const { activeRows, inactiveRows, bufferRows } = splitStaffRowsByStatus(result.data)
+    setInactiveStaff(inactiveRows)
+    setBufferStaff(bufferRows)
+    // Include buffer staff in main staff array for allocation algorithms.
+    setStaff([...activeRows, ...bufferRows])
   }
 
   const loadSpecialPrograms = async () => {
-    const attempt = await supabase
-      .from('special_programs')
-      .select(SPECIAL_PROGRAM_SELECT_FIELDS)
-    let res = attempt
-    if (attempt.error && (attempt.error.message?.includes('column') || attempt.error.code === '42703')) {
-      res = await supabase.from('special_programs').select('*')
-    }
-    if (res.data) {
-      setSpecialPrograms(res.data as SpecialProgram[])
+    const result = await fetchSpecialProgramsWithFallback({
+      supabase,
+      selectFields: SPECIAL_PROGRAM_SELECT_FIELDS,
+    })
+    if (result.data) {
+      setSpecialPrograms(result.data)
+    } else if (result.error) {
+      console.error(result.error)
     }
   }
 
   const loadSPTAllocations = async () => {
-    // Load all SPT allocations (active and inactive), filter in code
-    const attempt = await supabase.from('spt_allocations').select(SPT_ALLOC_SELECT_FIELDS)
-    let res = attempt
-    if (attempt.error && (attempt.error.message?.includes('column') || attempt.error.code === '42703')) {
-      res = await supabase.from('spt_allocations').select('*')
-    }
-    if (res.data) {
-      // Filter for active allocations (active !== false, handles null as active)
-      const activeAllocations = res.data.filter(a => (a as any).active !== false) as SPTAllocation[]
-      setSptAllocations(activeAllocations)
+    const result = await fetchSptAllocationsWithFallback({
+      supabase,
+      selectFields: SPT_ALLOC_SELECT_FIELDS,
+    })
+    if (result.data) {
+      setSptAllocations(result.data)
+    } else if (result.error) {
+      console.error(result.error)
     }
   }
 
 
   const loadWards = async () => {
-    const attempt = await supabase.from('wards').select(WARDS_SELECT_FIELDS)
-    let res = attempt
-    if (attempt.error?.message?.includes('team_assignment_portions')) {
-      res = await supabase.from('wards').select('id,name,total_beds,team_assignments')
-    } else if (attempt.error && (attempt.error.message?.includes('column') || attempt.error.code === '42703')) {
-      res = await supabase.from('wards').select('*')
-    }
-    if (res.data) {
-      setWards(
-        res.data.map((ward: any) => ({
-          name: ward.name,
-          total_beds: ward.total_beds,
-          team_assignments: ward.team_assignments || {},
-          team_assignment_portions: ward.team_assignment_portions || {},
-        }))
-      )
+    const result = await fetchWardsWithFallback({
+      supabase,
+      selectFields: WARDS_SELECT_FIELDS,
+    })
+    if (result.data) {
+      setWards(result.data)
+    } else if (result.error) {
+      console.error(result.error)
     }
   }
 
 
   const loadPCAPreferences = async () => {
-    const attempt = await supabase.from('pca_preferences').select(PCA_PREFS_SELECT_FIELDS)
-    let res = attempt
-    if (attempt.error && (attempt.error.message?.includes('column') || attempt.error.code === '42703')) {
-      res = await supabase.from('pca_preferences').select('*')
-    }
-    if (res.data) {
-      setPcaPreferences(res.data as PCAPreference[])
+    const result = await fetchPcaPreferencesWithFallback({
+      supabase,
+      selectFields: PCA_PREFS_SELECT_FIELDS,
+    })
+    if (result.data) {
+      setPcaPreferences(result.data)
+    } else if (result.error) {
+      console.error(result.error)
     }
   }
 
@@ -4114,16 +4068,9 @@ function SchedulePageContent() {
 
                 ;(async () => {
                   try {
-                    const { error } = await supabase
-                      .from('staff')
-                      .update({ status: 'buffer' })
-                      .in('id', inactiveSelectedIds)
-
-                    if (error) {
-                      // Fallback for legacy schema without 'status' column
-                      if (error.message?.includes('column') || (error as any).code === 'PGRST116') {
-                        await supabase.from('staff').update({ active: true }).in('id', inactiveSelectedIds)
-                      }
+                    const promotionResult = await promoteInactiveStaffToBufferAction(inactiveSelectedIds)
+                    if (!promotionResult.ok) {
+                      console.error('Error promoting inactive staff to buffer:', promotionResult.error)
                     }
 
                     await loadStaff()
@@ -7036,17 +6983,14 @@ function SchedulePageContent() {
             // Remove buffer therapist from team using shared function
             removeTherapistAllocationFromTeam(staffId, currentTeam)
             
-            // Update staff.team to null in database
-            supabase
-              .from('staff')
-              .update({ team: null })
-              .eq('id', staffId)
-              .then(() => {
-                // Update local state
-                setBufferStaff(prev => prev.map(s => 
-                  s.id === staffId ? { ...s, team: null } : s
-                ))
-              })
+            // Update buffer staff team in database via server action.
+            updateBufferStaffTeamAction(staffId, null).then((result) => {
+              if (!result.ok) return
+              // Update local state
+              setBufferStaff(prev => prev.map(s =>
+                s.id === staffId ? { ...s, team: null } : s
+              ))
+            })
           }
         }
       }
@@ -7114,16 +7058,13 @@ function SchedulePageContent() {
     // For buffer therapist, also update the staff.team in the database
     // For fixed-team staff (APPT, RPT), do NOT change staff.team - it's only a staff override
     if (isBufferStaff) {
-      supabase
-        .from('staff')
-        .update({ team: targetTeam })
-        .eq('id', staffId)
-        .then(() => {
-          // Update local state
-          setBufferStaff(prev => prev.map(s => 
-            s.id === staffId ? { ...s, team: targetTeam } : s
-          ))
-        })
+      updateBufferStaffTeamAction(staffId, targetTeam).then((result) => {
+        if (!result.ok) return
+        // Update local state
+        setBufferStaff(prev => prev.map(s =>
+          s.id === staffId ? { ...s, team: targetTeam } : s
+        ))
+      })
     }
     
     // For fixed-team staff (APPT, RPT), the FTE is carried to target team
@@ -7811,13 +7752,10 @@ function SchedulePageContent() {
                   },
                 }))
 
-                supabase
-                  .from('staff')
-                  .update({ team: targetTeam })
-                  .eq('id', staffId)
-                  .then(() => {
-                    setBufferStaff(prev => prev.map(s => (s.id === staffId ? { ...s, team: targetTeam } : s)))
-                  })
+                updateBufferStaffTeamAction(staffId, targetTeam).then((result) => {
+                  if (!result.ok) return
+                  setBufferStaff(prev => prev.map(s => (s.id === staffId ? { ...s, team: targetTeam } : s)))
+                })
 
                 closeSptPoolAssignAction()
                 return
@@ -7878,16 +7816,12 @@ function SchedulePageContent() {
             onConfirm={async () => {
               const id = bufferStaffConvertConfirm.staffId
               if (!id) return
-              const { error } = await supabase
-                .from('staff')
-                .update({ status: 'inactive', team: null })
-                .eq('id', id)
-
-              if (error) {
-                showActionToast('Failed to convert to inactive. Please try again.', 'error')
-              } else {
+              const result = await convertBufferStaffToInactiveAction(id)
+              if (result.ok) {
                 showActionToast('Converted to inactive.', 'success')
                 loadStaff()
+              } else {
+                showActionToast('Failed to convert to inactive. Please try again.', 'error')
               }
 
               setBufferStaffConvertConfirm({ show: false, position: null, staffId: null, staffName: null })

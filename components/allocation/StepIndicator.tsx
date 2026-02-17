@@ -320,11 +320,9 @@ export function StepIndicator({
                     disabled={isLoading}
                     size="sm"
                     variant="default"
-                    className="h-8 bg-blue-600 hover:bg-blue-700 text-white rbip-cta-primary"
+                    className="h-8 bg-blue-600 text-white transition-[transform,box-shadow,filter] duration-200 ease-out hover:bg-blue-700 hover:-translate-y-px hover:shadow-md active:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:hover:shadow-none"
                   >
-                    <span className="rbip-cta-text">
-                      {isLoading ? 'Running...' : isInitialized ? 'Re-run Algorithm' : 'Initialize Algorithm'}
-                    </span>
+                    {isLoading ? 'Running...' : isInitialized ? 'Re-run Algorithm' : 'Initialize Algorithm'}
                   </Button>
                 ) : null}
               </div>

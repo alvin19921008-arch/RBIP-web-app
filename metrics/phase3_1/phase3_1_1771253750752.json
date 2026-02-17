@@ -1,0 +1,25 @@
+{
+  "label": "phase3_1_1771253750752",
+  "collectedAt": "2026-02-16T14:55:50.752Z",
+  "scheduleLoadMs": 3984,
+  "navigation": {
+    "ttfbMs": 624.5999999046326,
+    "domContentLoadedMs": 638.2999997138977,
+    "loadEventMs": 951.3999996185303,
+    "durationMs": 951.3999996185303
+  },
+  "webVitals": {
+    "fcpMs": 664,
+    "lcpMs": 2328,
+    "cls": 0.12314081255594889
+  },
+  "interaction": {
+    "sourceTeam": "FO",
+    "targetTeam": "SMM",
+    "popoverShown": false
+  },
+  "dndPersistence": {
+    "eventsCaptured": 0,
+    "latestEvent": null
+  }
+}

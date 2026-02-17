@@ -216,7 +216,7 @@ export function ScheduleHeaderBar(props: {
                   type="button"
                   aria-label="Previous working day"
                   onClick={() => props.onSelectDate(prevWorkingDay)}
-                  className="px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-110 active:scale-95 border-r border-border"
+                  className="rbip-nav-date-btn px-2 py-1.5 hover:scale-110 border-r border-border"
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
@@ -230,7 +230,7 @@ export function ScheduleHeaderBar(props: {
                   const target = isWorkingDay(today) ? today : getNextWorkingDay(today)
                   props.onSelectDate(target)
                 }}
-                className="px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-105 active:scale-95 border-r border-border"
+                className="rbip-nav-date-btn px-3 py-1.5 text-xs font-medium hover:scale-105 border-r border-border"
               >
                 Today
               </button>
@@ -240,7 +240,7 @@ export function ScheduleHeaderBar(props: {
                   type="button"
                   aria-label="Next working day"
                   onClick={() => props.onSelectDate(nextWorkingDay)}
-                  className="px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all duration-150 hover:scale-110 active:scale-95"
+                  className="rbip-nav-date-btn px-2 py-1.5 hover:scale-110"
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>

@@ -784,53 +784,10 @@ export function PCADedicatedScheduleTable({
         onMouseMove={pokeControls}
         onMouseLeave={hideControlsNow}
       >
-        <style jsx>{`
-          .pca-scroll-container::-webkit-scrollbar {
-            height: 12px;
-          }
-          .pca-scroll-container::-webkit-scrollbar-track {
-            background: #e5e7eb;
-            border-bottom-right-radius: 0.375rem;
-            border-bottom-left-radius: 0.375rem;
-          }
-          .pca-scroll-container::-webkit-scrollbar-thumb {
-            background-color: #9ca3af;
-            border-radius: 6px;
-            border: 3px solid #e5e7eb;
-          }
-          .pca-scroll-container::-webkit-scrollbar-thumb:hover {
-            background-color: #6b7280;
-          }
-          :global(.dark) .pca-scroll-container::-webkit-scrollbar-track {
-            background: #1f2937;
-            border: 3px solid #1f2937;
-          }
-          :global(.dark) .pca-scroll-container::-webkit-scrollbar-thumb {
-            background-color: #4b5563;
-            border: 3px solid #1f2937;
-          }
-          :global(.dark) .pca-scroll-container::-webkit-scrollbar-thumb:hover {
-            background-color: #6b7280;
-          }
-
-          .pca-scroll-container--hidden {
-            scrollbar-width: none;
-          }
-          .pca-scroll-container--hidden::-webkit-scrollbar {
-            height: 0px;
-          }
-          .pca-scroll-container--hidden::-webkit-scrollbar-track {
-            background: transparent;
-          }
-          .pca-scroll-container--hidden::-webkit-scrollbar-thumb {
-            background: transparent;
-            border: 0;
-          }
-        `}</style>
         <div
           ref={scrollRef}
-          className={`w-full overflow-x-auto overscroll-x-contain pca-scroll-container ${
-            controlsVisible ? '' : 'pca-scroll-container--hidden'
+          className={`w-full overflow-x-auto overscroll-x-contain pca-like-scrollbar ${
+            controlsVisible ? '' : 'pca-like-scrollbar--hidden'
           }`}
         >
           {tableNodeForColumns(columns, 'interactive', { stickyLeft: true })}

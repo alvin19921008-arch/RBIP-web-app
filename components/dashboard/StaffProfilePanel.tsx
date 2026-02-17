@@ -969,7 +969,7 @@ export function StaffProfilePanel() {
 
               {/* Staff Table */}
               <div className="border rounded-lg overflow-hidden">
-                <div className="overflow-y-auto max-h-[calc(100vh-400px)] staff-table-scroll">
+                <div className="overflow-y-auto max-h-[calc(100vh-400px)] scrollbar-visible">
                   <table className="w-full">
                     <thead className="bg-muted sticky top-0 z-10">
                     <tr>

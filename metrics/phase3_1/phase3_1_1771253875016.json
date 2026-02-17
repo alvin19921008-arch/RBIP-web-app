@@ -1,0 +1,36 @@
+{
+  "label": "phase3_1_1771253875016",
+  "collectedAt": "2026-02-16T14:57:55.016Z",
+  "scheduleLoadMs": 6633,
+  "navigation": {
+    "ttfbMs": 817.4000000953674,
+    "domContentLoadedMs": 832.3000001907349,
+    "loadEventMs": 1144.8000001907349,
+    "durationMs": 1144.8000001907349
+  },
+  "webVitals": {
+    "fcpMs": 852,
+    "lcpMs": 2308,
+    "cls": 0.12314081255594889
+  },
+  "interaction": {
+    "sourceTeam": "CPPC",
+    "targetTeam": "FO",
+    "popoverShown": false
+  },
+  "dndPersistence": {
+    "eventsCaptured": 1,
+    "latestEvent": {
+      "id": "dnd-1771253874711-1",
+      "kind": "transfer",
+      "status": "completed",
+      "uiToPersistenceMs": 156.69999980926514,
+      "persistenceDurationMs": 155.59999990463257,
+      "sourceTeam": "CPPC",
+      "targetTeam": "FO",
+      "slots": [
+        1
+      ]
+    }
+  }
+}
