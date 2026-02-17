@@ -97,6 +97,10 @@ const ScheduleCopyWizard = dynamic(
 const StaffEditDialog = dynamic(() => import('@/components/allocation/StaffEditDialog').then(m => m.StaffEditDialog), {
   ssr: false,
 })
+const Step1LeaveSetupDialog = dynamic(
+  () => import('@/components/allocation/Step1LeaveSetupDialog').then((m) => m.Step1LeaveSetupDialog),
+  { ssr: false }
+)
 const FloatingPCAConfigDialog = dynamic(
   () => import('@/components/allocation/FloatingPCAConfigDialog').then(m => m.FloatingPCAConfigDialog),
   { ssr: false }
@@ -1010,6 +1014,7 @@ function SchedulePageContent() {
   const [copying, setCopying] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [editingStaffId, setEditingStaffId] = useState<string | null>(null)
+  const [step1LeaveSetupOpen, setStep1LeaveSetupOpen] = useState(false)
   const [tieBreakDialogOpen, setTieBreakDialogOpen] = useState(false)
   const [tieBreakTeams, setTieBreakTeams] = useState<Team[]>([])
   const [tieBreakPendingFTE, setTieBreakPendingFTE] = useState<number>(0)
@@ -1043,6 +1048,17 @@ function SchedulePageContent() {
       displayText?: string | null
       assignedTeam?: Team | null
     }
+  }
+
+  type Step1BulkEditPayload = {
+    staffId: string
+    leaveType: LeaveType | null
+    fteRemaining: number
+    fteSubtraction?: number
+    availableSlots?: number[]
+    invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
+    amPmSelection?: 'AM' | 'PM'
+    specialProgramAvailable?: boolean
   }
 
   // Domain state moved into useScheduleController() (Stage 2 / Option A).
@@ -3493,6 +3509,24 @@ function SchedulePageContent() {
       }
     } catch (error) {
       console.error('Error updating allocations after staff edit:', error)
+    }
+  }
+
+  const handleSaveStep1LeaveSetup = async (args: { edits: Step1BulkEditPayload[] }) => {
+    const edits = Array.isArray(args.edits) ? args.edits : []
+    if (edits.length === 0) {
+      setStep1LeaveSetupOpen(false)
+      return
+    }
+
+    try {
+      scheduleActions.applyBulkStaffEditsDomain({ edits: edits as any })
+      recalculateScheduleCalculations()
+      setStep1LeaveSetupOpen(false)
+      showActionToast('Step 1 leave setup saved.', 'success')
+    } catch (error) {
+      console.error('Failed to save step 1 leave setup:', error)
+      showActionToast('Failed to save step 1 leave setup.', 'destructive')
     }
   }
 
@@ -9634,6 +9668,7 @@ function SchedulePageContent() {
               else if (currentStep === 'floating-pca') prefetchStep3Algorithms()
               else if (currentStep === 'bed-relieving') prefetchBedAlgorithm()
             }}
+            onOpenLeaveSetup={isViewingMode ? undefined : () => setStep1LeaveSetupOpen(true)}
             onClearStep={handleClearStep}
             showClear={showClearForCurrentStep}
             isInitialized={initializedSteps.has(currentStep)}
@@ -11348,6 +11383,20 @@ function SchedulePageContent() {
             />
           )
         })()}
+          step1LeaveSetupDialog={
+            step1LeaveSetupOpen ? (
+              <Step1LeaveSetupDialog
+                open={step1LeaveSetupOpen}
+                onOpenChange={setStep1LeaveSetupOpen}
+                staff={staff}
+                staffOverrides={staffOverrides as any}
+                specialPrograms={specialPrograms}
+                sptAllocations={sptAllocations}
+                weekday={currentWeekday}
+                onSaveDraft={handleSaveStep1LeaveSetup}
+              />
+            ) : null
+          }
           staffEditDialog={editingStaffId && (() => {
           const staffMember = staff.find(s => s.id === editingStaffId)
           if (!staffMember) return null

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Check, Circle, ChevronRight, ChevronLeft, AlertCircle, HelpCircle } from 'lucide-react'
+import { Check, Circle, ChevronRight, ChevronLeft, AlertCircle, HelpCircle, FilePenLine } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverArrow, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -34,6 +34,7 @@ interface StepIndicatorProps {
   showClear?: boolean
   isInitialized?: boolean
   isLoading?: boolean
+  onOpenLeaveSetup?: () => void
 }
 
 export function StepIndicator({
@@ -56,6 +57,7 @@ export function StepIndicator({
   showClear = true,
   isInitialized = false,
   isLoading = false,
+  onOpenLeaveSetup,
 }: StepIndicatorProps) {
   const currentStepIndex = steps.findIndex(s => s.id === currentStep)
   const currentStepData = steps[currentStepIndex]
@@ -66,6 +68,7 @@ export function StepIndicator({
     typeof onResetToBaseline === 'function' &&
     canClear
   const [clearMenuOpen, setClearMenuOpen] = useState(false)
+  const canOpenLeaveSetup = currentStep === 'leave-fte' && typeof onOpenLeaveSetup === 'function'
 
   return (
     <div
@@ -249,7 +252,7 @@ export function StepIndicator({
               </span>
             </div>
 
-            {(canClear || canInitialize) ? (
+            {(canClear || canInitialize || canOpenLeaveSetup) ? (
               <div className="flex items-center justify-center gap-2 flex-wrap">
                 {canClear && showClear && onClearStep ? (
                   canResetBaseline ? (
@@ -310,6 +313,19 @@ export function StepIndicator({
                       Clear
                     </Button>
                   )
+                ) : null}
+                {canOpenLeaveSetup ? (
+                  <Button
+                    type="button"
+                    onClick={onOpenLeaveSetup}
+                    disabled={isLoading}
+                    size="sm"
+                    variant="default"
+                    className="h-8 bg-blue-600 text-white transition-[transform,box-shadow,filter] duration-200 ease-out hover:bg-blue-700 hover:-translate-y-px hover:shadow-md active:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:hover:shadow-none"
+                  >
+                    <FilePenLine className="h-4 w-4 mr-1.5" />
+                    Leave setup
+                  </Button>
                 ) : null}
                 {canInitialize ? (
                   <Button

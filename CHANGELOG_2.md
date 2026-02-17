@@ -9,6 +9,7 @@
 - **Step 2.2 SPT dialog custom leave types**: When leave type is "others", dialog now shows a custom text input field that preserves the custom leave description from Step 1. Custom text is displayed in the leave badge and saved as the actual leave type.
 - **Step 2.1 streamlined layout**: Removed outer border boxes, consolidated header to single row (PCA name + team badge + missing slots), removed redundant table caption. Added visual hierarchy with horizontal dividers instead of nested containers.
 - **StaffEditDialog SPT FTE visualization**: Added minus (−) and equals (=) symbols between FTE fields to show equation relationship (FTE − FTE Cost = FTE Remaining). Added instruction text for SPT leave edit.
+- **Step 1 leave setup wizard**: Added a multi-stage dialog that builds the leave draft list, keeps therapist and PCA edits separate, supports quick search/picker interactions, and previews exactly which staff have leave before saving; the draft list now only surfaces staff with a non-on-duty leave type.
 
 ### Fixed
 - **SpecialProgramOverrideDialog slot re-selection bug**: Fixed issue where deselecting and reselecting a slot would show it as "uncovered" even though the primary PCA could cover it. Now auto-assigns primary PCA to re-added slots.

@@ -1864,7 +1864,7 @@ export function useScheduleController(params: {
     return entry
   }
 
-  const applyStaffEditDomain = (args: {
+  type Step1LeaveEditArgs = {
     staffId: string
     leaveType: LeaveType | null
     fteRemaining: number
@@ -1873,7 +1873,9 @@ export function useScheduleController(params: {
     invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
     amPmSelection?: 'AM' | 'PM'
     specialProgramAvailable?: boolean
-  }) => {
+  }
+
+  const applyStaffEditDomain = (args: Step1LeaveEditArgs) => {
     captureUndoCheckpoint('Leave/FTE edit')
     // Step 1 edits invalidate Step 2-derived state. Clear Step 2-only keys so Step 2.0 can
     // re-seed from dashboard config (preselect therapist/PCA/slots) instead of stale overrides.
@@ -1890,6 +1892,54 @@ export function useScheduleController(params: {
         specialProgramAvailable: args.specialProgramAvailable,
       },
     }
+
+    setStaffOverrides(nextOverrides)
+
+    // Any manual edit invalidates “saved allocations” assumptions and downstream steps.
+    setHasSavedAllocations(false)
+    setStep2Result(null)
+    setInitializedSteps(new Set())
+    setStepStatus((prev) => ({
+      ...(prev as any),
+      'leave-fte': 'modified',
+      'therapist-pca': 'pending',
+      'floating-pca': 'pending',
+      'bed-relieving': 'pending',
+      review: 'pending',
+    }))
+
+    if (currentStep !== 'leave-fte') {
+      setCurrentStep('leave-fte')
+    }
+
+    return nextOverrides
+  }
+
+  const applyBulkStaffEditsDomain = (args: { edits: Step1LeaveEditArgs[] }) => {
+    const edits = Array.isArray(args.edits) ? args.edits : []
+    if (edits.length === 0) return staffOverrides
+
+    captureUndoCheckpoint('Leave/FTE bulk edit')
+
+    // Step 1 edits invalidate Step 2-derived state. Clear Step 2-only keys so Step 2.0 can
+    // re-seed from dashboard config (preselect therapist/PCA/slots) instead of stale overrides.
+    const baseOverrides = removeStep2KeysFromOverrides(staffOverrides as any)
+    const nextOverrides: Record<string, StaffOverrideState> = {
+      ...(baseOverrides as any),
+    }
+
+    edits.forEach((edit) => {
+      if (!edit?.staffId) return
+      nextOverrides[edit.staffId] = {
+        leaveType: edit.leaveType,
+        fteRemaining: edit.fteRemaining,
+        fteSubtraction: edit.fteSubtraction,
+        availableSlots: edit.availableSlots,
+        invalidSlots: edit.invalidSlots,
+        amPmSelection: edit.amPmSelection,
+        specialProgramAvailable: edit.specialProgramAvailable,
+      }
+    })
 
     setStaffOverrides(nextOverrides)
 
@@ -4022,6 +4072,7 @@ export function useScheduleController(params: {
     canUndo: undoStack.length > 0,
     canRedo: redoStack.length > 0,
     applyStaffEditDomain,
+    applyBulkStaffEditsDomain,
     setScheduleStaffStatusOverride,
     clearScheduleStaffStatusOverride,
     updateBedRelievingNotes,

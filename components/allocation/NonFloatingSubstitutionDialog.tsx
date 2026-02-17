@@ -14,21 +14,11 @@ import { cn } from '@/lib/utils'
 import { getTeamFloor, isFloorPCAForTeam, getTeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
 import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
+import { getTeamTheme } from '@/components/allocation/teamThemePalette'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
-// Step 2.1 Wizard team themes:
-// Used to visually differentiate teams when multiple teams need non-floating substitution on the same day.
-// NOTE: We intentionally keep these light (50 backgrounds, 200 borders, 700 text) for readability.
-// Added 2 more themes to reduce early recycling (4th+ team).
-const TEAM_THEME_PALETTE = [
-  { badge: 'border-sky-200 bg-sky-50 text-sky-700', panel: 'border-sky-200 bg-sky-50/40 text-sky-950' },
-  { badge: 'border-emerald-200 bg-emerald-50 text-emerald-700', panel: 'border-emerald-200 bg-emerald-50/40 text-emerald-950' },
-  { badge: 'border-violet-200 bg-violet-50 text-violet-700', panel: 'border-violet-200 bg-violet-50/40 text-violet-950' },
-  // New themes (to avoid quick recycling)
-  { badge: 'border-teal-200 bg-teal-50 text-teal-700', panel: 'border-teal-200 bg-teal-50/40 text-teal-950' },
-  { badge: 'border-rose-200 bg-rose-50 text-rose-700', panel: 'border-rose-200 bg-rose-50/40 text-rose-950' },
-] as const
+// Step 2.1 Wizard team themes are shared via `teamThemePalette`.
 
 interface NonFloatingSubstitutionDialogProps {
   open: boolean
@@ -113,7 +103,7 @@ export function NonFloatingSubstitutionDialog({
   // For single team mode, always use the first (and only) team
   const currentTeam = isWizardMode ? teams[currentTeamIndex] : teams[0]
   const currentSubstitutions = substitutionsByTeam[currentTeam] || []
-  const currentTheme = TEAM_THEME_PALETTE[currentTeamIndex % TEAM_THEME_PALETTE.length]
+  const currentTheme = getTeamTheme(currentTeam)
 
   // Use availableFloatingPCAs directly from substitution data (already filtered and sorted by algorithm)
   const availablePCAsByNonFloating = useMemo(() => {
