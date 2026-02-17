@@ -6,6 +6,19 @@
 ## [Unreleased] - 2026-02-17
 
 ### Added
+- **Step 2.2 SPT dialog custom leave types**: When leave type is "others", dialog now shows a custom text input field that preserves the custom leave description from Step 1. Custom text is displayed in the leave badge and saved as the actual leave type.
+- **Step 2.1 streamlined layout**: Removed outer border boxes, consolidated header to single row (PCA name + team badge + missing slots), removed redundant table caption. Added visual hierarchy with horizontal dividers instead of nested containers.
+- **StaffEditDialog SPT FTE visualization**: Added minus (−) and equals (=) symbols between FTE fields to show equation relationship (FTE − FTE Cost = FTE Remaining). Added instruction text for SPT leave edit.
+
+### Fixed
+- **SpecialProgramOverrideDialog slot re-selection bug**: Fixed issue where deselecting and reselecting a slot would show it as "uncovered" even though the primary PCA could cover it. Now auto-assigns primary PCA to re-added slots.
+- **SPT leave state sync in Step 2.2**: SPTs with any non-on-duty leave type now correctly display as "leave" state in Step 2.2 dialog.
+
+### Changed
+- **StaffEditDialog AM/PM selection**: Removed AM/PM selection for SPT rank; now only available for RPT and APPT therapists.
+- **Step 2.2 SPT dialog spacing**: Reduced vertical padding in "Add SPT" section (py-4 → py-2), increased card title size (text-base → text-lg), tightened card content spacing (pt-3 → pt-2, space-y-3 → space-y-2).
+
+### Added
 - **Step 2.2 SPT dialog UI revamp**: New three-state design (Working/Leave/Off) with conditional field visibility. Replaced binary Enabled toggle with segmented control. Team Assignment Override moved to primary section with all 8 teams available. Leave type now prominent when "On Leave" state selected. Card header shows Slots (e.g., "1, 2"), FTE, and Team badges. FTE simplified/detail toggle when 3 slots (0.75 FTE). Compact spacing throughout. New ToggleGroup and Separator UI components.
 
 ### Reverted
