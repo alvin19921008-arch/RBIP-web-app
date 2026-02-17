@@ -23,24 +23,11 @@ export async function GET(request: NextRequest) {
 
     const dateStr = formatDate(dateParam)
 
-    // Try to load schedule with snapshot/overrides columns; fall back for legacy DB schemas
-    let { data: schedule, error: scheduleError } = await supabase
+    const { data: schedule, error: scheduleError } = await supabase
       .from('daily_schedules')
       .select('id, baseline_snapshot, staff_overrides')
       .eq('date', dateStr)
       .maybeSingle()
-
-    // If DB is missing the new columns (baseline_snapshot/staff_overrides), retry with minimal selection.
-    // This keeps the copy wizard functional even before migrations are applied.
-    if (scheduleError && (scheduleError as any)?.code === '42703') {
-      const fallback = await supabase
-        .from('daily_schedules')
-        .select('id')
-        .eq('date', dateStr)
-        .maybeSingle()
-      schedule = fallback.data as any
-      scheduleError = fallback.error as any
-    }
 
     if (scheduleError) {
       return NextResponse.json({ error: 'Failed to load schedule' }, { status: 500 })

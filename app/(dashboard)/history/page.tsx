@@ -110,23 +110,12 @@ export default function HistoryPage() {
     setLoading(true)
     startTopLoading(0.05)
     try {
-      // Query all schedules that have any allocation data
-      // Prefer workflow_state for completion badges when available (legacy-safe fallback).
+      // Query all schedules that have any allocation data.
       bumpTopLoadingTo(0.15)
-      let { data: scheduleData, error: scheduleError } = await supabase
+      const { data: scheduleData, error: scheduleError } = await supabase
         .from('daily_schedules')
         .select('id, date, workflow_state')
         .order('date', { ascending: false })
-
-      if (scheduleError && scheduleError.message?.includes('column')) {
-        bumpTopLoadingTo(0.2)
-        const fallback = await supabase
-          .from('daily_schedules')
-          .select('id, date')
-          .order('date', { ascending: false })
-        scheduleData = fallback.data as any
-        scheduleError = fallback.error as any
-      }
 
       if (scheduleError) {
         console.error('Error loading schedules:', scheduleError)

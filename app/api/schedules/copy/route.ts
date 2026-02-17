@@ -22,13 +22,7 @@ interface CopyScheduleRequest {
 }
 
 async function buildBaselineSnapshot(supabase: any): Promise<BaselineSnapshot> {
-  const safeSelect = async (table: string, columns: string) => {
-    const res = await supabase.from(table).select(columns)
-    if (res.error && (res.error.message?.includes('column') || (res.error as any)?.code === '42703')) {
-      return await supabase.from(table).select('*')
-    }
-    return res
-  }
+  const safeSelect = async (table: string, columns: string) => supabase.from(table).select(columns)
 
   const staffPromise = safeSelect(
     'staff',
@@ -286,7 +280,7 @@ export async function POST(request: NextRequest) {
 
       const admin = tryCreateAdmin()
       if (admin) {
-        // Try new signature first (with include-buffer flag), then fall back to legacy signature.
+        // Use current RPC signature with include-buffer flag.
         const attemptWithFlag = await admin.rpc('pull_global_to_snapshot_v1', {
           p_date: toDateStr,
           p_categories: categories,
@@ -303,13 +297,6 @@ export async function POST(request: NextRequest) {
             (msg.includes('schema cache') || msg.includes('Could not find') || msg.includes('not found')))
         if (!isMissingFn) {
           // Non-missing error (e.g. not_authorized before migration): fall through to JS fallback.
-        } else {
-          const attemptLegacy = await admin.rpc('pull_global_to_snapshot_v1', {
-            p_date: toDateStr,
-            p_categories: categories,
-            p_note: `Auto-rebase baseline after copy from ${fromDateStr}`,
-          } as any)
-          if (!attemptLegacy.error) return
         }
       }
 

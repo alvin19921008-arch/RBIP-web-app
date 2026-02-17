@@ -33,14 +33,6 @@ const SPT_ALLOC_SNAPSHOT_DIFF_SELECT_FIELDS =
 const snapshotDiffLiveInputsCache = new Map<string, { expiresAt: number; value: SnapshotDiffLiveInputs }>()
 const snapshotDiffLiveInputsInFlight = new Map<string, Promise<SnapshotDiffLiveInputs>>()
 
-function isMissingColumnError(error: any): boolean {
-  return !!error && (String(error?.message || '').includes('column') || String(error?.code || '') === '42703')
-}
-
-function isMissingTeamAssignmentPortionsError(error: any): boolean {
-  return !!error && String(error?.message || '').includes('team_assignment_portions')
-}
-
 async function withInFlight<T>(key: string | null, make: () => Promise<T>): Promise<T> {
   if (!key) return make()
   const existing = snapshotDiffLiveInputsInFlight.get(key)
@@ -72,45 +64,20 @@ export async function fetchSnapshotDiffLiveInputs(
   }
 
   const value = await withInFlight(scopedKey, async () => {
-    const teamSettingsAttemptPromise = includeTeamSettings
+    const teamSettingsQueryPromise = includeTeamSettings
       ? params.supabase.from('team_settings').select(TEAM_SETTINGS_SELECT_FIELDS)
       : Promise.resolve({ data: [], error: null } as QueryResult)
 
-    const [staffRes, teamSettingsAttempt, wardsRes, prefsRes, programsRes, sptRes] = await Promise.all([
+    const [staffRes, teamSettingsRes, wardsRes, prefsRes, programsRes, sptRes] = await Promise.all([
       params.supabase.from('staff').select(STAFF_SNAPSHOT_DIFF_SELECT_FIELDS),
-      teamSettingsAttemptPromise,
+      teamSettingsQueryPromise,
       params.supabase.from('wards').select(WARDS_SNAPSHOT_DIFF_SELECT_FIELDS),
       params.supabase.from('pca_preferences').select(PCA_PREFS_SNAPSHOT_DIFF_SELECT_FIELDS),
       params.supabase.from('special_programs').select(SPECIAL_PROGRAM_SNAPSHOT_DIFF_SELECT_FIELDS),
       params.supabase.from('spt_allocations').select(SPT_ALLOC_SNAPSHOT_DIFF_SELECT_FIELDS),
     ])
 
-    let effectiveWardsRes: QueryResult = wardsRes
-    if (isMissingTeamAssignmentPortionsError((wardsRes as any)?.error)) {
-      effectiveWardsRes = await params.supabase.from('wards').select('id,name,total_beds,team_assignments')
-    } else if (isMissingColumnError((wardsRes as any)?.error)) {
-      effectiveWardsRes = await params.supabase.from('wards').select('*')
-    }
-
-    let effectivePrefsRes: QueryResult = prefsRes
-    if (isMissingColumnError((prefsRes as any)?.error)) {
-      effectivePrefsRes = await params.supabase.from('pca_preferences').select('*')
-    }
-
-    let effectiveProgramsRes: QueryResult = programsRes
-    if (isMissingColumnError((programsRes as any)?.error)) {
-      effectiveProgramsRes = await params.supabase.from('special_programs').select('*')
-    }
-
-    let effectiveSptRes: QueryResult = sptRes
-    if (isMissingColumnError((sptRes as any)?.error)) {
-      effectiveSptRes = await params.supabase.from('spt_allocations').select('*')
-    }
-
-    let effectiveTeamSettingsRes: QueryResult = teamSettingsAttempt
-    if (includeTeamSettings && isMissingColumnError((teamSettingsAttempt as any)?.error)) {
-      effectiveTeamSettingsRes = await params.supabase.from('team_settings').select('*')
-    }
+    let effectiveTeamSettingsRes: QueryResult = teamSettingsRes
     // Team settings diff is additive; keep main diff working even if this optional category fails.
     if ((effectiveTeamSettingsRes as any)?.error) {
       effectiveTeamSettingsRes = { data: [], error: null }
@@ -118,19 +85,19 @@ export async function fetchSnapshotDiffLiveInputs(
 
     const firstError =
       (staffRes as any).error ||
-      (effectiveWardsRes as any).error ||
-      (effectivePrefsRes as any).error ||
-      (effectiveProgramsRes as any).error ||
-      (effectiveSptRes as any).error
+      (wardsRes as any).error ||
+      (prefsRes as any).error ||
+      (programsRes as any).error ||
+      (sptRes as any).error
     if (firstError) throw firstError
 
     return {
       staff: (staffRes as any).data || [],
       teamSettings: includeTeamSettings ? (effectiveTeamSettingsRes as any).data || [] : [],
-      wards: (effectiveWardsRes as any).data || [],
-      pcaPreferences: (effectivePrefsRes as any).data || [],
-      specialPrograms: (effectiveProgramsRes as any).data || [],
-      sptAllocations: (effectiveSptRes as any).data || [],
+      wards: (wardsRes as any).data || [],
+      pcaPreferences: (prefsRes as any).data || [],
+      specialPrograms: (programsRes as any).data || [],
+      sptAllocations: (sptRes as any).data || [],
     }
   })
 

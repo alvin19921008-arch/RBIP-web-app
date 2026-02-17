@@ -1107,17 +1107,6 @@ export function useScheduleController(params: {
 
       scheduleData = initialResult.data as any
       queryError = initialResult.error
-
-      if (queryError && queryError.message?.includes('column')) {
-        const fallbackResult = await supabase
-          .from('daily_schedules')
-          .select('id, is_tentative')
-          .eq('date', dateStr)
-          .maybeSingle()
-        innerTimer.stage('select:daily_schedules:fallback')
-        scheduleData = fallbackResult.data as { id: string; is_tentative: boolean } | null
-        queryError = (fallbackResult as any).error
-      }
     }
 
     let scheduleId: string
@@ -1153,15 +1142,8 @@ export function useScheduleController(params: {
       innerTimer.stage('insert:daily_schedules')
 
       if (insertAttempt.error) {
-        // Fallback if columns don't exist
-        const fallbackInsert = await supabase
-          .from('daily_schedules')
-          .insert({ date: dateStr, is_tentative: true } as any)
-          .select('id, is_tentative')
-          .single()
-        innerTimer.stage('insert:daily_schedules:fallback')
-        scheduleData = fallbackInsert.data as any
-        queryError = (fallbackInsert as any).error
+        scheduleData = null
+        queryError = (insertAttempt as any).error
       } else {
         scheduleData = insertAttempt.data as any
       }
@@ -1208,7 +1190,7 @@ export function useScheduleController(params: {
     let scheduleCalcsRows: any[] = rpcUsed ? ((rpcBundle as any).calculations as any[]) : []
 
     if (!rpcUsed) {
-      // Non-RPC fallback: separate queries (minimal selects with safe fallback)
+      // Non-RPC path: separate queries.
       batchedQueriesUsed = true
       const therapistSelect =
         'id,schedule_id,staff_id,team,fte_therapist,fte_remaining,slot_whole,slot1,slot2,slot3,slot4,leave_type,special_program_ids,is_substitute_team_head,spt_slot_display,is_manual_override,manual_override_note'
@@ -1218,29 +1200,11 @@ export function useScheduleController(params: {
       const calcSelect =
         'id,schedule_id,team,designated_wards,total_beds_designated,total_beds,total_pt_on_duty,beds_per_pt,pt_per_team,beds_for_relieving,pca_on_duty,total_pt_per_pca,total_pt_per_team,average_pca_per_team,base_average_pca_per_team,expected_beds_per_team,required_pca_per_team'
 
-      const [tAttempt, pAttempt, bAttempt, cAttempt] = await Promise.all([
+      const [tRes, pRes, bRes, cRes] = await Promise.all([
         supabase.from('schedule_therapist_allocations').select(therapistSelect).eq('schedule_id', scheduleId),
         supabase.from('schedule_pca_allocations').select(pcaSelect).eq('schedule_id', scheduleId),
         supabase.from('schedule_bed_allocations').select(bedSelect).eq('schedule_id', scheduleId),
         supabase.from('schedule_calculations').select(calcSelect).eq('schedule_id', scheduleId),
-      ])
-
-      const needsColumnFallback = (error?: any) =>
-        !!error && (error.message?.includes('column') || error.code === '42703')
-
-      const [tRes, pRes, bRes, cRes] = await Promise.all([
-        needsColumnFallback((tAttempt as any)?.error)
-          ? supabase.from('schedule_therapist_allocations').select('*').eq('schedule_id', scheduleId)
-          : Promise.resolve(tAttempt),
-        needsColumnFallback((pAttempt as any)?.error)
-          ? supabase.from('schedule_pca_allocations').select('*').eq('schedule_id', scheduleId)
-          : Promise.resolve(pAttempt),
-        needsColumnFallback((bAttempt as any)?.error)
-          ? supabase.from('schedule_bed_allocations').select('*').eq('schedule_id', scheduleId)
-          : Promise.resolve(bAttempt),
-        needsColumnFallback((cAttempt as any)?.error)
-          ? supabase.from('schedule_calculations').select('*').eq('schedule_id', scheduleId)
-          : Promise.resolve(cAttempt),
       ])
 
       innerTimer.stage('select:allocations')
@@ -1264,17 +1228,11 @@ export function useScheduleController(params: {
           referencedStaffIds,
           fetchLiveStaffByIds: async (ids: string[]) => {
             if (ids.length === 0) return []
-            const attempt = await supabase
+            const result = await supabase
               .from('staff')
               .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program')
               .in('id', ids)
-            if (!attempt.error) return (attempt.data || []) as any[]
-            // Legacy fallback: older schemas may not have status/buffer_fte columns
-            if (attempt.error.message?.includes('column') || (attempt.error as any)?.code === '42703') {
-              const fallback = await supabase.from('staff').select('*').in('id', ids)
-              return (fallback.data || []) as any[]
-            }
-            return (attempt.data || []) as any[]
+            return (result.data || []) as any[]
           },
           buildFallbackBaseline: buildBaselineSnapshotFromCurrentState,
           sourceForNewEnvelope: 'migration',
@@ -1471,7 +1429,6 @@ export function useScheduleController(params: {
   const loadAndHydrateDate = async (args: {
     date: Date
     signal?: AbortSignal
-    loadAllDataFallback?: () => Promise<void>
     recalculateScheduleCalculations?: () => void
   }) => {
     const timer = createTimingCollector()
@@ -1568,23 +1525,6 @@ export function useScheduleController(params: {
       let resultAny: any = await loadScheduleForDate(date)
       timer.stage('loadScheduleForDate')
       if (args.signal?.aborted) return null
-
-      // Fallback for legacy schedules without baseline_snapshot: load base tables once, then retry.
-      const snapshotStaff0: any[] = (resultAny?.baselineSnapshot?.staff || []) as any[]
-      const needsBaseDataFallback =
-        !resultAny?.meta?.baselineSnapshotUsed &&
-        snapshotStaff0.length === 0 &&
-        staff.length === 0 &&
-        (Array.isArray(resultAny?.therapistAllocs) || Array.isArray(resultAny?.pcaAllocs))
-
-      if (needsBaseDataFallback && args.loadAllDataFallback) {
-        await args.loadAllDataFallback()
-        timer.stage('loadAllDataFallback')
-        if (args.signal?.aborted) return null
-        resultAny = await loadScheduleForDate(date)
-        timer.stage('retryLoadScheduleForDate')
-        if (args.signal?.aborted) return null
-      }
 
       if (!resultAny) {
         setScheduleLoadedForDate(dateStr)
@@ -2743,16 +2683,11 @@ export function useScheduleController(params: {
               referencedStaffIds: referencedIds,
               fetchLiveStaffByIds: async (ids: string[]) => {
                 if (ids.length === 0) return []
-                const attempt = await params.supabase
+                const result = await params.supabase
                   .from('staff')
                   .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program')
                   .in('id', ids)
-                if (!attempt.error) return (attempt.data || []) as any[]
-                if (attempt.error.message?.includes('column') || (attempt.error as any)?.code === '42703') {
-                  const fallback = await params.supabase.from('staff').select('*').in('id', ids)
-                  return (fallback.data || []) as any[]
-                }
-                return (attempt.data || []) as any[]
+                return (result.data || []) as any[]
               },
               buildFallbackBaseline: buildBaselineSnapshotFromCurrentState,
               sourceForNewEnvelope: 'save',

@@ -3,6 +3,14 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-02-17
+
+### Added
+- **Step 2.2 SPT dialog UI revamp**: New three-state design (Working/Leave/Off) with conditional field visibility. Replaced binary Enabled toggle with segmented control. Team Assignment Override moved to primary section (no longer in "More options"). Leave type now prominent when "On Leave" state selected. Compact spacing throughout. Simplified card header with status badges. New ToggleGroup and Separator UI components.
+
+### Reverted
+- **Step 2.1 UI**: Reverted experimental UI changes; restored original navigation for NonFloatingSubstitutionDialog.
+
 ## [Unreleased] - 2026-02-13
 
 ### Added

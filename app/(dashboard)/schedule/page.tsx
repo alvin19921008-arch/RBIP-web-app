@@ -152,12 +152,6 @@ const prefetchScheduleCalendarPopover = () => import('@/components/schedule/Sche
 
 const STAFF_SELECT_FIELDS =
   'id,name,rank,special_program,team,floating,floor_pca,status,buffer_fte'
-const WARDS_SELECT_FIELDS =
-  'id,name,total_beds,team_assignments,team_assignment_portions'
-const PCA_PREFS_SELECT_FIELDS =
-  'id,team,preferred_pca_ids,preferred_slots,avoid_gym_schedule,gym_schedule,floor_pca_selection'
-const SPECIAL_PROGRAM_SELECT_FIELDS =
-  'id,name,staff_ids,weekdays,slots,fte_subtraction,pca_required,therapist_preference_order,pca_preference_order'
 const SPT_ALLOC_SELECT_FIELDS =
   'id,staff_id,specialty,teams,weekdays,slots,slot_modes,fte_addon,config_by_weekday,substitute_team_head,is_rbip_supervisor,active'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -212,11 +206,8 @@ import {
   type TherapistDragState,
 } from '@/lib/features/schedule/dnd/dragState'
 import {
-  fetchPcaPreferencesWithFallback,
-  fetchSpecialProgramsWithFallback,
   fetchSptAllocationsWithFallback,
   fetchStaffRowsWithFallback,
-  fetchWardsWithFallback,
   splitStaffRowsByStatus,
 } from '@/lib/features/schedule/controller/dataGateway'
 import {
@@ -2055,7 +2046,6 @@ function SchedulePageContent() {
       const report = await loadAndHydrateDate({
         date: selectedDate,
         signal: controller.signal,
-        loadAllDataFallback: loadAllData,
         recalculateScheduleCalculations,
       })
       if (cancelled || controller.signal.aborted) return
@@ -2463,23 +2453,6 @@ function SchedulePageContent() {
 
   // applyBaselineSnapshot/buildBaselineSnapshotFromCurrentState moved into useScheduleController()
 
-  const loadAllData = async () => {
-    setLoading(true)
-    try {
-      await Promise.all([
-        loadStaff(),
-        loadSpecialPrograms(),
-        loadSPTAllocations(),
-        loadWards(),
-        loadPCAPreferences(),
-      ])
-    } catch (error) {
-      console.error('Error loading data:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
   const loadStaff = async () => {
     const result = await fetchStaffRowsWithFallback({
       supabase,
@@ -2497,18 +2470,6 @@ function SchedulePageContent() {
     setStaff([...activeRows, ...bufferRows])
   }
 
-  const loadSpecialPrograms = async () => {
-    const result = await fetchSpecialProgramsWithFallback({
-      supabase,
-      selectFields: SPECIAL_PROGRAM_SELECT_FIELDS,
-    })
-    if (result.data) {
-      setSpecialPrograms(result.data)
-    } else if (result.error) {
-      console.error(result.error)
-    }
-  }
-
   const loadSPTAllocations = async () => {
     const result = await fetchSptAllocationsWithFallback({
       supabase,
@@ -2516,32 +2477,6 @@ function SchedulePageContent() {
     })
     if (result.data) {
       setSptAllocations(result.data)
-    } else if (result.error) {
-      console.error(result.error)
-    }
-  }
-
-
-  const loadWards = async () => {
-    const result = await fetchWardsWithFallback({
-      supabase,
-      selectFields: WARDS_SELECT_FIELDS,
-    })
-    if (result.data) {
-      setWards(result.data)
-    } else if (result.error) {
-      console.error(result.error)
-    }
-  }
-
-
-  const loadPCAPreferences = async () => {
-    const result = await fetchPcaPreferencesWithFallback({
-      supabase,
-      selectFields: PCA_PREFS_SELECT_FIELDS,
-    })
-    if (result.data) {
-      setPcaPreferences(result.data)
     } else if (result.error) {
       console.error(result.error)
     }
