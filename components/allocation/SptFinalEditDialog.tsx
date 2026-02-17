@@ -669,7 +669,15 @@ export function SptFinalEditDialog(props: {
 
                         {card.state === 'working' && effectiveEnabled && (
                           <Badge variant="secondary" className="border border-border/60 text-[10px] px-1.5 py-0.5">
-                            FTE: <span className="ml-0.5 font-medium text-foreground">{fteChipText}</span>
+                            {computed.effectiveSlots.total > 0 ? `${computed.effectiveSlots.total} slots` : 'No slots'}
+                            {showToggle && (
+                              <button
+                                onClick={() => updateCard(card.staffId, { displayText: showDetailedDisplay ? null : slotDisplayText })}
+                                className="ml-1 underline opacity-60 hover:opacity-100"
+                              >
+                                {showDetailedDisplay ? 'Simple' : 'Detail'}
+                              </button>
+                            )}
                           </Badge>
                         )}
 
@@ -679,9 +687,9 @@ export function SptFinalEditDialog(props: {
                           </Badge>
                         )}
 
-                        {card.state === 'working' && card.teamChoice !== 'AUTO' && (
+                        {card.state === 'working' && (
                           <Badge variant="secondary" className="border border-border/60 text-[10px] px-1.5 py-0.5">
-                            {card.teamChoice}
+                            {card.teamChoice === 'AUTO' ? `Auto: ${suggestedTeam}` : card.teamChoice}
                           </Badge>
                         )}
                       </div>
@@ -855,7 +863,7 @@ export function SptFinalEditDialog(props: {
 
                           <div className="space-y-1.5 pt-1">
                             <div className="flex items-center justify-between gap-2">
-                              <Label className="text-xs shrink-0">Team Assignment</Label>
+                              <Label className="text-xs shrink-0">Team Assignment Override</Label>
                               <Switch
                                 checked={card.teamChoice !== 'AUTO'}
                                 onCheckedChange={(v) => {
@@ -876,13 +884,13 @@ export function SptFinalEditDialog(props: {
                             ) : (
                               <Select
                                 value={teamValue}
-                                onValueChange={(v) => updateCard(card.staffId, { teamChoice: v === 'AUTO' ? 'AUTO' : (v as Team) })}
+                                onValueChange={(v) => updateCard(card.staffId, { teamChoice: v as Team })}
                               >
                                 <SelectTrigger className="h-8 text-xs">
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {allowedTeams.map((t) => (
+                                  {TEAMS.map((t) => (
                                     <SelectItem key={t} value={t} className="text-xs">{t}</SelectItem>
                                   ))}
                                 </SelectContent>
