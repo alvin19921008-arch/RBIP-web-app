@@ -136,6 +136,7 @@ type CardState = {
 
   leaveType: LeaveType | null
   leaveCostInput: string
+  customLeaveType?: string // For 'others' leave type with custom text
 
   /** 'AUTO' means use suggested team at confirm time. */
   teamChoice: Team | 'AUTO'
@@ -286,7 +287,17 @@ export function SptFinalEditDialog(props: {
           ? (existingOnDay.displayText ?? null)
           : dashDisplayText
 
-      const leaveType = existing?.leaveType ?? null
+      // Handle leave type - if it's a custom type (not in standard list), split it into 'others' + custom text
+      let rawLeaveType = existing?.leaveType ?? null
+      let leaveType: LeaveType | null = rawLeaveType
+      let customLeaveType: string | undefined = undefined
+      
+      if (rawLeaveType && !LEAVE_TYPES.includes(rawLeaveType as any)) {
+        // Custom leave type stored as the actual text - split into 'others' + custom text
+        leaveType = 'others'
+        customLeaveType = rawLeaveType
+      }
+      
       const forceDisableByLeave =
         typeof leaveType === 'string' && SPT_FULL_LEAVE_TYPES_FORCE_DISABLE.has(leaveType)
       const leaveCost =
@@ -304,8 +315,10 @@ export function SptFinalEditDialog(props: {
       const allowedTeams = Array.isArray(allowedTeamsRaw) && allowedTeamsRaw.length > 0 ? allowedTeamsRaw : TEAMS
 
       // Determine initial state based on existing data
+      // If SPT has any leave type set (and it's not an on-duty leave type like attending course), show as leave
       let initialState: SPTState
-      if (forceDisableByLeave || (!enabled && leaveType && !isOnDutyLeaveType(leaveType))) {
+      const hasNonOnDutyLeave = leaveType && !isOnDutyLeaveType(leaveType)
+      if (forceDisableByLeave || hasNonOnDutyLeave) {
         initialState = 'leave'
       } else if (!enabled) {
         initialState = 'off'
@@ -334,6 +347,7 @@ export function SptFinalEditDialog(props: {
         displayText,
         leaveType,
         leaveCostInput: String(Math.max(0, leaveCost)),
+        customLeaveType,
         teamChoice: forceDisableByLeave ? 'AUTO' : (seedTeam ?? 'AUTO'),
       }
     })
@@ -413,6 +427,7 @@ export function SptFinalEditDialog(props: {
         displayText: null,
         leaveType: null,
         leaveCostInput: '0',
+        customLeaveType: undefined,
         teamChoice: 'AUTO',
       },
     ])
@@ -497,8 +512,14 @@ export function SptFinalEditDialog(props: {
       const resolvedTeam: Team | undefined =
         shouldAllocate ? (card.teamChoice === 'AUTO' ? suggested : card.teamChoice) : undefined
 
+      // Determine final leave type: if 'others' with custom text, use the custom text; otherwise use the type
+      const finalLeaveType: LeaveType | null =
+        card.leaveType === 'others' && card.customLeaveType?.trim()
+          ? (card.customLeaveType.trim() as LeaveType)
+          : card.leaveType ?? null
+
       updates[card.staffId] = {
-        leaveType: card.leaveType ?? null,
+        leaveType: finalLeaveType,
         fteSubtraction: mappedFullLeaveCost,
         fteRemaining,
         ...(resolvedTeam ? { team: resolvedTeam } : {}),
@@ -626,14 +647,14 @@ export function SptFinalEditDialog(props: {
                     key={card.staffId}
                     className="min-w-[340px] max-w-[400px] w-[min(400px,calc(100vw-120px))] flex-shrink-0 h-full max-h-full min-h-0 overflow-y-auto overscroll-contain"
                   >
-                    <CardHeader className="pb-3">
+                    <CardHeader className="pb-2">
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex items-center gap-2">
                           <StatusIcon className={cn('h-4 w-4', 
                             card.state === 'working' ? 'text-emerald-600' : 
                             card.state === 'leave' ? 'text-rose-600' : 'text-slate-500'
                           )} />
-                          <CardTitle className="text-base">{card.staffName}</CardTitle>
+                          <CardTitle className="text-lg">{card.staffName}</CardTitle>
                         </div>
                         <div className="flex items-center gap-1">
                           {!(card.dashboard.enabled && card.dashboard.slots.length > 0) && (
@@ -688,7 +709,8 @@ export function SptFinalEditDialog(props: {
 
                         {card.state === 'leave' && card.leaveType && (
                           <Badge variant="secondary" className="border border-rose-200 text-[10px] px-1.5 py-0.5 bg-rose-50 text-rose-700">
-                            {String(card.leaveType)}
+                            {/* Show custom text if available, otherwise show the leave type */}
+                            {card.customLeaveType?.trim() || String(card.leaveType)}
                           </Badge>
                         )}
 
@@ -702,7 +724,7 @@ export function SptFinalEditDialog(props: {
 
                     <Separator />
 
-                    <CardContent className="pt-3 space-y-3">
+                    <CardContent className="pt-2 space-y-2">
                       {/* Three-state Toggle */}
                       <div className="space-y-1.5">
                         <Label className="text-xs">Status</Label>
@@ -916,7 +938,8 @@ export function SptFinalEditDialog(props: {
                                 if (v === '__NONE__') {
                                   updateCard(card.staffId, { 
                                     state: 'off',
-                                    leaveType: null, 
+                                    leaveType: null,
+                                    customLeaveType: undefined,
                                     leaveCostInput: '0',
                                     enabled: false 
                                   })
@@ -924,8 +947,14 @@ export function SptFinalEditDialog(props: {
                                 }
                                 const nextLeaveType = v as Exclude<LeaveType, null>
                                 const shouldForceDisable = SPT_FULL_LEAVE_TYPES_FORCE_DISABLE.has(nextLeaveType)
+                                // If changing FROM others TO something else, clear custom text
+                                // If changing TO others, keep any existing custom text or start empty
+                                const nextCustomLeaveType = nextLeaveType === 'others' 
+                                  ? (card.customLeaveType || '')
+                                  : undefined
                                 updateCard(card.staffId, { 
                                   leaveType: nextLeaveType,
+                                  customLeaveType: nextCustomLeaveType,
                                   leaveCostInput: shouldForceDisable 
                                     ? String(card.dashboard.baseFte ?? 0)
                                     : card.leaveCostInput,
@@ -945,6 +974,20 @@ export function SptFinalEditDialog(props: {
                               </SelectContent>
                             </Select>
                           </div>
+
+                          {/* Custom Leave Type text field when 'others' is selected */}
+                          {card.leaveType === 'others' && (
+                            <div className="space-y-1.5">
+                              <Label className="text-xs">Custom Leave Type</Label>
+                              <Input
+                                type="text"
+                                value={card.customLeaveType || ''}
+                                onChange={(e) => updateCard(card.staffId, { customLeaveType: e.target.value })}
+                                placeholder="Enter leave type description"
+                                className="h-8 text-xs"
+                              />
+                            </div>
+                          )}
 
                           {card.leaveType && (
                             <div className="space-y-1.5">
@@ -987,8 +1030,8 @@ export function SptFinalEditDialog(props: {
         </div>
 
         {/* Keep Add section OUTSIDE the carousel scroller to avoid “underlay” peeking */}
-        <div className="border-t px-6 py-4 bg-background">
-          <div className="space-y-2">
+        <div className="border-t px-6 py-2 bg-background">
+          <div className="space-y-1">
             <Label>Add SPT not configured on this day</Label>
 
             <div className="flex flex-wrap items-center gap-2">

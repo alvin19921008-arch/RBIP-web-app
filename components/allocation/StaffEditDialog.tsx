@@ -550,14 +550,14 @@ export function StaffEditDialog({
                     )}
                   </div>
                   <div>
-                    <Label htmlFor="fte-subtraction">FTE Cost due to Leave</Label>
+                    <Label htmlFor="fte-subtraction">FTE cost by leave</Label>
                   </div>
                   <div>
-                    <Label htmlFor="fte-remaining">FTE Remaining on Duty</Label>
+                    <Label htmlFor="fte-remaining">FTE Remaining</Label>
                   </div>
                 </div>
-                {/* Inputs row - aligned horizontally */}
-                <div className="grid grid-cols-3 gap-4 items-start">
+                {/* Inputs row with symbols */}
+                <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-2 items-center">
                   <Input
                     id="spt-base-fte"
                     type="text"
@@ -567,6 +567,7 @@ export function StaffEditDialog({
                     onBlur={handleSPTBaseFTEBlur}
                     placeholder="0.00"
                   />
+                  <div className="text-center text-muted-foreground font-medium text-lg">−</div>
                   <Input
                     id="fte-subtraction"
                     type="text"
@@ -577,6 +578,7 @@ export function StaffEditDialog({
                     className={!isValid ? 'border-red-500' : ''}
                     placeholder="0.00"
                   />
+                  <div className="text-center text-muted-foreground font-medium text-lg">=</div>
                   <Input
                     id="fte-remaining"
                     type="text"
@@ -589,6 +591,10 @@ export function StaffEditDialog({
                     disabled={isSPT}
                   />
                 </div>
+                {/* Instruction text for SPT */}
+                <p className="text-xs text-muted-foreground mt-1">
+                  Re-edit and final confirm for leave in Step 2.2
+                </p>
               </div>
             ) : (
               <div className={cn('grid gap-4', 'grid-cols-2')}>
@@ -633,8 +639,8 @@ export function StaffEditDialog({
             )}
           </div>
 
-          {/* AM/PM Selection for therapists when FTE = 0.5 or 0.25 */}
-          {isTherapistRank && (fteRemaining === 0.5 || fteRemaining === 0.25) && (
+          {/* AM/PM Selection for therapists (RPT/APPT only, not SPT) when FTE = 0.5 or 0.25 */}
+          {isTherapistRank && staffRank !== 'SPT' && (fteRemaining === 0.5 || fteRemaining === 0.25) && (
             <div className="space-y-2 mt-4">
               <Label htmlFor="am-pm-selection">AM/PM Selection</Label>
               <select

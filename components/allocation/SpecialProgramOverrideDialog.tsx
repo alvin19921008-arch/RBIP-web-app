@@ -1260,6 +1260,21 @@ export function SpecialProgramOverrideDialog({
         }
       })
 
+      // Auto-assign primary PCA to newly uncovered required slots when slot is re-added
+      if (current?.primaryPcaId || current?.pcaId) {
+        const primaryPcaId = current.primaryPcaId ?? current.pcaId
+        if (primaryPcaId) {
+          const coverableByPrimary = new Set(getCoverableSlotsForPCA(primaryPcaId, newSlots))
+          
+          newSlots.forEach((s) => {
+            const slot = s as SpecialProgramSlot
+            if (nextCoverage[slot]) return // Already has coverage
+            if (!coverableByPrimary.has(slot)) return // Primary can't cover
+            nextCoverage[slot] = primaryPcaId
+          })
+        }
+      }
+
       // Auto-calculate PCA FTE for Robotic/CRP
       const program = activePrograms.find(p => p.id === programId)
       const pcaFTE = (program?.name === 'Robotic' || program?.name === 'CRP')

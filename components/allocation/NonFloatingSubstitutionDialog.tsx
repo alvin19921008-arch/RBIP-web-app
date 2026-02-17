@@ -461,8 +461,9 @@ export function NonFloatingSubstitutionDialog({
               const extraGroups = groupPCAsByCategory(extraCandidates)
 
               return (
-                <div key={sub.nonFloatingPCAId} className="border rounded-lg p-4 space-y-4">
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                <div key={sub.nonFloatingPCAId} className="pb-4">
+                  {/* Streamlined header: PCA name + team badge + missing slots */}
+                  <div className="flex items-center gap-3 pb-3 mb-3 border-b">
                     <span className="font-semibold">{sub.nonFloatingPCAName}</span>
                     <Badge
                       variant="outline"
@@ -473,7 +474,7 @@ export function NonFloatingSubstitutionDialog({
                     >
                       {currentTeam}
                     </Badge>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-sm text-muted-foreground">
                       Missing slots: {sub.missingSlots.join(', ')}
                     </span>
                   </div>
@@ -482,15 +483,11 @@ export function NonFloatingSubstitutionDialog({
                       No available floating PCAs found for substitution.
                     </div>
                   ) : (
-                    <div className="space-y-4">
+                    <div>
                       {currentSelections.length > 0 ? (
-                        <div className="space-y-2">
-                          <div className="text-sm font-medium">Selected covers</div>
+                        <div className="space-y-3 mb-4">
                           <div className="overflow-x-auto rounded-md border">
                             <table className="w-full min-w-[680px] text-sm">
-                              <caption className="px-3 py-2 text-left text-sm font-semibold">
-                                {sub.nonFloatingPCAName}
-                              </caption>
                               <thead className="bg-muted/40">
                                 <tr>
                                   <th className="px-3 py-2 text-left font-medium">Floating PCA</th>
@@ -510,7 +507,7 @@ export function NonFloatingSubstitutionDialog({
                                   <td className="px-3 py-2 align-top">
                                     <div className="text-xs font-medium text-muted-foreground">Need coverage</div>
                                     <div className="mt-0.5 text-[11px] text-muted-foreground">
-                                      FTE: {sub.fte.toFixed(2)} · Missing slots: {sub.missingSlots.join(', ')}
+                                      FTE: {sub.fte.toFixed(2)} · Slots: {sub.missingSlots.join(', ')}
                                     </div>
                                   </td>
                                   {[1, 2, 3, 4].map((slot) => {
@@ -573,7 +570,7 @@ export function NonFloatingSubstitutionDialog({
 
                       {/* Preferred PCAs */}
                       {preferred.length > 0 && (
-                        <div>
+                        <div className={currentSelections.length === 0 ? 'mt-1' : ''}>
                           <div className="text-sm font-medium mb-2">Preferred PCAs</div>
                           <div className="space-y-2">
                             {preferred.map(pca => {
@@ -608,7 +605,7 @@ export function NonFloatingSubstitutionDialog({
 
                       {/* Floor PCAs */}
                       {floor.length > 0 && (
-                        <div>
+                        <div className={currentSelections.length === 0 ? 'mt-1' : ''}>
                           <div className="text-sm font-medium mb-2">
                             Floor PCAs ({teamFloor === 'upper' ? 'Upper' : teamFloor === 'lower' ? 'Lower' : 'N/A'})
                           </div>
@@ -645,7 +642,7 @@ export function NonFloatingSubstitutionDialog({
 
                       {/* Non-Floor PCAs */}
                       {nonFloor.length > 0 && (
-                        <div>
+                        <div className={currentSelections.length === 0 ? 'mt-1' : ''}>
                           <div className="text-sm font-medium mb-2">Non-Floor PCAs</div>
                           <div className="space-y-2">
                             {nonFloor.map(pca => {
@@ -679,7 +676,7 @@ export function NonFloatingSubstitutionDialog({
                       )}
 
                       {currentSelections.length > 0 ? (
-                        <div className="border-t pt-4 space-y-2">
+                        <div className={remainingSlots.length === 0 ? "mt-2" : "mt-4 pt-4 border-t space-y-2"}>
                           <div className="text-sm font-medium flex items-center gap-2">
                             {remainingSlots.length === 0 ? (
                               <span className="relative inline-flex h-4 w-4 shrink-0 items-center justify-center">
@@ -704,9 +701,7 @@ export function NonFloatingSubstitutionDialog({
                                 : 'All missing slots are covered'}
                             </span>
                           </div>
-                          {remainingSlots.length === 0 ? (
-                            <div className="sr-only">All missing slots are covered</div>
-                          ) : extraCandidates.length === 0 ? (
+                          {remainingSlots.length === 0 ? null : extraCandidates.length === 0 ? (
                             <div className="text-sm text-muted-foreground">
                               No additional floating PCAs can cover the remaining slot(s).
                             </div>
