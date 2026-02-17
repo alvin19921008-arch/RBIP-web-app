@@ -668,17 +668,22 @@ export function SptFinalEditDialog(props: {
                         </Badge>
 
                         {card.state === 'working' && effectiveEnabled && (
-                          <Badge variant="secondary" className="border border-border/60 text-[10px] px-1.5 py-0.5">
-                            {computed.effectiveSlots.total > 0 ? `${computed.effectiveSlots.total} slots` : 'No slots'}
-                            {showToggle && (
-                              <button
-                                onClick={() => updateCard(card.staffId, { displayText: showDetailedDisplay ? null : slotDisplayText })}
-                                className="ml-1 underline opacity-60 hover:opacity-100"
-                              >
-                                {showDetailedDisplay ? 'Simple' : 'Detail'}
-                              </button>
-                            )}
-                          </Badge>
+                          <>
+                            <Badge variant="secondary" className="border border-border/60 text-[10px] px-1.5 py-0.5">
+                              Slots: {card.slots.length > 0 ? card.slots.join(', ') : '—'}
+                            </Badge>
+                            <Badge variant="secondary" className="border border-border/60 text-[10px] px-1.5 py-0.5">
+                              {showDetailedDisplay ? slotDisplayText : `${formatFteShort(fteRemaining)} FTE`}
+                              {showToggle && (
+                                <button
+                                  onClick={() => updateCard(card.staffId, { displayText: showDetailedDisplay ? null : slotDisplayText })}
+                                  className="ml-1 underline opacity-60 hover:opacity-100"
+                                >
+                                  {showDetailedDisplay ? 'Simple' : 'Detail'}
+                                </button>
+                              )}
+                            </Badge>
+                          </>
                         )}
 
                         {card.state === 'leave' && card.leaveType && (

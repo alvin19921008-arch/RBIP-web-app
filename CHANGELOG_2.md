@@ -6,7 +6,7 @@
 ## [Unreleased] - 2026-02-17
 
 ### Added
-- **Step 2.2 SPT dialog UI revamp**: New three-state design (Working/Leave/Off) with conditional field visibility. Replaced binary Enabled toggle with segmented control. Team Assignment Override moved to primary section (no longer in "More options"). Leave type now prominent when "On Leave" state selected. Compact spacing throughout. Simplified card header with status badges. New ToggleGroup and Separator UI components.
+- **Step 2.2 SPT dialog UI revamp**: New three-state design (Working/Leave/Off) with conditional field visibility. Replaced binary Enabled toggle with segmented control. Team Assignment Override moved to primary section with all 8 teams available. Leave type now prominent when "On Leave" state selected. Card header shows Slots (e.g., "1, 2"), FTE, and Team badges. FTE simplified/detail toggle when 3 slots (0.75 FTE). Compact spacing throughout. New ToggleGroup and Separator UI components.
 
 ### Reverted
 - **Step 2.1 UI**: Reverted experimental UI changes; restored original navigation for NonFloatingSubstitutionDialog.
