@@ -3526,7 +3526,7 @@ function SchedulePageContent() {
       showActionToast('Step 1 leave setup saved.', 'success')
     } catch (error) {
       console.error('Failed to save step 1 leave setup:', error)
-      showActionToast('Failed to save step 1 leave setup.', 'destructive')
+      showActionToast('Failed to save step 1 leave setup.', 'error')
     }
   }
 
