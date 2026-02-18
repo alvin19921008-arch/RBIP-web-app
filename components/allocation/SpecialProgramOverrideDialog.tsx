@@ -7,9 +7,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Staff, StaffRank, Team, Weekday, SpecialProgram as StaffSpecialProgram } from '@/types/staff'
 import { SpecialProgram } from '@/types/allocation'
-import { AlertCircle, Edit2, ChevronDown, X } from 'lucide-react'
+import { AlertCircle, CircleHelp, Edit2, ChevronDown, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { BufferStaffCreateDialog } from './BufferStaffCreateDialog'
 import { SpecialProgramSubstitutionDialog } from '@/components/allocation/SpecialProgramSubstitutionDialog'
@@ -1393,7 +1394,26 @@ export function SpecialProgramOverrideDialog({
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-[95vw] max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+          <div className="absolute right-3 top-3 sm:right-4 sm:top-4">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label="Step 2.0 help">
+                  <CircleHelp className="h-4 w-4 text-muted-foreground" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-[340px] rounded-md border border-border bg-white p-3 shadow-md">
+                <div className="space-y-2 text-xs">
+                  <div className="font-medium text-foreground">Tip</div>
+                  <p className="text-muted-foreground">
+                    To de-select a PCA from a specific slot, hover over the PCA name shown under the slot button, then click the{' '}
+                    <span className="font-medium text-foreground">X</span>.
+                  </p>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+
+          <DialogHeader className="pr-10">
             <DialogTitle>Special program overrides</DialogTitle>
             <DialogDescription>
               <span className="block text-xs text-muted-foreground">Step 2.0 · Before allocation</span>
@@ -1692,39 +1712,52 @@ export function SpecialProgramOverrideDialog({
                             </Select>
                           </div>
 
-                          {/* Multi-cover picker: only show when required slots > 1 and still incomplete */}
-                          {currentSlots.length > 1 && primaryPcaId && remainingSlots.length > 0 ? (
+                          {/* Multi-cover helper: keep visible for multi-slot programs so user can adjust without re-opening. */}
+                          {currentSlots.length > 1 && primaryPcaId ? (
                             <div className="space-y-2">
-                              <Label>Cover remaining slots: {remainingSlots.join(', ')}</Label>
-                              <Select
-                                key={`${program.id}:${remainingSlots.join(',')}:${Array.from(selectedCoverageByPca.keys()).sort().join(',')}`}
-                                onValueChange={(value) => {
-                                  if (!value) return
-                                  // Assign this PCA to cover any currently-uncovered slots it can.
-                                  handleAdditionalPCASelection(program.id, value, true)
-                                }}
-                              >
-                                <SelectTrigger className="h-9 w-full">
-                                  <SelectValue placeholder="Select PCA for remaining slots" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {availablePCAs
-                                    .filter((candidate) => candidate.id !== primaryPcaId)
-                                    .filter((candidate) => !selectedCoverageByPca.has(candidate.id))
-                                    .map((candidate) => {
-                                      const coverable = getCoverableSlotsForPCA(candidate.id, remainingSlots)
-                                      if (coverable.length === 0) return null
-                                      return (
-                                        <SelectItem key={candidate.id} value={candidate.id}>
-                                          {candidate.name} ({candidate.floating ? 'Floating' : 'Non-floating'}) — can cover: {coverable.join(', ')}
-                                        </SelectItem>
-                                      )
-                                    })}
-                                </SelectContent>
-                              </Select>
-                              <p className="text-xs text-muted-foreground">
-                                Add more PCAs until all required slots are covered.
-                              </p>
+                              <Label>
+                                {remainingSlots.length > 0
+                                  ? `Cover remaining slots: ${remainingSlots.join(', ')}`
+                                  : 'All required slots are covered'}
+                              </Label>
+
+                              {remainingSlots.length > 0 ? (
+                                <Select
+                                  key={`${program.id}:${remainingSlots.join(',')}:${Array.from(selectedCoverageByPca.keys()).sort().join(',')}`}
+                                  onValueChange={(value) => {
+                                    if (!value) return
+                                    // Assign this PCA to cover any currently-uncovered slots it can.
+                                    handleAdditionalPCASelection(program.id, value, true)
+                                  }}
+                                >
+                                  <SelectTrigger className="h-9 w-full">
+                                    <SelectValue placeholder="Select PCA to cover remaining slots" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {(() => {
+                                      const base = primaryPcaStaff ? [primaryPcaStaff, ...availablePCAs] : availablePCAs
+                                      const unique = Array.from(new Map(base.map((s) => [s.id, s])).values())
+                                      return unique.map((candidate) => {
+                                        const coverable = getCoverableSlotsForPCA(candidate.id, remainingSlots)
+                                        const coverableLabel = coverable.length > 0 ? ` — can cover: ${coverable.join(', ')}` : ''
+                                        const usageLabel = selectedCoverageByPca.has(candidate.id) ? ' · already used' : ''
+                                        const primaryLabel = candidate.id === primaryPcaId ? ' · primary' : ''
+                                        return (
+                                          <SelectItem key={candidate.id} value={candidate.id} disabled={coverable.length === 0}>
+                                            {candidate.name} ({candidate.floating ? 'Floating' : 'Non-floating'})
+                                            {primaryLabel}
+                                            {usageLabel}
+                                            {coverableLabel}
+                                          </SelectItem>
+                                        )
+                                      })
+                                    })()}
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                <p className="text-xs text-muted-foreground"> </p>
+                              )}
+
                             </div>
                           ) : null}
 

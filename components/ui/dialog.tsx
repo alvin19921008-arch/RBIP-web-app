@@ -10,6 +10,8 @@ interface DialogProps {
 }
 
 const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
+  const dialogId = React.useId()
+
   // Prevent background (underlay) page scroll while dialog is open.
   // Also reduces scroll-chaining when dialog scroll reaches edges.
   React.useEffect(() => {
@@ -46,15 +48,51 @@ const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
     }
   }, [open])
 
+  // Track a simple global "dialog stack" so Escape closes the top-most dialog only.
+  React.useEffect(() => {
+    if (!open) return
+    const STACK_KEY = "__rbip_dialog_stack__"
+    const g = globalThis as any
+    const stack: string[] = Array.isArray(g[STACK_KEY]) ? g[STACK_KEY] : []
+    stack.push(dialogId)
+    g[STACK_KEY] = stack
+    return () => {
+      const curr: string[] = Array.isArray(g[STACK_KEY]) ? g[STACK_KEY] : []
+      const idx = curr.lastIndexOf(dialogId)
+      if (idx >= 0) curr.splice(idx, 1)
+      g[STACK_KEY] = curr
+    }
+  }, [open, dialogId])
+
+  React.useEffect(() => {
+    if (!open) return
+    const STACK_KEY = "__rbip_dialog_stack__"
+    const g = globalThis as any
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return
+      const stack: string[] = Array.isArray(g[STACK_KEY]) ? g[STACK_KEY] : []
+      if (stack[stack.length - 1] !== dialogId) return
+      e.preventDefault()
+      onOpenChange?.(false)
+    }
+    document.addEventListener("keydown", onKeyDown)
+    return () => document.removeEventListener("keydown", onKeyDown)
+  }, [open, dialogId, onOpenChange])
+
   if (!open) return null
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
+      <div className="fixed inset-0 bg-black/50" />
       <div
-        className="fixed inset-0 bg-black/50"
-        onClick={() => onOpenChange?.(false)}
-      />
-      <div className="relative z-50 flex min-h-full items-start justify-center p-2 sm:items-center sm:p-4">
+        className="relative z-50 flex min-h-full items-start justify-center p-2 sm:items-center sm:p-4"
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) onOpenChange?.(false)
+        }}
+        onTouchStart={(e) => {
+          if (e.target === e.currentTarget) onOpenChange?.(false)
+        }}
+      >
         {children}
       </div>
     </div>

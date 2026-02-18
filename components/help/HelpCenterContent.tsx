@@ -19,6 +19,7 @@ export function HelpCenterContent(props: { onAfterStartTour?: () => void }) {
   const isOnSchedule = pathname?.startsWith('/schedule')
   const isOnDashboard = pathname?.startsWith('/dashboard')
   const isAdmin = access.role === 'admin' || access.role === 'developer'
+  const helpContext: 'schedule' | 'dashboard' | 'all' = isOnSchedule ? 'schedule' : isOnDashboard ? 'dashboard' : 'all'
 
   const tourCards = useMemo(
     () => [
@@ -26,16 +27,16 @@ export function HelpCenterContent(props: { onAfterStartTour?: () => void }) {
         id: 'schedule-core' as const,
         title: 'Schedule Core Tour',
         description: 'Core workflow for daily schedule operation (Step 1 to Step 5 + common actions).',
-        visible: true,
+        visible: helpContext !== 'dashboard',
       },
       {
         id: 'dashboard-admin' as const,
         title: 'Dashboard Admin Tour',
         description: 'Admin configuration tour focusing on Special Programs, PCA Preferences, and Sync / Publish.',
-        visible: isAdmin,
+        visible: isAdmin && helpContext !== 'schedule',
       },
     ],
-    [isAdmin]
+    [helpContext, isAdmin]
   )
 
   const handleStartTour = async (tourId: HelpTourId) => {
@@ -88,7 +89,7 @@ export function HelpCenterContent(props: { onAfterStartTour?: () => void }) {
 
       <section className="space-y-3">
         <h2 className="text-base font-semibold">How To Use (FAQ)</h2>
-        <FaqAccordion role={access.role} />
+        <FaqAccordion role={access.role} context={helpContext} />
       </section>
     </div>
   )

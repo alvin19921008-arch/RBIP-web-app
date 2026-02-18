@@ -15,6 +15,7 @@ import { useRouter } from 'next/navigation'
 import { CalendarGrid } from '@/components/ui/calendar-grid'
 import { formatDateForInput, parseDateFromInput } from '@/lib/features/schedule/date'
 import { formatDateDisplay } from '@/lib/utils/dateHelpers'
+import { useAccessControl } from '@/lib/access/useAccessControl'
 import type { BaselineSnapshot, BaselineSnapshotStored, GlobalHeadAtCreation } from '@/types/schedule'
 import { unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { diffBaselineSnapshot } from '@/lib/features/schedule/snapshotDiff'
@@ -89,6 +90,10 @@ export function ConfigSyncPanel() {
   const supabase = createClientComponentClient()
   const toast = useToast()
   const router = useRouter()
+  const access = useAccessControl()
+  const canShowInternalVersion =
+    (access.role === 'admin' || access.role === 'developer') &&
+    access.can('dashboard.sync-publish.show-internal-config-version')
 
   const [loading, setLoading] = useState(false)
   const [availableDates, setAvailableDates] = useState<string[]>([])
@@ -411,7 +416,7 @@ export function ConfigSyncPanel() {
               <div className="text-sm text-muted-foreground">
                 Global config:{' '}
                 <span className="font-medium text-foreground">{globalUpdatedAt}</span>
-                {typeof globalHead?.global_version === 'number' ? (
+                {canShowInternalVersion && typeof globalHead?.global_version === 'number' ? (
                   <Tooltip
                     side="top"
                     content={
@@ -492,7 +497,7 @@ export function ConfigSyncPanel() {
                   <>
                     Based on Global config:{' '}
                     <span className="font-medium text-foreground">{snapshotGlobalUpdatedAt}</span>
-                    {typeof snapshotHead.global_version === 'number' ? (
+                    {canShowInternalVersion && typeof snapshotHead.global_version === 'number' ? (
                       <Tooltip
                         side="top"
                         content={

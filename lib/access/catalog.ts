@@ -65,6 +65,12 @@ export const FEATURE_CATALOG: FeatureDefinition[] = [
     label: 'Sync / Publish',
     description: 'Dashboard sidebar: Snapshot sync panel',
   },
+  {
+    id: 'dashboard.sync-publish.show-internal-config-version',
+    group: 'dashboard',
+    label: 'Show internal config version ID',
+    description: 'Sync / Publish panel: show vNN tooltip next to Global/snapshot timestamps',
+  },
 
   // Schedule diagnostics/tools
   {

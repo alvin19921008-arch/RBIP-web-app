@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface TimeIntervalSliderProps {
   slot: number
@@ -44,6 +44,7 @@ export function TimeIntervalSlider({
   const [sliderStart, setSliderStart] = useState<number>(0)
   const [sliderEnd, setSliderEnd] = useState<number>(intervals.length - 1)
   const trackRef = useRef<HTMLDivElement>(null)
+  const activePointerRef = useRef<{ pointerId: number; handle: 'start' | 'end' } | null>(null)
 
   // Update slider positions when value changes
   useEffect(() => {
@@ -64,23 +65,6 @@ export function TimeIntervalSlider({
     return Math.max(0, Math.min(intervals.length - 1, idx))
   }
 
-  const handleTrackMouseDown = (e: ReactMouseEvent<HTMLDivElement>) => {
-    // Allow click-to-jump anywhere on the track (including the blue selected bar).
-    // Move the *nearest* handle to the clicked position.
-    const idx = indexFromClientX(e.clientX)
-    if (idx == null) return
-
-    const distToStart = Math.abs(idx - sliderStart)
-    const distToEnd = Math.abs(idx - sliderEnd)
-    const moveStart = distToStart <= distToEnd
-
-    if (moveStart) {
-      handleSliderChange(idx, Math.max(idx, sliderEnd))
-    } else {
-      handleSliderChange(Math.min(idx, sliderStart), idx)
-    }
-  }
-
   const handleSliderChange = (startIdx: number, endIdx: number) => {
     setSliderStart(startIdx)
     setSliderEnd(endIdx)
@@ -92,6 +76,60 @@ export function TimeIntervalSlider({
       start: startTimeSelected,
       end: endTimeSelected
     })
+  }
+
+  const applyHandleIndex = (handle: 'start' | 'end', idx: number) => {
+    if (handle === 'start') {
+      handleSliderChange(idx, Math.max(idx, sliderEnd))
+    } else {
+      handleSliderChange(Math.min(idx, sliderStart), idx)
+    }
+  }
+
+  const startPointerDrag = (pointerId: number, handle: 'start' | 'end') => {
+    activePointerRef.current = { pointerId, handle }
+
+    const onMove = (ev: PointerEvent) => {
+      const active = activePointerRef.current
+      if (!active || active.pointerId !== ev.pointerId) return
+      const idx = indexFromClientX(ev.clientX)
+      if (idx == null) return
+      applyHandleIndex(active.handle, idx)
+    }
+
+    const end = (ev: PointerEvent) => {
+      const active = activePointerRef.current
+      if (!active || active.pointerId !== ev.pointerId) return
+      activePointerRef.current = null
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', end)
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', end)
+    window.addEventListener('pointercancel', end)
+  }
+
+  useEffect(() => {
+    return () => {
+      // best-effort cleanup
+      activePointerRef.current = null
+    }
+  }, [])
+
+  const handleTrackPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Allow tap/click-to-jump anywhere on the track (including the blue selected bar),
+    // then allow dragging on the track to keep adjusting the nearest handle.
+    e.preventDefault()
+    const idx = indexFromClientX(e.clientX)
+    if (idx == null) return
+
+    const distToStart = Math.abs(idx - sliderStart)
+    const distToEnd = Math.abs(idx - sliderEnd)
+    const handle: 'start' | 'end' = distToStart <= distToEnd ? 'start' : 'end'
+    applyHandleIndex(handle, idx)
+    startPointerDrag(e.pointerId, handle)
   }
 
   const selectedStartTime = minutesToTime(intervals[sliderStart])
@@ -118,8 +156,8 @@ export function TimeIntervalSlider({
         {/* Slider track */}
         <div
           ref={trackRef}
-          className="relative h-2 bg-gray-200 rounded-full cursor-pointer"
-          onMouseDown={handleTrackMouseDown}
+          className="relative h-2 bg-gray-200 rounded-full cursor-pointer touch-none"
+          onPointerDown={handleTrackPointerDown}
         >
           {/* Selected range */}
           <div
@@ -132,63 +170,29 @@ export function TimeIntervalSlider({
 
           {/* Start handle */}
           <div
-            className="absolute w-4 h-4 bg-white border-2 border-blue-500 rounded-full -top-1 cursor-pointer"
+            className="absolute w-4 h-4 bg-white border-2 border-blue-500 rounded-full -top-1 cursor-pointer touch-none"
             style={{
               left: `${(sliderStart / (intervals.length - 1)) * 100}%`,
               transform: 'translateX(-50%)'
             }}
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault()
               e.stopPropagation()
-              if (!trackRef.current) return
-              
-              const startDrag = (moveEvent: globalThis.MouseEvent) => {
-                if (!trackRef.current) return
-                const rect = trackRef.current.getBoundingClientRect()
-                const x = moveEvent.clientX - rect.left
-                const percentage = Math.max(0, Math.min(1, x / rect.width))
-                const newIndex = Math.round(percentage * (intervals.length - 1))
-                handleSliderChange(newIndex, Math.max(newIndex, sliderEnd))
-              }
-
-              const endDrag = () => {
-                document.removeEventListener('mousemove', startDrag)
-                document.removeEventListener('mouseup', endDrag)
-              }
-
-              document.addEventListener('mousemove', startDrag)
-              document.addEventListener('mouseup', endDrag)
+              startPointerDrag(e.pointerId, 'start')
             }}
           />
 
           {/* End handle */}
           <div
-            className="absolute w-4 h-4 bg-white border-2 border-blue-500 rounded-full -top-1 cursor-pointer"
+            className="absolute w-4 h-4 bg-white border-2 border-blue-500 rounded-full -top-1 cursor-pointer touch-none"
             style={{
               left: `${(sliderEnd / (intervals.length - 1)) * 100}%`,
               transform: 'translateX(-50%)'
             }}
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault()
               e.stopPropagation()
-              if (!trackRef.current) return
-              
-              const startDrag = (moveEvent: globalThis.MouseEvent) => {
-                if (!trackRef.current) return
-                const rect = trackRef.current.getBoundingClientRect()
-                const x = moveEvent.clientX - rect.left
-                const percentage = Math.max(0, Math.min(1, x / rect.width))
-                const newIndex = Math.round(percentage * (intervals.length - 1))
-                handleSliderChange(Math.min(newIndex, sliderStart), newIndex)
-              }
-
-              const endDrag = () => {
-                document.removeEventListener('mousemove', startDrag)
-                document.removeEventListener('mouseup', endDrag)
-              }
-
-              document.addEventListener('mousemove', startDrag)
-              document.addEventListener('mouseup', endDrag)
+              startPointerDrag(e.pointerId, 'end')
             }}
           />
         </div>

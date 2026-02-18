@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Info } from 'lucide-react'
+import { useAccessControl } from '@/lib/access/useAccessControl'
 
 function formatFriendlyDateTime(value: unknown): string {
   const raw = typeof value === 'string' ? value : ''
@@ -26,7 +27,11 @@ function formatFriendlyDateTime(value: unknown): string {
 
 export function DashboardConfigMetaBanner() {
   const supabase = createClientComponentClient()
+  const access = useAccessControl()
   const [head, setHead] = useState<any>(null)
+  const canShowInternalVersion =
+    (access.role === 'admin' || access.role === 'developer') &&
+    access.can('dashboard.sync-publish.show-internal-config-version')
 
   useEffect(() => {
     let cancelled = false
@@ -48,7 +53,7 @@ export function DashboardConfigMetaBanner() {
           <div className="text-xs text-muted-foreground">
             Global config{' '}
             <span className="font-medium text-foreground">{formatFriendlyDateTime(head?.global_updated_at)}</span>
-            {typeof head?.global_version === 'number' ? (
+            {canShowInternalVersion && typeof head?.global_version === 'number' ? (
               <Tooltip
                 side="top"
                 content={

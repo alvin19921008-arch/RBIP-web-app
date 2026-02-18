@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -13,7 +13,7 @@ import { formatTimeRange, getSlotTime } from '@/lib/utils/slotHelpers'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { SpecialProgram, SPTAllocation } from '@/types/allocation'
 import { LEAVE_TYPE_FTE_MAP, LeaveType, Staff, Weekday } from '@/types/staff'
-import { Plus, RotateCcw, Search, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, CircleHelp, Plus, RotateCcw, Search, X } from 'lucide-react'
 import { getTeamBadgeClass } from '@/components/allocation/teamThemePalette'
 import { TimeIntervalSlider } from '@/components/allocation/TimeIntervalSlider'
 
@@ -169,6 +169,7 @@ export function Step1LeaveSetupDialog({
   const [rows, setRows] = useState<DraftRow[]>([])
   const [initialRows, setInitialRows] = useState<DraftRow[]>([])
   const [customEditingById, setCustomEditingById] = useState<Record<string, boolean>>({})
+  const [partialPresenceOpenById, setPartialPresenceOpenById] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [bulkLeaveTherapist, setBulkLeaveTherapist] = useState<LeaveChoice>('__none__')
   const [bulkLeavePca, setBulkLeavePca] = useState<LeaveChoice>('__none__')
@@ -325,6 +326,7 @@ export function Step1LeaveSetupDialog({
     setQuickFind('')
     setQuickFindOpen(false)
     setCustomEditingById({})
+    setPartialPresenceOpenById({})
     setSaveError(null)
     setBulkLeaveTherapist('__none__')
     setBulkLeavePca('__none__')
@@ -604,6 +606,7 @@ export function Step1LeaveSetupDialog({
   const resetDraft = () => {
     setRows(initialRows.map((row) => ({ ...row, selected: false })))
     setCustomEditingById({})
+    setPartialPresenceOpenById({})
     setSaveError(null)
   }
 
@@ -696,8 +699,8 @@ export function Step1LeaveSetupDialog({
             })
           }}
         >
-          <SelectTrigger className="h-8 w-[148px]">
-            <SelectValue placeholder="On duty" />
+          <SelectTrigger className="h-8 w-[148px] text-[11px] sm:text-xs [&>span]:max-w-[calc(100%-20px)] [&>span]:truncate [&>span]:whitespace-nowrap">
+            <SelectValue className="truncate" placeholder="On duty" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="__none__">On duty</SelectItem>
@@ -748,7 +751,7 @@ export function Step1LeaveSetupDialog({
     const showSpecialProgram = hasSpecialProgramForToday(member.id)
     return (
       <div key={row.staffId} className="py-3">
-        <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
           <label className="inline-flex min-w-0 items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -888,6 +891,9 @@ export function Step1LeaveSetupDialog({
     const capacity = getCapacity(member, row.sptBaseFTE)
     const maxSlotCount = clamp(Math.round(capacity / 0.25), 0, 4)
     const unavailableSlots = SLOT_OPTIONS.filter((slot) => !row.availableSlots.includes(slot))
+    const canShowPartialPresencePanel = row.availableSlots.length > 0 && unavailableSlots.length > 0
+    const hasPartialPresence = row.invalidSlots.length > 0
+    const isPartialPresenceOpen = partialPresenceOpenById[row.staffId] ?? hasPartialPresence
     return (
       <div key={row.staffId} className="py-3">
         <div className="flex items-center justify-between gap-2">
@@ -921,136 +927,219 @@ export function Step1LeaveSetupDialog({
           </Button>
         </div>
 
-        <div className="mt-2 flex flex-wrap items-end gap-2">
-          {renderLeaveTypeSelect(row, member)}
-          {renderCustomLeaveInput(row)}
+        <div className={cn('mt-2 grid gap-3', canShowPartialPresencePanel ? 'xl:grid-cols-[auto_minmax(0,340px)] xl:justify-start' : null)}>
+          <div className="min-w-0 flex flex-wrap items-end gap-2">
+            {renderLeaveTypeSelect(row, member)}
+            {renderCustomLeaveInput(row)}
 
-          <div className="space-y-1">
-            <Label className="text-[11px] text-muted-foreground">A/V slots</Label>
-            <div className="flex gap-1">
-              {SLOT_OPTIONS.map((slot) => {
-                const selected = row.availableSlots.includes(slot)
-                const reachedCap = !selected && row.availableSlots.length >= maxSlotCount
-                return (
-                  <Button
-                    key={`${row.staffId}-slot-${slot}`}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className={cn('h-8 min-w-8 px-2', selected && 'bg-blue-600 text-white hover:bg-blue-600 hover:text-white')}
-                    disabled={reachedCap}
-                    onClick={() => {
-                      setRow(row.staffId, (current) => {
-                        const has = current.availableSlots.includes(slot)
-                        let nextSlots = current.availableSlots
-                        if (has) nextSlots = current.availableSlots.filter((item) => item !== slot)
-                        else if (current.availableSlots.length < maxSlotCount) nextSlots = [...current.availableSlots, slot].sort((a, b) => a - b)
-                        const nextRemaining = clamp(round2(nextSlots.length * 0.25), 0, capacity)
-                        const nextUnavailable = SLOT_OPTIONS.filter((item) => !nextSlots.includes(item))
-                        return {
-                          ...current,
-                          availableSlots: nextSlots,
-                          fteRemaining: nextRemaining,
-                          fteSubtraction: clamp(round2(capacity - nextRemaining), 0, capacity),
-                          invalidSlots: current.invalidSlots.filter((entry) => nextUnavailable.includes(entry.slot as 1 | 2 | 3 | 4)),
-                        }
-                      })
-                    }}
-                  >
-                    {slot}
-                  </Button>
-                )
-              })}
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label className="text-[11px] text-muted-foreground">FTE remaining</Label>
-            <div className="h-8 rounded-md border border-input bg-muted/40 px-2 text-sm leading-8">
-              {row.fteRemaining.toFixed(2)}
-            </div>
-          </div>
-        </div>
-
-        {unavailableSlots.length > 0 ? (
-          <div className="mt-3 pt-1">
-            <div className="mb-1 text-[11px] font-medium text-muted-foreground">Slots with partial presence</div>
-            <div className="space-y-2">
-              {unavailableSlots.map((slot) => {
-                const existing = row.invalidSlots.find((entry) => entry.slot === slot)
-                return (
-                  <div key={`${row.staffId}-partial-${slot}`} className="flex flex-wrap items-center gap-2 text-xs">
-                    <label className="inline-flex items-center gap-1">
-                      <input
-                        type="checkbox"
-                        checked={!!existing}
-                        onChange={(event) => {
-                          if (event.target.checked) {
-                            setRow(row.staffId, (current) => ({
-                              ...current,
-                              invalidSlots: [...current.invalidSlots, { slot, timeRange: slotDefaultRange(slot) }],
-                            }))
-                          } else {
-                            setRow(row.staffId, (current) => ({
-                              ...current,
-                              invalidSlots: current.invalidSlots.filter((entry) => entry.slot !== slot),
-                            }))
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">A/V slots</Label>
+              <div className="flex gap-1">
+                {SLOT_OPTIONS.map((slot) => {
+                  const selected = row.availableSlots.includes(slot)
+                  const reachedCap = !selected && row.availableSlots.length >= maxSlotCount
+                  return (
+                    <Button
+                      key={`${row.staffId}-slot-${slot}`}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className={cn('h-8 min-w-8 px-2', selected && 'bg-blue-600 text-white hover:bg-blue-600 hover:text-white')}
+                      disabled={reachedCap}
+                      onClick={() => {
+                        setRow(row.staffId, (current) => {
+                          const has = current.availableSlots.includes(slot)
+                          let nextSlots = current.availableSlots
+                          if (has) nextSlots = current.availableSlots.filter((item) => item !== slot)
+                          else if (current.availableSlots.length < maxSlotCount) nextSlots = [...current.availableSlots, slot].sort((a, b) => a - b)
+                          const nextRemaining = clamp(round2(nextSlots.length * 0.25), 0, capacity)
+                          const nextUnavailable = SLOT_OPTIONS.filter((item) => !nextSlots.includes(item))
+                          return {
+                            ...current,
+                            availableSlots: nextSlots,
+                            fteRemaining: nextRemaining,
+                            fteSubtraction: clamp(round2(capacity - nextRemaining), 0, capacity),
+                            invalidSlots: nextSlots.length === 0
+                              ? []
+                              : current.invalidSlots.filter((entry) => nextUnavailable.includes(entry.slot as 1 | 2 | 3 | 4)),
                           }
-                        }}
-                      />
-                      Slot {slot}
-                    </label>
-                    {existing ? (
-                      <>
-                        <span className="text-muted-foreground">
-                          {existing.timeRange.start}-{existing.timeRange.end}
-                        </span>
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs">
-                              Edit time
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-[380px] rounded-md border border-border bg-white p-3 shadow-md">
-                            <div className="text-xs font-medium mb-2">Slot {slot} partial presence</div>
-                            <TimeIntervalSlider
-                              slot={slot}
-                              startTime={slotDefaultRange(slot).start}
-                              endTime={slotDefaultRange(slot).end}
-                              value={{ start: existing.timeRange.start, end: existing.timeRange.end }}
-                              onChange={(range) => {
+                        })
+                      }}
+                    >
+                      {slot}
+                    </Button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">FTE remaining</Label>
+              <div className="h-8 rounded-md border border-input bg-muted/40 px-2 text-sm leading-8">
+                {row.fteRemaining.toFixed(2)}
+              </div>
+            </div>
+          </div>
+
+          {canShowPartialPresencePanel ? (
+            <div className="min-w-0">
+              <div className="flex w-fit items-center gap-1">
+                <div className="text-[11px] font-medium text-muted-foreground">Slots with partial presence</div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-1 text-[11px]"
+                  onClick={() => setPartialPresenceOpenById((prev) => ({ ...prev, [row.staffId]: !isPartialPresenceOpen }))}
+                >
+                  {isPartialPresenceOpen ? <ChevronDown className="mr-0.5 h-3.5 w-3.5" /> : <ChevronRight className="mr-0.5 h-3.5 w-3.5" />}
+                  {isPartialPresenceOpen ? 'Hide' : 'Show'}
+                  {hasPartialPresence ? ` (${row.invalidSlots.length})` : ''}
+                </Button>
+              </div>
+              {isPartialPresenceOpen ? (
+                <div className="mt-2 space-y-2">
+                  {unavailableSlots.map((slot) => {
+                    const existing = row.invalidSlots.find((entry) => entry.slot === slot)
+                    return (
+                      <div key={`${row.staffId}-partial-${slot}`} className="flex flex-wrap items-center gap-2 text-xs">
+                        <label className="inline-flex items-center gap-1">
+                          <input
+                            type="checkbox"
+                            checked={!!existing}
+                            onChange={(event) => {
+                              if (event.target.checked) {
                                 setRow(row.staffId, (current) => ({
                                   ...current,
-                                  invalidSlots: current.invalidSlots.map((entry) =>
-                                    entry.slot === slot
-                                      ? {
-                                          ...entry,
-                                          timeRange: {
-                                            start: normalizeHHMM(range.start),
-                                            end: normalizeHHMM(range.end),
-                                          },
-                                        }
-                                      : entry
-                                  ),
+                                  invalidSlots: [...current.invalidSlots, { slot, timeRange: slotDefaultRange(slot) }],
                                 }))
-                              }}
-                            />
-                          </PopoverContent>
-                        </Popover>
-                        {!isValidRange(existing.timeRange) ? (
-                          <span className="text-destructive">Invalid range</span>
+                              } else {
+                                setRow(row.staffId, (current) => ({
+                                  ...current,
+                                  invalidSlots: current.invalidSlots.filter((entry) => entry.slot !== slot),
+                                }))
+                              }
+                            }}
+                          />
+                          Slot {slot}
+                        </label>
+                        {existing ? (
+                          <>
+                            <span className="text-muted-foreground">
+                              {existing.timeRange.start}-{existing.timeRange.end}
+                            </span>
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs">
+                                  Edit time
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-[380px] rounded-md border border-border bg-white p-3 shadow-md">
+                                <div className="text-xs font-medium mb-2">Slot {slot} partial presence</div>
+                                <TimeIntervalSlider
+                                  slot={slot}
+                                  startTime={slotDefaultRange(slot).start}
+                                  endTime={slotDefaultRange(slot).end}
+                                  value={{ start: existing.timeRange.start, end: existing.timeRange.end }}
+                                  onChange={(range) => {
+                                    setRow(row.staffId, (current) => ({
+                                      ...current,
+                                      invalidSlots: current.invalidSlots.map((entry) =>
+                                        entry.slot === slot
+                                          ? {
+                                              ...entry,
+                                              timeRange: {
+                                                start: normalizeHHMM(range.start),
+                                                end: normalizeHHMM(range.end),
+                                              },
+                                            }
+                                          : entry
+                                      ),
+                                    }))
+                                  }}
+                                />
+                              </PopoverContent>
+                            </Popover>
+                            {!isValidRange(existing.timeRange) ? (
+                              <span className="text-destructive">Invalid range</span>
+                            ) : null}
+                          </>
                         ) : null}
-                      </>
-                    ) : null}
-                  </div>
-                )
-              })}
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : null}
             </div>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </div>
     )
   }
+
+  const renderSectionDivider = () => (
+    <div className="my-3 space-y-[2px]">
+      <div className="h-px bg-border" />
+      <div className="h-px bg-border/40" />
+    </div>
+  )
+
+  const renderRankSections = ({
+    sections,
+    emptyMessage,
+    renderRow,
+  }: {
+    sections: Array<{ key: string; label: string; rows: DraftRow[]; note?: string }>
+    emptyMessage: string
+    renderRow: (row: DraftRow) => ReactNode
+  }) => {
+    const visibleSections = sections.filter((section) => section.rows.length > 0)
+    if (visibleSections.length === 0) {
+      return <p className="py-6 text-center text-xs text-muted-foreground">{emptyMessage}</p>
+    }
+    return (
+      <>
+        {visibleSections.map((section, index) => (
+          <div key={section.key}>
+            {index > 0 ? renderSectionDivider() : null}
+            <section className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-semibold tracking-wide text-muted-foreground">{section.label}</h4>
+                <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={section.rows.length > 0 && section.rows.every((row) => row.selected)}
+                    onChange={(event) => setSectionSelected(section.rows, event.target.checked)}
+                  />
+                  Select all
+                </label>
+              </div>
+              <div className="divide-y divide-border">
+                {section.rows.map((row) => renderRow(row))}
+              </div>
+              {section.note ? <p className="text-[11px] text-muted-foreground">{section.note}</p> : null}
+            </section>
+          </div>
+        ))}
+      </>
+    )
+  }
+
+  const therapistSections = [
+    {
+      key: 'spt',
+      label: 'SPT',
+      rows: sptRows,
+      note: 'You can do final SPT leave edit later in Step 2.2 (SPT Final Edit).',
+    },
+    { key: 'appt', label: 'APPT', rows: apptRows },
+    { key: 'rpt', label: 'RPT', rows: rptRows },
+  ]
+
+  const pcaSections = [
+    { key: 'floating', label: 'Floating PCA', rows: floatingPcaRows },
+    { key: 'non-floating', label: 'Non-floating PCA', rows: nonFloatingPcaRows },
+  ]
 
   const therapistSection = (
     <div className="space-y-3">
@@ -1058,8 +1147,8 @@ export function Step1LeaveSetupDialog({
         <div className="text-sm text-muted-foreground">Bulk actions</div>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={bulkLeaveTherapist} onValueChange={(value) => setBulkLeaveTherapist(value as LeaveChoice)}>
-            <SelectTrigger className="h-8 w-[148px]">
-              <SelectValue placeholder="Set leave type" />
+            <SelectTrigger className="h-8 w-[148px] text-[11px] sm:text-xs [&>span]:max-w-[calc(100%-20px)] [&>span]:truncate [&>span]:whitespace-nowrap">
+              <SelectValue className="truncate" placeholder="Set leave type" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__">On duty</SelectItem>
@@ -1092,67 +1181,14 @@ export function Step1LeaveSetupDialog({
       </div>
 
       <div className="max-h-[420px] overflow-y-auto overscroll-contain pr-1">
-        <section className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-semibold tracking-wide text-muted-foreground">SPT</h4>
-            <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={sptRows.length > 0 && sptRows.every((row) => row.selected)}
-                onChange={(event) => setSectionSelected(sptRows, event.target.checked)}
-              />
-              Select all
-            </label>
-          </div>
-          <div className="divide-y divide-border">
-            {sptRows.length > 0 ? sptRows.map((row) => renderTherapistRow(row, staffById.get(row.staffId)!)) : <p className="py-2 text-xs text-muted-foreground">No SPT rows in draft.</p>}
-          </div>
-          <p className="text-[11px] text-muted-foreground">You can do final SPT leave edit later in Step 2.2 (SPT Final Edit).</p>
-        </section>
-
-        <div className="my-3 space-y-[2px]">
-          <div className="h-px bg-border" />
-          <div className="h-px bg-border/40" />
-        </div>
-
-        <section className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-semibold tracking-wide text-muted-foreground">APPT</h4>
-            <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={apptRows.length > 0 && apptRows.every((row) => row.selected)}
-                onChange={(event) => setSectionSelected(apptRows, event.target.checked)}
-              />
-              Select all
-            </label>
-          </div>
-          <div className="divide-y divide-border">
-            {apptRows.length > 0 ? apptRows.map((row) => renderTherapistRow(row, staffById.get(row.staffId)!)) : <p className="py-2 text-xs text-muted-foreground">No APPT rows in draft.</p>}
-          </div>
-        </section>
-
-        <div className="my-3 space-y-[2px]">
-          <div className="h-px bg-border" />
-          <div className="h-px bg-border/40" />
-        </div>
-
-        <section className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-semibold tracking-wide text-muted-foreground">RPT</h4>
-            <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={rptRows.length > 0 && rptRows.every((row) => row.selected)}
-                onChange={(event) => setSectionSelected(rptRows, event.target.checked)}
-              />
-              Select all
-            </label>
-          </div>
-          <div className="divide-y divide-border">
-            {rptRows.length > 0 ? rptRows.map((row) => renderTherapistRow(row, staffById.get(row.staffId)!)) : <p className="py-2 text-xs text-muted-foreground">No RPT rows in draft.</p>}
-          </div>
-        </section>
+        {renderRankSections({
+          sections: therapistSections,
+          emptyMessage: 'No therapist rows in draft.',
+          renderRow: (row) => {
+            const member = staffById.get(row.staffId)
+            return member ? renderTherapistRow(row, member) : null
+          },
+        })}
       </div>
     </div>
   )
@@ -1163,8 +1199,8 @@ export function Step1LeaveSetupDialog({
         <div className="text-sm text-muted-foreground">Bulk actions</div>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={bulkLeavePca} onValueChange={(value) => setBulkLeavePca(value as LeaveChoice)}>
-            <SelectTrigger className="h-8 w-[148px]">
-              <SelectValue placeholder="Set leave type" />
+            <SelectTrigger className="h-8 w-[148px] text-[11px] sm:text-xs [&>span]:max-w-[calc(100%-20px)] [&>span]:truncate [&>span]:whitespace-nowrap">
+              <SelectValue className="truncate" placeholder="Set leave type" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__">On duty</SelectItem>
@@ -1197,39 +1233,14 @@ export function Step1LeaveSetupDialog({
       </div>
 
       <div className="max-h-[420px] overflow-y-auto overscroll-contain pr-1">
-        <section className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-semibold tracking-wide text-muted-foreground">Floating PCA</h4>
-            <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={floatingPcaRows.length > 0 && floatingPcaRows.every((row) => row.selected)}
-                onChange={(event) => setSectionSelected(floatingPcaRows, event.target.checked)}
-              />
-              Select all
-            </label>
-          </div>
-          <div className="divide-y divide-border">
-            {floatingPcaRows.length > 0 ? floatingPcaRows.map((row) => renderPcaRow(row, staffById.get(row.staffId)!)) : <p className="py-2 text-xs text-muted-foreground">No floating PCA rows in draft.</p>}
-          </div>
-        </section>
-
-        <section className="space-y-2 pt-2">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-semibold tracking-wide text-muted-foreground">Non-floating PCA</h4>
-            <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={nonFloatingPcaRows.length > 0 && nonFloatingPcaRows.every((row) => row.selected)}
-                onChange={(event) => setSectionSelected(nonFloatingPcaRows, event.target.checked)}
-              />
-              Select all
-            </label>
-          </div>
-          <div className="divide-y divide-border">
-            {nonFloatingPcaRows.length > 0 ? nonFloatingPcaRows.map((row) => renderPcaRow(row, staffById.get(row.staffId)!)) : <p className="py-2 text-xs text-muted-foreground">No non-floating PCA rows in draft.</p>}
-          </div>
-        </section>
+        {renderRankSections({
+          sections: pcaSections,
+          emptyMessage: 'No PCA rows in draft.',
+          renderRow: (row) => {
+            const member = staffById.get(row.staffId)
+            return member ? renderPcaRow(row, member) : null
+          },
+        })}
       </div>
     </div>
   )
@@ -1237,7 +1248,32 @@ export function Step1LeaveSetupDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[90vh] w-[calc(100vw-24px)] max-w-5xl flex-col overflow-hidden">
-        <DialogHeader>
+        {wizardStep === '1.3' ? (
+          <div className="absolute right-3 top-3 sm:right-4 sm:top-4">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label="Step 1.3 terms help">
+                  <CircleHelp className="h-4 w-4 text-muted-foreground" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-[320px] rounded-md border border-border bg-white p-3 shadow-md">
+                <div className="space-y-2 text-xs">
+                  <div className="font-medium text-foreground">Step 1.3 terms</div>
+                  <p className="text-muted-foreground">
+                    <span className="font-medium text-foreground">A/V slots</span>: fully present in the selected slot. Each selected slot counts as{' '}
+                    <span className="font-medium text-foreground">0.25 FTE</span>.
+                  </p>
+                  <p className="text-muted-foreground">
+                    <span className="font-medium text-foreground">Slots with partial presence</span>: partial attendance windows for unavailable slots. These
+                    notes do <span className="font-medium text-foreground">not</span> add FTE.
+                  </p>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+        ) : null}
+
+        <DialogHeader className="pr-10">
           <DialogTitle>Leave setup</DialogTitle>
           <DialogDescription>
             <span className="block text-xs text-muted-foreground">
@@ -1364,20 +1400,20 @@ export function Step1LeaveSetupDialog({
                 <div className="rounded-md border border-border overflow-hidden">
                   <div className="grid gap-0 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,0.85fr)] divide-x divide-border items-stretch">
                     {/* Left: pickers */}
-                    <div className="min-h-[420px] flex flex-col">
+                    <div className="h-[420px] min-h-0 flex flex-col">
                       <div className="px-3 py-2 text-xs font-semibold text-muted-foreground border-b border-border">
                         Add staff
                       </div>
                       <div className="min-h-0 flex-1">
-                        <div className="grid h-full grid-cols-2 md:grid-cols-2 xl:grid-cols-4 divide-x divide-border">
+                        <div className="grid h-full grid-cols-2 grid-rows-2 gap-px bg-border xl:grid-cols-4 xl:grid-rows-1">
                           {(['SPT', 'APPT', 'RPT', 'PCA'] as const).map((rank) => (
-                            <div key={`picker-${rank}`} className="min-h-0 flex flex-col">
+                            <div key={`picker-${rank}`} className="min-h-0 flex flex-col overflow-hidden bg-background">
                               <div className="px-2 py-1.5 border-b border-border flex items-center gap-2">
                                 <Badge variant="outline" className={cn('select-none px-1.5 py-0.5 text-[11px] font-medium', RANK_BADGE_NEUTRAL_CLASS)}>
                                   {rank}
                                 </Badge>
                               </div>
-                              <div className="min-h-0 flex-1 overflow-y-auto p-2 space-y-1">
+                              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 space-y-1">
                                 {filteredPickers[rank].map((member) => {
                                   const exists = rowIds.has(member.id)
                                   return (
@@ -1420,7 +1456,7 @@ export function Step1LeaveSetupDialog({
                     </div>
 
                     {/* Right: draft preview */}
-                    <div className="min-h-[420px] flex flex-col">
+                    <div className="h-[420px] min-h-0 flex flex-col">
                       <div className="px-3 py-2 text-xs font-semibold text-muted-foreground border-b border-border">
                         Draft list
                       </div>

@@ -14,6 +14,7 @@
 ### Fixed
 - **SpecialProgramOverrideDialog slot re-selection bug**: Fixed issue where deselecting and reselecting a slot would show it as "uncovered" even though the primary PCA could cover it. Now auto-assigns primary PCA to re-added slots.
 - **SPT leave state sync in Step 2.2**: SPTs with any non-on-duty leave type now correctly display as "leave" state in Step 2.2 dialog.
+- **Step 2.0 multi-slot coverage helper**: The “Cover remaining slots” helper now stays visible even when all slots are covered, and the dropdown lists the primary/used PCAs so you can reassign without reopening the dialog.
 
 ### Changed
 - **StaffEditDialog AM/PM selection**: Removed AM/PM selection for SPT rank; now only available for RPT and APPT therapists.

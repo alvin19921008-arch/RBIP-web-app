@@ -51,7 +51,7 @@ export const HELP_TOURS: Record<HelpTourId, { title: string; steps: HelpTourStep
       {
         selector: '[data-tour="step3-interactions"]',
         title: 'Step 3 Interactions',
-        description: 'Use drag-and-drop for speed, and the pencil/context menu for precise slot edits.',
+        description: 'Use drag-and-drop for fast replacement. Use the pencil/context menu when you need exact slot-level control.',
         side: 'left',
       },
       {

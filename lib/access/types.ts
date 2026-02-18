@@ -12,6 +12,7 @@ export type FeatureId =
   | 'dashboard.category.team-configuration'
   | 'dashboard.category.account-management'
   | 'dashboard.category.sync-publish'
+  | 'dashboard.sync-publish.show-internal-config-version'
   // Schedule diagnostics/tools
   | 'schedule.diagnostics.load'
   | 'schedule.diagnostics.copy'

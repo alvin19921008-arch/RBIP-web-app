@@ -3,20 +3,25 @@
 import { HELP_FAQ_SECTIONS } from '@/lib/help/faq'
 import type { AccessRole } from '@/lib/access/types'
 import { Building2, CalendarDays, LayoutList, Settings } from 'lucide-react'
+import { DashboardSyncPublishAnswer } from '@/components/help/answers/DashboardSyncPublishAnswer'
+import { StaffCardColorGuideAnswer } from '@/components/help/answers/StaffCardColorGuideAnswer'
 
-export function FaqAccordion(props: { role: AccessRole }) {
+export function FaqAccordion(props: { role: AccessRole; context?: 'all' | 'schedule' | 'dashboard' }) {
   const isAdmin = props.role === 'admin' || props.role === 'developer'
+  const context = props.context ?? 'all'
   const sectionIcon = (id: string) => {
     if (id === 'daily-workflow') return CalendarDays
     if (id === 'beds-and-summary') return Building2
     if (id === 'step2-3') return LayoutList
-    if (id === 'admin') return Settings
+    if (id === 'schedule-admin' || id === 'dashboard-admin') return Settings
     return LayoutList
   }
 
   return (
     <div className="space-y-4">
       {HELP_FAQ_SECTIONS.map((section) => {
+        const sectionContext = section.context ?? 'all'
+        if (context !== 'all' && sectionContext !== 'all' && sectionContext !== context) return null
         const visibleItems = section.items.filter((item) => item.audience !== 'admin' || isAdmin)
         if (visibleItems.length === 0) return null
         const Icon = sectionIcon(section.id)
@@ -37,7 +42,15 @@ export function FaqAccordion(props: { role: AccessRole }) {
                       +
                     </span>
                   </summary>
-                  <p className="mt-2 text-sm text-muted-foreground whitespace-pre-line">{item.answer}</p>
+                  <div className="mt-2 text-sm text-muted-foreground whitespace-pre-line">
+                    {item.answerKind === 'dashboard-sync-publish' ? (
+                      <DashboardSyncPublishAnswer />
+                    ) : item.answerKind === 'staff-card-color-guide' ? (
+                      <StaffCardColorGuideAnswer />
+                    ) : (
+                      item.answer
+                    )}
+                  </div>
                 </details>
               ))}
             </div>

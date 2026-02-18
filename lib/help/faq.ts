@@ -2,12 +2,14 @@ export type FaqItem = {
   id: string
   question: string
   answer: string
+  answerKind?: 'dashboard-sync-publish' | 'staff-card-color-guide'
   audience?: 'all' | 'admin'
 }
 
 export type FaqSection = {
   id: string
   title: string
+  context?: 'all' | 'schedule' | 'dashboard'
   items: FaqItem[]
 }
 
@@ -15,6 +17,7 @@ export const HELP_FAQ_SECTIONS: FaqSection[] = [
   {
     id: 'daily-workflow',
     title: 'Daily Workflow',
+    context: 'schedule',
     items: [
       {
         id: 'start-today',
@@ -40,11 +43,18 @@ export const HELP_FAQ_SECTIONS: FaqSection[] = [
         answer:
           'Most actions are step-locked. Switch to the correct step (for example Step 1 for leave edits, Step 3 for floating PCA actions).',
       },
+      {
+        id: 'step1-batch-leave',
+        question: 'How do I batch-edit leave and availability in Step 1?',
+        answer:
+          'Open Step 1 → Leave setup dialog.\n\n- Step 1.1: Add staff into the draft list.\n- Step 1.2: Edit therapist leave + FTE on-duty (bulk actions supported).\n- Step 1.3: Edit PCA A/V slots (each slot = 0.25 FTE) and optionally record partial presence.\n- Step 1.4: Preview, then Save & Apply.',
+      },
     ],
   },
   {
     id: 'beds-and-summary',
     title: 'Beds and Summary',
+    context: 'schedule',
     items: [
       {
         id: 'summary-box',
@@ -75,6 +85,7 @@ export const HELP_FAQ_SECTIONS: FaqSection[] = [
   {
     id: 'step2-3',
     title: 'Step 2 and Step 3',
+    context: 'schedule',
     items: [
       {
         id: 'staff-pool-purpose',
@@ -91,14 +102,8 @@ export const HELP_FAQ_SECTIONS: FaqSection[] = [
       {
         id: 'staff-card-color-legend',
         question: 'What do the staff card border and fill colors mean?',
-        answer:
-          'In Staff Pool: non-floating PCA uses a green border; floating PCA uses a blue thin border + light blue fill to indicate remaining FTE; APPT uses a yellow border; SPT uses a brownish-yellow border.',
-      },
-      {
-        id: 'step3-focus',
-        question: 'What are the most important Step 3 interactions?',
-        answer:
-          'Use drag-and-drop for fast placement and the contextual menu for precise slot edits.',
+        answer: 'See the guide below.',
+        answerKind: 'staff-card-color-guide',
       },
       {
         id: 'context-menu',
@@ -110,13 +115,14 @@ export const HELP_FAQ_SECTIONS: FaqSection[] = [
         id: 'drag-vs-menu',
         question: 'When should I drag-and-drop versus use the menu?',
         answer:
-          'Use drag-and-drop for speed. Use menu actions when you need exact slot-level control.',
+          'Use drag-and-drop for fast replacement. Use menu actions when you need exact slot-level control.',
       },
     ],
   },
   {
-    id: 'admin',
-    title: 'Admin FAQ',
+    id: 'schedule-admin',
+    title: 'Schedule (Admin)',
+    context: 'schedule',
     items: [
       {
         id: 'snapshot-reminder',
@@ -125,11 +131,18 @@ export const HELP_FAQ_SECTIONS: FaqSection[] = [
           'The schedule is using a saved date snapshot that differs from current dashboard config. Admins can review and sync in Dashboard.',
         audience: 'admin',
       },
+    ],
+  },
+  {
+    id: 'dashboard-admin',
+    title: 'Dashboard (Admin)',
+    context: 'dashboard',
+    items: [
       {
         id: 'sync-publish-purpose',
         question: 'When should I use Sync / Publish?',
-        answer:
-          'Use Sync / Publish when you intentionally want to align date snapshots with Global config or publish snapshot changes to Global.',
+        answer: 'See details below.',
+        answerKind: 'dashboard-sync-publish',
         audience: 'admin',
       },
     ],
