@@ -1,8 +1,11 @@
+import type { HelpMediaKey } from '@/lib/help/helpMedia'
+
 export type FaqItem = {
   id: string
   question: string
   answer: string
   answerKind?: 'dashboard-sync-publish' | 'staff-card-color-guide'
+  answerMediaKey?: HelpMediaKey
   audience?: 'all' | 'admin'
 }
 
@@ -61,6 +64,7 @@ export const HELP_FAQ_SECTIONS: FaqSection[] = [
         question: 'What should I watch in the summary info box?',
         answer:
           'Track Total bed counts, After SHS/students, Total PT, Total PCA, and Beds/PT for quick quality checks.',
+        answerMediaKey: 'summaryInfoGif',
       },
       {
         id: 'bed-adjustments',
@@ -92,6 +96,7 @@ export const HELP_FAQ_SECTIONS: FaqSection[] = [
         question: 'What is Staff Pool used for?',
         answer:
           'Staff Pool is your source list for drag-and-drop and contextual actions like assign slot and move slot.',
+        answerMediaKey: 'staffPoolGif',
       },
       {
         id: 'step2-focus',
@@ -110,6 +115,7 @@ export const HELP_FAQ_SECTIONS: FaqSection[] = [
         question: 'How do I open contextual actions?',
         answer:
           'Use the pencil action on staff cards (or context click where available) to access assign, move, split/merge, and discard actions.',
+        answerMediaKey: 'contextualMenuGif',
       },
       {
         id: 'drag-vs-menu',

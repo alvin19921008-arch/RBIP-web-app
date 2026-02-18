@@ -100,7 +100,10 @@ export function Navbar() {
 
   return (
     <nav className="border-b bg-background">
-      <div className="w-full px-8 flex h-16 items-center justify-between">
+      <div
+        className="mx-auto flex w-full px-4 py-3 sm:px-6 lg:px-8 items-center justify-between"
+        style={{ maxWidth: 'var(--rbip-app-max-width)' }}
+      >
         <div className="flex items-center space-x-8">
           <Link href="/schedule" className="text-xl font-bold">
             RBIP Duty List

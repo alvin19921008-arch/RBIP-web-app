@@ -13,7 +13,9 @@ export default async function DashboardLayout({
     <div className="min-h-screen min-w-[1440px] bg-background">
       <NavigationLoadingProvider>
         <Navbar />
-        <main>{children}</main>
+        <main className="mx-auto w-full" style={{ maxWidth: 'var(--rbip-app-max-width)' }}>
+          {children}
+        </main>
       </NavigationLoadingProvider>
     </div>
   )

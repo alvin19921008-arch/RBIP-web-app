@@ -16,6 +16,7 @@ import { BufferStaffCreateDialog } from './BufferStaffCreateDialog'
 import { SpecialProgramSubstitutionDialog } from '@/components/allocation/SpecialProgramSubstitutionDialog'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { HorizontalCardCarousel } from '@/components/ui/horizontal-card-carousel'
+import { helpMedia } from '@/lib/help/helpMedia'
 
 interface SpecialProgramOverrideDialogProps {
   open: boolean
@@ -1404,6 +1405,20 @@ export function SpecialProgramOverrideDialog({
               <PopoverContent align="end" className="w-[340px] rounded-md border border-border bg-white p-3 shadow-md">
                 <div className="space-y-2 text-xs">
                   <div className="font-medium text-foreground">Tip</div>
+                  {helpMedia.step2PcaCoverGif ? (
+                    <div className="overflow-hidden rounded-md border border-border">
+                      <img
+                        src={helpMedia.step2PcaCoverGif}
+                        alt="Demo showing how to remove a PCA assignment from a required slot"
+                        className="h-auto max-h-56 w-full object-cover object-top"
+                        loading="lazy"
+                      />
+                    </div>
+                  ) : (
+                    <div className="rounded-md border border-dashed border-border px-2 py-1.5 text-[11px] text-muted-foreground">
+                      Add `NEXT_PUBLIC_HELP_MEDIA_STEP2_PCA_COVER_GIF_URL` to show the demo clip.
+                    </div>
+                  )}
                   <p className="text-muted-foreground">
                     To de-select a PCA from a specific slot, hover over the PCA name shown under the slot button, then click the{' '}
                     <span className="font-medium text-foreground">X</span>.

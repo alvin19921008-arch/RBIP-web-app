@@ -5,6 +5,7 @@ import type { AccessRole } from '@/lib/access/types'
 import { Building2, CalendarDays, LayoutList, Settings } from 'lucide-react'
 import { DashboardSyncPublishAnswer } from '@/components/help/answers/DashboardSyncPublishAnswer'
 import { StaffCardColorGuideAnswer } from '@/components/help/answers/StaffCardColorGuideAnswer'
+import { helpMedia } from '@/lib/help/helpMedia'
 
 export function FaqAccordion(props: { role: AccessRole; context?: 'all' | 'schedule' | 'dashboard' }) {
   const isAdmin = props.role === 'admin' || props.role === 'developer'
@@ -50,6 +51,16 @@ export function FaqAccordion(props: { role: AccessRole; context?: 'all' | 'sched
                     ) : (
                       item.answer
                     )}
+                    {item.answerMediaKey ? (
+                      <div className="mt-4 block w-full max-w-[360px] overflow-hidden rounded-md ring-1 ring-border/15">
+                        <img
+                          src={helpMedia[item.answerMediaKey]}
+                          alt={`${item.question} demo`}
+                          className="block h-auto max-h-[220px] w-full object-contain object-top"
+                          loading="lazy"
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </details>
               ))}

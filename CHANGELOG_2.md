@@ -10,6 +10,7 @@
 - **Step 2.1 streamlined layout**: Removed outer border boxes, consolidated header to single row (PCA name + team badge + missing slots), removed redundant table caption. Added visual hierarchy with horizontal dividers instead of nested containers.
 - **StaffEditDialog SPT FTE visualization**: Added minus (−) and equals (=) symbols between FTE fields to show equation relationship (FTE − FTE Cost = FTE Remaining). Added instruction text for SPT leave edit.
 - **Step 1 leave setup wizard**: Added a multi-stage dialog that builds the leave draft list, keeps therapist and PCA edits separate, supports quick search/picker interactions, and previews exactly which staff have leave before saving; the draft list now only surfaces staff with a non-on-duty leave type.
+- **Help-focused GIF assist**: Step 2.0 help popover now shows the animated “step 2 PCA cover” clip, and FAQ answers for the summary info box, Staff Pool, and contextual actions render matching GIFs via the shared `helpMedia` helper. Added `scripts/upload-help-media.mjs` + `npm run blob:upload-help-media` so you can batch-upload the clips to Vercel Blob and keep `NEXT_PUBLIC_HELP_MEDIA_*` URLs in sync.
 
 ### Fixed
 - **SpecialProgramOverrideDialog slot re-selection bug**: Fixed issue where deselecting and reselecting a slot would show it as "uncovered" even though the primary PCA could cover it. Now auto-assigns primary PCA to re-added slots.
@@ -20,6 +21,7 @@
 ### Changed
 - **StaffEditDialog AM/PM selection**: Removed AM/PM selection for SPT rank; now only available for RPT and APPT therapists.
 - **Step 2.2 SPT dialog spacing**: Reduced vertical padding in "Add SPT" section (py-4 → py-2), increased card title size (text-base → text-lg), tightened card content spacing (pt-3 → pt-2, space-y-3 → space-y-2).
+- **Desktop canvas alignment**: Dashboard content and navbar now share one `--rbip-app-max-width` (1440px) so the layout and header stay centered without varying widths on different components.
 
 ### Added
 - **Step 2.2 SPT dialog UI revamp**: New three-state design (Working/Leave/Off) with conditional field visibility. Replaced binary Enabled toggle with segmented control. Team Assignment Override moved to primary section with all 8 teams available. Leave type now prominent when "On Leave" state selected. Card header shows Slots (e.g., "1, 2"), FTE, and Team badges. FTE simplified/detail toggle when 3 slots (0.75 FTE). Compact spacing throughout. New ToggleGroup and Separator UI components.
