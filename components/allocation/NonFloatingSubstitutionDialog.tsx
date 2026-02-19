@@ -451,7 +451,7 @@ export function NonFloatingSubstitutionDialog({
               const extraGroups = groupPCAsByCategory(extraCandidates)
 
               return (
-                <div key={sub.nonFloatingPCAId} className="pb-4">
+                <div key={sub.nonFloatingPCAId} className={cn(remainingSlots.length === 0 ? 'pb-0' : 'pb-4')}>
                   {/* Streamlined header: PCA name + team badge + missing slots */}
                   <div className="flex items-center gap-3 pb-3 mb-3 border-b">
                     <span className="font-semibold">{sub.nonFloatingPCAName}</span>
@@ -666,7 +666,7 @@ export function NonFloatingSubstitutionDialog({
                       )}
 
                       {currentSelections.length > 0 ? (
-                        <div className={remainingSlots.length === 0 ? "mt-2" : "mt-4 pt-4 border-t space-y-2"}>
+                        <div className={remainingSlots.length === 0 ? 'mt-4 pt-2 sm:mt-6 sm:pt-3' : 'mt-4 pt-4 border-t space-y-2'}>
                           <div className="text-sm font-medium flex items-center gap-2">
                             {remainingSlots.length === 0 ? (
                               <span className="relative inline-flex h-4 w-4 shrink-0 items-center justify-center">

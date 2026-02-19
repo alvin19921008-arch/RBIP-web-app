@@ -107,6 +107,9 @@ const RANK_ORDER: Record<string, number> = {
 const RANK_BADGE_NEUTRAL_CLASS =
   'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-200'
 
+const NARROW_VIEWPORT_FOOTER_CLASS =
+  'sticky bottom-0 z-10 mt-4 flex-row flex-wrap items-center justify-end gap-2 border-t border-border bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:px-0'
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
@@ -1143,11 +1146,11 @@ export function Step1LeaveSetupDialog({
 
   const therapistSection = (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-end gap-2 border-b border-border pb-3">
-        <div className="text-sm text-muted-foreground">Bulk actions</div>
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="flex items-center gap-2 overflow-x-auto border-b border-border pb-3">
+        <div className="shrink-0 text-sm text-muted-foreground">Bulk actions</div>
+        <div className="flex flex-nowrap items-center gap-2">
           <Select value={bulkLeaveTherapist} onValueChange={(value) => setBulkLeaveTherapist(value as LeaveChoice)}>
-            <SelectTrigger className="h-8 w-[148px] text-[11px] sm:text-xs [&>span]:max-w-[calc(100%-20px)] [&>span]:truncate [&>span]:whitespace-nowrap">
+            <SelectTrigger className="h-8 w-[120px] shrink-0 text-[11px] sm:w-[148px] sm:text-xs [&>span]:max-w-[calc(100%-20px)] [&>span]:truncate [&>span]:whitespace-nowrap">
               <SelectValue className="truncate" placeholder="Set leave type" />
             </SelectTrigger>
             <SelectContent>
@@ -1163,16 +1166,26 @@ export function Step1LeaveSetupDialog({
             type="button"
             size="sm"
             variant="outline"
+            className="shrink-0"
             disabled={selectedTherapistCount === 0}
             onClick={() => applyBulkLeaveChoice('therapist', bulkLeaveTherapist)}
           >
-            Apply leave type
+            <span className="sm:hidden">Apply</span>
+            <span className="hidden sm:inline">Apply leave type</span>
           </Button>
-          <Button type="button" size="sm" variant="outline" disabled={selectedTherapistCount === 0} onClick={() => clearSelectedRows('therapist')}>
-            Clear fields
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="shrink-0"
+            disabled={selectedTherapistCount === 0}
+            onClick={() => clearSelectedRows('therapist')}
+          >
+            <span className="sm:hidden">Clear</span>
+            <span className="hidden sm:inline">Clear fields</span>
           </Button>
           {isDraftDirty ? (
-            <Button type="button" size="sm" variant="ghost" onClick={resetDraft}>
+            <Button type="button" size="sm" variant="ghost" className="shrink-0" onClick={resetDraft}>
               <RotateCcw className="mr-1 h-3.5 w-3.5" />
               Reset draft
             </Button>
@@ -1180,7 +1193,7 @@ export function Step1LeaveSetupDialog({
         </div>
       </div>
 
-      <div className="max-h-[420px] overflow-y-auto overscroll-contain pr-1">
+      <div className="max-h-none overflow-visible overscroll-contain pr-1 sm:max-h-[420px] sm:overflow-y-auto">
         {renderRankSections({
           sections: therapistSections,
           emptyMessage: 'No therapist rows in draft.',
@@ -1195,11 +1208,11 @@ export function Step1LeaveSetupDialog({
 
   const pcaSection = (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-end gap-2 border-b border-border pb-3">
-        <div className="text-sm text-muted-foreground">Bulk actions</div>
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="flex items-center gap-2 overflow-x-auto border-b border-border pb-3">
+        <div className="shrink-0 text-sm text-muted-foreground">Bulk actions</div>
+        <div className="flex flex-nowrap items-center gap-2">
           <Select value={bulkLeavePca} onValueChange={(value) => setBulkLeavePca(value as LeaveChoice)}>
-            <SelectTrigger className="h-8 w-[148px] text-[11px] sm:text-xs [&>span]:max-w-[calc(100%-20px)] [&>span]:truncate [&>span]:whitespace-nowrap">
+            <SelectTrigger className="h-8 w-[120px] shrink-0 text-[11px] sm:w-[148px] sm:text-xs [&>span]:max-w-[calc(100%-20px)] [&>span]:truncate [&>span]:whitespace-nowrap">
               <SelectValue className="truncate" placeholder="Set leave type" />
             </SelectTrigger>
             <SelectContent>
@@ -1215,16 +1228,26 @@ export function Step1LeaveSetupDialog({
             type="button"
             size="sm"
             variant="outline"
+            className="shrink-0"
             disabled={selectedPcaCount === 0}
             onClick={() => applyBulkLeaveChoice('pca', bulkLeavePca)}
           >
-            Apply leave type
+            <span className="sm:hidden">Apply</span>
+            <span className="hidden sm:inline">Apply leave type</span>
           </Button>
-          <Button type="button" size="sm" variant="outline" disabled={selectedPcaCount === 0} onClick={() => clearSelectedRows('pca')}>
-            Clear fields
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="shrink-0"
+            disabled={selectedPcaCount === 0}
+            onClick={() => clearSelectedRows('pca')}
+          >
+            <span className="sm:hidden">Clear</span>
+            <span className="hidden sm:inline">Clear fields</span>
           </Button>
           {isDraftDirty ? (
-            <Button type="button" size="sm" variant="ghost" onClick={resetDraft}>
+            <Button type="button" size="sm" variant="ghost" className="shrink-0" onClick={resetDraft}>
               <RotateCcw className="mr-1 h-3.5 w-3.5" />
               Reset draft
             </Button>
@@ -1232,7 +1255,7 @@ export function Step1LeaveSetupDialog({
         </div>
       </div>
 
-      <div className="max-h-[420px] overflow-y-auto overscroll-contain pr-1">
+      <div className="max-h-none overflow-visible overscroll-contain pr-1 sm:max-h-[420px] sm:overflow-y-auto">
         {renderRankSections({
           sections: pcaSections,
           emptyMessage: 'No PCA rows in draft.',
@@ -1297,7 +1320,7 @@ export function Step1LeaveSetupDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 overflow-auto overscroll-contain pr-1">
+        <div className="min-h-0 flex-1 overflow-auto overscroll-contain pr-1 pb-3">
           {wizardStep === '1.1' ? (() => {
             const countsByRank: Record<string, number> = { SPT: 0, APPT: 0, RPT: 0, PCA: 0, workman: 0 }
             rows.forEach((r) => {
@@ -1600,7 +1623,7 @@ export function Step1LeaveSetupDialog({
 
         {saveError ? <p className="text-sm text-destructive">{saveError}</p> : null}
 
-        <DialogFooter className="gap-2 border-t border-border pt-3">
+        <DialogFooter className={NARROW_VIEWPORT_FOOTER_CLASS}>
           {wizardStep !== '1.1' ? (
             <Button type="button" variant="outline" onClick={prevStep} disabled={saving}>
               Back

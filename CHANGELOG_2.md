@@ -21,6 +21,8 @@
 ### Changed
 - **StaffEditDialog AM/PM selection**: Removed AM/PM selection for SPT rank; now only available for RPT and APPT therapists.
 - **Step 2.2 SPT dialog spacing**: Reduced vertical padding in "Add SPT" section (py-4 → py-2), increased card title size (text-base → text-lg), tightened card content spacing (pt-3 → pt-2, space-y-3 → space-y-2).
+- **Step 1 leave setup mobile polish**: Footer buttons now share the Step 2 sticky layout so they stay manageable on narrow viewports; bulk action labels shorten to “Apply”/“Clear” on mobile, the therapist/PCA lists can scroll without clipping, and the footer button row doesn’t push the entire dialog to full width.  
+- **Step 2.1 substitution confirmation spacing**: “All missing slots are covered” now stays close to the footer divider and the callout sits nearer the footer line without extra blank space, helping it line up with the sticky button row.
 - **Desktop canvas alignment**: Dashboard content and navbar now share one `--rbip-app-max-width` (1440px) so the layout and header stay centered without varying widths on different components.
 
 ### Added
