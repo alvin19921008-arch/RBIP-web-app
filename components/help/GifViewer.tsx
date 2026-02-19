@@ -9,9 +9,10 @@ interface GifViewerProps {
   alt: string
   className?: string
   thumbnailClassName?: string
+  frame?: boolean
 }
 
-export function GifViewer({ src, alt, className, thumbnailClassName }: GifViewerProps) {
+export function GifViewer({ src, alt, className, thumbnailClassName, frame = true }: GifViewerProps) {
   const [isOpen, setIsOpen] = useState(false)
 
   const handleClose = useCallback(() => setIsOpen(false), [])
@@ -41,7 +42,8 @@ export function GifViewer({ src, alt, className, thumbnailClassName }: GifViewer
     <>
       <div
         className={cn(
-          'relative group inline-block w-full max-w-[360px] overflow-hidden rounded-md ring-1 ring-border/15',
+          'relative group inline-block w-full max-w-[360px] overflow-hidden rounded-md bg-transparent',
+          frame && 'ring-1 ring-border/15',
           className
         )}
       >
