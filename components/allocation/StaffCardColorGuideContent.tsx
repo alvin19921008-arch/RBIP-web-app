@@ -52,7 +52,7 @@ function LegendDemoCard(props: {
 export function StaffCardColorGuideContent() {
   return (
     <div className="space-y-2">
-      <div className="text-xs font-semibold text-amber-950">Staff card color guide</div>
+      <div className="text-xs font-semibold text-foreground">Staff card color guide</div>
       <div className="flex flex-col items-start space-y-1">
         <LegendDemoCard label="PCA (non-floating)" borderClassName="border-green-700" />
         <LegendDemoCard
@@ -65,7 +65,7 @@ export function StaffCardColorGuideContent() {
         <LegendDemoCard label="APPT" borderClassName="border-[#e7cc32]" />
         <LegendDemoCard label="SPT" borderClassName="border-[#d38e25]" />
       </div>
-      <ul className="list-disc pl-4 text-[11px] leading-snug text-amber-950 space-y-0.5">
+      <ul className="list-disc pl-4 text-[11px] leading-snug text-muted-foreground space-y-0.5">
         <li>PCA with green border means non-floating PCA.</li>
         <li>PCA with blue thin border and light blue fill shows remaining floating PCA FTE.</li>
         <li>APPT uses yellow border; SPT uses brownish-yellow border.</li>

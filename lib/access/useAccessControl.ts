@@ -3,14 +3,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AccessControlResponse, AccessControlSettingsV1, AccessRole, FeatureId } from '@/lib/access/types'
 import { canFeature, normalizeAccessControlSettings } from '@/lib/access/normalize'
+import { useAccessContext } from '@/lib/access/AccessContext'
 
 type Status = 'idle' | 'loading' | 'ready' | 'error'
 
+const DEFAULT_SETTINGS = normalizeAccessControlSettings(null)
+
 export function useAccessControl() {
-  const [status, setStatus] = useState<Status>('idle')
-  const [role, setRole] = useState<AccessRole>('user')
-  const [settings, setSettings] = useState<AccessControlSettingsV1>(() => normalizeAccessControlSettings(null))
+  const context = useAccessContext()
+
+  const [status, setStatus] = useState<Status>(() => (context.role && context.role !== 'user' ? 'ready' : context.settings ? 'ready' : 'idle'))
+  const [role, setRole] = useState<AccessRole>(() => context.role || 'user')
+  const [settings, setSettings] = useState<AccessControlSettingsV1>(() => context.settings || DEFAULT_SETTINGS)
   const [error, setError] = useState<string | null>(null)
+
+  const hasServerValues = context.role !== 'user' || context.settings !== null
 
   const reload = useCallback(async () => {
     setStatus('loading')
@@ -31,8 +38,14 @@ export function useAccessControl() {
   }, [])
 
   useEffect(() => {
-    void reload()
-  }, [reload])
+    if (hasServerValues) {
+      if (context.role) setRole(context.role)
+      if (context.settings) setSettings(context.settings)
+      setStatus('ready')
+    } else {
+      void reload()
+    }
+  }, [context.role, context.settings, hasServerValues, reload])
 
   const can = useCallback(
     (featureId: FeatureId) => {
@@ -72,4 +85,3 @@ export function useAccessControl() {
     [status, role, settings, error, can, reload, updateRoleFeatures]
   )
 }
-

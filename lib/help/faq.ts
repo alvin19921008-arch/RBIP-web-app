@@ -4,7 +4,7 @@ export type FaqItem = {
   id: string
   question: string
   answer: string
-  answerKind?: 'dashboard-sync-publish' | 'staff-card-color-guide'
+  answerKind?: 'dashboard-sync-publish' | 'staff-card-color-guide' | 'snapshot-reminder'
   answerMediaKey?: HelpMediaKey
   audience?: 'all' | 'admin'
 }
@@ -132,9 +132,9 @@ export const HELP_FAQ_SECTIONS: FaqSection[] = [
     items: [
       {
         id: 'snapshot-reminder',
-        question: 'What does “saved setup snapshot” reminder mean?',
-        answer:
-          'The schedule is using a saved date snapshot that differs from current dashboard config. Admins can review and sync in Dashboard.',
+        question: 'What does "saved setup snapshot" reminder mean?',
+        answer: 'See details below.',
+        answerKind: 'snapshot-reminder',
         audience: 'admin',
       },
     ],

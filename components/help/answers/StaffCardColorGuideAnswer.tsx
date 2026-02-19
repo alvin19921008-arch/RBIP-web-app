@@ -4,7 +4,7 @@ import { StaffCardColorGuideContent } from '@/components/allocation/StaffCardCol
 
 export function StaffCardColorGuideAnswer() {
   return (
-    <div className="rounded-md border border-amber-200 bg-amber-50/95 p-3">
+    <div className="rounded-md border border-border bg-card p-3">
       <StaffCardColorGuideContent />
     </div>
   )

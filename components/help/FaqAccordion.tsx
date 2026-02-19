@@ -5,6 +5,8 @@ import type { AccessRole } from '@/lib/access/types'
 import { Building2, CalendarDays, LayoutList, Settings } from 'lucide-react'
 import { DashboardSyncPublishAnswer } from '@/components/help/answers/DashboardSyncPublishAnswer'
 import { StaffCardColorGuideAnswer } from '@/components/help/answers/StaffCardColorGuideAnswer'
+import { SnapshotReminderAnswer } from '@/components/help/answers/SnapshotReminderAnswer'
+import { GifViewer } from '@/components/help/GifViewer'
 import { helpMedia } from '@/lib/help/helpMedia'
 
 export function FaqAccordion(props: { role: AccessRole; context?: 'all' | 'schedule' | 'dashboard' }) {
@@ -48,18 +50,17 @@ export function FaqAccordion(props: { role: AccessRole; context?: 'all' | 'sched
                       <DashboardSyncPublishAnswer />
                     ) : item.answerKind === 'staff-card-color-guide' ? (
                       <StaffCardColorGuideAnswer />
+                    ) : item.answerKind === 'snapshot-reminder' ? (
+                      <SnapshotReminderAnswer />
                     ) : (
                       item.answer
                     )}
                     {item.answerMediaKey ? (
-                      <div className="mt-4 block w-full max-w-[360px] overflow-hidden rounded-md ring-1 ring-border/15">
-                        <img
-                          src={helpMedia[item.answerMediaKey]}
-                          alt={`${item.question} demo`}
-                          className="block h-auto max-h-[220px] w-full object-contain object-top"
-                          loading="lazy"
-                        />
-                      </div>
+                      <GifViewer
+                        src={helpMedia[item.answerMediaKey]}
+                        alt={`${item.question} demo`}
+                        className="mt-4"
+                      />
                     ) : null}
                   </div>
                 </details>

@@ -3,6 +3,17 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-02-19
+
+### Added
+- **GifViewer component**: Expandable GIF viewer for help center FAQ answers. Ghost button overlay on thumbnails opens centered modal with backdrop blur; max-width 560px for optimal 720p viewing.
+- **Access context provider**: Server-side role fetching in dashboard layout eliminates "flash" of admin-only features. `AccessProvider` wraps authenticated routes with initial role/settings from server; `useAccessControl` uses context as initial state.
+- **Snapshot reminder FAQ**: Detailed answer explaining yellow alert icon, which categories are compared (staff profile, team config, ward config, special programs, SPT allocations, PCA preferences), and admin sync/publish actions.
+
+### Changed
+- **Layout width constraints**: Responsive min-width (`1024px` → `1280px` lg → `1440px` xl) and max-width capped at `1600px` via CSS variable `--rbip-app-max-width`. Root container uses `mx-auto` for centering on ultra-wide screens.
+- **StaffCardColorGuideAnswer**: Removed yellow background when displayed in help center; uses neutral card styling. Content colors use semantic `text-foreground`/`text-muted-foreground` for both popover and help center contexts.
+
 ## [Unreleased] - 2026-02-17
 
 ### Added
