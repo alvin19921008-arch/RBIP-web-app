@@ -67,6 +67,8 @@ export function ScheduleHeaderBar(props: {
   // Display tools (view/split)
   displayTools?: ReactNode
 
+  onClearCache?: () => void
+
   // Steps toggle (Show/Hide Steps)
   isViewingMode: boolean
   stepIndicatorCollapsed: boolean
@@ -275,51 +277,79 @@ export function ScheduleHeaderBar(props: {
             </Tooltip>
 
             {shouldShowDevCache ? (
-              <Tooltip
-                side="bottom"
-                className="whitespace-normal max-w-[360px]"
-                content={
-                  <div className="text-xs space-y-1">
-                    <div className="font-medium">Cache (dev)</div>
-                    <div>
-                      <span className="text-muted-foreground">read:</span> {cacheStateLabel}
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">layer:</span> {cacheLayer ?? 'unknown'}
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">source:</span> {cacheSource ?? 'unknown'}
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">date(meta):</span> {metaKey ?? 'unknown'}
-                      {currentKey ? `, current:${currentKey}` : ''}
-                    </div>
-                    {cacheEntryAt != null ? (
+              <div className="inline-flex items-center gap-0">
+                <Tooltip
+                  side="bottom"
+                  className="whitespace-normal max-w-[360px]"
+                  content={
+                    <div className="text-xs space-y-1">
+                      <div className="font-medium">Cache (dev)</div>
                       <div>
-                        <span className="text-muted-foreground">cachedAt:</span> {new Date(cacheEntryAt).toLocaleString()}
+                        <span className="text-muted-foreground">read:</span> {cacheStateLabel}
                       </div>
-                    ) : null}
-                  </div>
-                }
-              >
-                <span
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Cache status (developer)"
-                  suppressHydrationWarning
-                  className={cn(
-                    cacheBadgeClass,
-                    'cursor-help focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background'
-                  )}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                    }
-                  }}
+                      <div>
+                        <span className="text-muted-foreground">layer:</span> {cacheLayer ?? 'unknown'}
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">source:</span> {cacheSource ?? 'unknown'}
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">date(meta):</span> {metaKey ?? 'unknown'}
+                        {currentKey ? `, current:${currentKey}` : ''}
+                      </div>
+                      {cacheEntryAt != null ? (
+                        <div>
+                          <span className="text-muted-foreground">cachedAt:</span> {new Date(cacheEntryAt).toLocaleString()}
+                        </div>
+                      ) : null}
+                    </div>
+                  }
                 >
-                  cache:{cacheStateLabel}
-                </span>
-              </Tooltip>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Cache status (developer)"
+                    suppressHydrationWarning
+                    className={cn(
+                      cacheBadgeClass,
+                      'cursor-help focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background'
+                    )}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                      }
+                    }}
+                  >
+                    cache:{cacheStateLabel}
+                  </span>
+                </Tooltip>
+                {props.userRole === 'developer' && props.onClearCache ? (
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label="Developer cache actions"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full border-l border-border bg-background text-muted-foreground ring-offset-background transition-colors hover:bg-muted/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                      >
+                        <ChevronDown className="h-4 w-4" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="start"
+                      side="bottom"
+                      className="w-auto rounded-md border border-border bg-card px-1 py-1 shadow-lg"
+                    >
+                      <button
+                        type="button"
+                        onClick={props.onClearCache}
+                        className="w-full rounded-sm px-3 py-2 text-left text-xs hover:bg-accent hover:text-accent-foreground"
+                      >
+                        clear cache
+                      </button>
+                    </PopoverContent>
+                  </Popover>
+                ) : null}
+              </div>
             ) : null}
           </div>
 

@@ -186,6 +186,7 @@ import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/
 import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
 import { createTimingCollector, type TimingReport } from '@/lib/utils/timing'
 import { getCachedSchedule, cacheSchedule, clearCachedSchedule, getCacheSize } from '@/lib/utils/scheduleCache'
+import { hasAnyStaffOverrideKey } from '@/lib/utils/staffOverridesMeaningful'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import {
   applySubstitutionSlotsToOverride,
@@ -760,6 +761,12 @@ function SchedulePageContent() {
     return `${y}-${m}-${day}`
   }, [])
 
+  const handleDeveloperCacheClear = () => {
+    const dateStr = toDateKey(selectedDate)
+    clearCachedSchedule(dateStr)
+    scheduleActions.loadScheduleForDate(selectedDate)
+  }
+
   const isScheduleCompletedToStep4 = useCallback((workflowState: WorkflowState | null | undefined) => {
     const completed = (workflowState?.completedSteps || []) as any[]
     if (!Array.isArray(completed)) return false
@@ -773,8 +780,8 @@ function SchedulePageContent() {
 
   // Initial navigation behavior:
   // - If URL has ?date=..., respect it.
-  // - Else if user previously opened a schedule in this session, restore it.
-  // - Else open today, but if today has no saved data, fall back to the latest schedule completed to Step 4.
+  // - Else if user previously opened a schedule in this session, restore it only when still meaningful.
+  // - Else open today, but if today has no saved data/progress, fall back to the latest meaningful Step 1 date.
   useEffect(() => {
     if (initialDateResolutionStartedRef.current) return
     initialDateResolutionStartedRef.current = true
@@ -796,18 +803,52 @@ function SchedulePageContent() {
           return
         }
 
+        const findLastMeaningfulStep1ScheduleDateKey = async (): Promise<string | null> => {
+          const res = await supabase
+            .from('daily_schedules')
+            .select('date,staff_overrides')
+            .order('date', { ascending: false })
+            .limit(180)
+          if (res.error) return null
+          const rows = (res.data || []) as Array<{ date?: string; staff_overrides?: unknown }>
+          for (const row of rows) {
+            if (typeof row?.date !== 'string') continue
+            if (hasAnyStaffOverrideKey(row.staff_overrides)) return row.date
+          }
+          return null
+        }
+
         const stored =
           typeof window !== 'undefined' ? window.sessionStorage.getItem(LAST_OPEN_SCHEDULE_DATE_KEY) : null
         if (stored) {
           try {
-            const parsed = parseDateFromInput(stored)
-            controllerBeginDateTransition(parsed, { resetLoadedForDate: true })
+            // Validate shape first.
+            parseDateFromInput(stored)
+            const storedRes = await supabase
+              .from('daily_schedules')
+              .select('id,staff_overrides')
+              .eq('date', stored)
+              .maybeSingle()
+            const storedExists = !!(storedRes.data as any)?.id
+            const storedIsMeaningful = hasAnyStaffOverrideKey((storedRes.data as any)?.staff_overrides)
+
+            if (storedExists && storedIsMeaningful) {
+              const parsed = parseDateFromInput(stored)
+              controllerBeginDateTransition(parsed, { resetLoadedForDate: true })
+              if (!cancelled) setInitialDateResolved(true)
+              return
+            }
+
+            // Stored date was deleted/empty; drop the pointer so top-nav /schedule cannot resurrect it.
+            if (typeof window !== 'undefined') {
+              window.sessionStorage.removeItem(LAST_OPEN_SCHEDULE_DATE_KEY)
+            }
           } catch (e) {
             console.warn('Invalid stored last-open schedule date; falling back to auto date selection.', e)
-          } finally {
-            if (!cancelled) setInitialDateResolved(true)
+            if (typeof window !== 'undefined') {
+              window.sessionStorage.removeItem(LAST_OPEN_SCHEDULE_DATE_KEY)
+            }
           }
-          return
         }
 
         const today = new Date()
@@ -816,12 +857,13 @@ function SchedulePageContent() {
         // Check if today already has a saved schedule row (without auto-creating a blank schedule).
         const todayRes = await supabase
           .from('daily_schedules')
-          .select('id,date,workflow_state')
+          .select('id,date,workflow_state,staff_overrides')
           .eq('date', todayKey)
           .maybeSingle()
 
         const todayScheduleId = (todayRes.data as any)?.id as string | undefined
         const todayWorkflow = (todayRes.data as any)?.workflow_state as WorkflowState | null | undefined
+        const todayOverrides = (todayRes.data as any)?.staff_overrides
 
         const scheduleHasAnyAllocations = async (scheduleId: string): Promise<boolean> => {
           try {
@@ -841,42 +883,30 @@ function SchedulePageContent() {
           }
         }
 
-        const findLastCompletedScheduleDateKey = async (): Promise<string | null> => {
-          const res = await supabase
-            .from('daily_schedules')
-            .select('date,workflow_state')
-            .order('date', { ascending: false })
-            .limit(90)
-          if (res.error) return null
-          const rows = (res.data || []) as any[]
-          for (const row of rows) {
-            const wk = row?.workflow_state as WorkflowState | null | undefined
-            if (isScheduleCompletedToStep4(wk) && typeof row?.date === 'string') return row.date
-          }
-          return null
-        }
-
         let initialDate: Date = today
 
         if (todayScheduleId) {
           const hasSavedRows = await scheduleHasAnyAllocations(todayScheduleId)
-          const hasProgress = isScheduleCompletedToStep4(todayWorkflow) || ((todayWorkflow?.completedSteps || [])?.length ?? 0) > 0
+          const hasProgress =
+            isScheduleCompletedToStep4(todayWorkflow) ||
+            ((todayWorkflow?.completedSteps || [])?.length ?? 0) > 0 ||
+            hasAnyStaffOverrideKey(todayOverrides)
           if (!hasSavedRows && !hasProgress) {
-            const lastCompletedKey = await findLastCompletedScheduleDateKey()
-            if (lastCompletedKey) {
+            const lastMeaningfulKey = await findLastMeaningfulStep1ScheduleDateKey()
+            if (lastMeaningfulKey) {
               try {
-                initialDate = parseDateFromInput(lastCompletedKey)
+                initialDate = parseDateFromInput(lastMeaningfulKey)
               } catch {
                 initialDate = today
               }
             }
           }
         } else {
-          // No schedule row for today yet: fall back to last completed schedule date (if any) rather than creating a blank today schedule.
-          const lastCompletedKey = await findLastCompletedScheduleDateKey()
-          if (lastCompletedKey) {
+          // No schedule row for today yet: fall back to latest meaningful Step 1 date (if any) rather than creating a blank today schedule.
+          const lastMeaningfulKey = await findLastMeaningfulStep1ScheduleDateKey()
+          if (lastMeaningfulKey) {
             try {
-              initialDate = parseDateFromInput(lastCompletedKey)
+              initialDate = parseDateFromInput(lastMeaningfulKey)
             } catch {
               initialDate = today
             }
@@ -896,6 +926,9 @@ function SchedulePageContent() {
     resolve()
     return () => {
       cancelled = true
+      // Allow React dev strict-mode to re-run this effect after cleanup.
+      // Otherwise the second invocation can be short-circuited and leave initialDateResolved stuck false.
+      initialDateResolutionStartedRef.current = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -4990,6 +5023,7 @@ function SchedulePageContent() {
 
       const targetKey = formatDateForInput(toDate)
       setCopyTargetDateKey(targetKey)
+      clearCachedSchedule(targetKey)
 
       // Navigate to copied schedule date and reload schedule metadata
       queueDateTransition(toDate, { resetLoadedForDate: true, useLocalTopBar: false })
@@ -9267,6 +9301,7 @@ function SchedulePageContent() {
               )}
             </>
           }
+          onClearCache={handleDeveloperCacheClear}
         />
         )}
         {userRole === 'developer' && devLeaveSimOpen ? (

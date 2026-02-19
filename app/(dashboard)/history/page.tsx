@@ -20,6 +20,10 @@ import {
   getCompletionStatus,
   getCompletionStatusFromWorkflowState,
 } from '@/lib/utils/scheduleHistory'
+import { clearCachedSchedule } from '@/lib/utils/scheduleCache'
+import { hasAnyStaffOverrideKey } from '@/lib/utils/staffOverridesMeaningful'
+
+const LAST_OPEN_SCHEDULE_DATE_KEY = 'rbip_last_open_schedule_date'
 
 export default function HistoryPage() {
   const [schedules, setSchedules] = useState<ScheduleHistoryEntry[]>([])
@@ -42,6 +46,33 @@ export default function HistoryPage() {
   const canDeleteSchedules = access.can('history.delete-schedules') && (access.role === 'admin' || access.role === 'developer')
   const initialCleanupMode = useMemo(() => (searchParams.get('mode') || '') === 'cleanup', [searchParams])
   const [cleanupMode, setCleanupMode] = useState<boolean>(initialCleanupMode)
+
+  const resolveLastMeaningfulScheduleDate = async (): Promise<string | null> => {
+    const { data, error } = await supabase
+      .from('daily_schedules')
+      .select('date, staff_overrides')
+      .order('date', { ascending: false })
+      .limit(180)
+    if (error) return null
+    for (const row of (data || []) as Array<{ date?: string; staff_overrides?: unknown }>) {
+      if (typeof row?.date !== 'string') continue
+      if (hasAnyStaffOverrideKey(row.staff_overrides)) return row.date
+    }
+    return null
+  }
+
+  const reconcileLastOpenScheduleDateAfterDeletion = async (deletedDateKeys: Set<string>) => {
+    if (typeof window === 'undefined' || deletedDateKeys.size === 0) return
+    const stored = window.sessionStorage.getItem(LAST_OPEN_SCHEDULE_DATE_KEY)
+    if (!stored || !deletedDateKeys.has(stored)) return
+
+    const fallback = await resolveLastMeaningfulScheduleDate()
+    if (fallback) {
+      window.sessionStorage.setItem(LAST_OPEN_SCHEDULE_DATE_KEY, fallback)
+    } else {
+      window.sessionStorage.removeItem(LAST_OPEN_SCHEDULE_DATE_KEY)
+    }
+  }
 
   const startTopLoading = (initialProgress: number = 0.05) => {
     if (loadingBarHideTimeoutRef.current) {
@@ -262,6 +293,15 @@ export default function HistoryPage() {
         return
       }
 
+      const deletedDateKeys = new Set<string>()
+      ;(data as any[]).forEach((row: any) => {
+        const dateKey = typeof row?.date === 'string' ? row.date : null
+        if (!dateKey) return
+        deletedDateKeys.add(dateKey)
+        clearCachedSchedule(dateKey)
+      })
+      await reconcileLastOpenScheduleDateAfterDeletion(deletedDateKeys)
+
       // Reload schedules
       await loadSchedules()
       setSelectedScheduleIds(new Set())
@@ -297,6 +337,19 @@ export default function HistoryPage() {
       const deletedIds: string[] = (json?.deletedIds || []) as any
       const skippedIds: string[] = (json?.skippedIds || []) as any
 
+      const dateById = new Map<string, string>()
+      ;[...schedules, ...cleanupCandidates].forEach((entry) => {
+        if (entry?.id && entry?.date) dateById.set(entry.id, entry.date)
+      })
+      const deletedDateKeys = new Set<string>()
+      deletedIds.forEach((id) => {
+        const dateKey = dateById.get(id)
+        if (!dateKey) return
+        deletedDateKeys.add(dateKey)
+        clearCachedSchedule(dateKey)
+      })
+      await reconcileLastOpenScheduleDateAfterDeletion(deletedDateKeys)
+
       if (deletedIds.length === 0) {
         toast.warning('Nothing deleted', 'Selected schedules were not eligible for cleanup deletion.')
       } else {
@@ -315,6 +368,8 @@ export default function HistoryPage() {
   }
 
   const handleNavigate = (date: string) => {
+    // Force fresh hydration when opening a date from History.
+    clearCachedSchedule(date)
     navLoading.start(`/schedule?date=${date}`)
     router.push(`/schedule?date=${date}`)
   }

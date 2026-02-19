@@ -14,6 +14,7 @@
 - **Layout width constraints**: Responsive min-width (`1024px` → `1280px` lg → `1440px` xl) and max-width capped at `1600px` via CSS variable `--rbip-app-max-width`. Root container uses `mx-auto` for centering on ultra-wide screens.
 - **StaffCardColorGuideAnswer**: Removed yellow background when displayed in help center; uses neutral card styling. Content colors use semantic `text-foreground`/`text-muted-foreground` for both popover and help center contexts.
 - **Schedule copy performance & resilience**: Copy now prefers the DB RPC path (`rpc:yes`), skips baseline rebase when the source snapshot head matches current Global, and surfaces RPC/rebase diagnostics (including `rpcError`) in the developer timing tooltip. Added atomic long-term RPC `copy_schedule_with_rebase_v1` (copy + rebase in one transaction) with graceful fallback when unavailable.
+- **Developer cache and navigation guards**: The developer cache badge now exposes a tiny chevron menu that clears the per-date cache and reloads the schedule, history deletes + navigation clear the cache/last-open key, and the initial date resolver resets its Strict-Mode guard so “Loading schedule…” can finish even after the cleanup pass.
 
 ### Fixed
 - **Mobile navbar width**: Navbar now has `min-w-[1024px]` to match dashboard layout, preventing content overflow on narrow screens.
