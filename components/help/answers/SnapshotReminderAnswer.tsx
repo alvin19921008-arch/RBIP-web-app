@@ -18,8 +18,8 @@ export function SnapshotReminderAnswer() {
         </p>
       </div>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-        <div className="flex-1 space-y-2">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-6">
+        <div className="space-y-2 w-full sm:max-w-[360px]">
           <div className="flex items-center gap-2">
             <div className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-amber-50 text-amber-700">
               <AlertCircle className="h-4 w-4" />
