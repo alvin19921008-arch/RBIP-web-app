@@ -99,7 +99,7 @@ export function Navbar() {
   useOnClickOutside(menuRef, () => setMenuOpen(false), { enabled: menuOpen, event: 'pointerdown' })
 
   return (
-    <nav className="border-b bg-background">
+    <nav className="border-b bg-background min-w-[1024px]">
       <div
         className="mx-auto flex w-full px-4 py-3 sm:px-6 lg:px-8 items-center justify-between"
         style={{ maxWidth: 'var(--rbip-app-max-width)' }}

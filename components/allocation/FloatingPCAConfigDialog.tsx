@@ -1364,7 +1364,7 @@ export function FloatingPCAConfigDialog({
             items={teamOrder}
             strategy={horizontalListSortingStrategy}
           >
-            <div className="flex flex-nowrap gap-1.5 justify-center items-center overflow-x-auto min-h-[120px] py-2">
+            <div className="flex flex-nowrap gap-1.5 justify-center items-center overflow-x-auto min-h-[120px] py-2 scrollbar-visible [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
               {teamOrder.map((team, index) => (
                 <div key={team} className="flex items-center gap-1.5 flex-shrink-0">
                   <TeamPendingCard

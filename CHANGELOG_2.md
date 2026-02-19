@@ -14,6 +14,10 @@
 - **Layout width constraints**: Responsive min-width (`1024px` → `1280px` lg → `1440px` xl) and max-width capped at `1600px` via CSS variable `--rbip-app-max-width`. Root container uses `mx-auto` for centering on ultra-wide screens.
 - **StaffCardColorGuideAnswer**: Removed yellow background when displayed in help center; uses neutral card styling. Content colors use semantic `text-foreground`/`text-muted-foreground` for both popover and help center contexts.
 
+### Fixed
+- **Mobile navbar width**: Navbar now has `min-w-[1024px]` to match dashboard layout, preventing content overflow on narrow screens.
+- **Step 3.1 team order horizontal scroll**: Added visible thin scrollbar on mobile for the team order drag area.
+
 ## [Unreleased] - 2026-02-17
 
 ### Added
