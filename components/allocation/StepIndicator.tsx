@@ -1,10 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Check, Circle, ChevronRight, ChevronLeft, AlertCircle, HelpCircle, FilePenLine } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverArrow, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { COPY_ARRIVAL_ANIMATION_MS } from '@/lib/features/schedule/copyConstants'
 
 interface Step {
   id: string
@@ -35,6 +36,7 @@ interface StepIndicatorProps {
   isInitialized?: boolean
   isLoading?: boolean
   onOpenLeaveSetup?: () => void
+  leaveSetupPulseKey?: number
 }
 
 export function StepIndicator({
@@ -58,6 +60,7 @@ export function StepIndicator({
   isInitialized = false,
   isLoading = false,
   onOpenLeaveSetup,
+  leaveSetupPulseKey,
 }: StepIndicatorProps) {
   const currentStepIndex = steps.findIndex(s => s.id === currentStep)
   const currentStepData = steps[currentStepIndex]
@@ -69,6 +72,19 @@ export function StepIndicator({
     canClear
   const [clearMenuOpen, setClearMenuOpen] = useState(false)
   const canOpenLeaveSetup = currentStep === 'leave-fte' && typeof onOpenLeaveSetup === 'function'
+  const [isLeaveSetupHighlighted, setIsLeaveSetupHighlighted] = useState(false)
+  const lastLeaveSetupPulseKeyRef = useRef<number | null>(leaveSetupPulseKey ?? null)
+
+  useEffect(() => {
+    if (leaveSetupPulseKey == null || leaveSetupPulseKey <= 0) return
+    if (lastLeaveSetupPulseKeyRef.current === leaveSetupPulseKey) return
+    lastLeaveSetupPulseKeyRef.current = leaveSetupPulseKey
+    setIsLeaveSetupHighlighted(true)
+    const timeout = window.setTimeout(() => {
+      setIsLeaveSetupHighlighted(false)
+    }, COPY_ARRIVAL_ANIMATION_MS)
+    return () => window.clearTimeout(timeout)
+  }, [leaveSetupPulseKey])
 
   return (
     <div
@@ -321,7 +337,15 @@ export function StepIndicator({
                     disabled={isLoading}
                     size="sm"
                     variant="default"
-                    className="h-8 bg-blue-600 text-white transition-[transform,box-shadow,filter] duration-200 ease-out hover:bg-blue-700 hover:-translate-y-px hover:shadow-md active:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:hover:shadow-none"
+                    className={cn(
+                      'h-8 bg-blue-600 text-white transition-[transform,box-shadow,filter] duration-200 ease-out hover:bg-blue-700 hover:-translate-y-px hover:shadow-md active:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:hover:shadow-none',
+                      isLeaveSetupHighlighted ? 'rbip-step-cta-highlight' : null
+                    )}
+                    style={
+                      isLeaveSetupHighlighted
+                        ? { animationDuration: `${COPY_ARRIVAL_ANIMATION_MS}ms` }
+                        : undefined
+                    }
                   >
                     <FilePenLine className="h-4 w-4 mr-1.5" />
                     Leave setup

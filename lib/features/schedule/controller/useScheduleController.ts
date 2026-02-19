@@ -2871,7 +2871,7 @@ export function useScheduleController(params: {
     onProgress?: (next: number) => void
     startSoftAdvance?: (cap: number) => void
     stopSoftAdvance?: () => void
-  }): Promise<{ copiedUpToStep?: string; timing: TimingReport }> => {
+  }): Promise<{ copiedUpToStep?: string; timing: TimingReport; rebaseWarning?: string | null }> => {
     const timer = createTimingCollector()
     const onProgress = args.onProgress ?? (() => {})
     const startSoftAdvance = args.startSoftAdvance ?? (() => {})
@@ -2915,6 +2915,8 @@ export function useScheduleController(params: {
 
       return {
         copiedUpToStep: (data as any)?.copiedUpToStep as string | undefined,
+        rebaseWarning:
+          typeof (data as any)?.warnings?.rebase === 'string' ? ((data as any).warnings.rebase as string) : null,
         timing: timer.finalize({ ok: true, server: serverTiming }),
       }
     } catch (e) {

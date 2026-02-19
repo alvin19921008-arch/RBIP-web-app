@@ -3,6 +3,7 @@ import { Navbar } from '@/components/layout/Navbar'
 import { NavigationLoadingProvider } from '@/components/ui/navigation-loading'
 import { getAccessSettings } from '@/lib/access/server'
 import { AccessProvider } from '@/lib/access/AccessContext'
+import { RBIP_APP_MIN_WIDTH_CLASS } from '@/lib/layoutWidth'
 
 export default async function DashboardLayout({
   children,
@@ -13,7 +14,7 @@ export default async function DashboardLayout({
   const { role, settings } = await getAccessSettings()
 
   return (
-    <div className="min-h-screen min-w-[1024px] lg:min-w-[1280px] xl:min-w-[1440px] mx-auto bg-background" style={{ maxWidth: 'var(--rbip-app-max-width)' }}>
+    <div className={`min-h-screen ${RBIP_APP_MIN_WIDTH_CLASS} mx-auto bg-background`} style={{ maxWidth: 'var(--rbip-app-max-width)' }}>
       <NavigationLoadingProvider>
         <AccessProvider initialRole={role} initialSettings={settings}>
           <Navbar />

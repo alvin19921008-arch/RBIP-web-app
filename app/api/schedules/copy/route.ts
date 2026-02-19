@@ -10,6 +10,7 @@ import { createTimingCollector } from '@/lib/utils/timing'
 import { fetchGlobalHeadAtCreation } from '@/lib/features/config/globalHead'
 import { createSupabaseAdminClient } from '@/lib/supabase/admin'
 import { hasAnySubstitution } from '@/lib/utils/substitutionFor'
+import type { GlobalHeadAtCreation } from '@/types/schedule'
 
 type CopyMode = 'hybrid'
 
@@ -176,24 +177,69 @@ function getBufferStaffIdsFromScheduleLocalOverrides(overrides: any): Set<string
   return ids
 }
 
-function inferCopiedUpToStep(
-  therapistAllocs: any[] | null | undefined,
-  pcaAllocs: any[] | null | undefined,
-  bedAllocs: any[] | null | undefined
-): string {
-  if (bedAllocs && bedAllocs.length > 0) return 'bed-relieving'
-  if (pcaAllocs && pcaAllocs.length > 0) return 'floating-pca'
-  if (therapistAllocs && therapistAllocs.length > 0) return 'therapist-pca'
+function inferCopiedUpToStepFromCounts(args: {
+  therapistCount: number
+  pcaCount: number
+  bedCount: number
+}): string {
+  if (args.bedCount > 0) return 'bed-relieving'
+  if (args.pcaCount > 0) return 'floating-pca'
+  if (args.therapistCount > 0) return 'therapist-pca'
   return 'leave-fte'
+}
+
+function toRpcErrorMeta(error: any): { code?: string; message: string } {
+  return {
+    code: typeof error?.code === 'string' ? error.code : undefined,
+    message: String(error?.message || 'Unknown RPC error'),
+  }
+}
+
+function isMissingFunctionError(error: any, fnName: string): boolean {
+  const msg = String(error?.message || '')
+  const code = String(error?.code || '')
+  return (
+    code === 'PGRST202' ||
+    (msg.includes(fnName) &&
+      (msg.includes('schema cache') || msg.includes('Could not find') || msg.includes('not found')))
+  )
+}
+
+function doesSnapshotHeadMatchLiveGlobal(args: {
+  sourceHead: GlobalHeadAtCreation | null
+  liveHead: GlobalHeadAtCreation | null
+}): boolean {
+  const { sourceHead, liveHead } = args
+  if (!sourceHead || !liveHead) return false
+
+  const sourceCat = sourceHead.category_versions
+  const liveCat = liveHead.category_versions
+  const liveEntries = Object.entries(liveCat || {}).filter(([, v]) => typeof v === 'number')
+  if (liveEntries.length > 0) {
+    const allMatch = liveEntries.every(([k, v]) => {
+      const sourceValue = (sourceCat as any)?.[k]
+      return typeof sourceValue === 'number' && Number(sourceValue) === Number(v)
+    })
+    if (allMatch) return true
+  }
+
+  if (typeof sourceHead.global_version === 'number' && typeof liveHead.global_version === 'number') {
+    return Number(sourceHead.global_version) === Number(liveHead.global_version)
+  }
+
+  return false
 }
 
 export async function POST(request: NextRequest) {
   try {
     const timer = createTimingCollector({ now: () => Date.now() })
     await requireAuth()
+    timer.stage('auth')
     const supabase = await createServerComponentClient()
     const globalHeadAtCreation = await fetchGlobalHeadAtCreation(supabase)
+    timer.stage('loadGlobalHead')
     const body: CopyScheduleRequest = await request.json()
+    timer.stage('parseRequest')
 
     const { fromDate, toDate, includeBufferStaff } = body
     const mode: CopyMode = 'hybrid'
@@ -208,7 +254,7 @@ export async function POST(request: NextRequest) {
     // Load source schedule
     const { data: fromSchedule, error: fromError } = await supabase
       .from('daily_schedules')
-      .select('*')
+      .select('id, baseline_snapshot, staff_overrides')
       .eq('date', fromDateStr)
       .single()
 
@@ -220,7 +266,7 @@ export async function POST(request: NextRequest) {
     // Load or create target schedule
     let { data: toSchedule, error: toError } = await supabase
       .from('daily_schedules')
-      .select('*')
+      .select('id')
       .eq('date', toDateStr)
       .maybeSingle()
 
@@ -233,7 +279,7 @@ export async function POST(request: NextRequest) {
       const { data: created, error: createError } = await supabase
         .from('daily_schedules')
         .insert({ date: toDateStr, is_tentative: true })
-        .select('*')
+        .select('id')
         .single()
 
       if (createError || !created) {
@@ -245,6 +291,9 @@ export async function POST(request: NextRequest) {
 
     const fromScheduleId = fromSchedule.id
     const toScheduleId = toSchedule.id
+    const rebaseCategories = ['staffProfile', 'teamConfig', 'wardConfig', 'specialPrograms', 'sptAllocations', 'pcaPreferences']
+    let rebaseWarning: string | null = null
+    let rpcErrorMeta: { code?: string; message: string } | null = null
 
     const tryCreateAdmin = () => {
       try {
@@ -266,28 +315,20 @@ export async function POST(request: NextRequest) {
       return { ...(snapshot as any), staff: nextStaff } as any
     }
 
-    const rebaseTargetBaselineToCurrentGlobal = async () => {
+    const adminClient = tryCreateAdmin()
+
+    const rebaseTargetBaselineToCurrentGlobal = async (): Promise<'rpc' | 'js'> => {
       // Preferred: single DB-side RPC to rebuild snapshot slices in one transaction.
       // This avoids propagating legacy baseline payloads when users copy schedules forward/backward.
-      const categories = [
-        'staffProfile',
-        'teamConfig',
-        'wardConfig',
-        'specialPrograms',
-        'sptAllocations',
-        'pcaPreferences',
-      ]
-
-      const admin = tryCreateAdmin()
-      if (admin) {
+      if (adminClient) {
         // Use current RPC signature with include-buffer flag.
-        const attemptWithFlag = await admin.rpc('pull_global_to_snapshot_v1', {
+        const attemptWithFlag = await adminClient.rpc('pull_global_to_snapshot_v1', {
           p_date: toDateStr,
-          p_categories: categories,
+          p_categories: rebaseCategories,
           p_note: `Auto-rebase baseline after copy from ${fromDateStr}`,
           p_include_buffer_staff: includeBufferStaff,
         } as any)
-        if (!attemptWithFlag.error) return
+        if (!attemptWithFlag.error) return 'rpc'
 
         const msg = (attemptWithFlag.error as any)?.message || ''
         const code = (attemptWithFlag.error as any)?.code
@@ -302,7 +343,7 @@ export async function POST(request: NextRequest) {
 
       // Fallback: rebuild baseline snapshot in JS and write to target schedule.
       // Not transactional across tables, but better than leaving inherited legacy payloads.
-      const clientForReadWrite = admin ?? supabase
+      const clientForReadWrite = adminClient ?? supabase
       const fresh = await buildBaselineSnapshot(clientForReadWrite)
       const adjusted = applyBufferStaffDowngradeIfNeeded(fresh)
       const envelope = buildBaselineSnapshotEnvelope({
@@ -315,6 +356,7 @@ export async function POST(request: NextRequest) {
         .update({ baseline_snapshot: envelope as any })
         .eq('id', toScheduleId)
       if (error) throw error
+      return 'js'
     }
 
     // Ensure target schedule is tentative BEFORE cloning allocations.
@@ -333,8 +375,10 @@ export async function POST(request: NextRequest) {
       sourceStored && typeof sourceStored === 'object' && Object.keys(sourceStored as any).length > 0
 
     let sourceBaselineData: BaselineSnapshot
+    let sourceSnapshotHead: GlobalHeadAtCreation | null = null
     if (!hasExistingBaseline) {
       sourceBaselineData = await buildBaselineSnapshot(supabase)
+      sourceSnapshotHead = globalHeadAtCreation
       // Persist baseline snapshot back to source schedule for future consistency
       await supabase
         .from('daily_schedules')
@@ -343,8 +387,9 @@ export async function POST(request: NextRequest) {
         })
         .eq('id', fromScheduleId)
     } else {
-      const { data, wasWrapped } = unwrapBaselineSnapshotStored(sourceStored as BaselineSnapshotStored)
+      const { data, envelope, wasWrapped } = unwrapBaselineSnapshotStored(sourceStored as BaselineSnapshotStored)
       sourceBaselineData = data
+      sourceSnapshotHead = ((envelope as any)?.globalHeadAtCreation ?? null) as GlobalHeadAtCreation | null
       // If the source schedule still stores the legacy raw shape, upgrade it opportunistically.
       if (wasWrapped) {
         const upgraded: BaselineSnapshot = {
@@ -356,28 +401,46 @@ export async function POST(request: NextRequest) {
           .update({ baseline_snapshot: buildBaselineSnapshotEnvelope({ data: upgraded, source: 'copy', globalHeadAtCreation }) as any })
           .eq('id', fromScheduleId)
         sourceBaselineData = upgraded
+        sourceSnapshotHead = globalHeadAtCreation
       }
     }
     timer.stage('resolveSourceBaseline')
 
+    const shouldRebaseToCurrentGlobal = globalHeadAtCreation
+      ? !doesSnapshotHeadMatchLiveGlobal({
+          sourceHead: sourceSnapshotHead,
+          liveHead: globalHeadAtCreation,
+        })
+      : true
+
     const sourceOverridesRaw = (fromSchedule as any).staff_overrides || {}
     const sourceOverrides = stripNonCopyableScheduleOverrides(sourceOverridesRaw)
 
-    // Load allocations to clone
-    const [
-      { data: therapistAllocations },
-      { data: pcaAllocations },
-      { data: bedAllocations },
-      { data: calculations },
-    ] = await Promise.all([
-      supabase.from('schedule_therapist_allocations').select('*').eq('schedule_id', fromScheduleId),
-      supabase.from('schedule_pca_allocations').select('*').eq('schedule_id', fromScheduleId),
-      supabase.from('schedule_bed_allocations').select('*').eq('schedule_id', fromScheduleId),
-      supabase.from('schedule_calculations').select('*').eq('schedule_id', fromScheduleId),
+    // Lightweight probes for UX metadata (avoid loading full allocation payloads on fast RPC path).
+    const [therapistProbeRes, pcaProbeRes, bedProbeRes] = await Promise.all([
+      supabase
+        .from('schedule_therapist_allocations')
+        .select('id')
+        .eq('schedule_id', fromScheduleId)
+        .limit(1),
+      supabase
+        .from('schedule_pca_allocations')
+        .select('id')
+        .eq('schedule_id', fromScheduleId)
+        .limit(1),
+      supabase
+        .from('schedule_bed_allocations')
+        .select('id')
+        .eq('schedule_id', fromScheduleId)
+        .limit(1),
     ])
-    timer.stage('loadSourceAllocations')
+    timer.stage('probeSourceStepDepth')
 
-    const copiedUpToStep = inferCopiedUpToStep(therapistAllocations, pcaAllocations, bedAllocations)
+    const copiedUpToStep = inferCopiedUpToStepFromCounts({
+      therapistCount: Array.isArray(therapistProbeRes.data) && therapistProbeRes.data.length > 0 ? 1 : 0,
+      pcaCount: Array.isArray(pcaProbeRes.data) && pcaProbeRes.data.length > 0 ? 1 : 0,
+      bedCount: Array.isArray(bedProbeRes.data) && bedProbeRes.data.length > 0 ? 1 : 0,
+    })
 
     // Buffer staff ids (snapshot-local):
     // - primary: staff_overrides.__staffStatusOverrides where status='buffer'
@@ -447,12 +510,54 @@ export async function POST(request: NextRequest) {
     const completed: string[] = []
     if (Object.keys(targetOverrides || {}).length > 0) completed.push('leave-fte')
     const targetWorkflowState = {
-      currentStep: 'therapist-pca',
+      currentStep: 'leave-fte',
       completedSteps: completed,
     }
 
     // Fast path: SQL-based clone (RPC) if available. Falls back to JS copy if function isn't installed.
-    const rpcAttempt = await supabase.rpc('copy_schedule_v1', {
+    const rpcClient = adminClient ?? supabase
+    if (shouldRebaseToCurrentGlobal) {
+      // Long-term path: single transaction copy + rebase in DB.
+      const atomicAttempt = await rpcClient.rpc('copy_schedule_with_rebase_v1', {
+        p_from_schedule_id: fromScheduleId,
+        p_to_schedule_id: toScheduleId,
+        p_to_date: toDateStr,
+        p_mode: mode,
+        p_include_buffer_staff: includeBufferStaff,
+        p_baseline_snapshot: targetBaselineEnvelope as any,
+        p_staff_overrides: targetOverrides,
+        p_workflow_state: targetWorkflowState,
+        p_tie_break_decisions: {},
+        p_buffer_staff_ids: Array.from(bufferStaffIds),
+        p_rebase_categories: rebaseCategories,
+        p_rebase_note: `Auto-rebase baseline after copy from ${fromDateStr}`,
+      } as any)
+      timer.stage('rpcCopyAndRebaseAttempt')
+      if (!atomicAttempt.error) {
+        return NextResponse.json({
+          success: true,
+          mode,
+          fromDate: fromDateStr,
+          toDate: toDateStr,
+          copiedUpToStep,
+          timings: timer.finalize({
+            rpcUsed: true,
+            rpcAtomicUsed: true,
+            baselineBytes,
+            specialProgramsBytes,
+            rebaseSkipped: false,
+          }),
+        })
+      }
+
+      const atomicMissing = isMissingFunctionError(atomicAttempt.error, 'copy_schedule_with_rebase_v1')
+      if (!atomicMissing) {
+        rpcErrorMeta = toRpcErrorMeta(atomicAttempt.error)
+      }
+      timer.stage('rpcCopyAndRebaseFallback')
+    }
+
+    const rpcAttempt = await rpcClient.rpc('copy_schedule_v1', {
       from_schedule_id: fromScheduleId,
       to_schedule_id: toScheduleId,
       mode,
@@ -464,6 +569,7 @@ export async function POST(request: NextRequest) {
       tie_break_decisions: {},
       buffer_staff_ids: Array.from(bufferStaffIds),
     })
+    timer.stage('rpcCopyAttempt')
 
     if (!rpcAttempt.error) {
       // Defensive cleanup: older deployed RPC versions may still copy SPT therapist allocations.
@@ -478,11 +584,17 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: `Failed to drop SPT allocations after copy: ${del.error.message}` }, { status: 500 })
         }
       }
-      try {
-        await rebaseTargetBaselineToCurrentGlobal()
-        timer.stage('rebaseBaselineToGlobal')
-      } catch {
-        // Non-fatal: copy succeeded; baseline rebase failure should not block schedule work.
+      timer.stage('rpcPostCopyCleanup')
+      if (shouldRebaseToCurrentGlobal) {
+        try {
+          const rebasePath = await rebaseTargetBaselineToCurrentGlobal()
+          timer.stage(rebasePath === 'rpc' ? 'rebaseBaselineToGlobalRpc' : 'rebaseBaselineToGlobalJs')
+        } catch (e: any) {
+          // Non-fatal: copy succeeded; baseline rebase failure should not block schedule work.
+          rebaseWarning = String(e?.message || 'Failed to rebase target baseline to current Global config.')
+        }
+      } else {
+        timer.stage('rebaseSkipped')
       }
       return NextResponse.json({
         success: true,
@@ -490,10 +602,27 @@ export async function POST(request: NextRequest) {
         fromDate: fromDateStr,
         toDate: toDateStr,
         copiedUpToStep,
-        timings: timer.finalize({ rpcUsed: true, baselineBytes, specialProgramsBytes }),
+        warnings: rebaseWarning ? { rebase: rebaseWarning } : undefined,
+        timings: timer.finalize({
+          rpcUsed: true,
+          rpcAtomicUsed: false,
+          baselineBytes,
+          specialProgramsBytes,
+          rebaseSkipped: !shouldRebaseToCurrentGlobal,
+          rebaseSkipReason: !shouldRebaseToCurrentGlobal ? 'source-head-matches-global' : undefined,
+          rpcError: rpcErrorMeta ?? undefined,
+        }),
       })
     }
+    rpcErrorMeta = toRpcErrorMeta(rpcAttempt.error)
     timer.stage('rpcCopyFallback')
+
+    // Fallback path needs full allocation payloads for JS copy.
+    const [{ data: therapistAllocations }, { data: pcaAllocations }] = await Promise.all([
+      supabase.from('schedule_therapist_allocations').select('*').eq('schedule_id', fromScheduleId),
+      supabase.from('schedule_pca_allocations').select('*').eq('schedule_id', fromScheduleId),
+    ])
+    timer.stage('loadSourceAllocations')
 
     // Clear target allocations and calculations
     const deleteResults = await Promise.all([
@@ -509,6 +638,7 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       )
     }
+    timer.stage('clearTargetAllocations')
 
     // Legacy-safe: unmet-needs tracking table may not exist in some deployments.
     const unmetDelete = await supabase
@@ -528,6 +658,7 @@ export async function POST(request: NextRequest) {
         )
       }
     }
+    timer.stage('clearTargetUnmetNeeds')
 
     // Prepare therapist & PCA allocations to insert depending on mode
     let therapistToInsert = (therapistAllocations || []).filter(
@@ -575,6 +706,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `Failed to copy therapist allocations: ${ins.error.message}` }, { status: 500 })
       }
     }
+    timer.stage('insertTherapistAllocations')
 
     if (pcaToInsert.length > 0) {
       const pcaClones = pcaToInsert.map((a: any) => {
@@ -589,6 +721,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `Failed to copy PCA allocations: ${ins.error.message}` }, { status: 500 })
       }
     }
+    timer.stage('insertPcaAllocations')
 
     // NOTE: We intentionally do NOT copy bed allocations or calculations.
     // They are derived from Step 2+ outputs and must be regenerated after SPT reset.
@@ -609,12 +742,18 @@ export async function POST(request: NextRequest) {
     if (updateError) {
       return NextResponse.json({ error: 'Failed to update schedule metadata' }, { status: 500 })
     }
+    timer.stage('updateTargetScheduleMeta')
 
-    try {
-      await rebaseTargetBaselineToCurrentGlobal()
-      timer.stage('rebaseBaselineToGlobal')
-    } catch {
-      // Non-fatal: copy succeeded; baseline rebase failure should not block schedule work.
+    if (shouldRebaseToCurrentGlobal) {
+      try {
+        const rebasePath = await rebaseTargetBaselineToCurrentGlobal()
+        timer.stage(rebasePath === 'rpc' ? 'rebaseBaselineToGlobalRpc' : 'rebaseBaselineToGlobalJs')
+      } catch (e: any) {
+        // Non-fatal: copy succeeded; baseline rebase failure should not block schedule work.
+        rebaseWarning = String(e?.message || 'Failed to rebase target baseline to current Global config.')
+      }
+    } else {
+      timer.stage('rebaseSkipped')
     }
 
     return NextResponse.json({
@@ -623,7 +762,15 @@ export async function POST(request: NextRequest) {
       fromDate: fromDateStr,
       toDate: toDateStr,
       copiedUpToStep,
-      timings: timer.finalize({ rpcUsed: false, baselineBytes, specialProgramsBytes }),
+      warnings: rebaseWarning ? { rebase: rebaseWarning } : undefined,
+      timings: timer.finalize({
+        rpcUsed: false,
+        baselineBytes,
+        specialProgramsBytes,
+        rebaseSkipped: !shouldRebaseToCurrentGlobal,
+        rebaseSkipReason: !shouldRebaseToCurrentGlobal ? 'source-head-matches-global' : undefined,
+        rpcError: rpcErrorMeta ?? undefined,
+      }),
     })
   } catch (error) {
     console.error('Error copying schedule:', error)

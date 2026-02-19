@@ -514,6 +514,7 @@ export function PCADedicatedScheduleTable({
         const firstTeam = cell.kind === 'team' ? ((cell as any).team as Team) : null
         const firstLeaveType = cell.kind === 'naLeave' ? ((cell as any).leaveType as string) : null
         const firstSubstitution = cell.kind === 'team' ? substitutionBySlot[slot] : false
+        const firstExtraCoverage = cell.kind === 'team' ? !!(cell as any).isExtraCoverage : false
         
         while (j < slots.length) {
           const checkSlot = slots[j]
@@ -527,7 +528,8 @@ export function PCADedicatedScheduleTable({
             if (
               checkCell.kind === 'team' &&
               (checkCell as any).team === firstTeam &&
-              substitutionBySlot[checkSlot] === firstSubstitution
+              substitutionBySlot[checkSlot] === firstSubstitution &&
+              !!(checkCell as any).isExtraCoverage === firstExtraCoverage
             ) {
               j += 1
               continue

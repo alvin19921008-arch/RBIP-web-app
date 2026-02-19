@@ -12,6 +12,7 @@ import { Staff, StaffRank, Team, Weekday, SpecialProgram as StaffSpecialProgram 
 import { SpecialProgram } from '@/types/allocation'
 import { AlertCircle, CircleHelp, Edit2, ChevronDown, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { RBIP_WIDE_DIALOG_WIDTH_CLASS } from '@/lib/layoutWidth'
 import { BufferStaffCreateDialog } from './BufferStaffCreateDialog'
 import { SpecialProgramSubstitutionDialog } from '@/components/allocation/SpecialProgramSubstitutionDialog'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
@@ -1394,7 +1395,7 @@ export function SpecialProgramOverrideDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-[95vw] max-h-[90vh] overflow-y-auto">
+        <DialogContent className={`${RBIP_WIDE_DIALOG_WIDTH_CLASS} max-h-[90vh] overflow-y-auto`}>
           <div className="absolute right-3 top-3 sm:right-4 sm:top-4">
             <Popover>
               <PopoverTrigger asChild>

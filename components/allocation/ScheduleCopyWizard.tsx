@@ -15,6 +15,14 @@ function formatDateIso(date: Date): string {
   return `${year}-${month}-${day}`
 }
 
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
+
+function formatDateWithWeekday(date: Date): string {
+  const dateStr = formatDate(date)
+  const weekday = WEEKDAYS[date.getDay()]
+  return `${dateStr} (${weekday})`
+}
+
 type FlowType = 'next-working-day' | 'last-working-day' | 'specific-date'
 
 interface ScheduleCopyWizardProps {
@@ -57,9 +65,9 @@ export function ScheduleCopyWizard({
   const [sourceBufferStaff, setSourceBufferStaff] = useState<Staff[]>([])
   const [bufferStaffLoading, setBufferStaffLoading] = useState(false)
 
-  const sourceDateStr = useMemo(() => formatDate(sourceDate), [sourceDate])
+  const sourceDateStr = useMemo(() => formatDateWithWeekday(sourceDate), [sourceDate])
   const targetDateStr = useMemo(
-    () => (targetDate ? formatDate(targetDate) : ''),
+    () => (targetDate ? formatDateWithWeekday(targetDate) : ''),
     [targetDate]
   )
 
@@ -83,7 +91,7 @@ export function ScheduleCopyWizard({
 
   const effectiveFromDateStr = useMemo(() => {
     const resolved = resolveFromAndTo()
-    return resolved.fromDate ? formatDate(resolved.fromDate) : null
+    return resolved.fromDate ? formatDateWithWeekday(resolved.fromDate) : null
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [direction, flowType, sourceDate, targetDate])
 
@@ -222,10 +230,11 @@ export function ScheduleCopyWizard({
 
   const renderStepIndicator = () => {
     const totalSteps = isSpecificDateFlow ? 2 : 1
-    const currentStep = isSpecificDateFlow ? step : 1
+    // Don't show step indicator when there's only 1 step
+    if (totalSteps <= 1) return null
     return (
       <p className="text-xs text-muted-foreground mb-1">
-        Step {currentStep} of {totalSteps}
+        Step {step} of {totalSteps}
       </p>
     )
   }
@@ -350,8 +359,8 @@ export function ScheduleCopyWizard({
   }
 
   const { fromDate, toDate } = resolveFromAndTo()
-  const fromLabel = fromDate ? formatDate(fromDate) : (direction === 'to' ? sourceDateStr : '(choose date)')
-  const toLabel = toDate ? formatDate(toDate) : (direction === 'to' ? targetDateStr || '(choose date)' : sourceDateStr)
+  const fromLabel = fromDate ? formatDateWithWeekday(fromDate) : (direction === 'to' ? `${formatDateWithWeekday(sourceDate)}` : '(choose date)')
+  const toLabel = toDate ? formatDateWithWeekday(toDate) : (direction === 'to' ? (targetDate ? `${formatDateWithWeekday(targetDate)}` : '(choose date)') : `${formatDateWithWeekday(sourceDate)}`)
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>

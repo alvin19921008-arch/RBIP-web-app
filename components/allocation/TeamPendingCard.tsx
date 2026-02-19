@@ -95,7 +95,7 @@ export function TeamPendingCard({
       ref={setNodeRef}
       style={style}
       className={cn(
-        'touch-none flex-shrink-0',
+        'touch-pan-x flex-shrink-0',
         isBeingDragged && 'opacity-50 z-50'
       )}
     >
@@ -167,7 +167,7 @@ export function TeamPendingCard({
               {...attributes}
               {...listeners}
               className={cn(
-                'cursor-grab active:cursor-grabbing p-0.5 rounded hover:bg-accent',
+                'touch-none cursor-grab active:cursor-grabbing p-0.5 rounded hover:bg-accent',
                 colorScheme?.text || 'text-muted-foreground'
               )}
             >

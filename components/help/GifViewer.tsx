@@ -42,7 +42,7 @@ export function GifViewer({ src, alt, className, thumbnailClassName, frame = tru
     <>
       <div
         className={cn(
-          'relative group inline-block w-full max-w-[360px] overflow-hidden rounded-md bg-transparent',
+          'relative group block w-full max-w-[360px] overflow-hidden rounded-md bg-transparent',
           frame && 'ring-1 ring-border/15',
           className
         )}

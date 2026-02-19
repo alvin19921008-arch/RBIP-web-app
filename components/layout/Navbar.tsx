@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import { RBIP_APP_MIN_WIDTH_CLASS } from '@/lib/layoutWidth'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
 import { useOnClickOutside } from '@/lib/hooks/useOnClickOutside'
 import {
@@ -99,7 +100,7 @@ export function Navbar() {
   useOnClickOutside(menuRef, () => setMenuOpen(false), { enabled: menuOpen, event: 'pointerdown' })
 
   return (
-    <nav className="border-b bg-background min-w-[1024px] lg:min-w-[1280px] xl:min-w-[1440px]">
+    <nav className={cn('border-b bg-background', RBIP_APP_MIN_WIDTH_CLASS)}>
       <div
         className="mx-auto flex w-full px-4 py-3 sm:px-6 lg:px-8 items-center justify-between"
         style={{ maxWidth: 'var(--rbip-app-max-width)' }}

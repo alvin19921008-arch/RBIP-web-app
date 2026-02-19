@@ -8,6 +8,7 @@ import type { SptWeekdayComputed } from '@/lib/features/schedule/sptConfig'
 import type { StaffOverrideState, SptOnDayOverrideState } from '@/lib/features/schedule/controller/useScheduleController'
 
 import { cn } from '@/lib/utils'
+import { RBIP_WIDE_DIALOG_WIDTH_CLASS } from '@/lib/layoutWidth'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -561,7 +562,7 @@ export function SptFinalEditDialog(props: {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
+      <DialogContent className={`${RBIP_WIDE_DIALOG_WIDTH_CLASS} max-h-[90vh] flex flex-col overflow-hidden`}>
         <DialogHeader className="space-y-3">
           <DialogTitle>SPT day overrides</DialogTitle>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">

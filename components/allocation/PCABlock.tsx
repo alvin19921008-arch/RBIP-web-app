@@ -1078,6 +1078,26 @@ export const PCABlock = memo(function PCABlock({
               ? getSlotDisplayForTeamFiltered(allocation, slotsToDisplay, { cardKind: 'regular' })
               : getSlotDisplayForTeam(allocation)
             const slotDisplayNode = renderSlotDisplay(slotDisplay, allocation, slotsToDisplay)
+            const extraSlotsForTeam = (() => {
+              const o: any = (staffOverrides as any)?.[allocation.staff_id]
+              const flags: any = o?.extraCoverageBySlot
+              if (!flags || typeof flags !== 'object') return [] as number[]
+              const allow = Array.isArray(slotsToDisplay) && slotsToDisplay.length > 0 ? new Set(slotsToDisplay) : null
+              const extra: number[] = []
+              if (allocation.slot1 === team && !!flags[1] && (!allow || allow.has(1))) extra.push(1)
+              if (allocation.slot2 === team && !!flags[2] && (!allow || allow.has(2))) extra.push(2)
+              if (allocation.slot3 === team && !!flags[3] && (!allow || allow.has(3))) extra.push(3)
+              if (allocation.slot4 === team && !!flags[4] && (!allow || allow.has(4))) extra.push(4)
+              return extra
+            })()
+            const slotDisplayNodeWithExtra = extraSlotsForTeam.length > 0 ? (
+              <div className="space-y-0.5">
+                {slotDisplayNode}
+                <div className="text-[10px] font-semibold text-purple-700 dark:text-purple-300">
+                  Extra: slots {extraSlotsForTeam.join(', ')}
+                </div>
+              </div>
+            ) : slotDisplayNode
             
             // Check substitution info (only apply styling in Step 2+)
             const computedSub = substitutionInfoByAllocId.get(allocation.id)
@@ -1112,17 +1132,9 @@ export const PCABlock = memo(function PCABlock({
                 useDragOverlay={true}
                 allocation={allocation as any}
                 fteRemaining={undefined}
-                slotDisplay={slotDisplayNode}
+                slotDisplay={slotDisplayNodeWithExtra}
                 headerRight={(() => {
-                  const o: any = (staffOverrides as any)?.[allocation.staff_id]
-                  const flags: any = o?.extraCoverageBySlot
-                  if (!flags || typeof flags !== 'object') return null
-                  const hasExtra =
-                    (allocation.slot1 === team && !!flags[1]) ||
-                    (allocation.slot2 === team && !!flags[2]) ||
-                    (allocation.slot3 === team && !!flags[3]) ||
-                    (allocation.slot4 === team && !!flags[4])
-                  if (!hasExtra) return null
+                  if (extraSlotsForTeam.length === 0) return null
                   return <span className="text-[10px] font-semibold text-purple-700 dark:text-purple-300 whitespace-nowrap">Extra</span>
                 })()}
                 onEdit={readOnly ? undefined : (e) => onEditStaff?.(allocation.staff_id, e)}

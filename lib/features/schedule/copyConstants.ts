@@ -1,0 +1,2 @@
+export const COPY_ARRIVAL_ANIMATION_MS = 2000
+

@@ -172,6 +172,7 @@ export function HorizontalCardCarousel(props: {
         ref={scrollContainerRef}
         className={cn(
           'flex overflow-x-auto scroll-smooth gap-4 px-6 items-start overscroll-x-contain',
+          !carouselOverflowing ? 'justify-center' : null,
           fill ? 'h-full' : 'h-auto',
           containerClassName
         )}

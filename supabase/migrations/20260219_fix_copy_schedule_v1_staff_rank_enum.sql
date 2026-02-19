@@ -1,14 +1,13 @@
--- copy_schedule_v1: setup-only copy + drop SPT therapist allocations
+-- Hotfix: avoid invalid enum coercion in copy_schedule_v1.
 --
--- Rationale:
--- - "Full copy" has been removed from the app UI. Copy now behaves like the former "hybrid" mode:
---   copies Step 1 + selected Step 2 outputs only, and resets Step 3+ derived outputs.
--- - SPT therapist allocations are weekday-specific and must NOT be copied across dates.
--- - Bed allocations / calculations are derived from Step 2+ outputs and must be regenerated.
+-- Bug:
+--   COALESCE(s.rank, '') <> 'SPT'
+-- on enum column staff.rank raises:
+--   invalid input value for enum staff_rank: ""
 --
--- Backward compatibility:
--- - We keep the function signature (including `mode`) so older clients don't break.
--- - `mode` is ignored; behavior is always setup-only.
+-- Fix:
+--   AND (s.rank IS NULL OR s.rank <> 'SPT'::staff_rank)
+
 CREATE OR REPLACE FUNCTION public.copy_schedule_v1(
   from_schedule_id uuid,
   to_schedule_id uuid,
@@ -29,7 +28,6 @@ BEGIN
   DELETE FROM schedule_pca_allocations WHERE schedule_id = to_schedule_id;
   DELETE FROM schedule_bed_allocations WHERE schedule_id = to_schedule_id;
   DELETE FROM schedule_calculations WHERE schedule_id = to_schedule_id;
-  -- Legacy-safe: unmet-needs tracking table may not exist in some deployments.
   IF to_regclass('public.pca_unmet_needs_tracking') IS NOT NULL THEN
     DELETE FROM pca_unmet_needs_tracking WHERE schedule_id = to_schedule_id;
   END IF;
@@ -130,9 +128,6 @@ BEGIN
       OR (a.special_program_ids IS NOT NULL AND array_length(a.special_program_ids, 1) > 0)
       OR a.staff_id IN (SELECT staff_id FROM substitution_ids)
     );
-
-  -- NOTE: We intentionally do NOT copy bed allocations or calculations.
-  -- They are derived from Step 2+ outputs and must be regenerated after copy.
 
   -- Update target schedule metadata
   UPDATE daily_schedules

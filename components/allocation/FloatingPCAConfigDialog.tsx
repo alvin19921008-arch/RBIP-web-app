@@ -208,6 +208,12 @@ export function FloatingPCAConfigDialog({
   const previewIdleHandleRef = useRef<number | null>(null)
   const previewLastHashRef = useRef<string>('')
   const step31InitializedForOpenRef = useRef(false)
+  const teamOrderStripRef = useRef<HTMLDivElement | null>(null)
+  const [teamOrderScrollMeta, setTeamOrderScrollMeta] = useState({
+    visible: false,
+    thumbWidthPct: 100,
+    thumbOffsetPct: 0,
+  })
 
   const cancelPreviewWork = useCallback(() => {
     if (previewDebounceRef.current != null) {
@@ -745,6 +751,72 @@ export function FloatingPCAConfigDialog({
     }),
     useSensor(KeyboardSensor)
   )
+
+  const updateTeamOrderScrollMeta = useCallback(() => {
+    const el = teamOrderStripRef.current
+    if (!el) {
+      setTeamOrderScrollMeta((prev) => (prev.visible ? { ...prev, visible: false } : prev))
+      return
+    }
+    const maxScroll = el.scrollWidth - el.clientWidth
+    if (maxScroll <= 1) {
+      setTeamOrderScrollMeta((prev) => (prev.visible ? { ...prev, visible: false } : prev))
+      return
+    }
+
+    const rawThumbWidthPct = (el.clientWidth / el.scrollWidth) * 100
+    const thumbWidthPct = Math.max(14, Math.min(100, rawThumbWidthPct))
+    const trackTravelPct = Math.max(0, 100 - thumbWidthPct)
+    const thumbOffsetPct = trackTravelPct * (el.scrollLeft / maxScroll)
+
+    setTeamOrderScrollMeta((prev) => {
+      const next = {
+        visible: true,
+        thumbWidthPct,
+        thumbOffsetPct,
+      }
+      if (
+        prev.visible === next.visible &&
+        Math.abs(prev.thumbWidthPct - next.thumbWidthPct) < 0.1 &&
+        Math.abs(prev.thumbOffsetPct - next.thumbOffsetPct) < 0.1
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    const el = teamOrderStripRef.current
+    if (!el) {
+      setTeamOrderScrollMeta((prev) => (prev.visible ? { ...prev, visible: false } : prev))
+      return
+    }
+
+    const onScrollOrResize = () => {
+      updateTeamOrderScrollMeta()
+    }
+
+    el.addEventListener('scroll', onScrollOrResize, { passive: true })
+    window.addEventListener('resize', onScrollOrResize)
+
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onScrollOrResize) : null
+    resizeObserver?.observe(el)
+    if (el.firstElementChild instanceof HTMLElement) {
+      resizeObserver?.observe(el.firstElementChild)
+    }
+
+    const rafId = window.requestAnimationFrame(onScrollOrResize)
+
+    return () => {
+      window.cancelAnimationFrame(rafId)
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', onScrollOrResize)
+      el.removeEventListener('scroll', onScrollOrResize)
+    }
+  }, [open, currentMiniStep, teamOrder, updateTeamOrderScrollMeta])
   
   // Handle value change from +/- buttons (Step 3.1)
   const handleValueChange = (team: Team, newValue: number) => {
@@ -1364,7 +1436,10 @@ export function FloatingPCAConfigDialog({
             items={teamOrder}
             strategy={horizontalListSortingStrategy}
           >
-            <div className="flex flex-nowrap gap-1.5 justify-center items-center overflow-x-auto min-h-[120px] py-2 scrollbar-visible [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
+            <div
+              ref={teamOrderStripRef}
+              className="floating-pca-team-strip--mobile-native-scrollbar-hidden flex flex-nowrap gap-1.5 justify-center max-[480px]:justify-start items-center overflow-x-auto max-[480px]:overflow-x-scroll min-h-[120px] py-2 scrollbar-visible [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent"
+            >
               {teamOrder.map((team, index) => (
                 <div key={team} className="flex items-center gap-1.5 flex-shrink-0">
                   <TeamPendingCard
@@ -1387,6 +1462,22 @@ export function FloatingPCAConfigDialog({
                 </div>
               ))}
             </div>
+            {teamOrderScrollMeta.visible ? (
+              <div className="mt-1 hidden max-[480px]:block" aria-hidden={true}>
+                <div className="relative h-1.5 rounded-full bg-muted/70">
+                  <div
+                    className="absolute top-0 h-full rounded-full bg-border transition-[left,width] duration-150 ease-out"
+                    style={{
+                      left: `${teamOrderScrollMeta.thumbOffsetPct}%`,
+                      width: `${teamOrderScrollMeta.thumbWidthPct}%`,
+                    }}
+                  />
+                </div>
+                <div className="mt-1 text-center text-[10px] text-muted-foreground">
+                  Swipe left/right to see all teams
+                </div>
+              </div>
+            ) : null}
           </SortableContext>
         </DndContext>
       </div>

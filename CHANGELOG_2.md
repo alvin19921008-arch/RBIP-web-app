@@ -13,10 +13,12 @@
 ### Changed
 - **Layout width constraints**: Responsive min-width (`1024px` → `1280px` lg → `1440px` xl) and max-width capped at `1600px` via CSS variable `--rbip-app-max-width`. Root container uses `mx-auto` for centering on ultra-wide screens.
 - **StaffCardColorGuideAnswer**: Removed yellow background when displayed in help center; uses neutral card styling. Content colors use semantic `text-foreground`/`text-muted-foreground` for both popover and help center contexts.
+- **Schedule copy performance & resilience**: Copy now prefers the DB RPC path (`rpc:yes`), skips baseline rebase when the source snapshot head matches current Global, and surfaces RPC/rebase diagnostics (including `rpcError`) in the developer timing tooltip. Added atomic long-term RPC `copy_schedule_with_rebase_v1` (copy + rebase in one transaction) with graceful fallback when unavailable.
 
 ### Fixed
 - **Mobile navbar width**: Navbar now has `min-w-[1024px]` to match dashboard layout, preventing content overflow on narrow screens.
 - **Step 3.1 team order horizontal scroll**: Added visible thin scrollbar on mobile for the team order drag area.
+- **Copy landing step & UX cues**: After copy-to-new-day, Step Indicator lands on Step 1 (Leave & FTE). Date highlight and “Leave setup” CTA pulse are now synchronized on the same “arrival” trigger and share one duration constant.
 
 ## [Unreleased] - 2026-02-17
 

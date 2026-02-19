@@ -317,6 +317,25 @@
   background-color: var(--rbip-scroll-thumb-hover);
 }
 
+.rbip-step-cta-highlight {
+  animation: rbip-step-cta-highlight 2s ease-out forwards;
+}
+
+@keyframes rbip-step-cta-highlight {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 12px rgba(59, 130, 246, 0.25);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+}
+
 .pca-like-scrollbar--hidden {
   scrollbar-width: none;
 }
@@ -324,6 +343,21 @@
 .pca-like-scrollbar--hidden::-webkit-scrollbar {
   width: 0px;
   height: 0px;
+}
+
+/* Mobile-only: hide native horizontal scrollbar for Step 3.1 team strip.
+   iOS/Chrome can force overlay/auto-hide behavior; we use a custom indicator there. */
+@media (max-width: 480px) {
+  .floating-pca-team-strip--mobile-native-scrollbar-hidden {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .floating-pca-team-strip--mobile-native-scrollbar-hidden::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
 }
 
 @layer base {

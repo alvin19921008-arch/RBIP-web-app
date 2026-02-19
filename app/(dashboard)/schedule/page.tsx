@@ -67,6 +67,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Tooltip } from '@/components/ui/tooltip'
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
+import { RBIP_APP_MIN_WIDTH_CLASS } from '@/lib/layoutWidth'
+import { COPY_ARRIVAL_ANIMATION_MS } from '@/lib/features/schedule/copyConstants'
 import { useAccessControl } from '@/lib/access/useAccessControl'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
 import { getWeekday, formatDateDDMMYYYY, formatDateForInput, parseDateFromInput } from '@/lib/features/schedule/date'
@@ -263,6 +265,9 @@ function SchedulePageContent() {
   const lastHapticDropZoneRef = useRef<string | null>(null)
   const calcStaleRepairAttemptedDateRef = useRef<string | null>(null)
   const avgPcaTargetRepairAttemptedDateRef = useRef<string | null>(null)
+  const highlightTimerRef = useRef<any>(null)
+  const [copyTargetDateKey, setCopyTargetDateKey] = useState<string | null>(null)
+  const [leaveSetupPulseKey, setLeaveSetupPulseKey] = useState(0)
 
   const triggerHaptic = useCallback((pattern: number | number[] = 10) => {
     const coarsePointer = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
@@ -286,6 +291,30 @@ function SchedulePageContent() {
   useEffect(() => {
     setStepIndicatorCollapsed(isSplitMode)
   }, [isSplitMode])
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!copyTargetDateKey) return
+    const loadedDateKey = scheduleState.scheduleLoadedForDate
+    const activeStep = scheduleState.currentStep
+    if (!loadedDateKey) return
+    if (loadedDateKey !== copyTargetDateKey) return
+    if (activeStep !== 'leave-fte') {
+      void scheduleActions.goToStep('leave-fte')
+    }
+    setIsDateHighlighted(true)
+    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current)
+    highlightTimerRef.current = window.setTimeout(() => {
+      setIsDateHighlighted(false)
+    }, COPY_ARRIVAL_ANIMATION_MS)
+    setLeaveSetupPulseKey((prev) => prev + 1)
+    setCopyTargetDateKey(null)
+  }, [copyTargetDateKey, scheduleState.scheduleLoadedForDate, scheduleState.currentStep, scheduleActions])
 
   const replaceScheduleQuery = useCallback(
     (mutate: (params: URLSearchParams) => void) => {
@@ -901,8 +930,6 @@ function SchedulePageContent() {
   const [mobilePreviewUrl, setMobilePreviewUrl] = useState<string | null>(null)
   const [mobilePreviewFilename, setMobilePreviewFilename] = useState('')
   const exportPngRootRef = useRef<HTMLDivElement | null>(null)
-  const highlightTimerRef = useRef<any>(null)
-  const [highlightDateKey, setHighlightDateKey] = useState<string | null>(null)
   const [isDateHighlighted, setIsDateHighlighted] = useState(false)
   const [lastSaveTiming, setLastSaveTiming] = useState<TimingReport | null>(null)
   const [lastCopyTiming, setLastCopyTiming] = useState<TimingReport | null>(null)
@@ -1867,18 +1894,6 @@ function SchedulePageContent() {
       cancelled = true
     }
   }, [supabase])
-
-  useEffect(() => {
-    if (!highlightDateKey) return
-    const currentKey = formatDateForInput(selectedDate)
-    if (currentKey !== highlightDateKey) return
-
-    setIsDateHighlighted(true)
-    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
-    highlightTimerRef.current = setTimeout(() => {
-      setIsDateHighlighted(false)
-    }, 2000)
-  }, [selectedDate, highlightDateKey])
 
   useEffect(() => {
     const isScheduleNavTarget = (navLoading.targetHref ?? '').startsWith('/schedule')
@@ -4973,8 +4988,8 @@ function SchedulePageContent() {
       setCopyMenuOpen(false)
       bumpTopLoadingTo(0.86)
 
-      // Highlight the newly-loaded date label briefly.
-      setHighlightDateKey(formatDateForInput(toDate))
+      const targetKey = formatDateForInput(toDate)
+      setCopyTargetDateKey(targetKey)
 
       // Navigate to copied schedule date and reload schedule metadata
       queueDateTransition(toDate, { resetLoadedForDate: true, useLocalTopBar: false })
@@ -4991,6 +5006,13 @@ function SchedulePageContent() {
       bumpTopLoadingTo(0.98)
 
       showActionToast('Copied schedule to ' + formatDateDDMMYYYY(toDate) + '.', 'success')
+      if (result.rebaseWarning) {
+        showActionToast(
+          'Copied, but baseline rebase failed.',
+          'warning',
+          `Please go to Dashboard > Sync / Publish and run "Pull Global → snapshot" for today. (${result.rebaseWarning})`
+        )
+      }
 
       return {
         copiedUpToStep: result.copiedUpToStep,
@@ -8856,7 +8878,8 @@ function SchedulePageContent() {
       
       <div
         className={cn(
-          'w-full px-8 py-4 min-w-[1440px] bg-background',
+          'w-full px-8 py-4 bg-background',
+          RBIP_APP_MIN_WIDTH_CLASS,
           // In split mode, behave like a full-viewport workspace (Arena/NotebookLM style):
           // panes scroll independently; the page itself shouldn't require scrolling to reach pane B.
           isSplitMode && 'h-[calc(100vh-64px)] flex flex-col min-h-0 overflow-hidden'
@@ -8916,6 +8939,7 @@ function SchedulePageContent() {
             />
           </div>
         ) : null}
+        <div className={cn(!isSplitMode && 'inline-block min-w-full align-top')}>
         {!isSplitMode && (
         <ScheduleHeaderBar
           userRole={userRole}
@@ -9052,6 +9076,12 @@ function SchedulePageContent() {
                                           ) : null}
                                           {typeof server?.meta?.specialProgramsBytes === 'number' ? (
                                             <span className="text-slate-400"> sp:{Math.round(server.meta.specialProgramsBytes / 1024)}KB</span>
+                                          ) : null}
+                                          {server?.meta?.rpcError ? (
+                                            <span className="text-amber-300">
+                                              {' '}
+                                              rpcError:{String((server.meta.rpcError as any)?.message || 'unknown')}
+                                            </span>
                                           ) : null}
                                         </div>
                                         {Array.isArray(server.stages) && server.stages.length > 0 && (
@@ -9673,6 +9703,7 @@ function SchedulePageContent() {
             showClear={showClearForCurrentStep}
             isInitialized={initializedSteps.has(currentStep)}
             isLoading={loading || isUiTransitionPending}
+            leaveSetupPulseKey={leaveSetupPulseKey}
           />
         </div>
 
@@ -10684,6 +10715,12 @@ function SchedulePageContent() {
                                           {typeof server?.meta?.specialProgramsBytes === 'number' ? (
                                             <span className="text-slate-400"> sp:{Math.round(server.meta.specialProgramsBytes / 1024)}KB</span>
                                           ) : null}
+                                          {server?.meta?.rpcError ? (
+                                            <span className="text-amber-300">
+                                              {' '}
+                                              rpcError:{String((server.meta.rpcError as any)?.message || 'unknown')}
+                                            </span>
+                                          ) : null}
                                         </div>
                                         {Array.isArray(server.stages) && server.stages.length > 0 && (
                                           <div className="text-[11px] text-slate-300 space-y-0.5">
@@ -11115,6 +11152,12 @@ function SchedulePageContent() {
                                           {typeof server?.meta?.specialProgramsBytes === 'number' ? (
                                             <span className="text-slate-400"> sp:{Math.round(server.meta.specialProgramsBytes / 1024)}KB</span>
                                           ) : null}
+                                          {server?.meta?.rpcError ? (
+                                            <span className="text-amber-300">
+                                              {' '}
+                                              rpcError:{String((server.meta.rpcError as any)?.message || 'unknown')}
+                                            </span>
+                                          ) : null}
                                         </div>
                                         {Array.isArray(server.stages) && server.stages.length > 0 && (
                                           <div className="text-[11px] text-slate-300 space-y-0.5">
@@ -11319,6 +11362,7 @@ function SchedulePageContent() {
             </>
           )
         })()}
+        </div>
         </div>
 
         <ScheduleDialogsLayer
