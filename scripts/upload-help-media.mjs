@@ -28,6 +28,16 @@ const mediaPlan = [
     localPath: 'Video/Contexual menu.gif',
     blobPath: 'help/contextual-menu.gif',
   },
+  {
+    envKey: 'NEXT_PUBLIC_HELP_MEDIA_SHS_STUDENT_GIF_URL',
+    localPath: 'Video/SHS_Student.gif',
+    blobPath: 'help/shs-student.gif',
+  },
+  {
+    envKey: 'NEXT_PUBLIC_HELP_MEDIA_SNAPSHOT_DIFF_GIF_URL',
+    localPath: 'Video/saved snapshot diff.gif',
+    blobPath: 'help/snapshot-diff.gif',
+  },
 ]
 
 if (!token) {

@@ -3,6 +3,8 @@ import step2PcaCoverGif from '@/Video/step 2 PCA cover.gif'
 import summaryInfoGif from '@/Video/Summary info_Gif.gif'
 import staffPoolGif from '@/Video/staffpool.gif'
 import contextualMenuGif from '@/Video/Contexual menu.gif'
+import shsStudentGif from '@/Video/SHS_Student.gif'
+import snapshotDiffGif from '@/Video/saved snapshot diff.gif'
 
 const isHttpUrl = (value: string): boolean => {
   try {
@@ -35,6 +37,14 @@ export const helpMedia = {
   contextualMenuGif: resolveHelpMediaUrl(
     process.env.NEXT_PUBLIC_HELP_MEDIA_CONTEXTUAL_MENU_GIF_URL,
     contextualMenuGif
+  ),
+  shsStudentGif: resolveHelpMediaUrl(
+    process.env.NEXT_PUBLIC_HELP_MEDIA_SHS_STUDENT_GIF_URL,
+    shsStudentGif
+  ),
+  snapshotDiffGif: resolveHelpMediaUrl(
+    process.env.NEXT_PUBLIC_HELP_MEDIA_SNAPSHOT_DIFF_GIF_URL,
+    snapshotDiffGif
   ),
 } as const
 

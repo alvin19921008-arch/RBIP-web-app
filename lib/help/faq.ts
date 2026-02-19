@@ -71,6 +71,7 @@ export const HELP_FAQ_SECTIONS: FaqSection[] = [
         question: 'How do I adjust total beds for SHS and student placements?',
         answer:
           'Use the pencil next to Total beds in the team calculation block, then fill SHS and Students under Adjustments.',
+        answerMediaKey: 'shsStudentGif',
       },
       {
         id: 'after-deductions',
