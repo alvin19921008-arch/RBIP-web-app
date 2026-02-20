@@ -9,12 +9,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, ArrowRight } from 'lucide-react'
+import { ArrowLeft, ArrowRight, MoreHorizontal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getTeamFloor, isFloorPCAForTeam, getTeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
 import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
 import { getTeamTheme } from '@/components/allocation/teamThemePalette'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -92,6 +93,7 @@ export function NonFloatingSubstitutionDialog({
   const [selections, setSelections] = useState<Record<string, Array<{ floatingPCAId: string; slots: number[] }>>>(
     () => initialSelections ?? {}
   )
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
 
   // When dialog opens, seed selections from initialSelections (if provided)
   useEffect(() => {
@@ -99,6 +101,17 @@ export function NonFloatingSubstitutionDialog({
     setCurrentTeamIndex(0)
     setSelections(initialSelections ?? {})
   }, [open, initialSelections])
+
+  useEffect(() => {
+    const detect = () => {
+      const narrow = typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches
+      const coarse = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
+      setIsMobileViewport(narrow || coarse)
+    }
+    detect()
+    window.addEventListener('resize', detect)
+    return () => window.removeEventListener('resize', detect)
+  }, [])
 
   // For single team mode, always use the first (and only) team
   const currentTeam = isWizardMode ? teams[currentTeamIndex] : teams[0]
@@ -817,43 +830,98 @@ export function NonFloatingSubstitutionDialog({
         </div>
 
         <DialogFooter className="sticky bottom-0 z-10 mt-4 flex-row flex-wrap items-center gap-2 border-t bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:justify-between sm:px-0">
-          {onBack ? (
-            <Button variant="outline" onClick={onBack} className="mr-auto max-w-full whitespace-normal">
-              <ArrowLeft className="mr-2 h-4 w-4" /> Back to 2.0
-            </Button>
-          ) : (
-            <div className="hidden sm:block" />
-          )}
+          {isMobileViewport ? (
+            <div className="flex w-full items-center gap-1">
+              {onBack ? (
+                <Button type="button" variant="outline" size="icon" onClick={onBack} className="h-8 w-8 shrink-0">
+                  <ArrowLeft className="h-4 w-4" />
+                </Button>
+              ) : (
+                <div className="h-8 w-8 shrink-0" />
+              )}
 
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <div className="relative group">
-              <Button variant="outline" onClick={onSkip} className="max-w-full whitespace-normal">
-                {isWizardMode ? 'Skip All' : 'Skip'}
-              </Button>
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-80 p-3 bg-popover border border-border rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none whitespace-normal">
-                <p className="text-xs text-popover-foreground mb-2 font-medium">
-                  Should the algorithm automatically assign floating PCAs to substitute for non-floating PCAs?
-                </p>
-                <ul className="text-xs text-popover-foreground space-y-1 list-disc list-inside">
-                  <li><strong>Skip:</strong> Algorithm will automatically assign floating PCAs based on preferences and availability</li>
-                  <li><strong>Cancel:</strong> Exit dialog without changes</li>
-                  <li><strong>Confirm:</strong> Apply your manual substitution selections</li>
-                </ul>
+              <div className="ml-auto flex items-center gap-1">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button type="button" variant="outline" className="h-8 px-2 text-xs shrink-0">
+                      <MoreHorizontal className="mr-1 h-3.5 w-3.5" />
+                      More
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-[200px] rounded-md border border-border bg-popover p-1.5 shadow-md">
+                    <div className="space-y-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={onSkip}
+                        className="h-8 w-full justify-start px-2 text-xs"
+                      >
+                        {isWizardMode ? 'Skip All' : 'Skip'}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={onCancel}
+                        className="h-8 w-full justify-start px-2 text-xs"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+                {!isWizardMode ? (
+                  <Button onClick={handleConfirm} disabled={!isCurrentTeamComplete} className="h-8 px-2 text-xs shrink-0">
+                    Confirm
+                  </Button>
+                ) : (
+                  <Button onClick={handleConfirm} disabled={!isAllTeamsComplete} className="h-8 px-2 text-xs shrink-0">
+                    Confirm
+                  </Button>
+                )}
               </div>
             </div>
-            <Button variant="outline" onClick={onCancel} className="max-w-full whitespace-normal">
-              Cancel
-            </Button>
-            {!isWizardMode ? (
-              <Button onClick={handleConfirm} disabled={!isCurrentTeamComplete} className="max-w-full whitespace-normal">
-                Confirm
-              </Button>
-            ) : (
-              <Button onClick={handleConfirm} disabled={!isAllTeamsComplete} className="max-w-full whitespace-normal">
-                Confirm All
-              </Button>
-            )}
-          </div>
+          ) : (
+            <>
+              {onBack ? (
+                <Button variant="outline" onClick={onBack} className="mr-auto max-w-full whitespace-normal">
+                  <ArrowLeft className="mr-2 h-4 w-4" /> Back to 2.0
+                </Button>
+              ) : (
+                <div className="hidden sm:block" />
+              )}
+
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="relative group">
+                  <Button variant="outline" onClick={onSkip} className="max-w-full whitespace-normal">
+                    {isWizardMode ? 'Skip All' : 'Skip'}
+                  </Button>
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-80 p-3 bg-popover border border-border rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none whitespace-normal">
+                    <p className="text-xs text-popover-foreground mb-2 font-medium">
+                      Should the algorithm automatically assign floating PCAs to substitute for non-floating PCAs?
+                    </p>
+                    <ul className="text-xs text-popover-foreground space-y-1 list-disc list-inside">
+                      <li><strong>Skip:</strong> Algorithm will automatically assign floating PCAs based on preferences and availability</li>
+                      <li><strong>Cancel:</strong> Exit dialog without changes</li>
+                      <li><strong>Confirm:</strong> Apply your manual substitution selections</li>
+                    </ul>
+                  </div>
+                </div>
+                <Button variant="outline" onClick={onCancel} className="max-w-full whitespace-normal">
+                  Cancel
+                </Button>
+                {!isWizardMode ? (
+                  <Button onClick={handleConfirm} disabled={!isCurrentTeamComplete} className="max-w-full whitespace-normal">
+                    Confirm
+                  </Button>
+                ) : (
+                  <Button onClick={handleConfirm} disabled={!isAllTeamsComplete} className="max-w-full whitespace-normal">
+                    Confirm All
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

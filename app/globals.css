@@ -383,6 +383,7 @@
     --ring: 222.2 84% 4.9%;
     --radius: 0.5rem;
     --rbip-app-max-width: 1600px;
+    --rbip-workspace-min-width: 1488px;
   }
 
   .dark {

@@ -783,13 +783,13 @@ export const BedBlock = React.memo(function BedBlock({
                   ) : null}
                 </div>
                 {!isEditingTakes && onSaveBedRelievingNotesForToTeam ? (
-                  <Tooltip side="top" content="Edit takes for all releasing teams">
+                <Tooltip side="top" content="Edit takes for all releasing teams">
                     <span>
                       <Button
                         type="button"
-                        variant="ghost"
+                        variant={canEdit ? 'secondary' : 'outline'}
                         size="sm"
-                        className="h-6 px-2 text-xs"
+                        className="h-7 px-2 text-xs font-semibold rounded-full"
                         onClick={(e) => {
                           e.preventDefault()
                           e.stopPropagation()

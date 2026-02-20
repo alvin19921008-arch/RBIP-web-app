@@ -10,12 +10,13 @@
 - **Access context provider**: Server-side role fetching in dashboard layout eliminates "flash" of admin-only features. `AccessProvider` wraps authenticated routes with initial role/settings from server; `useAccessControl` uses context as initial state.
 - **Snapshot reminder FAQ**: Detailed answer explaining yellow alert icon, which categories are compared (staff profile, team config, ward config, special programs, SPT allocations, PCA preferences), and admin sync/publish actions.
 
-### Changed
+-### Changed
 - **Layout width constraints**: Responsive min-width (`1024px` → `1280px` lg → `1440px` xl) and max-width capped at `1600px` via CSS variable `--rbip-app-max-width`. Root container uses `mx-auto` for centering on ultra-wide screens.
 - **StaffCardColorGuideAnswer**: Removed yellow background when displayed in help center; uses neutral card styling. Content colors use semantic `text-foreground`/`text-muted-foreground` for both popover and help center contexts.
 - **Schedule copy performance & resilience**: Copy now prefers the DB RPC path (`rpc:yes`), skips baseline rebase when the source snapshot head matches current Global, and surfaces RPC/rebase diagnostics (including `rpcError`) in the developer timing tooltip. Added atomic long-term RPC `copy_schedule_with_rebase_v1` (copy + rebase in one transaction) with graceful fallback when unavailable.
 - **Developer cache and navigation guards**: The developer cache badge now exposes a tiny chevron menu that clears the per-date cache and reloads the schedule, history deletes + navigation clear the cache/last-open key, and the initial date resolver resets its Strict-Mode guard so “Loading schedule…” can finish even after the cleanup pass.
 - **Schedule draft persistence**: Step 2/4 edits now auto-flush into the in-memory draft cache (with identity checks) whenever dirty, the confirm buttons read “Confirm”, and allocation notes toasts remind you to “Save Schedule” before the data reaches the database.
+- **Step 2/3 footers + Step 2.0 helper**: Step 2.0 cards with multiple slots now show a brief “hover over the PCA name to remove them from a selected slot” helper, the Step 2.1/2.2 footers collapse to a single mobile row (back / +SPT / More / Confirm), the Step 3 mini-step footers show mobile labels like “Continue”, “Skip”, and “Assign”, and the Relieving Beds “Edit” trigger becomes a tighter pill button once Step 4 has run so the control feels more like a button.
 - **Step 3.4 floating PCA gym-avoid behavior**: Cycle 3 cleanup now honors gym avoidance as a first-class constraint, but if a team still needs ≥0.25 FTE and **no** other non-gym slots remain anywhere in the pool, the gym slot is allowed as a deterministic “last resort” so teams aren’t stuck forever.
 
 ### Fixed

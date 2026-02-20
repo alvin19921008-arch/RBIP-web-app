@@ -1520,7 +1520,7 @@ export function SpecialProgramOverrideDialog({
                     return (
                       <Card
                         key={program.id}
-                        className="min-w-[360px] max-w-[420px] w-[min(420px,calc(100vw-120px))] flex-shrink-0"
+                        className="min-w-[280px] sm:min-w-[360px] max-w-[420px] w-[min(420px,calc(100vw-40px))] sm:w-[min(420px,calc(100vw-120px))] flex-shrink-0"
                       >
                         <CardHeader>
                           <CardTitle>{program.name}</CardTitle>
@@ -1895,6 +1895,11 @@ export function SpecialProgramOverrideDialog({
                                 )
                               })}
                             </div>
+                            {currentSlots.length > 1 ? (
+                              <p className="text-[11px] text-muted-foreground/80 mt-1">
+                                Hover over the PCA name to remove them from a selected slot.
+                              </p>
+                            ) : null}
                           </div>
 
                           {/* PCA FTE Subtraction - Auto-calculated for Robotic/CRP */}

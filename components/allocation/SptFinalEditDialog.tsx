@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { Check, Plus, RotateCcw, Trash2, ArrowLeft, Briefcase, AlertCircle, X } from 'lucide-react'
+import { Check, Plus, RotateCcw, Trash2, ArrowLeft, Briefcase, AlertCircle, X, MoreHorizontal } from 'lucide-react'
 
 import type { Staff, Team, Weekday, LeaveType } from '@/types/staff'
 import type { SptWeekdayComputed } from '@/lib/features/schedule/sptConfig'
@@ -21,6 +21,7 @@ import { HorizontalCardCarousel } from '@/components/ui/horizontal-card-carousel
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Separator } from '@/components/ui/separator'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -212,6 +213,10 @@ export function SptFinalEditDialog(props: {
   const [cards, setCards] = React.useState<CardState[]>([])
   const [addStaffId, setAddStaffId] = React.useState<string>('')
   const [deletedInitialStaffIds, setDeletedInitialStaffIds] = React.useState<string[]>([])
+  const [addPanelOpen, setAddPanelOpen] = React.useState(false)
+  const [isMobileViewport, setIsMobileViewport] = React.useState(false)
+  const [carouselInitialIndex, setCarouselInitialIndex] = React.useState(0)
+  const [carouselJumpToken, setCarouselJumpToken] = React.useState(0)
 
   const candidateAddList = React.useMemo(() => {
     const existing = new Set(cards.map((c) => c.staffId))
@@ -232,6 +237,17 @@ export function SptFinalEditDialog(props: {
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [cards, sptStaff, sptWeekdayByStaffId, staffOverrides])
+
+  React.useEffect(() => {
+    const detect = () => {
+      const narrow = typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches
+      const coarse = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
+      setIsMobileViewport(narrow || coarse)
+    }
+    detect()
+    window.addEventListener('resize', detect)
+    return () => window.removeEventListener('resize', detect)
+  }, [])
 
   const buildInitialCards = React.useCallback((): CardState[] => {
     const visible = new Set<string>()
@@ -359,6 +375,8 @@ export function SptFinalEditDialog(props: {
     setCards(buildInitialCards())
     setAddStaffId('')
     setDeletedInitialStaffIds([])
+    setCarouselInitialIndex(0)
+    setCarouselJumpToken((t) => t + 1)
   }, [open, buildInitialCards])
 
   const updateCard = (staffId: string, patch: Partial<CardState>) => {
@@ -405,9 +423,13 @@ export function SptFinalEditDialog(props: {
     const allowedTeamsRaw = sptTeamsByStaffId?.[s.id]
     const allowedTeams = Array.isArray(allowedTeamsRaw) && allowedTeamsRaw.length > 0 ? allowedTeamsRaw : TEAMS
 
-    setCards((prev) => [
-      ...prev,
-      {
+    setCards((prev) => {
+      const nextIndex = prev.length
+      setCarouselInitialIndex(nextIndex)
+      setCarouselJumpToken((t) => t + 1)
+      return [
+        ...prev,
+        {
         staffId: s.id,
         staffName: s.name,
         allowedTeams,
@@ -430,9 +452,11 @@ export function SptFinalEditDialog(props: {
         leaveCostInput: '0',
         customLeaveType: undefined,
         teamChoice: 'AUTO',
-      },
-    ])
+        },
+      ]
+    })
     setAddStaffId('')
+    setAddPanelOpen(false)
   }
 
   const handleDeleteCard = (staffId: string) => {
@@ -561,7 +585,8 @@ export function SptFinalEditDialog(props: {
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={`${RBIP_WIDE_DIALOG_WIDTH_CLASS} max-h-[90vh] flex flex-col overflow-hidden`}>
         <DialogHeader className="space-y-3">
           <DialogTitle>SPT day overrides</DialogTitle>
@@ -596,7 +621,13 @@ export function SptFinalEditDialog(props: {
               No SPT configured for this weekday. You can add one below.
             </div>
           ) : (
-            <HorizontalCardCarousel recomputeKey={open} fill={true} showDots={false} containerClassName="h-full">
+            <HorizontalCardCarousel
+              recomputeKey={`${open}:${carouselJumpToken}`}
+              initialIndex={carouselInitialIndex}
+              fill={true}
+              showDots={false}
+              containerClassName="h-full"
+            >
               {cards.map((card) => {
                 const forceDisableByLeave =
                   typeof card.leaveType === 'string' && SPT_FULL_LEAVE_TYPES_FORCE_DISABLE.has(card.leaveType)
@@ -646,7 +677,7 @@ export function SptFinalEditDialog(props: {
                 return (
                   <Card
                     key={card.staffId}
-                    className="min-w-[340px] max-w-[400px] w-[min(400px,calc(100vw-120px))] flex-shrink-0 h-full max-h-full min-h-0 overflow-y-auto overscroll-contain"
+                    className="min-w-[280px] sm:min-w-[340px] max-w-[400px] w-[min(400px,calc(100vw-40px))] sm:w-[min(400px,calc(100vw-120px))] flex-shrink-0 h-full max-h-full min-h-0 overflow-y-auto overscroll-contain"
                   >
                     <CardHeader className="pb-2">
                       <div className="flex items-start justify-between gap-3">
@@ -1030,85 +1061,198 @@ export function SptFinalEditDialog(props: {
           )}
         </div>
 
-        {/* Keep Add section OUTSIDE the carousel scroller to avoid “underlay” peeking */}
-        <div className="border-t px-6 py-2 bg-background">
-          <div className="space-y-1">
-            <Label>Add SPT not configured on this day</Label>
-
-            <div className="flex flex-wrap items-center gap-2">
-            <div className="w-[180px] max-w-[180px]">
-                <Select value={addStaffId || '__NONE__'} onValueChange={(v) => setAddStaffId(v === '__NONE__' ? '' : v)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select SPT" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__NONE__">Select SPT</SelectItem>
-                    {candidateAddList.length === 0 ? (
-                      <SelectItem value="__NONE__" disabled>
-                        No eligible SPT to add
-                      </SelectItem>
-                    ) : (
-                      candidateAddList.map((s) => (
-                        <SelectItem key={s.id} value={s.id}>
-                          {s.name}
-                        </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <Button onClick={handleAdd} disabled={!addStaffId || candidateAddList.length === 0}>
-                <Plus className="h-4 w-4 mr-1" />
-                Add
-              </Button>
-            </div>
-
-            <div className="text-xs text-muted-foreground">
-              Add an on-duty SPT who is not configured for this weekday (ad hoc help).
-            </div>
-          </div>
-        </div>
-
         <DialogFooter className="sticky bottom-0 z-10 mt-4 flex-row flex-wrap items-center gap-2 border-t bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:justify-between sm:px-0">
-          {onBack ? (
-            <Button variant="outline" onClick={onBack} className="mr-auto max-w-full whitespace-normal">
-              <ArrowLeft className="mr-2 h-4 w-4" /> Back to 2.1
-            </Button>
-          ) : (
-            <div className="hidden sm:block" />
-          )}
+          {isMobileViewport ? (
+            <div className="flex w-full items-center gap-1">
+              {onBack ? (
+                <Button type="button" variant="outline" size="icon" onClick={onBack} className="h-8 w-8 shrink-0">
+                  <ArrowLeft className="h-4 w-4" />
+                </Button>
+              ) : (
+                <div className="h-8 w-8 shrink-0" />
+              )}
 
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)} className="max-w-full whitespace-normal">
-              Cancel
-            </Button>
-            <div className="relative group">
-              <Button variant="outline" onClick={onSkip} className="max-w-full whitespace-normal">
-                Skip
-              </Button>
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-80 p-3 bg-popover border border-border rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none whitespace-normal">
-                <p className="text-xs text-popover-foreground mb-2 font-medium">
-                  Should Step 2 continue without applying any Step 2.2 SPT overrides?
-                </p>
-                <ul className="text-xs text-popover-foreground space-y-1 list-disc list-inside">
-                  <li><strong>Skip:</strong> Keep Step 2 results as-is (no Step 2.2 changes)</li>
-                  <li><strong>Cancel:</strong> Close dialog without changes</li>
-                  <li><strong>Confirm:</strong> Apply your per-day SPT edits</li>
-                </ul>
+              <div className="ml-auto flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setAddPanelOpen(true)}
+                  disabled={candidateAddList.length === 0}
+                  className="h-8 px-2 text-xs shrink-0"
+                >
+                  <Plus className="mr-1 h-3.5 w-3.5" />
+                  SPT
+                </Button>
+
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button type="button" variant="outline" className="h-8 px-2 text-xs shrink-0">
+                      <MoreHorizontal className="mr-1 h-3.5 w-3.5" />
+                      More
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-[180px] rounded-md border border-border bg-popover p-1.5 shadow-md">
+                    <div className="space-y-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => onOpenChange(false)}
+                        className="h-8 w-full justify-start px-2 text-xs"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={onSkip}
+                        className="h-8 w-full justify-start px-2 text-xs"
+                      >
+                        Skip
+                      </Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+                <Button
+                  onClick={handleConfirm}
+                  disabled={cards.some((c) => c.enabled && c.contributesFte && c.slots.length === 0)}
+                  className="h-8 px-2 text-xs shrink-0"
+                >
+                  Confirm
+                </Button>
               </div>
             </div>
-            <Button
-              onClick={handleConfirm}
-              disabled={cards.some((c) => c.enabled && c.contributesFte && c.slots.length === 0)}
-              className="max-w-full whitespace-normal"
-            >
-              Confirm
-            </Button>
-          </div>
+          ) : (
+            <>
+              {onBack ? (
+                <Button variant="outline" onClick={onBack} className="mr-auto max-w-full whitespace-normal">
+                  <ArrowLeft className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Back to 2.1</span>
+                </Button>
+              ) : (
+                <div className="hidden sm:block" />
+              )}
+
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <Popover open={addPanelOpen} onOpenChange={setAddPanelOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={candidateAddList.length === 0}
+                      className="max-w-full whitespace-normal"
+                    >
+                      <Plus className="mr-1 h-4 w-4" />
+                      Add ad-hoc SPT
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-[320px] rounded-md border border-border bg-popover p-3 shadow-md">
+                    <div className="space-y-2">
+                      <Label>Add SPT not configured on this day</Label>
+                      <Select value={addStaffId || '__NONE__'} onValueChange={(v) => setAddStaffId(v === '__NONE__' ? '' : v)}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select SPT" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__NONE__">Select SPT</SelectItem>
+                          {candidateAddList.length === 0 ? (
+                            <SelectItem value="__NONE__" disabled>
+                              No eligible SPT to add
+                            </SelectItem>
+                          ) : (
+                            candidateAddList.map((s) => (
+                              <SelectItem key={s.id} value={s.id}>
+                                {s.name}
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <div className="text-xs text-muted-foreground">
+                        Add an on-duty SPT who is not configured for this weekday (ad hoc help).
+                      </div>
+                      <div className="flex justify-end">
+                        <Button type="button" onClick={handleAdd} disabled={!addStaffId || candidateAddList.length === 0}>
+                          <Plus className="mr-1 h-4 w-4" />
+                          Add
+                        </Button>
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+                <Button variant="outline" onClick={() => onOpenChange(false)} className="max-w-full whitespace-normal">
+                  Cancel
+                </Button>
+                <div className="relative group">
+                  <Button variant="outline" onClick={onSkip} className="max-w-full whitespace-normal">
+                    Skip
+                  </Button>
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-80 p-3 bg-popover border border-border rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none whitespace-normal">
+                    <p className="text-xs text-popover-foreground mb-2 font-medium">
+                      Should Step 2 continue without applying any Step 2.2 SPT overrides?
+                    </p>
+                    <ul className="text-xs text-popover-foreground space-y-1 list-disc list-inside">
+                      <li><strong>Skip:</strong> Keep Step 2 results as-is (no Step 2.2 changes)</li>
+                      <li><strong>Cancel:</strong> Close dialog without changes</li>
+                      <li><strong>Confirm:</strong> Apply your per-day SPT edits</li>
+                    </ul>
+                  </div>
+                </div>
+                <Button
+                  onClick={handleConfirm}
+                  disabled={cards.some((c) => c.enabled && c.contributesFte && c.slots.length === 0)}
+                  className="max-w-full whitespace-normal"
+                >
+                  Confirm
+                </Button>
+              </div>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
-    </Dialog>
+      </Dialog>
+      <Dialog open={isMobileViewport && addPanelOpen} onOpenChange={setAddPanelOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add ad-hoc SPT</DialogTitle>
+            <DialogDescription>
+              Add an on-duty SPT who is not configured for this weekday.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Label>Select SPT</Label>
+            <Select value={addStaffId || '__NONE__'} onValueChange={(v) => setAddStaffId(v === '__NONE__' ? '' : v)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select SPT" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__NONE__">Select SPT</SelectItem>
+                {candidateAddList.length === 0 ? (
+                  <SelectItem value="__NONE__" disabled>
+                    No eligible SPT to add
+                  </SelectItem>
+                ) : (
+                  candidateAddList.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter className="mt-4">
+            <Button type="button" variant="outline" onClick={() => setAddPanelOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleAdd} disabled={!addStaffId || candidateAddList.length === 0}>
+              <Plus className="mr-1 h-4 w-4" />
+              Add
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 

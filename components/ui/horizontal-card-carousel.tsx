@@ -128,6 +128,8 @@ export function HorizontalCardCarousel(props: {
     recomputeCarouselOverflow()
     const el = scrollContainerRef.current
     if (!el) return
+    // Keep initial position deterministic after dialog mount/reopen.
+    el.scrollLeft = 0
     const ro = new ResizeObserver(() => recomputeCarouselOverflow())
     ro.observe(el)
 
@@ -171,8 +173,8 @@ export function HorizontalCardCarousel(props: {
       <div
         ref={scrollContainerRef}
         className={cn(
-          'flex overflow-x-auto scroll-smooth gap-4 px-6 items-start overscroll-x-contain',
-          !carouselOverflowing ? 'justify-center' : null,
+          'flex overflow-x-auto scroll-smooth gap-4 px-2 sm:px-6 items-start overscroll-x-contain',
+          !carouselOverflowing ? 'sm:justify-center' : null,
           fill ? 'h-full' : 'h-auto',
           containerClassName
         )}

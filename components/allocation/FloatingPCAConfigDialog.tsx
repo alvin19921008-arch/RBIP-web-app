@@ -214,6 +214,7 @@ export function FloatingPCAConfigDialog({
     thumbWidthPct: 100,
     thumbOffsetPct: 0,
   })
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
 
   const cancelPreviewWork = useCallback(() => {
     if (previewDebounceRef.current != null) {
@@ -227,6 +228,17 @@ export function FloatingPCAConfigDialog({
       }
       previewIdleHandleRef.current = null
     }
+  }, [])
+
+  useEffect(() => {
+    const detect = () => {
+      const narrow = typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches
+      const coarse = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
+      setIsMobileViewport(narrow || coarse)
+    }
+    detect()
+    window.addEventListener('resize', detect)
+    return () => window.removeEventListener('resize', detect)
   }, [])
 
   // Reset per-open state on close to avoid stale preview hash.
@@ -1640,12 +1652,14 @@ export function FloatingPCAConfigDialog({
             step31Flow.tooltip ? (
               <Tooltip content={step31Flow.tooltip} side="top" zIndex={120000} wrapperClassName="max-w-full">
                 <Button onClick={handleProceedToStep32} className="max-w-full whitespace-normal">
-                  {step31Flow.nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
+                  {isMobileViewport && step31Flow.nextLabel === 'Continue to 3.2' ? 'Continue' : step31Flow.nextLabel}
+                  <ArrowRight className={cn('ml-2 h-4 w-4', isMobileViewport ? 'hidden' : 'inline-flex')} />
                 </Button>
               </Tooltip>
             ) : (
               <Button onClick={handleProceedToStep32} className="max-w-full whitespace-normal">
-                {step31Flow.nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
+                {isMobileViewport && step31Flow.nextLabel === 'Continue to 3.2' ? 'Continue' : step31Flow.nextLabel}
+                <ArrowRight className={cn('ml-2 h-4 w-4', isMobileViewport ? 'hidden' : 'inline-flex')} />
               </Button>
             )
           )}
@@ -1694,7 +1708,8 @@ export function FloatingPCAConfigDialog({
       
       <DialogFooter className="sticky bottom-0 z-10 mt-4 flex-row flex-wrap items-center gap-2 border-t bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:justify-between sm:px-0">
         <Button variant="outline" onClick={handleBackToStep31} className="mr-auto max-w-full whitespace-normal">
-          <ArrowLeft className="mr-2 h-4 w-4" /> Back to 3.1
+          <ArrowLeft className="h-4 w-4 sm:mr-2" />
+          <span className="hidden sm:inline">Back to 3.1</span>
         </Button>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Tooltip content={step32Flow.skipTooltip} side="top" zIndex={120000} wrapperClassName="max-w-full">
@@ -1704,18 +1719,20 @@ export function FloatingPCAConfigDialog({
               title={step32Flow.skipTooltip}
               className="max-w-full whitespace-normal"
             >
-              {step32Flow.skipLabel}
+              {isMobileViewport && step32Flow.skipLabel === 'Skip to 3.3' ? 'Skip' : step32Flow.skipLabel}
             </Button>
           </Tooltip>
           {step32Flow.tooltip ? (
             <Tooltip content={step32Flow.tooltip} side="top" zIndex={120000} wrapperClassName="max-w-full">
               <Button onClick={handleProceedToStep33} className="max-w-full whitespace-normal">
-                {step32Flow.nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
+                {isMobileViewport && step32Flow.nextLabel === 'Assign & Continue' ? 'Assign' : step32Flow.nextLabel}
+                <ArrowRight className={cn('ml-2 h-4 w-4', isMobileViewport ? 'hidden' : 'inline-flex')} />
               </Button>
             </Tooltip>
           ) : (
             <Button onClick={handleProceedToStep33} className="max-w-full whitespace-normal">
-              {step32Flow.nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
+              {isMobileViewport && step32Flow.nextLabel === 'Assign & Continue' ? 'Assign' : step32Flow.nextLabel}
+              <ArrowRight className={cn('ml-2 h-4 w-4', isMobileViewport ? 'hidden' : 'inline-flex')} />
             </Button>
           )}
         </div>
@@ -1765,7 +1782,8 @@ export function FloatingPCAConfigDialog({
       
       <DialogFooter className="sticky bottom-0 z-10 mt-4 flex-row flex-wrap items-center gap-2 border-t bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:justify-between sm:px-0">
         <Button variant="outline" onClick={handleBackToStep32} className="mr-auto max-w-full whitespace-normal">
-          <ArrowLeft className="mr-2 h-4 w-4" /> Back to 3.2
+          <ArrowLeft className="h-4 w-4 sm:mr-2" />
+          <span className="hidden sm:inline">Back to 3.2</span>
         </Button>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button 
@@ -1774,10 +1792,10 @@ export function FloatingPCAConfigDialog({
             title="Skip adjacent slot assignments and proceed to final allocation"
             className="max-w-full whitespace-normal"
           >
-            Skip Assignments
+            {isMobileViewport ? 'Skip' : 'Skip Assignments'}
           </Button>
           <Button onClick={() => handleFinalSave('standard')} disabled={isRunningAlgorithm} className="max-w-full whitespace-normal">
-            Complete (Standard)
+            {isMobileViewport ? 'Assign' : 'Complete (Standard)'}
           </Button>
         </div>
       </DialogFooter>
