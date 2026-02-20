@@ -16,6 +16,7 @@
 - **Schedule copy performance & resilience**: Copy now prefers the DB RPC path (`rpc:yes`), skips baseline rebase when the source snapshot head matches current Global, and surfaces RPC/rebase diagnostics (including `rpcError`) in the developer timing tooltip. Added atomic long-term RPC `copy_schedule_with_rebase_v1` (copy + rebase in one transaction) with graceful fallback when unavailable.
 - **Developer cache and navigation guards**: The developer cache badge now exposes a tiny chevron menu that clears the per-date cache and reloads the schedule, history deletes + navigation clear the cache/last-open key, and the initial date resolver resets its Strict-Mode guard so “Loading schedule…” can finish even after the cleanup pass.
 - **Schedule draft persistence**: Step 2/4 edits now auto-flush into the in-memory draft cache (with identity checks) whenever dirty, the confirm buttons read “Confirm”, and allocation notes toasts remind you to “Save Schedule” before the data reaches the database.
+- **Step 3.4 floating PCA gym-avoid behavior**: Cycle 3 cleanup now honors gym avoidance as a first-class constraint, but if a team still needs ≥0.25 FTE and **no** other non-gym slots remain anywhere in the pool, the gym slot is allowed as a deterministic “last resort” so teams aren’t stuck forever.
 
 ### Fixed
 - **Mobile navbar width**: Navbar now has `min-w-[1024px]` to match dashboard layout, preventing content overflow on narrow screens.
