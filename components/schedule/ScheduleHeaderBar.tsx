@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
 import { formatDateDDMMYYYY, getWeekday } from '@/lib/features/schedule/date'
 import { ScheduleTitleWithLoadDiagnostics } from '@/components/schedule/ScheduleTitleWithLoadDiagnostics'
-import { Popover, PopoverContent, PopoverTrigger, PopoverArrow } from '@/components/ui/popover'
+import { Popover, PopoverContent, PopoverTrigger, PopoverArrow, PopoverClose } from '@/components/ui/popover'
 import type { SnapshotDiffResult } from '@/lib/features/schedule/snapshotDiff'
 
 const SnapshotDiffDetails = dynamic(
@@ -95,6 +95,16 @@ export function ScheduleHeaderBar(props: {
   const cacheLayer = devMeta?.cacheLayer ?? null
   const cacheSource = devMeta?.cacheSource ?? null
   const cacheEntryAt = typeof devMeta?.cacheEntryAt === 'number' ? (devMeta.cacheEntryAt as number) : null
+  const loadFrom = typeof devMeta?.loadFrom === 'string' ? (devMeta.loadFrom as string) : null
+  const draftHit = !!devMeta?.draftHit
+  const draftApplied = !!devMeta?.draftApplied
+  const draftIdentityMatched = typeof devMeta?.draftIdentityMatched === 'boolean' ? !!devMeta.draftIdentityMatched : null
+  const draftMismatch = typeof devMeta?.draftIdentityMismatchReason === 'string' ? (devMeta.draftIdentityMismatchReason as string) : null
+  const scheduleId = typeof devMeta?.scheduleId === 'string' ? (devMeta.scheduleId as string) : null
+  const scheduleUpdatedAt = typeof devMeta?.scheduleUpdatedAt === 'string' ? (devMeta.scheduleUpdatedAt as string) : null
+  const cacheEpoch = typeof devMeta?.cacheEpoch === 'number' ? (devMeta.cacheEpoch as number) : null
+  const cacheEntryEpoch = typeof devMeta?.cacheEntryEpoch === 'number' ? (devMeta.cacheEntryEpoch as number) : null
+  const draftDirtyReasons = Array.isArray(devMeta?.draftDirtyReasons) ? (devMeta.draftDirtyReasons as string[]) : null
   const cacheBadgeClass = cn(
     'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium select-none',
     isDevMetaStale
@@ -288,6 +298,9 @@ export function ScheduleHeaderBar(props: {
                         <span className="text-muted-foreground">read:</span> {cacheStateLabel}
                       </div>
                       <div>
+                        <span className="text-muted-foreground">loadFrom:</span> {loadFrom ?? 'unknown'}
+                      </div>
+                      <div>
                         <span className="text-muted-foreground">layer:</span> {cacheLayer ?? 'unknown'}
                       </div>
                       <div>
@@ -296,6 +309,27 @@ export function ScheduleHeaderBar(props: {
                       <div>
                         <span className="text-muted-foreground">date(meta):</span> {metaKey ?? 'unknown'}
                         {currentKey ? `, current:${currentKey}` : ''}
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">draft:</span>{' '}
+                        {draftApplied ? 'applied' : draftHit ? 'hit(not-applied)' : 'miss'}
+                        {draftIdentityMatched == null ? '' : draftIdentityMatched ? ', idCheck:pass' : ', idCheck:fail'}
+                        {draftMismatch ? ` (${draftMismatch})` : ''}
+                      </div>
+                      {draftDirtyReasons && draftDirtyReasons.length > 0 ? (
+                        <div>
+                          <span className="text-muted-foreground">draftReasons:</span> {draftDirtyReasons.join(',')}
+                        </div>
+                      ) : null}
+                      <div>
+                        <span className="text-muted-foreground">scheduleId:</span> {scheduleId ?? 'unknown'}
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">updatedAt:</span> {scheduleUpdatedAt ?? 'unknown'}
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">epoch:</span> {cacheEpoch ?? 'unknown'}
+                        {cacheEntryEpoch == null ? '' : `, entryEpoch:${cacheEntryEpoch}`}
                       </div>
                       {cacheEntryAt != null ? (
                         <div>
@@ -339,13 +373,15 @@ export function ScheduleHeaderBar(props: {
                       side="bottom"
                       className="w-auto rounded-md border border-border bg-card px-1 py-1 shadow-lg"
                     >
-                      <button
-                        type="button"
-                        onClick={props.onClearCache}
-                        className="w-full rounded-sm px-3 py-2 text-left text-xs hover:bg-accent hover:text-accent-foreground"
-                      >
-                        clear cache
-                      </button>
+                      <PopoverClose asChild>
+                        <button
+                          type="button"
+                          onClick={props.onClearCache}
+                          className="w-full rounded-sm px-3 py-2 text-left text-xs hover:bg-accent hover:text-accent-foreground"
+                        >
+                          clear cache
+                        </button>
+                      </PopoverClose>
                     </PopoverContent>
                   </Popover>
                 ) : null}

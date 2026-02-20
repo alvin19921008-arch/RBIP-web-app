@@ -15,6 +15,7 @@
 - **StaffCardColorGuideAnswer**: Removed yellow background when displayed in help center; uses neutral card styling. Content colors use semantic `text-foreground`/`text-muted-foreground` for both popover and help center contexts.
 - **Schedule copy performance & resilience**: Copy now prefers the DB RPC path (`rpc:yes`), skips baseline rebase when the source snapshot head matches current Global, and surfaces RPC/rebase diagnostics (including `rpcError`) in the developer timing tooltip. Added atomic long-term RPC `copy_schedule_with_rebase_v1` (copy + rebase in one transaction) with graceful fallback when unavailable.
 - **Developer cache and navigation guards**: The developer cache badge now exposes a tiny chevron menu that clears the per-date cache and reloads the schedule, history deletes + navigation clear the cache/last-open key, and the initial date resolver resets its Strict-Mode guard so “Loading schedule…” can finish even after the cleanup pass.
+- **Schedule draft persistence**: Step 2/4 edits now auto-flush into the in-memory draft cache (with identity checks) whenever dirty, the confirm buttons read “Confirm”, and allocation notes toasts remind you to “Save Schedule” before the data reaches the database.
 
 ### Fixed
 - **Mobile navbar width**: Navbar now has `min-w-[1024px]` to match dashboard layout, preventing content overflow on narrow screens.

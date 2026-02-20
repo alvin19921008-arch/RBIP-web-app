@@ -251,7 +251,7 @@ export function AllocationNotesBoardEditor({
                   </Button>
                 </span>
               </Tooltip>
-              <Tooltip side="top" content="Save">
+              <Tooltip side="top" content="Confirm">
                 <span>
                   <Button
                     type="button"

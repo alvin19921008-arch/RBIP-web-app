@@ -33,6 +33,8 @@ import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/
 import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
 import { fetchGlobalHeadAtCreation } from '@/lib/features/config/globalHead'
 import { cacheSchedule, clearCachedSchedule, getCachedSchedule, getCacheSize } from '@/lib/utils/scheduleCache'
+import { getScheduleCacheEpoch } from '@/lib/utils/scheduleCacheEpoch'
+import { cacheDraftSchedule, clearDraftSchedule, getDraftSchedule, type DraftScheduleData } from '@/lib/utils/scheduleDraftCache'
 import { createTimingCollector, type TimingReport } from '@/lib/utils/timing'
 import {
   applySubstitutionSlotsToOverride,
@@ -73,6 +75,15 @@ function loadPcaEngine() {
 function loadBedAlgo() {
   bedAlgoImport = bedAlgoImport ?? import('@/lib/algorithms/bedAllocation')
   return bedAlgoImport
+}
+
+function jsonDeepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  try {
+    return JSON.stringify(a) === JSON.stringify(b)
+  } catch {
+    return false
+  }
 }
 
 export type ScheduleWardRow = {
@@ -216,6 +227,7 @@ type ScheduleDomainState = {
 
   // Schedule persistence state
   currentScheduleId: string | null
+  currentScheduleUpdatedAt: string | null
   staffOverrides: Record<string, StaffOverrideState>
   savedOverrides: Record<string, StaffOverrideState>
   saving: boolean
@@ -457,6 +469,7 @@ function createInitialScheduleDomainState(defaultDate: Date): ScheduleDomainStat
     deferBelowFold: true,
 
     currentScheduleId: null,
+    currentScheduleUpdatedAt: null,
     staffOverrides: {},
     savedOverrides: {},
     saving: false,
@@ -594,6 +607,7 @@ export function useScheduleController(params: {
   const setDeferBelowFold = makeSetter('deferBelowFold')
 
   const setCurrentScheduleId = makeSetter('currentScheduleId')
+  const setCurrentScheduleUpdatedAt = makeSetter('currentScheduleUpdatedAt')
   const setStaffOverrides = makeSetter('staffOverrides')
   const setSavedOverrides = makeSetter('savedOverrides')
   const setSaving = makeSetter('saving')
@@ -640,6 +654,7 @@ export function useScheduleController(params: {
     gridLoading,
     deferBelowFold,
     currentScheduleId,
+    currentScheduleUpdatedAt,
     staffOverrides,
     savedOverrides,
     saving,
@@ -670,6 +685,90 @@ export function useScheduleController(params: {
     undoStack,
     redoStack,
   } = domainState
+
+  const canUseDraftCache = params.controllerRole !== 'ref' && params.preserveUnsavedAcrossDateSwitch !== false
+  const allocationNotesDirty = !jsonDeepEqual(allocationNotesDoc ?? null, savedAllocationNotesDoc ?? null)
+  const draftDirtyReasons: string[] = []
+  if (staffOverridesVersion !== savedOverridesVersion) draftDirtyReasons.push('staffOverrides')
+  if (bedCountsOverridesVersion !== savedBedCountsOverridesVersion) draftDirtyReasons.push('bedCounts')
+  if (bedRelievingNotesVersion !== savedBedRelievingNotesVersion) draftDirtyReasons.push('bedRelievingNotes')
+  if (allocationNotesDirty) draftDirtyReasons.push('allocationNotes')
+  const hasDirtyDraftState = draftDirtyReasons.length > 0
+
+  const flushDraftForDateIfDirty = (args: {
+    dateStr: string | null | undefined
+    scheduleId: string | null | undefined
+    scheduleUpdatedAt?: string | null
+  }): boolean => {
+    const dateStr = args.dateStr ?? null
+    const scheduleId = args.scheduleId ?? null
+    if (!canUseDraftCache) return false
+    if (!dateStr || !scheduleId) return false
+
+    // Only flush for the currently-loaded schedule date. This avoids writing stale/mixed snapshots.
+    if (scheduleLoadedForDate !== dateStr || currentScheduleId !== scheduleId) return false
+
+    if (!hasDirtyDraftState) {
+      clearDraftSchedule(dateStr)
+      return false
+    }
+
+    const completedSteps: ScheduleStepId[] = Object.entries(stepStatus || {})
+      .filter(([, v]) => v === 'completed')
+      .map(([k]) => k as ScheduleStepId)
+    const workflowStateForCache: WorkflowState = {
+      currentStep: (currentStep as any) ?? 'leave-fte',
+      completedSteps,
+    }
+
+    const draft: DraftScheduleData = {
+      scheduleId,
+      scheduleUpdatedAt: args.scheduleUpdatedAt ?? null,
+
+      currentOverrides: deepCloneSnapshotValue((staffOverrides as any) || {}),
+      savedOverrides: deepCloneSnapshotValue((savedOverrides as any) || {}),
+      currentBedCountsOverridesByTeam: deepCloneSnapshotValue((bedCountsOverridesByTeam as any) || {}),
+      savedBedCountsOverridesByTeam: deepCloneSnapshotValue((savedBedCountsOverridesByTeam as any) || {}),
+      currentBedRelievingNotesByToTeam: deepCloneSnapshotValue((bedRelievingNotesByToTeam as any) || {}),
+      savedBedRelievingNotesByToTeam: deepCloneSnapshotValue((savedBedRelievingNotesByToTeam as any) || {}),
+      currentAllocationNotesDoc: deepCloneSnapshotValue((allocationNotesDoc as any) ?? null),
+      savedAllocationNotesDoc: deepCloneSnapshotValue((savedAllocationNotesDoc as any) ?? null),
+
+      staffOverridesVersion,
+      savedOverridesVersion,
+      bedCountsOverridesVersion,
+      savedBedCountsOverridesVersion,
+      bedRelievingNotesVersion,
+      savedBedRelievingNotesVersion,
+
+      therapistAllocationsByTeam: deepCloneSnapshotValue((therapistAllocations as any) || {}),
+      pcaAllocationsByTeam: deepCloneSnapshotValue((pcaAllocations as any) || {}),
+      bedAllocs: deepCloneSnapshotValue((bedAllocations as any) || []),
+      calculations: deepCloneSnapshotValue((calculations as any) || null),
+      tieBreakDecisions: deepCloneSnapshotValue((tieBreakDecisions as any) || {}),
+      baselineSnapshot: deepCloneSnapshotValue((baselineSnapshot as any) || null),
+      workflowState: workflowStateForCache,
+      currentStep: (currentStep as any) ?? 'leave-fte',
+      stepStatus: deepCloneSnapshotValue((stepStatus as any) || {}),
+      initializedSteps: Array.from((initializedSteps as any) || []) as any,
+      pendingPCAFTEPerTeam: deepCloneSnapshotValue((pendingPCAFTEPerTeam as any) || {}),
+      hasSavedAllocations: !!hasSavedAllocations,
+      persistedWorkflowState: deepCloneSnapshotValue((persistedWorkflowState as any) || null),
+
+      dirtyReasons: [...draftDirtyReasons],
+      cachedAt: Date.now(),
+    }
+    cacheDraftSchedule(dateStr, draft)
+    return true
+  }
+
+  const flushDraftForCurrentDate = (): boolean => {
+    return flushDraftForDateIfDirty({
+      dateStr: scheduleLoadedForDate,
+      scheduleId: currentScheduleId,
+      scheduleUpdatedAt: currentScheduleUpdatedAt,
+    })
+  }
 
 
   function getStaffStatusOverridesFromScheduleOverrides(overrides: any): StaffStatusOverridesById {
@@ -1003,6 +1102,7 @@ export function useScheduleController(params: {
       }
       if (shouldApplyToState) {
         setCurrentScheduleId(cached.scheduleId)
+        setCurrentScheduleUpdatedAt((cached as any).scheduleUpdatedAt ?? null)
         if (cached.baselineSnapshot) {
           applyBaselineSnapshot(cached.baselineSnapshot, cached.overrides)
         }
@@ -1030,6 +1130,7 @@ export function useScheduleController(params: {
       }
       return {
         scheduleId: cached.scheduleId,
+        scheduleUpdatedAt: (cached as any).scheduleUpdatedAt ?? null,
         overrides: cached.overrides,
         initializedSteps: (cached as any).initializedSteps ?? null,
         pcaAllocs: (repaired ? pcaAllocsDeduped : (cached.pcaAllocs as any)) as any,
@@ -1047,7 +1148,11 @@ export function useScheduleController(params: {
           cacheLayer: (cached as any).__cacheLayer ?? 'memory',
           cacheSource: (cached as any).__source ?? null,
           cacheEntryAt: typeof (cached as any).cachedAt === 'number' ? (cached as any).cachedAt : null,
+          cacheEntryEpoch: typeof (cached as any).__epoch === 'number' ? (cached as any).__epoch : null,
+          cacheEpoch: getScheduleCacheEpoch(),
           cacheSize: getCacheSize(),
+          scheduleId: cached.scheduleId,
+          scheduleUpdatedAt: (cached as any).scheduleUpdatedAt ?? null,
           stages: innerTimer.finalize().stages,
           calculationsSource: cached.calculations ? 'schedule_calculations' : 'none',
           counts: {
@@ -1078,7 +1183,7 @@ export function useScheduleController(params: {
         if ((rpcBundle as any)?.schedule?.id) {
           rpcUsed = true
         }
-        rpcServerMs = (rpcBundle as any)?.meta?.rpcServerMs ?? null
+        rpcServerMs = (rpcBundle as any)?.meta?.rpcServerMs ?? (rpcBundle as any)?.meta?.server_ms ?? null
       } else {
         const code = (rpcAttempt.error as any)?.code
         const msg = (rpcAttempt.error as any)?.message || ''
@@ -1100,7 +1205,7 @@ export function useScheduleController(params: {
     if (!scheduleData) {
       const initialResult = (await supabase
         .from('daily_schedules')
-        .select('id, is_tentative, tie_break_decisions, baseline_snapshot, staff_overrides, workflow_state')
+        .select('id, updated_at, is_tentative, tie_break_decisions, baseline_snapshot, staff_overrides, workflow_state')
         .eq('date', dateStr)
         .maybeSingle()) as any
       innerTimer.stage('select:daily_schedules')
@@ -1137,7 +1242,7 @@ export function useScheduleController(params: {
           workflow_state: initialWorkflowState as any,
           tie_break_decisions: {},
         } as any)
-        .select('id, is_tentative, baseline_snapshot, staff_overrides, workflow_state, tie_break_decisions')
+        .select('id, updated_at, is_tentative, baseline_snapshot, staff_overrides, workflow_state, tie_break_decisions')
         .single()
       innerTimer.stage('insert:daily_schedules')
 
@@ -1154,8 +1259,11 @@ export function useScheduleController(params: {
     }
 
     scheduleId = scheduleData.id
+    const scheduleUpdatedAt =
+      typeof (scheduleData as any)?.updated_at === 'string' ? ((scheduleData as any).updated_at as string) : null
     if (shouldApplyToState) {
       setCurrentScheduleId(scheduleId)
+      setCurrentScheduleUpdatedAt(scheduleUpdatedAt)
     }
 
     // Extract baseline snapshot and workflow state if present
@@ -1304,6 +1412,7 @@ export function useScheduleController(params: {
       cacheKey,
       {
       scheduleId,
+      scheduleUpdatedAt,
       overrides,
       bedCountsOverridesByTeam: bedCountsByTeamForCache,
       bedRelievingNotesByToTeam: bedRelievingByToTeamForCache,
@@ -1326,6 +1435,7 @@ export function useScheduleController(params: {
     if (opts?.prefetchOnly) {
       return {
         scheduleId,
+        scheduleUpdatedAt,
         overrides,
         pcaAllocs: pcaAllocs || [],
         therapistAllocs: therapistAllocs || [],
@@ -1342,7 +1452,11 @@ export function useScheduleController(params: {
           cacheLayer: null,
           cacheSource: 'db',
           cacheEntryAt: null,
+          cacheEntryEpoch: null,
+          cacheEpoch: getScheduleCacheEpoch(),
           cacheSize: getCacheSize(),
+          scheduleId,
+          scheduleUpdatedAt,
           stages: innerTimer.finalize().stages,
           calculationsSource,
           counts: {
@@ -1358,6 +1472,7 @@ export function useScheduleController(params: {
 
     return {
       scheduleId,
+      scheduleUpdatedAt,
       overrides,
       pcaAllocs: pcaAllocs || [],
       therapistAllocs: therapistAllocs || [],
@@ -1374,7 +1489,11 @@ export function useScheduleController(params: {
         cacheLayer: null,
         cacheSource: 'db',
         cacheEntryAt: null,
+        cacheEntryEpoch: null,
+        cacheEpoch: getScheduleCacheEpoch(),
         cacheSize: getCacheSize(),
+        scheduleId,
+        scheduleUpdatedAt,
         stages: innerTimer.finalize().stages,
         rpcServerMs,
         calculationsSource,
@@ -1440,82 +1559,19 @@ export function useScheduleController(params: {
     activeHydrationDateStrRef.current = dateStr
 
     try {
-      // Preserve latest unsaved work across date switches (Option A).
-      // When leaving a date, write the *current in-memory* domain state back into the cache for the previous date,
-      // so navigating away and back shows the latest unsaved work instead of the last DB/cached snapshot.
+      // Preserve latest unsaved work across date switches.
+      // When leaving a date, write a draft snapshot (memory only) for that previous date.
       const prevDateStr = scheduleLoadedForDate
       const prevScheduleId = currentScheduleId
+      const prevScheduleUpdatedAt = currentScheduleUpdatedAt
       const switchingAway = !!prevDateStr && prevDateStr !== dateStr
 
-      const preserveUnsaved = params.preserveUnsavedAcrossDateSwitch !== false
-      if (switchingAway && prevDateStr && prevScheduleId && preserveUnsaved) {
-        const completedSteps: ScheduleStepId[] = Object.entries(stepStatus || {})
-          .filter(([, v]) => v === 'completed')
-          .map(([k]) => k as ScheduleStepId)
-
-        const workflowStateForCache: WorkflowState = {
-          currentStep: (currentStep as any) ?? 'leave-fte',
-          completedSteps,
-        }
-
-        const therapistAllocsForCacheRaw = TEAMS.flatMap((t) =>
-          ((therapistAllocations as any)?.[t] || []).map((a: any) => {
-            const { staff: _staff, ...rest } = a || {}
-            return rest
-          })
-        )
-
-        const pcaAllocsForCacheRaw = TEAMS.flatMap((t) =>
-          ((pcaAllocations as any)?.[t] || []).map((a: any) => {
-            const { staff: _staff, ...rest } = a || {}
-            return rest
-          })
-        )
-
-        // IMPORTANT:
-        // `pcaAllocations` is grouped *by team*, and the same allocation row can appear under multiple teams
-        // (because a PCA can have slots in multiple teams). If we cache the flattened grouped arrays, then on
-        // rehydrate we group again, causing multiplicative duplicates (same allocation id repeated many times).
-        // Always cache the canonical allocation rows (dedupe by id) for pca/therapist allocations.
-        const dedupeByIdKeepFirst = (items: any[]) => {
-          const seen = new Set<string>()
-          const out: any[] = []
-          for (const it of items || []) {
-            const id = (it as any)?.id
-            if (typeof id !== 'string' || !id) continue
-            if (seen.has(id)) continue
-            seen.add(id)
-            out.push(it)
-          }
-          return out
-        }
-
-        const therapistAllocsForCache = dedupeByIdKeepFirst(therapistAllocsForCacheRaw)
-        const pcaAllocsForCache = dedupeByIdKeepFirst(pcaAllocsForCacheRaw)
-
-        cacheSchedule(
-          prevDateStr,
-          {
+      if (switchingAway && prevDateStr && prevScheduleId) {
+        flushDraftForDateIfDirty({
+          dateStr: prevDateStr,
           scheduleId: prevScheduleId,
-          overrides: (staffOverrides as any) || {},
-          initializedSteps: Array.from((initializedSteps as any) || []) as any,
-          bedCountsOverridesByTeam: (bedCountsOverridesByTeam as any) || {},
-          bedRelievingNotesByToTeam: (bedRelievingNotesByToTeam as any) || {},
-          allocationNotesDoc: (allocationNotesDoc as any) ?? null,
-          tieBreakDecisions: (tieBreakDecisions as any) || {},
-          therapistAllocs: therapistAllocsForCache,
-          pcaAllocs: pcaAllocsForCache,
-          bedAllocs: (bedAllocations as any) || [],
-          baselineSnapshot: (baselineSnapshot as any) || null,
-          workflowState: workflowStateForCache,
-          calculations: (calculations as any) || null,
-          cachedAt: Date.now(),
-          __source: 'writeThrough',
-        } as any,
-          // Critical: preserve across date switches, but do NOT persist unsaved work to sessionStorage.
-          // This prevents "refresh shows different FTE (0.83 vs 1.0)" due to rehydrating unsaved cache.
-          { persist: false, source: 'writeThrough' }
-        )
+          scheduleUpdatedAt: prevScheduleUpdatedAt,
+        })
       }
 
       setIsHydratingSchedule(true)
@@ -1745,10 +1801,74 @@ export function useScheduleController(params: {
         setInitializedSteps(new Set())
       }
 
+      let draftHit = false
+      let draftApplied = false
+      let draftIdentityMatched = false
+      let draftIdentityMismatchReason: string | null = null
+      let draftDirtyReasonsFromCache: string[] | null = null
+      if (canUseDraftCache) {
+        const draft = getDraftSchedule(dateStr)
+        if (draft) {
+          draftHit = true
+          const baseScheduleId =
+            (typeof resultAny?.scheduleId === 'string' ? (resultAny.scheduleId as string) : null) ??
+            (typeof resultAny?.meta?.scheduleId === 'string' ? (resultAny.meta.scheduleId as string) : null)
+          const baseScheduleUpdatedAt =
+            (typeof resultAny?.scheduleUpdatedAt === 'string'
+              ? (resultAny.scheduleUpdatedAt as string)
+              : typeof resultAny?.meta?.scheduleUpdatedAt === 'string'
+                ? (resultAny.meta.scheduleUpdatedAt as string)
+                : null) ?? null
+          const idMatches = !!baseScheduleId && draft.scheduleId === baseScheduleId
+          const updatedAtMatches =
+            !draft.scheduleUpdatedAt || !baseScheduleUpdatedAt || draft.scheduleUpdatedAt === baseScheduleUpdatedAt
+
+          if (idMatches && updatedAtMatches) {
+            draftIdentityMatched = true
+            draftDirtyReasonsFromCache = Array.isArray(draft.dirtyReasons) ? [...draft.dirtyReasons] : []
+            patchState({
+              currentScheduleId: draft.scheduleId,
+              currentScheduleUpdatedAt: draft.scheduleUpdatedAt ?? baseScheduleUpdatedAt ?? null,
+              staffOverrides: deepCloneSnapshotValue((draft.currentOverrides as any) || {}),
+              savedOverrides: deepCloneSnapshotValue((draft.savedOverrides as any) || {}),
+              bedCountsOverridesByTeam: deepCloneSnapshotValue((draft.currentBedCountsOverridesByTeam as any) || {}),
+              savedBedCountsOverridesByTeam: deepCloneSnapshotValue((draft.savedBedCountsOverridesByTeam as any) || {}),
+              bedRelievingNotesByToTeam: deepCloneSnapshotValue((draft.currentBedRelievingNotesByToTeam as any) || {}),
+              savedBedRelievingNotesByToTeam: deepCloneSnapshotValue((draft.savedBedRelievingNotesByToTeam as any) || {}),
+              allocationNotesDoc: deepCloneSnapshotValue((draft.currentAllocationNotesDoc as any) ?? null),
+              savedAllocationNotesDoc: deepCloneSnapshotValue((draft.savedAllocationNotesDoc as any) ?? null),
+              staffOverridesVersion: draft.staffOverridesVersion,
+              savedOverridesVersion: draft.savedOverridesVersion,
+              bedCountsOverridesVersion: draft.bedCountsOverridesVersion,
+              savedBedCountsOverridesVersion: draft.savedBedCountsOverridesVersion,
+              bedRelievingNotesVersion: draft.bedRelievingNotesVersion,
+              savedBedRelievingNotesVersion: draft.savedBedRelievingNotesVersion,
+              therapistAllocations: deepCloneSnapshotValue((draft.therapistAllocationsByTeam as any) || {}),
+              pcaAllocations: deepCloneSnapshotValue((draft.pcaAllocationsByTeam as any) || {}),
+              bedAllocations: deepCloneSnapshotValue((draft.bedAllocs as any) || []),
+              calculations: deepCloneSnapshotValue((draft.calculations as any) || null),
+              hasLoadedStoredCalculations: !!draft.calculations,
+              tieBreakDecisions: deepCloneSnapshotValue((draft.tieBreakDecisions as any) || {}),
+              baselineSnapshot: deepCloneSnapshotValue((draft.baselineSnapshot as any) || baselineSnapshot),
+              persistedWorkflowState: deepCloneSnapshotValue((draft.persistedWorkflowState as any) || persistedWorkflowState),
+              currentStep: (draft.currentStep as any) ?? currentStep,
+              stepStatus: deepCloneSnapshotValue((draft.stepStatus as any) || stepStatus),
+              initializedSteps: new Set((draft.initializedSteps as any) || []),
+              pendingPCAFTEPerTeam: deepCloneSnapshotValue((draft.pendingPCAFTEPerTeam as any) || pendingPCAFTEPerTeam),
+              hasSavedAllocations: typeof draft.hasSavedAllocations === 'boolean' ? draft.hasSavedAllocations : hasSavedAllocations,
+            } as any)
+            draftApplied = true
+          } else {
+            draftIdentityMismatchReason = !idMatches ? 'scheduleId' : 'updatedAt'
+            clearDraftSchedule(dateStr)
+          }
+        }
+      }
+
       setScheduleLoadedForDate(dateStr)
       return timer.finalize({
         dateStr,
-        loadFrom: resultAny?.meta?.loadFrom,
+        loadFrom: draftApplied ? 'draft' : resultAny?.meta?.loadFrom,
         rpcUsed: !!resultAny?.meta?.rpcUsed,
         batchedQueriesUsed: !!resultAny?.meta?.batchedQueriesUsed,
         baselineSnapshotUsed: !!resultAny?.meta?.baselineSnapshotUsed,
@@ -1756,7 +1876,16 @@ export function useScheduleController(params: {
         cacheLayer: resultAny?.meta?.cacheLayer ?? null,
         cacheSource: resultAny?.meta?.cacheSource ?? null,
         cacheEntryAt: resultAny?.meta?.cacheEntryAt ?? null,
+        cacheEntryEpoch: resultAny?.meta?.cacheEntryEpoch ?? null,
+        cacheEpoch: resultAny?.meta?.cacheEpoch ?? getScheduleCacheEpoch(),
         cacheSize: typeof resultAny?.meta?.cacheSize === 'number' ? resultAny.meta.cacheSize : getCacheSize(),
+        scheduleId: resultAny?.meta?.scheduleId ?? resultAny?.scheduleId ?? null,
+        scheduleUpdatedAt: resultAny?.meta?.scheduleUpdatedAt ?? resultAny?.scheduleUpdatedAt ?? null,
+        draftHit,
+        draftApplied,
+        draftIdentityMatched,
+        draftIdentityMismatchReason,
+        draftDirtyReasons: draftDirtyReasonsFromCache,
         stages: Array.isArray(resultAny?.meta?.stages) ? resultAny.meta.stages : undefined,
         rpcServerMs: resultAny?.meta?.rpcServerMs ?? null,
         calculationsSource: resultAny?.meta?.calculationsSource,
@@ -1779,6 +1908,7 @@ export function useScheduleController(params: {
     clearUndoRedoHistory()
     if (options?.resetLoadedForDate) {
       setScheduleLoadedForDate(null)
+      setCurrentScheduleUpdatedAt(null)
     }
   }
 
@@ -2674,6 +2804,8 @@ export function useScheduleController(params: {
       const d = String(selectedDate.getDate()).padStart(2, '0')
       const dateStr = `${y}-${m}-${d}`
       clearCachedSchedule(dateStr)
+      clearDraftSchedule(dateStr)
+      setCurrentScheduleUpdatedAt(new Date().toISOString())
 
       // Conditional snapshot refresh (same logic as page.tsx previously)
       try {
@@ -4023,6 +4155,7 @@ export function useScheduleController(params: {
 
     // Persistence
     setCurrentScheduleId,
+    setCurrentScheduleUpdatedAt,
     setStaffOverrides,
     setSavedOverrides,
     setSaving,
@@ -4087,6 +4220,7 @@ export function useScheduleController(params: {
     // Load/save/copy
     loadScheduleForDate,
     loadAndHydrateDate,
+    flushDraftForCurrentDate,
     saveScheduleToDatabase,
     copySchedule,
     resetToBaseline,

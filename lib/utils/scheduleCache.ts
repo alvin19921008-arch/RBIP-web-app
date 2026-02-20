@@ -1,3 +1,5 @@
+import { getScheduleCacheEpoch } from '@/lib/utils/scheduleCacheEpoch'
+
 /**
  * In-memory cache for schedule data to speed up navigation.
  * Caches schedule data by date string (YYYY-MM-DD format).
@@ -5,6 +7,7 @@
 
 interface CachedScheduleData {
   scheduleId: string
+  scheduleUpdatedAt?: string | null
   overrides: Record<string, any>
   /**
    * Step-wise workflow: which steps have been initialized for this date.
@@ -31,6 +34,8 @@ interface CachedScheduleData {
   __source?: 'db' | 'writeThrough' | string
   /** Populated when a cache entry was rehydrated from sessionStorage. */
   __cacheLayer?: 'memory' | 'sessionStorage'
+  /** Cache epoch marker used to invalidate stale entries in bulk. */
+  __epoch?: number
 }
 
 // In-memory cache (survives navigation but not page refresh)
@@ -97,6 +102,11 @@ function persistSchedule(dateStr: string, data: CachedScheduleData): void {
   }
 }
 
+function isEpochCurrent(entry: CachedScheduleData): boolean {
+  const entryEpoch = typeof (entry as any)?.__epoch === 'number' ? ((entry as any).__epoch as number) : 0
+  return entryEpoch === getScheduleCacheEpoch()
+}
+
 function readPersistedSchedule(dateStr: string): CachedScheduleData | null {
   if (!canUseSessionStorage()) return null
   try {
@@ -108,6 +118,11 @@ function readPersistedSchedule(dateStr: string): CachedScheduleData | null {
     if (typeof parsed.cachedAt !== 'number') return null
     // If a legacy/buggy client persisted a write-through cache entry, treat it as invalid.
     if (parsed.__source === 'writeThrough') {
+      window.sessionStorage.removeItem(persistKey(dateStr))
+      return null
+    }
+    // validate epoch
+    if (!isEpochCurrent(parsed as CachedScheduleData)) {
       window.sessionStorage.removeItem(persistKey(dateStr))
       return null
     }
@@ -136,6 +151,18 @@ export function getCachedSchedule(dateStr: string): CachedScheduleData | null {
     const rehydrated = { ...(persisted as any), __cacheLayer: 'sessionStorage' as const }
     scheduleCache.set(dateStr, rehydrated as any)
     return rehydrated as any
+  }
+
+  if (!isEpochCurrent(cached)) {
+    scheduleCache.delete(dateStr)
+    if (canUseSessionStorage()) {
+      try {
+        window.sessionStorage.removeItem(persistKey(dateStr))
+      } catch {
+        // ignore
+      }
+    }
+    return null
   }
 
   // Check if cache is still valid
@@ -168,6 +195,7 @@ export function cacheSchedule(
     cachedAt: Date.now(),
     __source: opts?.source ?? (data as any).__source,
     __cacheLayer: 'memory' as const,
+    __epoch: getScheduleCacheEpoch(),
   }
   scheduleCache.set(dateStr, stored)
   const shouldPersist = opts?.persist !== false && (stored as any).__source !== 'writeThrough'

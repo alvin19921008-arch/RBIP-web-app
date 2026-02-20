@@ -4627,7 +4627,7 @@ async function processCycle3Cleanup(
       const existingSlots = getTeamExistingSlots(team, allocations)
 
       // Assign one slot at a time in Cycle 3
-      const result = assignOneSlotAndUpdatePending({
+      let result = assignOneSlotAndUpdatePending({
         pca,
         allocation,
         team,
@@ -4637,6 +4637,60 @@ async function processCycle3Cleanup(
         pendingFTEByTeam: pendingFTE,
         context: 'Cleanup pass → one slot at a time',
       })
+
+      // Soft gym-avoid (Cycle 3 only):
+      // If a team is still short (>= 0.25) and the ONLY feasible assignment from this PCA
+      // requires using the gym slot, allow it as a last resort.
+      if (
+        result.slotsAssigned.length === 0 &&
+        avoidGym &&
+        typeof gymSlot === 'number' &&
+        (pendingFTE[team] ?? 0) >= 0.25
+      ) {
+        // Only relax gym avoidance when the team has NO feasible non-gym assignments left
+        // anywhere in the pool (true last resort, not dependent on PCA iteration order).
+        const hasAnyNonGymCandidate = findAvailablePCAs({
+          pcaPool,
+          team,
+          teamFloor: pref.teamFloor,
+          floorMatch: 'any',
+          excludePreferredOfOtherTeams: false,
+          preferredPCAIdsOfOtherTeams: new Map<string, Team[]>(),
+          pendingFTEPerTeam: pendingFTE,
+          existingAllocations: allocations,
+          gymSlot,
+          avoidGym: true,
+        }).length > 0
+
+        if (hasAnyNonGymCandidate) {
+          // Skip gym-slot assignment here; a non-gym option exists elsewhere in the pool.
+          // Continue Cycle 3 so we only use gym if it becomes truly unavoidable.
+          continue
+        }
+
+        const simulate = assignSlotsToTeam({
+          pca,
+          allocation: { ...allocation },
+          team,
+          pendingFTE: 0.25,
+          teamExistingSlots: existingSlots,
+          gymSlot,
+          avoidGym: false,
+        })
+
+        if (simulate.slotsAssigned.length > 0) {
+          result = assignOneSlotAndUpdatePending({
+            pca,
+            allocation,
+            team,
+            teamExistingSlots: existingSlots,
+            gymSlot,
+            avoidGym: false,
+            pendingFTEByTeam: pendingFTE,
+            context: 'Cleanup pass → one slot at a time',
+          })
+        }
+      }
       
       if (result.slotsAssigned.length > 0) {
         for (const slot of result.slotsAssigned) {

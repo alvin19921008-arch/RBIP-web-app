@@ -73,6 +73,7 @@ import { useAccessControl } from '@/lib/access/useAccessControl'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
 import { getWeekday, formatDateDDMMYYYY, formatDateForInput, parseDateFromInput } from '@/lib/features/schedule/date'
 import { computeDrmAddOnFte, computeReservedSpecialProgramPcaFte } from '@/lib/utils/specialProgramPcaCapacity'
+import { flushSync } from 'react-dom'
 import {
   buildStaffByIdMap,
   groupTherapistAllocationsByTeam,
@@ -186,6 +187,7 @@ import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/
 import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
 import { createTimingCollector, type TimingReport } from '@/lib/utils/timing'
 import { getCachedSchedule, cacheSchedule, clearCachedSchedule, getCacheSize } from '@/lib/utils/scheduleCache'
+import { clearDraftSchedule, getMostRecentDirtyScheduleDate, hasDraftSchedule } from '@/lib/utils/scheduleDraftCache'
 import { hasAnyStaffOverrideKey } from '@/lib/utils/staffOverridesMeaningful'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import {
@@ -685,6 +687,7 @@ function SchedulePageContent() {
     beginDateTransition: controllerBeginDateTransition,
     loadScheduleForDate,
     loadAndHydrateDate,
+    flushDraftForCurrentDate,
     runStep4BedRelieving,
     prefetchStep2Algorithms,
     prefetchStep3Algorithms,
@@ -764,7 +767,16 @@ function SchedulePageContent() {
   const handleDeveloperCacheClear = () => {
     const dateStr = toDateKey(selectedDate)
     clearCachedSchedule(dateStr)
-    scheduleActions.loadScheduleForDate(selectedDate)
+    clearDraftSchedule(dateStr)
+    showActionToast(
+      'Cache cleared',
+      'success',
+      `Cleared cache for ${formatDateDDMMYYYY(selectedDate)}. Reloading schedule data...`
+    )
+    queueDateTransition(new Date(selectedDate.getTime()), {
+      resetLoadedForDate: true,
+      useLocalTopBar: false,
+    })
   }
 
   const isScheduleCompletedToStep4 = useCallback((workflowState: WorkflowState | null | undefined) => {
@@ -801,6 +813,18 @@ function SchedulePageContent() {
             if (!cancelled) setInitialDateResolved(true)
           }
           return
+        }
+
+        const recentDirty = getMostRecentDirtyScheduleDate()
+        if (recentDirty?.dateStr) {
+          try {
+            const parsed = parseDateFromInput(recentDirty.dateStr)
+            controllerBeginDateTransition(parsed, { resetLoadedForDate: true })
+            if (!cancelled) setInitialDateResolved(true)
+            return
+          } catch {
+            // Ignore malformed pointer and continue normal fallback resolution.
+          }
         }
 
         const findLastMeaningfulStep1ScheduleDateKey = async (): Promise<string | null> => {
@@ -950,6 +974,57 @@ function SchedulePageContent() {
     // URL-driven date changes should be treated like "real navigation": reset loaded-for-date to force proper hydration.
     setSelectedDate: (d) => controllerBeginDateTransition(d, { resetLoadedForDate: true }),
   })
+  const flushDraftForCurrentDateRef = useRef(flushDraftForCurrentDate)
+  flushDraftForCurrentDateRef.current = flushDraftForCurrentDate
+  const autoFlushTimerRef = useRef<number | null>(null)
+  useEffect(() => {
+    return () => {
+      try {
+        flushDraftForCurrentDateRef.current()
+      } catch {
+        // ignore cleanup-time flush failures
+      }
+    }
+  }, [])
+
+  // Auto-flush unsaved work into the draft cache shortly after edits.
+  // This prevents "confirm → immediately navigate away" from losing the latest state.
+  useEffect(() => {
+    if (!initialDateResolved) return
+    if (typeof window === 'undefined') return
+    if (autoFlushTimerRef.current != null) {
+      window.clearTimeout(autoFlushTimerRef.current)
+      autoFlushTimerRef.current = null
+    }
+
+    // Always schedule a flush when any of these change (dirty or becoming clean).
+    autoFlushTimerRef.current = window.setTimeout(() => {
+      try {
+        flushDraftForCurrentDateRef.current()
+      } catch {
+        // ignore
+      }
+    }, 120)
+
+    return () => {
+      if (autoFlushTimerRef.current != null) {
+        window.clearTimeout(autoFlushTimerRef.current)
+        autoFlushTimerRef.current = null
+      }
+    }
+  }, [
+    initialDateResolved,
+    currentScheduleId,
+    scheduleLoadedForDate,
+    staffOverridesVersion,
+    savedOverridesVersion,
+    bedCountsOverridesVersion,
+    savedBedCountsOverridesVersion,
+    bedRelievingNotesVersion,
+    savedBedRelievingNotesVersion,
+    allocationNotesDoc,
+    savedAllocationNotesDoc,
+  ])
   const gridLoadingUsesLocalBarRef = useRef(false)
   const [userRole, setUserRole] = useState<'developer' | 'admin' | 'user'>('user')
   const [helpDialogOpen, setHelpDialogOpen] = useState(false)
@@ -1125,9 +1200,15 @@ function SchedulePageContent() {
   const [editingBedTeam, setEditingBedTeam] = useState<Team | null>(null)
   const saveBedRelievingNotesForToTeam = useCallback(
     (toTeam: Team, notes: Partial<Record<Team, BedRelievingNoteRow[]>>) => {
-      scheduleActions.updateBedRelievingNotes({ toTeam, notes: notes as any })
+      try {
+        flushSync(() => {
+          scheduleActions.updateBedRelievingNotes({ toTeam, notes: notes as any })
+        })
+      } catch {
+        scheduleActions.updateBedRelievingNotes({ toTeam, notes: notes as any })
+      }
     },
-    []
+    [scheduleActions]
   )
 
   const bufferStep2SuccessToastRef = useRef(false)
@@ -1183,7 +1264,13 @@ function SchedulePageContent() {
 
   const saveAllocationNotes = useCallback(
     async (nextDoc: any) => {
-      setAllocationNotesDoc(nextDoc)
+      try {
+        flushSync(() => {
+          setAllocationNotesDoc(nextDoc)
+        })
+      } catch {
+        setAllocationNotesDoc(nextDoc)
+      }
 
       // Ensure schedule row exists so we have an id to save against.
       let scheduleId = currentScheduleId
@@ -1224,7 +1311,7 @@ function SchedulePageContent() {
       } catch {
         // ignore cache update
       }
-      showActionToast('Notes saved.', 'success')
+      showActionToast('Notes confirmed.', 'success', 'Click Save Schedule to persist schedule changes to the database.')
     },
     [currentScheduleId, selectedDate, supabase]
   )
@@ -2089,6 +2176,7 @@ function SchedulePageContent() {
       }
 
       const cachedNow = !!getCachedSchedule(dateStr)
+      const draftNow = hasDraftSchedule(dateStr)
       const pending: any = {
         at: new Date().toISOString(),
         totalMs: 0,
@@ -2097,6 +2185,7 @@ function SchedulePageContent() {
           dateStr,
           pending: true,
           cacheHit: cachedNow,
+          draftHit: draftNow,
           cacheSize: getCacheSize(),
         },
       }
@@ -5024,6 +5113,7 @@ function SchedulePageContent() {
       const targetKey = formatDateForInput(toDate)
       setCopyTargetDateKey(targetKey)
       clearCachedSchedule(targetKey)
+      clearDraftSchedule(targetKey)
 
       // Navigate to copied schedule date and reload schedule metadata
       queueDateTransition(toDate, { resetLoadedForDate: true, useLocalTopBar: false })
@@ -5075,7 +5165,8 @@ function SchedulePageContent() {
     () =>
       staffOverridesVersion !== savedOverridesVersion ||
       bedCountsOverridesVersion !== savedBedCountsOverridesVersion ||
-      bedRelievingNotesVersion !== savedBedRelievingNotesVersion,
+      bedRelievingNotesVersion !== savedBedRelievingNotesVersion ||
+      JSON.stringify(allocationNotesDoc ?? null) !== JSON.stringify(savedAllocationNotesDoc ?? null),
     [
       staffOverridesVersion,
       savedOverridesVersion,
@@ -5083,6 +5174,8 @@ function SchedulePageContent() {
       savedBedCountsOverridesVersion,
       bedRelievingNotesVersion,
       savedBedRelievingNotesVersion,
+      allocationNotesDoc,
+      savedAllocationNotesDoc,
     ]
   )
 

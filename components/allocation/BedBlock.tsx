@@ -743,7 +743,7 @@ export const BedBlock = React.memo(function BedBlock({
               </Button>
             </span>
           </Tooltip>
-          <Tooltip side="top" content="Save">
+          <Tooltip side="top" content="Confirm">
             <span>
               <Button
                 type="button"

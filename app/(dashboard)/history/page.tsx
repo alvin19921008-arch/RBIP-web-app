@@ -21,6 +21,7 @@ import {
   getCompletionStatusFromWorkflowState,
 } from '@/lib/utils/scheduleHistory'
 import { clearCachedSchedule } from '@/lib/utils/scheduleCache'
+import { clearDraftSchedule } from '@/lib/utils/scheduleDraftCache'
 import { hasAnyStaffOverrideKey } from '@/lib/utils/staffOverridesMeaningful'
 
 const LAST_OPEN_SCHEDULE_DATE_KEY = 'rbip_last_open_schedule_date'
@@ -72,6 +73,11 @@ export default function HistoryPage() {
     } else {
       window.sessionStorage.removeItem(LAST_OPEN_SCHEDULE_DATE_KEY)
     }
+  }
+
+  const clearDateCaches = (dateKey: string) => {
+    clearCachedSchedule(dateKey)
+    clearDraftSchedule(dateKey)
   }
 
   const startTopLoading = (initialProgress: number = 0.05) => {
@@ -298,7 +304,7 @@ export default function HistoryPage() {
         const dateKey = typeof row?.date === 'string' ? row.date : null
         if (!dateKey) return
         deletedDateKeys.add(dateKey)
-        clearCachedSchedule(dateKey)
+        clearDateCaches(dateKey)
       })
       await reconcileLastOpenScheduleDateAfterDeletion(deletedDateKeys)
 
@@ -335,6 +341,14 @@ export default function HistoryPage() {
       if (!res.ok) throw new Error(json?.error || 'Delete failed')
 
       const deletedIds: string[] = (json?.deletedIds || []) as any
+      const deletedRows: Array<{ id: string; date: string | null }> = Array.isArray(json?.deletedRows)
+        ? (json.deletedRows as any[])
+            .map((row: any) => ({
+              id: typeof row?.id === 'string' ? row.id : '',
+              date: typeof row?.date === 'string' ? row.date : null,
+            }))
+            .filter((row) => !!row.id)
+        : []
       const skippedIds: string[] = (json?.skippedIds || []) as any
 
       const dateById = new Map<string, string>()
@@ -342,12 +356,21 @@ export default function HistoryPage() {
         if (entry?.id && entry?.date) dateById.set(entry.id, entry.date)
       })
       const deletedDateKeys = new Set<string>()
-      deletedIds.forEach((id) => {
-        const dateKey = dateById.get(id)
+      deletedRows.forEach((row) => {
+        const dateKey = row.date ?? dateById.get(row.id)
         if (!dateKey) return
         deletedDateKeys.add(dateKey)
-        clearCachedSchedule(dateKey)
+        clearDateCaches(dateKey)
       })
+      // Backward compatibility in case API returns ids without rows.
+      if (deletedRows.length === 0) {
+        deletedIds.forEach((id) => {
+          const dateKey = dateById.get(id)
+          if (!dateKey) return
+          deletedDateKeys.add(dateKey)
+          clearDateCaches(dateKey)
+        })
+      }
       await reconcileLastOpenScheduleDateAfterDeletion(deletedDateKeys)
 
       if (deletedIds.length === 0) {
@@ -369,7 +392,7 @@ export default function HistoryPage() {
 
   const handleNavigate = (date: string) => {
     // Force fresh hydration when opening a date from History.
-    clearCachedSchedule(date)
+    clearDateCaches(date)
     navLoading.start(`/schedule?date=${date}`)
     router.push(`/schedule?date=${date}`)
   }

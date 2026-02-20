@@ -82,14 +82,21 @@ export async function POST(req: Request) {
       .from('daily_schedules')
       .delete()
       .in('id', finalEligible)
-      .select('id')
+      .select('id, date, updated_at')
 
     if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 })
 
-    const deletedIds = (deleted || []).map((r: any) => String(r.id)).filter(Boolean)
+    const deletedRows = (deleted || [])
+      .map((r: any) => ({
+        id: String(r?.id || ''),
+        date: typeof r?.date === 'string' ? r.date : null,
+        updated_at: typeof r?.updated_at === 'string' ? r.updated_at : null,
+      }))
+      .filter((r: any) => !!r.id)
+    const deletedIds = deletedRows.map((r: any) => r.id)
     const skippedIds = Array.from(new Set([...ids.filter((id) => !deletedIds.includes(id)), ...skippedDueToAlloc, ...skippedUnknown]))
 
-    return NextResponse.json({ deletedIds, skippedIds })
+    return NextResponse.json({ deletedIds, deletedRows, skippedIds })
   } catch (e) {
     const message = (e as any)?.message || 'Unexpected error'
     const status = message.startsWith('FORBIDDEN:') ? 403 : 500

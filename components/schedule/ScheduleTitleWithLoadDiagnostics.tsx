@@ -112,6 +112,20 @@ function LoadMetaBlock(props: {
         {typeof meta.cacheSize === 'number' ? `, size:${meta.cacheSize}` : ''}
       </div>
       <div>
+        loadFrom:{meta.loadFrom || 'unknown'}
+        {meta.draftHit ? ', draft:hit' : ', draft:miss'}
+        {meta.draftApplied ? ', draftApplied:yes' : ''}
+        {meta.draftIdentityMatched === true ? ', idCheck:pass' : meta.draftIdentityMatched === false ? ', idCheck:fail' : ''}
+      </div>
+      <div>
+        scheduleId:{meta.scheduleId || 'unknown'}
+        {meta.scheduleUpdatedAt ? `, updatedAt:${meta.scheduleUpdatedAt}` : ''}
+      </div>
+      <div>
+        epoch:{typeof meta.cacheEpoch === 'number' ? meta.cacheEpoch : 'unknown'}
+        {typeof meta.cacheEntryEpoch === 'number' ? `, entryEpoch:${meta.cacheEntryEpoch}` : ''}
+      </div>
+      <div>
         date(load):{timingDateKey ?? 'unknown'}
         {currentDateKey ? `, current:${currentDateKey}` : ''}
       </div>
