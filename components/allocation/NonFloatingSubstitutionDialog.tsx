@@ -17,8 +17,6 @@ import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
 import { getTeamTheme } from '@/components/allocation/teamThemePalette'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
-const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
-
 // Step 2.1 Wizard team themes are shared via `teamThemePalette`.
 
 interface NonFloatingSubstitutionDialogProps {
@@ -136,13 +134,16 @@ export function NonFloatingSubstitutionDialog({
     return result
   }, [currentSubstitutions])
 
+  const getSelectionKey = (team: Team, nonFloatingPCAId: string) => `${team}-${nonFloatingPCAId}`
+
   const handleSelectionChange = (
+    team: Team,
     nonFloatingPCAId: string,
     floatingPCAId: string,
     slots: number[],
     selected: boolean
   ) => {
-    const key = `${currentTeam}-${nonFloatingPCAId}`
+    const key = getSelectionKey(team, nonFloatingPCAId)
     if (selected) {
       setSelections(prev => ({
         ...prev,
@@ -158,8 +159,8 @@ export function NonFloatingSubstitutionDialog({
     }
   }
 
-  const addCoverSelection = (nonFloatingPCAId: string, floatingPCAId: string, slots: number[]) => {
-    const key = `${currentTeam}-${nonFloatingPCAId}`
+  const addCoverSelection = (team: Team, nonFloatingPCAId: string, floatingPCAId: string, slots: number[]) => {
+    const key = getSelectionKey(team, nonFloatingPCAId)
     setSelections((prev) => {
       const existing = prev[key] ?? []
       // Prevent duplicates of same PCA
@@ -168,8 +169,8 @@ export function NonFloatingSubstitutionDialog({
     })
   }
 
-  const removeCoverSelection = (nonFloatingPCAId: string, floatingPCAId: string) => {
-    const key = `${currentTeam}-${nonFloatingPCAId}`
+  const removeCoverSelection = (team: Team, nonFloatingPCAId: string, floatingPCAId: string) => {
+    const key = getSelectionKey(team, nonFloatingPCAId)
     setSelections((prev) => {
       const existing = prev[key] ?? []
       const nextArr = existing.filter((s) => s.floatingPCAId !== floatingPCAId)
@@ -200,18 +201,20 @@ export function NonFloatingSubstitutionDialog({
   const isLastTeam = currentTeamIndex === teams.length - 1
 
   const isSubstitutionComplete = (team: Team, nonFloatingPCAId: string, missingSlots: number[]): boolean => {
-    const key = `${team}-${nonFloatingPCAId}`
+    const key = getSelectionKey(team, nonFloatingPCAId)
     const sels = selections[key] ?? []
     const covered = new Set(sels.flatMap((s) => s.slots))
     return missingSlots.every((slot) => covered.has(slot))
   }
 
   const isCurrentTeamComplete = currentSubstitutions.every((sub) =>
-    isSubstitutionComplete(currentTeam, sub.nonFloatingPCAId, sub.missingSlots)
+    isSubstitutionComplete(sub.team, sub.nonFloatingPCAId, sub.missingSlots)
   )
 
-  const isAllTeamsComplete = TEAMS.filter((t) => (substitutionsByTeam[t] ?? []).length > 0).every((team) =>
-    (substitutionsByTeam[team] ?? []).every((sub) => isSubstitutionComplete(team, sub.nonFloatingPCAId, sub.missingSlots))
+  const isAllTeamsComplete = teams.filter((t) => (substitutionsByTeam[t] ?? []).length > 0).every((team) =>
+    (substitutionsByTeam[team] ?? []).every((sub) =>
+      isSubstitutionComplete(sub.team, sub.nonFloatingPCAId, sub.missingSlots)
+    )
   )
 
   // Group available PCAs by category for display
@@ -249,13 +252,13 @@ export function NonFloatingSubstitutionDialog({
 
   const nonFloatingNameById = useMemo(() => {
     const names = new Map<string, string>()
-    TEAMS.forEach((team) => {
+    teams.forEach((team) => {
       ;(substitutionsByTeam[team] || []).forEach((sub) => {
         names.set(sub.nonFloatingPCAId, sub.nonFloatingPCAName)
       })
     })
     return names
-  }, [substitutionsByTeam])
+  }, [teams, substitutionsByTeam])
 
   const floatingUsageById = useMemo(() => {
     const usage: Record<string, FloatingPCAUsage[]> = {}
@@ -446,13 +449,14 @@ export function NonFloatingSubstitutionDialog({
             currentSubstitutions.map((sub) => {
               const availablePCAs = availablePCAsByNonFloating[sub.nonFloatingPCAId] || []
               const { preferred, floor, nonFloor } = groupPCAsByCategory(availablePCAs)
-              const selectionKey = `${currentTeam}-${sub.nonFloatingPCAId}`
+              const selectionKey = getSelectionKey(sub.team, sub.nonFloatingPCAId)
+              const subTheme = getTeamTheme(sub.team)
               const currentSelections = selections[selectionKey] ?? []
               const primarySelection = currentSelections[0] ?? null
               const selectedIds = new Set(currentSelections.map((s) => s.floatingPCAId))
               const coveredSlots = new Set(currentSelections.flatMap((s) => s.slots))
               const remainingSlots = sub.missingSlots.filter((slot) => !coveredSlots.has(slot))
-              const teamFloor = getTeamFloor(currentTeam, pcaPreferences)
+              const teamFloor = getTeamFloor(sub.team, pcaPreferences)
 
               const extraCandidates = availablePCAs.filter((pca) => {
                 if (primarySelection?.floatingPCAId === pca.id) return false
@@ -472,10 +476,10 @@ export function NonFloatingSubstitutionDialog({
                       variant="outline"
                       className={cn(
                         'select-none px-2 py-0.5 text-[11px] font-medium',
-                        currentTheme.badge
+                        subTheme.badge
                       )}
                     >
-                      {currentTeam}
+                      {sub.team}
                     </Badge>
                     <span className="text-sm text-muted-foreground">
                       Missing slots: {sub.missingSlots.join(', ')}
@@ -557,7 +561,9 @@ export function NonFloatingSubstitutionDialog({
                                           type="button"
                                           variant="outline"
                                           size="sm"
-                                          onClick={() => removeCoverSelection(sub.nonFloatingPCAId, sel.floatingPCAId)}
+                                          onClick={() =>
+                                            removeCoverSelection(sub.team, sub.nonFloatingPCAId, sel.floatingPCAId)
+                                          }
                                         >
                                           Remove
                                         </Button>
@@ -589,7 +595,13 @@ export function NonFloatingSubstitutionDialog({
                                     checked={isSelected}
                                     disabled={disabledByUsage}
                                     onCheckedChange={(checked) =>
-                                      handleSelectionChange(sub.nonFloatingPCAId, pca.id, coverableSlots, checked as boolean)
+                                      handleSelectionChange(
+                                        sub.team,
+                                        sub.nonFloatingPCAId,
+                                        pca.id,
+                                        coverableSlots,
+                                        checked as boolean
+                                      )
                                     }
                                   />
                                   <label
@@ -626,7 +638,13 @@ export function NonFloatingSubstitutionDialog({
                                     checked={isSelected}
                                     disabled={disabledByUsage}
                                     onCheckedChange={(checked) =>
-                                      handleSelectionChange(sub.nonFloatingPCAId, pca.id, coverableSlots, checked as boolean)
+                                      handleSelectionChange(
+                                        sub.team,
+                                        sub.nonFloatingPCAId,
+                                        pca.id,
+                                        coverableSlots,
+                                        checked as boolean
+                                      )
                                     }
                                   />
                                   <label
@@ -661,7 +679,13 @@ export function NonFloatingSubstitutionDialog({
                                     checked={isSelected}
                                     disabled={disabledByUsage}
                                     onCheckedChange={(checked) =>
-                                      handleSelectionChange(sub.nonFloatingPCAId, pca.id, coverableSlots, checked as boolean)
+                                      handleSelectionChange(
+                                        sub.team,
+                                        sub.nonFloatingPCAId,
+                                        pca.id,
+                                        coverableSlots,
+                                        checked as boolean
+                                      )
                                     }
                                   />
                                   <label
@@ -727,8 +751,11 @@ export function NonFloatingSubstitutionDialog({
                                             checked={isSelected}
                                             disabled={disabledByUsage}
                                             onCheckedChange={(checked) => {
-                                              if (checked) addCoverSelection(sub.nonFloatingPCAId, pca.id, coverable)
-                                              else removeCoverSelection(sub.nonFloatingPCAId, pca.id)
+                                              if (checked) {
+                                                addCoverSelection(sub.team, sub.nonFloatingPCAId, pca.id, coverable)
+                                              } else {
+                                                removeCoverSelection(sub.team, sub.nonFloatingPCAId, pca.id)
+                                              }
                                             }}
                                           />
                                           <label
@@ -764,8 +791,11 @@ export function NonFloatingSubstitutionDialog({
                                             checked={isSelected}
                                             disabled={disabledByUsage}
                                             onCheckedChange={(checked) => {
-                                              if (checked) addCoverSelection(sub.nonFloatingPCAId, pca.id, coverable)
-                                              else removeCoverSelection(sub.nonFloatingPCAId, pca.id)
+                                              if (checked) {
+                                                addCoverSelection(sub.team, sub.nonFloatingPCAId, pca.id, coverable)
+                                              } else {
+                                                removeCoverSelection(sub.team, sub.nonFloatingPCAId, pca.id)
+                                              }
                                             }}
                                           />
                                           <label
@@ -799,8 +829,11 @@ export function NonFloatingSubstitutionDialog({
                                             checked={isSelected}
                                             disabled={disabledByUsage}
                                             onCheckedChange={(checked) => {
-                                              if (checked) addCoverSelection(sub.nonFloatingPCAId, pca.id, coverable)
-                                              else removeCoverSelection(sub.nonFloatingPCAId, pca.id)
+                                              if (checked) {
+                                                addCoverSelection(sub.team, sub.nonFloatingPCAId, pca.id, coverable)
+                                              } else {
+                                                removeCoverSelection(sub.team, sub.nonFloatingPCAId, pca.id)
+                                              }
                                             }}
                                           />
                                           <label

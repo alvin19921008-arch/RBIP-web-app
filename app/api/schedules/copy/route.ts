@@ -46,7 +46,10 @@ async function buildBaselineSnapshot(supabase: any): Promise<BaselineSnapshot> {
         'pca_preferences',
         'id,team,preferred_pca_ids,preferred_slots,avoid_gym_schedule,gym_schedule,floor_pca_selection'
       ),
-      safeSelect('team_settings', 'team,display_name'),
+      safeSelect(
+        'team_settings',
+        'team,display_name,merged_into,merge_label_override,merged_pca_preferences_override'
+      ),
     ])
 
   if (staffRes.error) {
@@ -66,11 +69,23 @@ async function buildBaselineSnapshot(supabase: any): Promise<BaselineSnapshot> {
   }
 
   let teamDisplayNames: Partial<Record<Team, string>> | undefined = undefined
+  const mergedInto: Partial<Record<Team, Team>> = {}
+  const mergeLabelOverrideByTeam: Partial<Record<Team, string>> = {}
+  const mergedPcaPreferencesOverrideByTeam: Partial<Record<Team, unknown>> = {}
   if (!teamSettingsRes.error && teamSettingsRes.data) {
     teamDisplayNames = {}
     for (const row of teamSettingsRes.data as any[]) {
       if (row.team && row.display_name) {
         teamDisplayNames[row.team as Team] = row.display_name as string
+      }
+      if (row.team && row.merged_into && row.merged_into !== row.team) {
+        mergedInto[row.team as Team] = row.merged_into as Team
+      }
+      if (row.team && typeof row.merge_label_override === 'string' && row.merge_label_override.trim()) {
+        mergeLabelOverrideByTeam[row.team as Team] = row.merge_label_override.trim()
+      }
+      if (row.team && row.merged_pca_preferences_override) {
+        mergedPcaPreferencesOverrideByTeam[row.team as Team] = row.merged_pca_preferences_override
       }
     }
   }
@@ -82,6 +97,11 @@ async function buildBaselineSnapshot(supabase: any): Promise<BaselineSnapshot> {
     wards: (wardsRes.data || []) as any,
     pcaPreferences: (pcaPreferencesRes.data || []) as any,
     teamDisplayNames,
+    teamMerge: {
+      mergedInto,
+      mergeLabelOverrideByTeam,
+      mergedPcaPreferencesOverrideByTeam: mergedPcaPreferencesOverrideByTeam as any,
+    },
   }
 }
 

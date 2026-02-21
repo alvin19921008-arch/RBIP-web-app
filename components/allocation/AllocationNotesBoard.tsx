@@ -15,15 +15,13 @@ const AllocationNotesBoardEditor = dynamic(
     ssr: false,
     loading: () => (
       <div className="mt-4">
-        <div className="grid grid-cols-8 gap-2">
-          <div className="col-span-8 border rounded-md">
-            <div className="flex items-center justify-between px-3 py-2 border-b">
-              <div className="h-4 w-40 rounded-md bg-muted animate-pulse" />
-              <div className="h-8 w-16 rounded-md bg-muted/70 animate-pulse" />
-            </div>
-            <div className="px-3 py-2">
-              <div className="h-20 rounded-md bg-muted/70 animate-pulse" />
-            </div>
+        <div className="border rounded-md">
+          <div className="flex items-center justify-between px-3 py-2 border-b">
+            <div className="h-4 w-40 rounded-md bg-muted animate-pulse" />
+            <div className="h-8 w-16 rounded-md bg-muted/70 animate-pulse" />
+          </div>
+          <div className="px-3 py-2">
+            <div className="h-20 rounded-md bg-muted/70 animate-pulse" />
           </div>
         </div>
       </div>
@@ -52,29 +50,27 @@ export function AllocationNotesBoard({
 
   return (
     <div className="mt-4">
-      <div className="grid grid-cols-8 gap-2">
-        <div className="col-span-8 border rounded-md">
-          <div className="flex items-center justify-between px-3 py-2 border-b">
-            <div className="text-sm font-semibold">{title}</div>
-            <Tooltip side="top" content="Edit">
-              <span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onMouseEnter={() => void prefetchAllocationNotesBoardEditor()}
-                  onFocus={() => void prefetchAllocationNotesBoardEditor()}
-                  onClick={() => setEditing(true)}
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-              </span>
-            </Tooltip>
-          </div>
-
-          <AllocationNotesBoardReadonly doc={doc} />
+      <div className="border rounded-md">
+        <div className="flex items-center justify-between px-3 py-2 border-b">
+          <div className="text-sm font-semibold">{title}</div>
+          <Tooltip side="top" content="Edit">
+            <span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onMouseEnter={() => void prefetchAllocationNotesBoardEditor()}
+                onFocus={() => void prefetchAllocationNotesBoardEditor()}
+                onClick={() => setEditing(true)}
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+            </span>
+          </Tooltip>
         </div>
+
+        <AllocationNotesBoardReadonly doc={doc} />
       </div>
     </div>
   )

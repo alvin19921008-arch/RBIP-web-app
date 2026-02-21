@@ -213,6 +213,26 @@ export interface BaselineSnapshot {
   pcaPreferences: import('./allocation').PCAPreference[]
   // Optional map of custom team display names (from team_settings)
   teamDisplayNames?: Partial<Record<Team, string>>
+  // Optional team merge settings frozen for this schedule date.
+  // If present, schedule rendering should prefer this over live team_settings merge config.
+  teamMerge?: {
+    mergedInto: Partial<Record<Team, Team>>
+    mergeLabelOverrideByTeam?: Partial<Record<Team, string>>
+    mergedPcaPreferencesOverrideByTeam?: Partial<
+      Record<
+        Team,
+        {
+          preferred_pca_ids?: string[]
+          preferred_slots?: number[]
+          avoid_gym_schedule?: boolean
+          gym_schedule?: number | null
+          floor_pca_selection?: 'upper' | 'lower' | null
+          source?: 'main' | 'mergedAway' | 'custom'
+          updatedAt?: string
+        }
+      >
+    >
+  }
   // Optional pre-calculated schedule calculations to avoid recalculation on load
   calculatedValues?: {
     calculations: Record<Team, ScheduleCalculations | null>

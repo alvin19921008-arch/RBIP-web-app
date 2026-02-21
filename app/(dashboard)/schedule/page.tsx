@@ -157,6 +157,47 @@ const prefetchSptFinalEditDialog = () => import('@/components/allocation/SptFina
 const prefetchNonFloatingSubstitutionDialog = () => import('@/components/allocation/NonFloatingSubstitutionDialog')
 const prefetchScheduleCalendarPopover = () => import('@/components/schedule/ScheduleCalendarPopover')
 
+function combineScheduleCalculations(rows: Array<ScheduleCalculations | null | undefined>): ScheduleCalculations | null {
+  const valid = rows.filter((row): row is ScheduleCalculations => !!row)
+  if (valid.length === 0) return null
+  if (valid.length === 1) return valid[0]
+
+  const first = valid[0]
+  const designated = Array.from(new Set(valid.flatMap((v) => v.designated_wards || [])))
+  const sum = (selector: (c: ScheduleCalculations) => number | undefined) =>
+    valid.reduce((acc, row) => acc + (selector(row) || 0), 0)
+
+  const totalBedsDesignated = sum((c) => c.total_beds_designated)
+  const totalBeds = sum((c) => c.total_beds)
+  const ptPerTeam = sum((c) => c.pt_per_team)
+  const totalPtPerTeam = sum((c) => c.total_pt_per_team)
+  const bedsForRelieving = sum((c) => c.beds_for_relieving)
+  const pcaOnDuty = sum((c) => c.pca_on_duty)
+  const avgPcaPerTeam = sum((c) => c.average_pca_per_team)
+  const baseAvgPcaPerTeam = sum((c) => c.base_average_pca_per_team || 0)
+  const requiredPcaPerTeam = sum((c) => c.required_pca_per_team || 0)
+  const expectedBedsPerTeam = sum((c) => c.expected_beds_per_team || 0)
+
+  return {
+    ...first,
+    designated_wards: designated,
+    total_beds_designated: totalBedsDesignated,
+    total_beds: totalBeds,
+    pt_per_team: ptPerTeam,
+    total_pt_per_team: totalPtPerTeam,
+    beds_for_relieving: bedsForRelieving,
+    pca_on_duty: pcaOnDuty,
+    average_pca_per_team: avgPcaPerTeam,
+    base_average_pca_per_team: baseAvgPcaPerTeam,
+    required_pca_per_team: requiredPcaPerTeam,
+    expected_beds_per_team: expectedBedsPerTeam,
+    // Keep globals from first row (these should be identical across teams in current model).
+    total_pt_on_duty: first.total_pt_on_duty,
+    beds_per_pt: first.beds_per_pt,
+    total_pt_per_pca: first.total_pt_per_pca,
+  }
+}
+
 const STAFF_SELECT_FIELDS =
   'id,name,rank,special_program,team,floating,floor_pca,status,buffer_fte'
 const SPT_ALLOC_SELECT_FIELDS =
@@ -224,6 +265,14 @@ import {
   promoteInactiveStaffToBufferAction,
   updateBufferStaffTeamAction,
 } from './actions'
+import {
+  getContributingTeams,
+  getMainTeam,
+  getMainTeamDisplayName,
+  getVisibleTeams,
+  resolveTeamMergeConfig,
+  type TeamSettingsMergeRow,
+} from '@/lib/utils/teamMerge'
 
 
 function SchedulePageContent() {
@@ -747,6 +796,7 @@ function SchedulePageContent() {
     setPcaAllocationErrors,
     setTieBreakDecisions,
   } = _unsafe
+  const [teamSettingsRows, setTeamSettingsRows] = useState<TeamSettingsMergeRow[]>([])
   const [activeDragStaffForOverlay, setActiveDragStaffForOverlay] = useState<Staff | null>(null)
   const [activeBedRelievingTransfer, setActiveBedRelievingTransfer] = useState<{
     fromTeam: Team
@@ -756,6 +806,36 @@ function SchedulePageContent() {
   const LAST_OPEN_SCHEDULE_DATE_KEY = 'rbip_last_open_schedule_date'
   const [initialDateResolved, setInitialDateResolved] = useState(false)
   const initialDateResolutionStartedRef = useRef(false)
+
+  const effectiveTeamMergeConfig = useMemo(
+    () =>
+      resolveTeamMergeConfig({
+        teamSettingsRows,
+        snapshotMerge: (baselineSnapshot as any)?.teamMerge ?? null,
+      }),
+    [teamSettingsRows, baselineSnapshot]
+  )
+  const visibleTeams = useMemo(
+    () => getVisibleTeams(effectiveTeamMergeConfig.mergedInto),
+    [effectiveTeamMergeConfig.mergedInto]
+  )
+  const visibleTeamGridStyle = useMemo(
+    () => ({ gridTemplateColumns: `repeat(${Math.max(1, visibleTeams.length)}, minmax(0, 1fr))` }),
+    [visibleTeams.length]
+  )
+  const scheduleMinWidthPx = Math.max(720, visibleTeams.length * 120)
+  const mainTeamDisplayNames = useMemo(() => {
+    const out: Partial<Record<Team, string>> = {}
+    visibleTeams.forEach((mainTeam) => {
+      out[mainTeam] = getMainTeamDisplayName({
+        mainTeam,
+        mergedInto: effectiveTeamMergeConfig.mergedInto,
+        displayNames: effectiveTeamMergeConfig.displayNames,
+        mergeLabelOverrideByTeam: effectiveTeamMergeConfig.mergeLabelOverrideByTeam,
+      })
+    })
+    return out
+  }, [visibleTeams, effectiveTeamMergeConfig])
 
   const toDateKey = useCallback((d: Date) => {
     const y = d.getFullYear()
@@ -2635,6 +2715,28 @@ function SchedulePageContent() {
     }
   }
 
+  const loadTeamSettings = async () => {
+    try {
+      const result = await supabase
+        .from('team_settings')
+        .select('team,display_name,merged_into,merge_label_override,merged_pca_preferences_override')
+        .order('team')
+      if (result.error) {
+        console.error('Error loading team settings:', result.error.message)
+        return
+      }
+      setTeamSettingsRows((result.data || []) as TeamSettingsMergeRow[])
+    } catch (error) {
+      console.error('Error loading team settings:', error)
+    }
+  }
+
+  useEffect(() => {
+    void loadTeamSettings()
+    // Refresh merge settings when date changes (snapshot merge may differ by date).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate])
+
   // loadScheduleForDate moved into useScheduleController() as scheduleActions.loadScheduleForDate()
   
   // Reset the flag when date changes (new schedule load)
@@ -2992,25 +3094,60 @@ function SchedulePageContent() {
     return therapistAllocationIndex.leaveTypeByStaffId.get(staffId) ?? null
   }
 
+  const recalculationTeams = useMemo(
+    () => (visibleTeams.length > 0 ? visibleTeams : TEAMS),
+    [visibleTeams]
+  )
+
+  const wardsForRecalculation = useMemo(() => {
+    const mergedInto = effectiveTeamMergeConfig.mergedInto
+    return (wards || []).map((ward: any) => {
+      const rawAssignments = ((ward?.team_assignments as Partial<Record<Team, number>>) ?? {})
+      const nextAssignments = createEmptyTeamRecord<number>(0)
+      const nextPortions = createEmptyTeamRecord<string | undefined>(undefined)
+
+      Object.entries(rawAssignments).forEach(([teamKey, beds]) => {
+        const team = teamKey as Team
+        const mainTeam = getMainTeam(team, mergedInto)
+        const val = typeof beds === 'number' ? beds : 0
+        nextAssignments[mainTeam] = (nextAssignments[mainTeam] || 0) + val
+      })
+
+      const rawPortions = ((ward?.team_assignment_portions as Partial<Record<Team, string>>) ?? {})
+      Object.entries(rawPortions).forEach(([teamKey, portion]) => {
+        const team = teamKey as Team
+        const mainTeam = getMainTeam(team, mergedInto)
+        if (!portion) return
+        if (!nextPortions[mainTeam]) nextPortions[mainTeam] = portion
+      })
+
+      return {
+        ...ward,
+        team_assignments: nextAssignments,
+        team_assignment_portions: nextPortions,
+      }
+    })
+  }, [wards, effectiveTeamMergeConfig.mergedInto])
+
   const wardsByTeam = useMemo(() => {
     const byTeam = createEmptyTeamRecordFactory<any[]>(() => [])
-    for (const ward of wards || []) {
-      for (const team of TEAMS) {
+    for (const ward of wardsForRecalculation || []) {
+      for (const team of recalculationTeams) {
         if ((ward as any)?.team_assignments?.[team] > 0) {
           byTeam[team].push(ward)
         }
       }
     }
     return byTeam
-  }, [wards])
+  }, [wardsForRecalculation, recalculationTeams])
 
   const designatedWardsByTeam = useMemo(() => {
     const byTeam = createEmptyTeamRecordFactory<string[]>(() => [])
-    for (const team of TEAMS) {
+    for (const team of recalculationTeams) {
       byTeam[team] = (wardsByTeam[team] || []).map((ward: any) => formatWardLabel(ward as any, team))
     }
     return byTeam
-  }, [wardsByTeam])
+  }, [wardsByTeam, recalculationTeams])
 
   const totalBedsAllTeams = useMemo(() => wards.reduce((sum, ward) => sum + ward.total_beds, 0), [wards])
 
@@ -3053,12 +3190,13 @@ function SchedulePageContent() {
           const override = staffOverrides[s.id]
           const fte = override?.fteRemaining ?? 1.0
           if (fte > 0 && s.team) {
+            const effectiveTeam = getMainTeam(s.team, effectiveTeamMergeConfig.mergedInto)
             // Create a minimal allocation object for calculation purposes
             const alloc: TherapistAllocation & { staff: Staff } = {
               id: '',
               schedule_id: '',
               staff_id: s.id,
-              team: s.team,
+              team: effectiveTeam,
               fte_therapist: fte,
               fte_remaining: 1.0 - fte,
               slot_whole: null,
@@ -3074,7 +3212,7 @@ function SchedulePageContent() {
               manual_override_note: null,
               staff: s
             }
-            therapistByTeam[s.team].push(alloc)
+            therapistByTeam[effectiveTeam].push(alloc)
           }
         }
       })
@@ -3082,11 +3220,19 @@ function SchedulePageContent() {
       // Reuse existing therapistAllocations state
       therapistByTeam = therapistAllocations
     }
+
+    const pcaByTeamForCalc = createEmptyTeamRecordFactory<(PCAAllocation & { staff: Staff })[]>(() => [])
+    const therapistByTeamForCalc = createEmptyTeamRecordFactory<(TherapistAllocation & { staff: Staff })[]>(() => [])
+    recalculationTeams.forEach((mainTeam) => {
+      const contributors = getContributingTeams(mainTeam, effectiveTeamMergeConfig.mergedInto)
+      pcaByTeamForCalc[mainTeam] = contributors.flatMap((team) => pcaByTeam[team] || [])
+      therapistByTeamForCalc[mainTeam] = contributors.flatMap((team) => therapistByTeam[team] || [])
+    })
     
     // Reuse the calculation logic from applySavedAllocations
     // CRITICAL: Use staffOverrides for current FTE values (not stale alloc.fte_therapist)
-    const totalPTOnDutyAllTeams = TEAMS.reduce((sum, team) => {
-      return sum + therapistByTeam[team].reduce((teamSum, alloc) => {
+    const totalPTOnDutyAllTeams = recalculationTeams.reduce((sum, team) => {
+      return sum + therapistByTeamForCalc[team].reduce((teamSum, alloc) => {
         const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
         // Use staffOverrides for current FTE, fallback to alloc.fte_therapist
         const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
@@ -3100,8 +3246,8 @@ function SchedulePageContent() {
     // Otherwise the global sum of bedsForRelieving becomes positive (e.g. +15) and Block 3 cannot match Block 5.
     const ptPerTeamByTeam: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
 
-    TEAMS.forEach(team => {
-      const ptPerTeam = therapistByTeam[team].reduce((sum, alloc) => {
+    recalculationTeams.forEach(team => {
+      const ptPerTeam = therapistByTeamForCalc[team].reduce((sum, alloc) => {
         const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
         // Use staffOverrides for current FTE, fallback to alloc.fte_therapist
         const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
@@ -3113,12 +3259,12 @@ function SchedulePageContent() {
     })
 
     const { bedsDesignatedByTeam, totalBedsEffectiveAllTeams } = computeBedsDesignatedByTeam({
-      teams: TEAMS,
-      wards: wards as any,
+      teams: recalculationTeams,
+      wards: wardsForRecalculation as any,
       bedCountsOverridesByTeam: bedCountsOverridesByTeam as any,
     })
     const { bedsForRelieving, overallBedsPerPT } = computeBedsForRelieving({
-      teams: TEAMS,
+      teams: recalculationTeams,
       bedsDesignatedByTeam,
       totalBedsEffectiveAllTeams,
       totalPTByTeam: ptPerTeamByTeam,
@@ -3140,8 +3286,8 @@ function SchedulePageContent() {
       }, 0)
     // Keep the old calculation for comparison in logs
     const seenPCAIds = new Set<string>()
-    const totalPCAFromAllocations = TEAMS.reduce((sum, team) => {
-      return sum + pcaByTeam[team].reduce((teamSum, alloc) => {
+    const totalPCAFromAllocations = recalculationTeams.reduce((sum, team) => {
+      return sum + pcaByTeamForCalc[team].reduce((teamSum, alloc) => {
         if (seenPCAIds.has(alloc.staff_id)) return teamSum
         seenPCAIds.add(alloc.staff_id)
         const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
@@ -3179,12 +3325,12 @@ function SchedulePageContent() {
       FO: null, SMM: null, SFM: null, CPPC: null, MC: null, GMC: null, NSM: null, DRO: null
     }
     
-    TEAMS.forEach(team => {
+    recalculationTeams.forEach(team => {
       const teamWards = wardsByTeam[team] || []
       const totalBedsDesignated = bedsDesignatedByTeam[team] ?? 0
       const designatedWards = designatedWardsByTeam[team] || []
       
-      const teamTherapists = therapistByTeam[team]
+      const teamTherapists = therapistByTeamForCalc[team]
       const ptPerTeam = teamTherapists.reduce((sum, alloc) => {
         const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
         // Use staffOverrides for current FTE, fallback to alloc.fte_therapist
@@ -3196,7 +3342,7 @@ function SchedulePageContent() {
       
       const bedsPerPT = ptPerTeam > 0 ? totalBedsDesignated / ptPerTeam : 0
       
-      const teamPCAs = pcaByTeam[team]
+      const teamPCAs = pcaByTeamForCalc[team]
       const pcaOnDuty = teamPCAs.reduce((sum, alloc) => {
         const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
         const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_pca || 0)
@@ -3207,7 +3353,7 @@ function SchedulePageContent() {
       // Avg PCA/team is based on the effective PCA pool after reserving special-program slots.
       const baseAveragePCAPerTeam = totalPTOnDutyAllTeams > 0
         ? (ptPerTeam * effectiveTotalPCAForAvg) / totalPTOnDutyAllTeams
-        : (effectiveTotalPCAForAvg / TEAMS.length)
+        : (effectiveTotalPCAForAvg / Math.max(1, recalculationTeams.length))
       
       const expectedBedsPerTeam = totalPTOnDutyAllTeams > 0 
         ? (totalBedsEffectiveAllTeams / totalPTOnDutyAllTeams) * ptPerTeam 
@@ -3245,7 +3391,7 @@ function SchedulePageContent() {
     pcaAllocations,
     therapistAllocations,
     staffOverrides,
-    wards,
+    wardsForRecalculation,
     wardsByTeam,
     designatedWardsByTeam,
     totalBedsAllTeams,
@@ -3254,6 +3400,8 @@ function SchedulePageContent() {
     specialPrograms,
     staff,
     currentStep,
+    recalculationTeams,
+    effectiveTeamMergeConfig.mergedInto,
   ])
 
   // Auto-recalculate when allocations change (e.g., after Step 2 algo)
@@ -3282,28 +3430,31 @@ function SchedulePageContent() {
     const dateKey = formatDateForInput(selectedDate)
     if (calcStaleRepairAttemptedDateRef.current === dateKey) return
 
-    const allExpectedBedsZero = TEAMS.every((team) => {
+    const allExpectedBedsZero = recalculationTeams.every((team) => {
       const v = calculations[team]?.expected_beds_per_team
       return typeof v !== 'number' || v === 0
     })
     if (!allExpectedBedsZero) return
 
-    const hasAnyTherapistOnDuty = TEAMS.some((team) =>
-      therapistAllocations[team].some((alloc) => {
-        if (!['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)) return false
-        const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
-        const fte = overrideFTE !== undefined ? overrideFTE : (alloc.fte_therapist || 0)
-        return fte > 0
-      })
-    )
+    const hasAnyTherapistOnDuty = recalculationTeams.some((team) => {
+      const contributors = getContributingTeams(team, effectiveTeamMergeConfig.mergedInto)
+      return contributors.some((fromTeam) =>
+        therapistAllocations[fromTeam].some((alloc) => {
+          if (!['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)) return false
+          const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
+          const fte = overrideFTE !== undefined ? overrideFTE : (alloc.fte_therapist || 0)
+          return fte > 0
+        })
+      )
+    })
     if (!hasAnyTherapistOnDuty) return
 
     const hasAnyPcaAllocations = Object.values(pcaAllocations).some((arr) => Array.isArray(arr) && arr.length > 0)
     if (!hasAnyPcaAllocations && currentStep !== 'leave-fte') return
 
     const { totalBedsEffectiveAllTeams } = computeBedsDesignatedByTeam({
-      teams: TEAMS,
-      wards: wards as any,
+      teams: recalculationTeams,
+      wards: wardsForRecalculation as any,
       bedCountsOverridesByTeam: bedCountsOverridesByTeam as any,
     })
     if (!(totalBedsEffectiveAllTeams > 0)) return
@@ -3323,6 +3474,9 @@ function SchedulePageContent() {
     recalculateScheduleCalculations,
     currentStep,
     pcaAllocations,
+    recalculationTeams,
+    wardsForRecalculation,
+    effectiveTeamMergeConfig.mergedInto,
   ])
 
   // Guardrail: older persisted calculations may have computed Avg PCA/team using the full PCA pool
@@ -3370,7 +3524,10 @@ function SchedulePageContent() {
     // Sum of targets should equal (totalPCAOnDuty - reservedSpecialProgramPcaFte)
     // since DRM is taken out then added back to DRO.
     const expectedSum = effectiveTotalPCAForAvg + drmAddOnFte
-    const observedSum = TEAMS.reduce((sum, team) => sum + ((calculations[team]?.average_pca_per_team as any) ?? 0), 0)
+    const observedSum = recalculationTeams.reduce(
+      (sum, team) => sum + ((calculations[team]?.average_pca_per_team as any) ?? 0),
+      0
+    )
 
     const mismatch = Math.abs(observedSum - expectedSum)
     if (mismatch < 0.2) return
@@ -3387,6 +3544,7 @@ function SchedulePageContent() {
     specialPrograms,
     calculations,
     recalculateScheduleCalculations,
+    recalculationTeams,
   ])
 
   // Recalculate beds + relieving beds when bed-count overrides change.
@@ -3426,24 +3584,27 @@ function SchedulePageContent() {
     // IMPORTANT: Use EFFECTIVE total beds (after SHS/Student deductions) for relieving calculations.
     const ptPerTeamByTeam: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
 
-    TEAMS.forEach(team => {
-      const ptPerTeam = therapistAllocations[team].reduce((sum, alloc) => {
-        const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-        const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
-        const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_therapist || 0)
-        const hasFTE = currentFTE > 0
-        return sum + (isTherapist && hasFTE ? currentFTE : 0)
+    recalculationTeams.forEach(team => {
+      const contributors = getContributingTeams(team, effectiveTeamMergeConfig.mergedInto)
+      const ptPerTeam = contributors.reduce((teamSum, fromTeam) => {
+        return teamSum + therapistAllocations[fromTeam].reduce((sum, alloc) => {
+          const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
+          const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
+          const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_therapist || 0)
+          const hasFTE = currentFTE > 0
+          return sum + (isTherapist && hasFTE ? currentFTE : 0)
+        }, 0)
       }, 0)
       ptPerTeamByTeam[team] = ptPerTeam
     })
 
     const { bedsDesignatedByTeam, totalBedsEffectiveAllTeams } = computeBedsDesignatedByTeam({
-      teams: TEAMS,
-      wards: wards as any,
+      teams: recalculationTeams,
+      wards: wardsForRecalculation as any,
       bedCountsOverridesByTeam: bedCountsOverridesByTeam as any,
     })
     const { bedsForRelieving } = computeBedsForRelieving({
-      teams: TEAMS,
+      teams: recalculationTeams,
       bedsDesignatedByTeam,
       totalBedsEffectiveAllTeams,
       totalPTByTeam: ptPerTeamByTeam,
@@ -3451,7 +3612,7 @@ function SchedulePageContent() {
 
     const bedContext: BedAllocationContext = {
       bedsForRelieving,
-      wards: wards.map(w => ({ name: w.name, team_assignments: w.team_assignments })),
+      wards: wardsForRecalculation.map((w: any) => ({ name: w.name, team_assignments: w.team_assignments })),
     }
     let cancelled = false
     void (async () => {
@@ -3470,11 +3631,13 @@ function SchedulePageContent() {
     isHydratingSchedule,
     currentStep,
     stepStatus,
-    wards,
+    wardsForRecalculation,
     therapistAllocations,
     staffOverrides,
     pcaAllocations,
     recalculateScheduleCalculations,
+    recalculationTeams,
+    effectiveTeamMergeConfig.mergedInto,
   ])
 
   // ============================================================================
@@ -3584,14 +3747,18 @@ function SchedulePageContent() {
           }, 0)
         
         // Calculate total PT on duty from therapist allocations
-        const totalPTOnDuty = TEAMS.reduce((sum, team) => {
-          return sum + therapistAllocations[team].reduce((teamSum, alloc) => {
-            const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-            const override = newOverrides[alloc.staff_id]
-            const fte = override ? override.fteRemaining : (alloc.fte_therapist || 0)
-            const hasFTE = fte > 0
-            return teamSum + (isTherapist && hasFTE ? fte : 0)
+        const totalPTOnDuty = recalculationTeams.reduce((sum, team) => {
+          const contributors = getContributingTeams(team, effectiveTeamMergeConfig.mergedInto)
+          const teamPt = contributors.reduce((acc, fromTeam) => {
+            return acc + therapistAllocations[fromTeam].reduce((teamSum, alloc) => {
+              const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
+              const override = newOverrides[alloc.staff_id]
+              const fte = override ? override.fteRemaining : (alloc.fte_therapist || 0)
+              const hasFTE = fte > 0
+              return teamSum + (isTherapist && hasFTE ? fte : 0)
+            }, 0)
           }, 0)
+          return sum + teamPt
         }, 0)
         
         // Calculate required PCA per team
@@ -3599,19 +3766,22 @@ function SchedulePageContent() {
           FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
         }
         
-        TEAMS.forEach(team => {
-          const ptPerTeam = therapistAllocations[team].reduce((sum, alloc) => {
-            const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-            const override = newOverrides[alloc.staff_id]
-            const fte = override ? override.fteRemaining : (alloc.fte_therapist || 0)
-            const hasFTE = fte > 0
-            return sum + (isTherapist && hasFTE ? fte : 0)
+        recalculationTeams.forEach(team => {
+          const contributors = getContributingTeams(team, effectiveTeamMergeConfig.mergedInto)
+          const ptPerTeam = contributors.reduce((acc, fromTeam) => {
+            return acc + therapistAllocations[fromTeam].reduce((sum, alloc) => {
+              const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
+              const override = newOverrides[alloc.staff_id]
+              const fte = override ? override.fteRemaining : (alloc.fte_therapist || 0)
+              const hasFTE = fte > 0
+              return sum + (isTherapist && hasFTE ? fte : 0)
+            }, 0)
           }, 0)
           
           if (totalPTOnDuty > 0) {
             requiredPCA[team] = (ptPerTeam * totalPCA) / totalPTOnDuty
           } else {
-            requiredPCA[team] = totalPCA / 8
+            requiredPCA[team] = totalPCA / Math.max(1, recalculationTeams.length)
           }
           
           // Add DRM add-on for DRO if applicable
@@ -3627,14 +3797,17 @@ function SchedulePageContent() {
           FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
         }
         
-        TEAMS.forEach(team => {
-          assignedPCA[team] = updatedAllocations[team].reduce((sum, alloc) => {
-            return sum + (alloc.slot_assigned || 0)
+        recalculationTeams.forEach(team => {
+          const contributors = getContributingTeams(team, effectiveTeamMergeConfig.mergedInto)
+          assignedPCA[team] = contributors.reduce((acc, fromTeam) => {
+            return acc + updatedAllocations[fromTeam].reduce((sum, alloc) => {
+              return sum + (alloc.slot_assigned || 0)
+            }, 0)
           }, 0)
         })
         
         // Calculate pending FTE and apply rounding
-        TEAMS.forEach(team => {
+        recalculationTeams.forEach(team => {
           const pending = Math.max(0, requiredPCA[team] - assignedPCA[team])
           updatedPendingFTE[team] = roundToNearestQuarterWithMidpoint(pending)
         })
@@ -5233,9 +5406,184 @@ function SchedulePageContent() {
   const currentWeekday = getWeekday(selectedDate)
   const weekdayName = WEEKDAY_NAMES[WEEKDAYS.indexOf(currentWeekday)]
 
+  const teamContributorsByMain = useMemo(() => {
+    const out: Partial<Record<Team, Team[]>> = {}
+    visibleTeams.forEach((mainTeam) => {
+      out[mainTeam] = getContributingTeams(mainTeam, effectiveTeamMergeConfig.mergedInto)
+    })
+    return out
+  }, [visibleTeams, effectiveTeamMergeConfig.mergedInto])
+
+  const substitutionWizardDataForDisplay = useMemo(() => {
+    if (!substitutionWizardData) return null
+
+    const teams = visibleTeams.filter((mainTeam) => {
+      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
+      return contributors.some((team) => (substitutionWizardData.substitutionsByTeam[team] || []).length > 0)
+    })
+
+    const substitutionsByTeam = createEmptyTeamRecordFactory<
+      Array<{
+        nonFloatingPCAId: string
+        nonFloatingPCAName: string
+        team: Team
+        fte: number
+        missingSlots: number[]
+        availableFloatingPCAs: Array<{
+          id: string
+          name: string
+          availableSlots: number[]
+          isPreferred: boolean
+          isFloorPCA: boolean
+          blockedSlotsInfo?: Array<{ slot: number; reasons: string[] }>
+        }>
+      }>
+    >(() => [])
+
+    teams.forEach((mainTeam) => {
+      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
+      substitutionsByTeam[mainTeam] = contributors.flatMap(
+        (team) => substitutionWizardData.substitutionsByTeam[team] || []
+      )
+    })
+
+    // Keep original selection keys (sourceTeam-nonFloatingId).
+    // The Step 2 allocator matches selections by original team keys, not merged display keys.
+    const initialSelections = substitutionWizardData.initialSelections
+
+    return {
+      ...substitutionWizardData,
+      teams,
+      substitutionsByTeam,
+      isWizardMode: teams.length > 1,
+      initialSelections,
+    }
+  }, [
+    substitutionWizardData,
+    effectiveTeamMergeConfig.mergedInto,
+    visibleTeams,
+    teamContributorsByMain,
+  ])
+
+  const therapistAllocationsForDisplay = useMemo(() => {
+    const out = createEmptyTeamRecordFactory<any[]>(() => [])
+    visibleTeams.forEach((mainTeam) => {
+      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
+      out[mainTeam] = contributors.flatMap((team) => therapistAllocations[team] || [])
+    })
+    return out
+  }, [visibleTeams, teamContributorsByMain, therapistAllocations])
+
+  const pcaAllocationsForDisplay = useMemo(() => {
+    const out = createEmptyTeamRecordFactory<any[]>(() => [])
+    visibleTeams.forEach((mainTeam) => {
+      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
+      const mergedRows = contributors
+        .flatMap((team) => pcaAllocationsForUi[team] || [])
+        .map((alloc: any) => {
+          const canonical = (value: unknown) =>
+            TEAMS.includes(value as Team)
+              ? getMainTeam(value as Team, effectiveTeamMergeConfig.mergedInto)
+              : value
+          return {
+            ...alloc,
+            team: canonical(alloc?.team),
+            slot1: canonical(alloc?.slot1),
+            slot2: canonical(alloc?.slot2),
+            slot3: canonical(alloc?.slot3),
+            slot4: canonical(alloc?.slot4),
+          }
+        })
+      const seen = new Set<string>()
+      out[mainTeam] = mergedRows.filter((alloc: any) => {
+        const contributesToMain =
+          alloc?.team === mainTeam ||
+          alloc?.slot1 === mainTeam ||
+          alloc?.slot2 === mainTeam ||
+          alloc?.slot3 === mainTeam ||
+          alloc?.slot4 === mainTeam
+        if (!contributesToMain) return false
+
+        const key =
+          (alloc?.id && String(alloc.id)) ||
+          `${String(alloc?.staff_id ?? '')}:${String(alloc?.team ?? '')}:${String(alloc?.slot1 ?? '')}:${String(alloc?.slot2 ?? '')}:${String(alloc?.slot3 ?? '')}:${String(alloc?.slot4 ?? '')}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+    })
+    return out
+  }, [visibleTeams, teamContributorsByMain, pcaAllocationsForUi, effectiveTeamMergeConfig.mergedInto])
+
+  const calculationsForDisplay = useMemo(() => {
+    const out = createEmptyTeamRecord<ScheduleCalculations | null>(null)
+    visibleTeams.forEach((mainTeam) => {
+      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
+      out[mainTeam] = combineScheduleCalculations(contributors.map((team) => calculations[team]))
+    })
+    return out
+  }, [visibleTeams, teamContributorsByMain, calculations])
+
+  const bedCountsOverridesByTeamForDisplay = useMemo(() => {
+    const out: Partial<Record<Team, { shsBedCounts?: number; studentPlacementBedCounts?: number }>> = {}
+    visibleTeams.forEach((mainTeam) => {
+      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
+      let shsTotal = 0
+      let studentTotal = 0
+      let hasAny = false
+      contributors.forEach((team) => {
+        const override = (bedCountsOverridesByTeam?.[team] as any) || null
+        if (override && typeof override.shsBedCounts === 'number') {
+          shsTotal += override.shsBedCounts
+          hasAny = true
+        }
+        if (override && typeof override.studentPlacementBedCounts === 'number') {
+          studentTotal += override.studentPlacementBedCounts
+          hasAny = true
+        }
+      })
+      if (hasAny) {
+        out[mainTeam] = {
+          shsBedCounts: shsTotal,
+          studentPlacementBedCounts: studentTotal,
+        }
+      }
+    })
+    return out
+  }, [visibleTeams, teamContributorsByMain, bedCountsOverridesByTeam])
+
+  const bedRelievingNotesByToTeamForDisplay = useMemo(() => {
+    const out = createEmptyTeamRecord<Partial<Record<Team, BedRelievingNoteRow[]>>>({})
+    for (const [toTeamRaw, fromMapRaw] of Object.entries(bedRelievingNotesByToTeam || {})) {
+      const toTeam = toTeamRaw as Team
+      const main = getMainTeam(toTeam, effectiveTeamMergeConfig.mergedInto)
+      const existingToTeamMap = out[main] || {}
+      const fromMap = (fromMapRaw || {}) as Partial<Record<Team, BedRelievingNoteRow[]>>
+
+      for (const [fromTeamRaw, rowsRaw] of Object.entries(fromMap)) {
+        const fromTeam = fromTeamRaw as Team
+        const mainFromTeam = getMainTeam(fromTeam, effectiveTeamMergeConfig.mergedInto)
+        const rows = Array.isArray(rowsRaw) ? rowsRaw : []
+        existingToTeamMap[mainFromTeam] = [...(existingToTeamMap[mainFromTeam] || []), ...rows]
+      }
+
+      out[main] = existingToTeamMap
+    }
+    return out as BedRelievingNotesByToTeam
+  }, [bedRelievingNotesByToTeam, effectiveTeamMergeConfig.mergedInto])
+
+  const bedAllocationsForDisplay = useMemo(() => {
+    const mapped = (bedAllocations || []).map((allocation) => ({
+      ...allocation,
+      from_team: getMainTeam(allocation.from_team, effectiveTeamMergeConfig.mergedInto),
+      to_team: getMainTeam(allocation.to_team, effectiveTeamMergeConfig.mergedInto),
+    }))
+    return mapped.filter((allocation) => allocation.from_team !== allocation.to_team)
+  }, [bedAllocations, effectiveTeamMergeConfig.mergedInto])
+
   const allPCAAllocationsFlat = useMemo(
-    () => Object.values(pcaAllocationsForUi).flat(),
-    [pcaAllocationsForUi]
+    () => visibleTeams.flatMap((team) => pcaAllocationsForDisplay[team] || []),
+    [visibleTeams, pcaAllocationsForDisplay]
   )
 
   // Step 3.1 "final" order (after user adjustments) for tooltip/display.
@@ -5293,8 +5641,11 @@ function SchedulePageContent() {
     const next: Record<Team, Record<string, any>> = createEmptyTeamRecord<Record<string, any>>({})
 
     for (const team of TEAMS) {
+      const sourceAllocations = visibleTeams.includes(team)
+        ? therapistAllocationsForDisplay[team]
+        : therapistAllocations[team]
       const ids = Array.from(
-        new Set((therapistAllocations[team] || []).map((a: any) => a.staff_id).filter(Boolean))
+        new Set((sourceAllocations || []).map((a: any) => a.staff_id).filter(Boolean))
       ).sort()
       const idsKey = ids.join('|')
 
@@ -5323,15 +5674,19 @@ function SchedulePageContent() {
 
     overridesSliceCacheRef.current.therapist = prev
     return next
-  }, [therapistAllocations, staffOverrides])
+  }, [visibleTeams, therapistAllocationsForDisplay, therapistAllocations, staffOverrides])
 
   const pcaOverridesByTeam = useMemo(() => {
     const prev = overridesSliceCacheRef.current.pca
     const next: Record<Team, Record<string, any>> = createEmptyTeamRecord<Record<string, any>>({})
 
     for (const team of TEAMS) {
+      const contributors = new Set<Team>(teamContributorsByMain[team] || [team])
+      const sourceAllocations = visibleTeams.includes(team)
+        ? pcaAllocationsForDisplay[team]
+        : pcaAllocationsForUi[team]
       const ids = Array.from(
-        new Set((pcaAllocationsForUi[team] || []).map((a: any) => a.staff_id).filter(Boolean))
+        new Set((sourceAllocations || []).map((a: any) => a.staff_id).filter(Boolean))
       ).sort()
       const idsKey = ids.join('|')
 
@@ -5351,7 +5706,36 @@ function SchedulePageContent() {
       } else {
         const slice: Record<string, any> = {}
         for (const id of ids) {
-          if (staffOverrides[id] !== undefined) slice[id] = staffOverrides[id]
+          const rawOverride = staffOverrides[id]
+          if (rawOverride === undefined) continue
+
+          if (!visibleTeams.includes(team)) {
+            slice[id] = rawOverride
+            continue
+          }
+
+          const bySlot = (rawOverride as any)?.substitutionForBySlot
+          const mappedBySlot =
+            bySlot && typeof bySlot === 'object'
+              ? Object.fromEntries(
+                  Object.entries(bySlot).map(([slotKey, value]) => {
+                    const row = value as any
+                    if (!row || !contributors.has(row.team as Team)) return [slotKey, row]
+                    return [slotKey, { ...row, team }]
+                  })
+                )
+              : bySlot
+
+          const subFor = (rawOverride as any)?.substitutionFor
+          const mappedSubFor =
+            subFor && contributors.has(subFor.team as Team)
+              ? { ...subFor, team }
+              : subFor
+
+          slice[id] =
+            mappedBySlot !== bySlot || mappedSubFor !== subFor
+              ? { ...rawOverride, substitutionForBySlot: mappedBySlot, substitutionFor: mappedSubFor }
+              : rawOverride
         }
         prev[team] = { idsKey, slice }
         next[team] = slice
@@ -5360,7 +5744,13 @@ function SchedulePageContent() {
 
     overridesSliceCacheRef.current.pca = prev
     return next
-  }, [pcaAllocationsForUi, staffOverrides])
+  }, [
+    visibleTeams,
+    pcaAllocationsForDisplay,
+    pcaAllocationsForUi,
+    staffOverrides,
+    teamContributorsByMain,
+  ])
 
   // ---------------------------------------------------------------------------
   // Copy button helpers (dynamic labels and source/target resolution)
@@ -5726,10 +6116,17 @@ function SchedulePageContent() {
       })
       const row = sorted[0]
       const teams = Array.isArray(row?.teams) ? (row.teams as Team[]) : []
-      out[staffId] = teams.filter((t) => TEAMS.includes(t))
+      out[staffId] = Array.from(
+        new Set(
+          teams
+            .filter((t) => TEAMS.includes(t))
+            .map((t) => getMainTeam(t, effectiveTeamMergeConfig.mergedInto))
+            .filter((t) => recalculationTeams.includes(t))
+        )
+      )
     }
     return out
-  }, [sptAllocations])
+  }, [sptAllocations, effectiveTeamMergeConfig.mergedInto, recalculationTeams])
 
   const sptStaffForStep22 = useMemo(() => {
     return [...staff, ...bufferStaff].filter((s) => s.rank === 'SPT')
@@ -5737,22 +6134,22 @@ function SchedulePageContent() {
 
   const currentSptAllocationByStaffIdForStep22 = useMemo(() => {
     const out: Record<string, { team: Team; fte: number } | null> = {}
-    for (const team of TEAMS) {
-      for (const alloc of therapistAllocations[team] ?? []) {
+    for (const team of recalculationTeams) {
+      for (const alloc of therapistAllocationsForDisplay[team] ?? []) {
         if (alloc.staff?.rank !== 'SPT') continue
         out[alloc.staff_id] = { team, fte: alloc.fte_therapist ?? 0 }
       }
     }
     return out
-  }, [therapistAllocations])
+  }, [recalculationTeams, therapistAllocationsForDisplay])
 
   const ptPerTeamByTeamForStep22 = useMemo(() => {
     const out: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
-    for (const t of TEAMS) {
-      out[t] = calculations[t]?.pt_per_team ?? 0
+    for (const t of recalculationTeams) {
+      out[t] = calculationsForDisplay[t]?.pt_per_team ?? 0
     }
     return out
-  }, [calculations])
+  }, [recalculationTeams, calculationsForDisplay])
 
   // SPT leave edit enhancement:
   // Nullify legacy auto-filled "FTE Cost due to Leave" for SPT where it was derived from (1.0 - remaining),
@@ -5912,8 +6309,8 @@ function SchedulePageContent() {
     let positiveSum = 0
     let negativeAbsSum = 0
 
-    for (const team of TEAMS) {
-      const allocationsForTeam = (pcaAllocations[team] || []) as Array<PCAAllocation & { staff: Staff }>
+    for (const team of visibleTeams) {
+      const allocationsForTeam = (pcaAllocationsForDisplay[team] || []) as Array<PCAAllocation & { staff: Staff }>
       let assignedRaw = 0
 
       allocationsForTeam.forEach((alloc) => {
@@ -5939,7 +6336,7 @@ function SchedulePageContent() {
       })
 
       const assigned = roundToNearestQuarterWithMidpoint(assignedRaw)
-      const target = calculations[team]?.average_pca_per_team ?? 0
+      const target = calculationsForDisplay[team]?.average_pca_per_team ?? 0
       const balance = assigned - target
       if (balance > 0) positiveSum += balance
       if (balance < 0) negativeAbsSum += Math.abs(balance)
@@ -5959,7 +6356,7 @@ function SchedulePageContent() {
       netDiff,
       perTeamText,
     }
-  }, [calculations, pcaAllocations, staffOverrides, specialPrograms, selectedDate])
+  }, [visibleTeams, calculationsForDisplay, pcaAllocationsForDisplay, staffOverrides, specialPrograms, selectedDate])
 
   // Handle drag start - detect if it's a PCA being dragged
   const handleDragStart = (event: DragStartEvent) => {
@@ -7762,6 +8159,7 @@ function SchedulePageContent() {
             {pcaPoolAssignAction.phase === 'team' ? (
               <TeamPickerPopover
                 title="Assign slot"
+                teams={visibleTeams}
                 selectedTeam={pcaPoolAssignAction.targetTeam}
                 onSelectTeam={(t) => setPcaPoolAssignAction(prev => ({ ...prev, targetTeam: t }))}
                 onClose={closePcaPoolAssignAction}
@@ -7835,6 +8233,7 @@ function SchedulePageContent() {
         sptPoolAssignAction.staffName && (
           <TeamPickerPopover
             title="Assign slot"
+            teams={visibleTeams}
             selectedTeam={sptPoolAssignAction.targetTeam}
             onSelectTeam={(t) => setSptPoolAssignAction(prev => ({ ...prev, targetTeam: t }))}
             onClose={closeSptPoolAssignAction}
@@ -7977,6 +8376,7 @@ function SchedulePageContent() {
             {pcaContextAction.phase === 'team' && pcaContextAction.mode === 'move' ? (
               <TeamPickerPopover
                 title="Move slot"
+                teams={visibleTeams}
                 selectedTeam={pcaContextAction.targetTeam}
                 onSelectTeam={(t) => setPcaContextAction(prev => ({ ...prev, targetTeam: t }))}
                 disabledTeams={pcaContextAction.sourceTeam ? [pcaContextAction.sourceTeam] : []}
@@ -8075,6 +8475,7 @@ function SchedulePageContent() {
             {therapistContextAction.mode === 'move' && therapistContextAction.phase === 'team' ? (
               <TeamPickerPopover
                 title="Move slot"
+                teams={visibleTeams}
                 selectedTeam={therapistContextAction.targetTeam}
                 onSelectTeam={(t) => setTherapistContextAction(prev => ({ ...prev, targetTeam: t }))}
                 disabledTeams={therapistContextAction.sourceTeam ? [therapistContextAction.sourceTeam] : []}
@@ -8173,6 +8574,7 @@ function SchedulePageContent() {
             {therapistContextAction.mode === 'split' && therapistContextAction.phase === 'team' ? (
               <TeamPickerPopover
                 title="Split slot"
+                teams={visibleTeams}
                 selectedTeam={therapistContextAction.targetTeam}
                 onSelectTeam={(t) => setTherapistContextAction(prev => ({ ...prev, targetTeam: t }))}
                 disabledTeams={therapistContextAction.sourceTeam ? [therapistContextAction.sourceTeam] : []}
@@ -9045,17 +9447,19 @@ function SchedulePageContent() {
               dateKey={toDateKey(selectedDate)}
               weekday={currentWeekday as any}
               currentStep={currentStep as any}
+              teams={visibleTeams as any}
+              teamDisplayNames={mainTeamDisplayNames as any}
               sptAllocations={sptAllocations as any}
               specialPrograms={specialPrograms as any}
-              therapistAllocationsByTeam={therapistAllocations as any}
-              pcaAllocationsByTeam={pcaAllocations as any}
-              bedAllocations={bedAllocations as any}
+              therapistAllocationsByTeam={therapistAllocationsForDisplay as any}
+              pcaAllocationsByTeam={pcaAllocationsForDisplay as any}
+              bedAllocations={bedAllocationsForDisplay as any}
               wards={(wards as any[]).map((w: any) => ({ name: w.name, team_assignments: w.team_assignments }))}
-              calculationsByTeam={calculations as any}
+              calculationsByTeam={calculationsForDisplay as any}
               staff={staff as any}
               staffOverrides={staffOverrides as any}
-              bedCountsOverridesByTeam={bedCountsOverridesByTeam as any}
-              bedRelievingNotesByToTeam={bedRelievingNotesByToTeam as any}
+              bedCountsOverridesByTeam={bedCountsOverridesByTeamForDisplay as any}
+              bedRelievingNotesByToTeam={bedRelievingNotesByToTeamForDisplay as any}
               stepStatus={stepStatus as any}
               initializedSteps={initializedSteps as any}
               allPCAStaff={[
@@ -9549,11 +9953,15 @@ function SchedulePageContent() {
             }}
             runStep3V2Auto={async ({ autoStep32, autoStep33, bufferPreAssignRatio, mode }) => {
               // Build defaults similar to the wizard (3.1/3.4), optionally auto-applying 3.0/3.2/3.3.
-              const pending0 = pendingPCAFTEPerTeam
-              const teamOrder = [...TEAMS].sort((a, b) => {
+              const pending0 = { ...pendingPCAFTEPerTeam }
+              const runtimeTeams = visibleTeams.length > 0 ? visibleTeams : TEAMS
+              TEAMS.forEach((team) => {
+                if (!runtimeTeams.includes(team)) pending0[team] = 0
+              })
+              const teamOrder = [...runtimeTeams].sort((a, b) => {
                 const d = (pending0[b] || 0) - (pending0[a] || 0)
                 if (d !== 0) return d
-                return TEAMS.indexOf(a) - TEAMS.indexOf(b)
+                return runtimeTeams.indexOf(a) - runtimeTeams.indexOf(b)
               })
 
               const floatingPCAs = buildPCADataFromCurrentState().filter((p) => p.floating)
@@ -10175,16 +10583,16 @@ function SchedulePageContent() {
             {gridLoading && (
               <div className="absolute inset-0 z-50 pointer-events-auto bg-background">
                 <div className="p-4 space-y-4">
-                  <div className="grid grid-cols-8 gap-2">
-                    {Array.from({ length: 8 }).map((_, i) => (
+                  <div className="grid gap-2" style={visibleTeamGridStyle}>
+                    {Array.from({ length: visibleTeams.length }).map((_, i) => (
                       <div key={`hdr-skel-${i}`} className="h-6 rounded-md bg-muted animate-pulse" />
                     ))}
                   </div>
 
                   <div className="space-y-3">
                     <div className="h-4 w-40 rounded-md bg-muted animate-pulse" />
-                    <div className="grid grid-cols-8 gap-2">
-                      {Array.from({ length: 8 }).map((_, i) => (
+                    <div className="grid gap-2" style={visibleTeamGridStyle}>
+                      {Array.from({ length: visibleTeams.length }).map((_, i) => (
                         <div key={`b1-skel-${i}`} className="h-24 rounded-lg border border-border bg-card animate-pulse" />
                       ))}
                     </div>
@@ -10192,8 +10600,8 @@ function SchedulePageContent() {
 
                   <div className="space-y-3">
                     <div className="h-4 w-32 rounded-md bg-muted animate-pulse" />
-                    <div className="grid grid-cols-8 gap-2">
-                      {Array.from({ length: 8 }).map((_, i) => (
+                    <div className="grid gap-2" style={visibleTeamGridStyle}>
+                      {Array.from({ length: visibleTeams.length }).map((_, i) => (
                         <div key={`b2-skel-${i}`} className="h-28 rounded-lg border border-border bg-card animate-pulse" />
                       ))}
                     </div>
@@ -10208,10 +10616,10 @@ function SchedulePageContent() {
                 !isSplitMode && 'backdrop-blur'
               )}
             >
-              <div className="grid grid-cols-8 gap-2 py-2 min-w-[960px]">
-                {TEAMS.map((team) => (
+              <div className="grid gap-2 py-2" style={{ ...visibleTeamGridStyle, minWidth: `${scheduleMinWidthPx}px` }}>
+                {visibleTeams.map((team) => (
                   <h2 key={`header-${team}`} className="text-lg font-bold text-center">
-                    {team}
+                    {mainTeamDisplayNames[team] || team}
                   </h2>
                 ))}
               </div>
@@ -10220,19 +10628,19 @@ function SchedulePageContent() {
             {/* Team grid content (page-level horizontal scroll) */}
             <MaybeProfiler id="TeamGrid">
             <div className="bg-background">
-              <div className="min-w-[960px]">
+              <div style={{ minWidth: `${scheduleMinWidthPx}px` }}>
                 {/* Height anchor for Staff Pool column: stop at bottom of PCA Dedicated table (exclude notes board). */}
                 <div ref={rightContentRef}>
                 
                 {/* Block 1: Therapist Allocation */}
                 <div ref={therapistAllocationBlockRef} className="mb-4">
                   <h3 className="text-xs font-semibold text-center mb-2">Therapist Allocation</h3>
-                  <div className="grid grid-cols-8 gap-2">
-                    {TEAMS.map((team) => (
+                  <div className="grid gap-2" style={visibleTeamGridStyle}>
+                    {visibleTeams.map((team) => (
                       <TherapistBlock
                         key={`therapist-${team}`}
                         team={team}
-                        allocations={therapistAllocations[team]}
+                        allocations={therapistAllocationsForDisplay[team]}
                         specialPrograms={specialPrograms}
                         weekday={currentWeekday}
                         currentStep={currentStep}
@@ -10250,16 +10658,16 @@ function SchedulePageContent() {
                     <h3 className="text-xs font-semibold">PCA Allocation</h3>
                     <PcaAllocationLegendPopover />
                   </div>
-                  <div className="grid grid-cols-8 gap-2">
-                    {TEAMS.map((team) => (
+                  <div className="grid gap-2" style={visibleTeamGridStyle}>
+                    {visibleTeams.map((team) => (
                       <Fragment key={`pca-${team}`}>
                         <PCABlock
                           team={team}
-                          allocations={pcaAllocationsForUi[team]}
+                          allocations={pcaAllocationsForDisplay[team]}
                           onEditStaff={onEditPcaByTeam[team]}
-                          requiredPCA={calculations[team]?.required_pca_per_team}
-                          averagePCAPerTeam={calculations[team]?.average_pca_per_team}
-                          baseAveragePCAPerTeam={calculations[team]?.base_average_pca_per_team}
+                          requiredPCA={calculationsForDisplay[team]?.required_pca_per_team}
+                          averagePCAPerTeam={calculationsForDisplay[team]?.average_pca_per_team}
+                          baseAveragePCAPerTeam={calculationsForDisplay[team]?.base_average_pca_per_team}
                         specialPrograms={specialPrograms}
                           allPCAAllocations={allPCAAllocationsFlat}
                           staffOverrides={pcaOverridesByTeam[team]}
@@ -10282,21 +10690,21 @@ function SchedulePageContent() {
                 {/* Block 3: Bed Allocation */}
                 <div className="mb-4">
                   <h3 className="text-xs font-semibold text-center mb-2">Relieving Beds</h3>
-                  <div className="grid grid-cols-8 gap-2">
+                  <div className="grid gap-2" style={visibleTeamGridStyle}>
                     {(() => {
                       const canShowBeds =
                         stepStatus['bed-relieving'] === 'completed' ||
                         currentStep === 'bed-relieving' ||
                         currentStep === 'review'
-                      const visibleBedAllocs = canShowBeds ? bedAllocations : EMPTY_BED_ALLOCATIONS
+                      const visibleBedAllocs = canShowBeds ? bedAllocationsForDisplay : EMPTY_BED_ALLOCATIONS
 
-                      return TEAMS.map((team) => (
+                      return visibleTeams.map((team) => (
                         <BedBlock
                           key={`bed-${team}`}
                           team={team}
                           allocations={visibleBedAllocs}
                           wards={wards}
-                          bedRelievingNotesByToTeam={bedRelievingNotesByToTeam}
+                          bedRelievingNotesByToTeam={bedRelievingNotesByToTeamForDisplay}
                           onSaveBedRelievingNotesForToTeam={saveBedRelievingNotesForToTeam}
                           activeEditingTransfer={activeBedRelievingTransfer}
                           onActiveEditingTransferChange={setActiveBedRelievingTransfer}
@@ -10323,11 +10731,11 @@ function SchedulePageContent() {
                 {/* Block 4: Leave Arrangements */}
                 <div className="mb-4">
                   <h3 className="text-xs font-semibold text-center mb-2">Leave Arrangements</h3>
-                  <div className="grid grid-cols-8 gap-2">
-                    {TEAMS.map((team) => {
+                  <div className="grid gap-2" style={visibleTeamGridStyle}>
+                    {visibleTeams.map((team) => {
                       // Get staff on leave from allocations AND staffOverrides
                       // Only include staff who are truly on leave (not on-duty).
-                      const therapistLeaves = therapistAllocations[team]
+                      const therapistLeaves = therapistAllocationsForDisplay[team]
                         .filter(alloc => {
                           const override = staffOverrides[alloc.staff.id]
                           const effectiveLeaveType =
@@ -10365,7 +10773,10 @@ function SchedulePageContent() {
                           const isTherapist = staffMember && ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)
                           const hasLeaveType = override.leaveType !== null && override.leaveType !== undefined
                           const isTrulyOnLeave = hasLeaveType && !isOnDutyLeaveType(override.leaveType as any)
-                          return isTherapist && staffMember.team === team && isTrulyOnLeave
+                          const canonicalTeam = staffMember?.team
+                            ? getMainTeam(staffMember.team as Team, effectiveTeamMergeConfig.mergedInto)
+                            : null
+                          return isTherapist && canonicalTeam === team && isTrulyOnLeave
                         })
                         .map(([staffId, override]) => {
                           const staffMember = staff.find(s => s.id === staffId)!
@@ -10398,9 +10809,9 @@ function SchedulePageContent() {
                 {/* Block 5: Calculations */}
                 <div className="mb-4">
                   <h3 className="text-xs font-semibold text-center mb-2">Beds Calculations</h3>
-                  <div className="grid grid-cols-8 gap-2">
-                    {TEAMS.map((team) => {
-                      const bedOverride = bedCountsOverridesByTeam?.[team] as any
+                  <div className="grid gap-2" style={visibleTeamGridStyle}>
+                    {visibleTeams.map((team) => {
+                      const bedOverride = bedCountsOverridesByTeamForDisplay?.[team] as any
                       const shs =
                         typeof bedOverride?.shsBedCounts === 'number' ? (bedOverride.shsBedCounts as number) : null
                       const students =
@@ -10412,7 +10823,7 @@ function SchedulePageContent() {
                         <CalculationBlock
                           key={`calc-${team}`}
                           team={team}
-                          calculations={calculations[team]}
+                          calculations={calculationsForDisplay[team]}
                           shsBedCounts={shs}
                           studentPlacementBedCounts={students}
                           onEditBedCounts={() => setEditingBedTeam(team)}
@@ -10503,12 +10914,12 @@ function SchedulePageContent() {
                       </PopoverContent>
                     </Popover>
                   </div>
-                  <div className="grid grid-cols-8 gap-2">
-                    {TEAMS.map((team) => (
+                  <div className="grid gap-2" style={visibleTeamGridStyle}>
+                    {visibleTeams.map((team) => (
                       <PCACalculationBlock
                         key={`pca-calc-${team}`}
                         team={team}
-                        calculations={calculations[team]}
+                        calculations={calculationsForDisplay[team]}
                       />
                     ))}
                   </div>
@@ -10588,6 +10999,7 @@ function SchedulePageContent() {
               refDateParam={refDateParam}
               splitDirection={splitDirection}
               showReference={showReference}
+              liveTeamSettingsRows={teamSettingsRows}
               datesWithData={datesWithData}
               holidays={holidays}
               replaceScheduleQuery={replaceScheduleQuery}
@@ -11751,6 +12163,7 @@ function SchedulePageContent() {
             floatingPCAConfigOpen ? (
               <FloatingPCAConfigDialog
                 open={floatingPCAConfigOpen}
+                teams={visibleTeams}
                 initialPendingFTE={pendingPCAFTEPerTeam}
                 pcaPreferences={pcaPreferences}
                 floatingPCAs={floatingPCAsForStep3}
@@ -11860,13 +12273,13 @@ function SchedulePageContent() {
             ) : null
           }
           nonFloatingSubstitutionDialog={
-            substitutionWizardData && substitutionWizardOpen ? (
+            substitutionWizardDataForDisplay && substitutionWizardOpen ? (
               <NonFloatingSubstitutionDialog
                 open={substitutionWizardOpen}
-                teams={substitutionWizardData.teams}
-                substitutionsByTeam={substitutionWizardData.substitutionsByTeam}
-                isWizardMode={substitutionWizardData.isWizardMode}
-                initialSelections={substitutionWizardData.initialSelections}
+                teams={substitutionWizardDataForDisplay.teams}
+                substitutionsByTeam={substitutionWizardDataForDisplay.substitutionsByTeam}
+                isWizardMode={substitutionWizardDataForDisplay.isWizardMode}
+                initialSelections={substitutionWizardDataForDisplay.initialSelections}
                 allStaff={staff}
                 pcaPreferences={pcaPreferences}
                 specialPrograms={specialPrograms}
@@ -11877,7 +12290,7 @@ function SchedulePageContent() {
                 onCancel={handleSubstitutionWizardCancel}
                 onSkip={handleSubstitutionWizardSkip}
                 onBack={
-                  substitutionWizardData.allowBackToSpecialPrograms
+                  substitutionWizardDataForDisplay.allowBackToSpecialPrograms
                     ? () => {
                         if (substitutionWizardResolverRef.current) {
                           ;(substitutionWizardResolverRef.current as any)({}, { back: true })
@@ -11985,6 +12398,7 @@ function SplitReferencePortal(props: {
   refDateParam: string | null
   splitDirection: 'col' | 'row'
   showReference: boolean
+  liveTeamSettingsRows: TeamSettingsMergeRow[]
   datesWithData: Set<string>
   holidays: Map<string, string>
   replaceScheduleQuery: (mutate: (params: URLSearchParams) => void) => void
@@ -12105,6 +12519,117 @@ function SplitReferencePortal(props: {
   const refSelectedDate = refScheduleState.selectedDate
   const refWeekday = getWeekday(refSelectedDate)
   const refDateLabel = formatDateDDMMYYYY(refSelectedDate)
+  const refEffectiveTeamMergeConfig = useMemo(
+    () =>
+      resolveTeamMergeConfig({
+        teamSettingsRows: props.liveTeamSettingsRows,
+        snapshotMerge: (refScheduleState.baselineSnapshot as any)?.teamMerge ?? null,
+      }),
+    [props.liveTeamSettingsRows, refScheduleState.baselineSnapshot]
+  )
+  const refVisibleTeams = useMemo(
+    () => getVisibleTeams(refEffectiveTeamMergeConfig.mergedInto),
+    [refEffectiveTeamMergeConfig.mergedInto]
+  )
+  const refMainTeamDisplayNames = useMemo(() => {
+    const out: Partial<Record<Team, string>> = {}
+    refVisibleTeams.forEach((mainTeam) => {
+      out[mainTeam] = getMainTeamDisplayName({
+        mainTeam,
+        mergedInto: refEffectiveTeamMergeConfig.mergedInto,
+        displayNames: refEffectiveTeamMergeConfig.displayNames,
+        mergeLabelOverrideByTeam: refEffectiveTeamMergeConfig.mergeLabelOverrideByTeam,
+      })
+    })
+    return out
+  }, [refVisibleTeams, refEffectiveTeamMergeConfig])
+  const refContributorsByMain = useMemo(() => {
+    const out: Partial<Record<Team, Team[]>> = {}
+    refVisibleTeams.forEach((mainTeam) => {
+      out[mainTeam] = getContributingTeams(mainTeam, refEffectiveTeamMergeConfig.mergedInto)
+    })
+    return out
+  }, [refVisibleTeams, refEffectiveTeamMergeConfig.mergedInto])
+  const refTherapistAllocationsForDisplay = useMemo(() => {
+    const out = createEmptyTeamRecordFactory<any[]>(() => [])
+    refVisibleTeams.forEach((mainTeam) => {
+      const contributors = refContributorsByMain[mainTeam] || [mainTeam]
+      out[mainTeam] = contributors.flatMap((team) => refScheduleState.therapistAllocations[team] || [])
+    })
+    return out
+  }, [refVisibleTeams, refContributorsByMain, refScheduleState.therapistAllocations])
+  const refPcaAllocationsForDisplay = useMemo(() => {
+    const out = createEmptyTeamRecordFactory<any[]>(() => [])
+    refVisibleTeams.forEach((mainTeam) => {
+      const contributors = refContributorsByMain[mainTeam] || [mainTeam]
+      out[mainTeam] = contributors.flatMap((team) => refScheduleState.pcaAllocations[team] || [])
+    })
+    return out
+  }, [refVisibleTeams, refContributorsByMain, refScheduleState.pcaAllocations])
+  const refCalculationsForDisplay = useMemo(() => {
+    const out = createEmptyTeamRecord<ScheduleCalculations | null>(null)
+    refVisibleTeams.forEach((mainTeam) => {
+      const contributors = refContributorsByMain[mainTeam] || [mainTeam]
+      out[mainTeam] = combineScheduleCalculations(
+        contributors.map((team) => refScheduleState.calculations[team])
+      )
+    })
+    return out
+  }, [refVisibleTeams, refContributorsByMain, refScheduleState.calculations])
+  const refBedCountsOverridesByTeamForDisplay = useMemo(() => {
+    const out: Partial<Record<Team, { shsBedCounts?: number; studentPlacementBedCounts?: number }>> = {}
+    refVisibleTeams.forEach((mainTeam) => {
+      const contributors = refContributorsByMain[mainTeam] || [mainTeam]
+      let shsTotal = 0
+      let studentTotal = 0
+      let hasAny = false
+      contributors.forEach((team) => {
+        const override = (refScheduleState.bedCountsOverridesByTeam?.[team] as any) || null
+        if (override && typeof override.shsBedCounts === 'number') {
+          shsTotal += override.shsBedCounts
+          hasAny = true
+        }
+        if (override && typeof override.studentPlacementBedCounts === 'number') {
+          studentTotal += override.studentPlacementBedCounts
+          hasAny = true
+        }
+      })
+      if (hasAny) {
+        out[mainTeam] = {
+          shsBedCounts: shsTotal,
+          studentPlacementBedCounts: studentTotal,
+        }
+      }
+    })
+    return out
+  }, [refVisibleTeams, refContributorsByMain, refScheduleState.bedCountsOverridesByTeam])
+  const refBedRelievingNotesByToTeamForDisplay = useMemo(() => {
+    const out = createEmptyTeamRecord<Partial<Record<Team, BedRelievingNoteRow[]>>>({})
+    for (const [toTeamRaw, fromMapRaw] of Object.entries(refScheduleState.bedRelievingNotesByToTeam || {})) {
+      const toTeam = toTeamRaw as Team
+      const mainToTeam = getMainTeam(toTeam, refEffectiveTeamMergeConfig.mergedInto)
+      const existingToTeamMap = out[mainToTeam] || {}
+      const fromMap = (fromMapRaw || {}) as Partial<Record<Team, BedRelievingNoteRow[]>>
+
+      for (const [fromTeamRaw, rowsRaw] of Object.entries(fromMap)) {
+        const fromTeam = fromTeamRaw as Team
+        const mainFromTeam = getMainTeam(fromTeam, refEffectiveTeamMergeConfig.mergedInto)
+        const rows = Array.isArray(rowsRaw) ? rowsRaw : []
+        existingToTeamMap[mainFromTeam] = [...(existingToTeamMap[mainFromTeam] || []), ...rows]
+      }
+
+      out[mainToTeam] = existingToTeamMap
+    }
+    return out as BedRelievingNotesByToTeam
+  }, [refScheduleState.bedRelievingNotesByToTeam, refEffectiveTeamMergeConfig.mergedInto])
+  const refBedAllocationsForDisplay = useMemo(() => {
+    const mapped = (refScheduleState.bedAllocations || []).map((allocation) => ({
+      ...allocation,
+      from_team: getMainTeam(allocation.from_team, refEffectiveTeamMergeConfig.mergedInto),
+      to_team: getMainTeam(allocation.to_team, refEffectiveTeamMergeConfig.mergedInto),
+    }))
+    return mapped.filter((allocation) => allocation.from_team !== allocation.to_team)
+  }, [refScheduleState.bedAllocations, refEffectiveTeamMergeConfig.mergedInto])
 
   const referencePaneNode = (
     <ReferenceSchedulePane
@@ -12112,6 +12637,8 @@ function SplitReferencePortal(props: {
         refHidden={!props.showReference}
         disableBlur={true}
         showTeamHeader={true}
+        teams={refVisibleTeams}
+        teamDisplayNames={refMainTeamDisplayNames}
         refDateLabel={refDateLabel}
         selectedDate={refSelectedDate}
         datesWithData={props.datesWithData}
@@ -12162,18 +12689,19 @@ function SplitReferencePortal(props: {
         ) : (
           <ScheduleBlocks1To6
             mode="reference"
+            teams={refVisibleTeams}
             weekday={refWeekday}
             sptAllocations={refScheduleState.sptAllocations as any}
             specialPrograms={refScheduleState.specialPrograms as any}
-            therapistAllocationsByTeam={refScheduleState.therapistAllocations as any}
-            pcaAllocationsByTeam={refScheduleState.pcaAllocations as any}
-            bedAllocations={refScheduleState.bedAllocations as any}
+            therapistAllocationsByTeam={refTherapistAllocationsForDisplay as any}
+            pcaAllocationsByTeam={refPcaAllocationsForDisplay as any}
+            bedAllocations={refBedAllocationsForDisplay as any}
             wards={refScheduleState.wards as any}
-            calculationsByTeam={refScheduleState.calculations as any}
+            calculationsByTeam={refCalculationsForDisplay as any}
             staff={refScheduleState.staff as any}
             staffOverrides={refScheduleState.staffOverrides as any}
-            bedCountsOverridesByTeam={refScheduleState.bedCountsOverridesByTeam as any}
-            bedRelievingNotesByToTeam={refScheduleState.bedRelievingNotesByToTeam as any}
+            bedCountsOverridesByTeam={refBedCountsOverridesByTeamForDisplay as any}
+            bedRelievingNotesByToTeam={refBedRelievingNotesByToTeamForDisplay as any}
             stepStatus={refScheduleState.stepStatus as any}
             initializedSteps={refScheduleState.initializedSteps as any}
           />

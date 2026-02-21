@@ -9,6 +9,7 @@
 - **GifViewer component**: Expandable GIF viewer for help center FAQ answers. Ghost button overlay on thumbnails opens centered modal with backdrop blur; max-width 560px for optimal 720p viewing.
 - **Access context provider**: Server-side role fetching in dashboard layout eliminates "flash" of admin-only features. `AccessProvider` wraps authenticated routes with initial role/settings from server; `useAccessControl` uses context as initial state.
 - **Snapshot reminder FAQ**: Detailed answer explaining yellow alert icon, which categories are compared (staff profile, team config, ward config, special programs, SPT allocations, PCA preferences), and admin sync/publish actions.
+- **Team merge configuration**: Added the new “Team merge” tab, Supabase migrations (merge columns + policies), canonicalization utilities, and merge-aware schedule UI (dynamic grid/columns, substitution wizard inputs, snapshot diffs, and PCA/bed aggregation) so merged teams display like a single main team while keeping split teams canonicalized underneath.
 
 -### Changed
 - **Layout width constraints**: Responsive min-width (`1024px` → `1280px` lg → `1440px` xl) and max-width capped at `1600px` via CSS variable `--rbip-app-max-width`. Root container uses `mx-auto` for centering on ultra-wide screens.

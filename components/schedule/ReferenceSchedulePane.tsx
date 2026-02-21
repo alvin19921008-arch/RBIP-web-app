@@ -7,6 +7,7 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { ScheduleCalendarPopover } from '@/components/schedule/ScheduleCalendarPopover'
 import { cn } from '@/lib/utils'
 import { TEAMS } from '@/lib/features/schedule/constants'
+import type { Team } from '@/types/staff'
 
 export function ReferenceSchedulePane(props: {
   direction: 'col' | 'row'
@@ -22,6 +23,8 @@ export function ReferenceSchedulePane(props: {
   collapsed?: boolean
   disableBlur?: boolean
   showTeamHeader?: boolean
+  teams?: Team[]
+  teamDisplayNames?: Partial<Record<Team, string>>
   children?: React.ReactNode
 }) {
   const {
@@ -38,8 +41,15 @@ export function ReferenceSchedulePane(props: {
     collapsed,
     disableBlur = false,
     showTeamHeader = false,
+    teams,
+    teamDisplayNames,
     children,
   } = props
+  const activeTeams = teams && teams.length > 0 ? teams : TEAMS
+  const headerGridStyle: React.CSSProperties = {
+    gridTemplateColumns: `repeat(${Math.max(1, activeTeams.length)}, minmax(0, 1fr))`,
+  }
+  const minWidthPx = Math.max(720, activeTeams.length * 120)
 
   const [calendarOpen, setCalendarOpen] = React.useState(false)
   const calendarButtonRef = React.useRef<HTMLButtonElement | null>(null)
@@ -147,10 +157,10 @@ export function ReferenceSchedulePane(props: {
               !disableBlur && 'backdrop-blur'
             )}
           >
-            <div className="grid grid-cols-8 gap-2 py-2 min-w-[960px]">
-              {TEAMS.map((team) => (
+            <div className="grid gap-2 py-2" style={{ ...headerGridStyle, minWidth: `${minWidthPx}px` }}>
+              {activeTeams.map((team) => (
                 <h2 key={`ref-header-${team}`} className="text-lg font-bold text-center">
-                  {team}
+                  {teamDisplayNames?.[team] || team}
                 </h2>
               ))}
             </div>

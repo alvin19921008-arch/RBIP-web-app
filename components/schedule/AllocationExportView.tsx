@@ -34,6 +34,8 @@ export type AllocationExportViewProps = {
   dateKey: string // YYYY-MM-DD
   weekday: Weekday
   currentStep?: string
+  teams?: Team[]
+  teamDisplayNames?: Partial<Record<Team, string>>
 
   sptAllocations: SPTAllocation[]
   specialPrograms: SpecialProgram[]
@@ -65,6 +67,12 @@ export type AllocationExportViewProps = {
 export const AllocationExportView = React.forwardRef<HTMLDivElement, AllocationExportViewProps>(
   function AllocationExportView(props, ref) {
     const includePcaDedicatedTable = props.includePcaDedicatedTable ?? true
+    const activeTeams = props.teams && props.teams.length > 0 ? props.teams : TEAMS
+    const minWidthPx = Math.max(720, activeTeams.length * 120)
+    const headerGridStyle = React.useMemo(
+      () => ({ gridTemplateColumns: `repeat(${Math.max(1, activeTeams.length)}, minmax(0, 1fr))` }),
+      [activeTeams.length]
+    )
     const canShowBeds =
       props.stepStatus?.['bed-relieving'] === 'completed' ||
       props.currentStep === 'bed-relieving' ||
@@ -78,22 +86,23 @@ export const AllocationExportView = React.forwardRef<HTMLDivElement, AllocationE
           'bg-background text-foreground',
           'p-4',
           // keep layout consistent for capture
-          'min-w-[960px]',
           props.className
         )}
+        style={{ minWidth: `${minWidthPx}px` }}
         data-rbip-export-root
       >
         {/* Team headers row (non-sticky, export-friendly) */}
-        <div className="grid grid-cols-8 gap-2 py-2 min-w-[960px]">
-          {TEAMS.map((team) => (
+        <div className="grid gap-2 py-2" style={headerGridStyle}>
+          {activeTeams.map((team) => (
             <h2 key={`export-header-${team}`} className="text-lg font-bold text-center">
-              {team}
+              {props.teamDisplayNames?.[team] || team}
             </h2>
           ))}
         </div>
 
         <ScheduleBlocks1To6
           mode="reference"
+          teams={activeTeams}
           density="compact"
           enableContentVisibility={false}
           weekday={props.weekday}

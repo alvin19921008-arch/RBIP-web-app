@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useMemo, useCallback, memo } from 'react'
+import React, { useMemo, useCallback, memo, useEffect } from 'react'
 import { Team } from '@/types/staff'
 import { PCAAllocation, TeamAllocationLog } from '@/types/schedule'
 import { Staff } from '@/types/staff'
@@ -1107,8 +1107,8 @@ export const PCABlock = memo(function PCABlock({
             const isWholeDaySub = substitutionInfo.isWholeDaySubstitution
           const isSubstituting = substitutionInfo.isSubstituting
             
-            // Set border color: green for non-floating PCA, or for whole day substituting floating PCA (Step 2+ only)
-            const borderColor = (!allocation.staff.floating || (showSubstitutionStyling && isWholeDaySub)) 
+            // Set border color: green only for substitute coverage cards (Step 2+ only).
+            const borderColor = (showSubstitutionStyling && isSubstituting) 
               ? 'border-green-700' 
               : undefined
             

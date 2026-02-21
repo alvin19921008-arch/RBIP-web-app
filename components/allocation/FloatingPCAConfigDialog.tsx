@@ -60,6 +60,7 @@ type MiniStep = '3.0' | '3.1' | '3.2' | '3.3' | '3.4'
 
 interface FloatingPCAConfigDialogProps {
   open: boolean
+  teams?: Team[]
   initialPendingFTE: Record<Team, number>  // Raw pending FTE from Step 2
   pcaPreferences: PCAPreference[]  // Team preferences from database
   floatingPCAs: PCAData[]  // Floating PCAs with their current FTE
@@ -151,6 +152,7 @@ function sortTeamsByPendingFTE(
 
 export function FloatingPCAConfigDialog({
   open,
+  teams = TEAMS,
   initialPendingFTE,
   pcaPreferences,
   floatingPCAs,
@@ -161,6 +163,10 @@ export function FloatingPCAConfigDialog({
   onSave,
   onCancel,
 }: FloatingPCAConfigDialogProps) {
+  const activeTeams = useMemo(
+    () => (Array.isArray(teams) && teams.length > 0 ? teams : TEAMS),
+    [teams]
+  )
   const supabase = createClientComponentClient()
   // Current mini-step
   const [currentMiniStep, setCurrentMiniStep] = useState<MiniStep>('3.0')
@@ -288,18 +294,18 @@ export function FloatingPCAConfigDialog({
 
   const roundedPendingByTeam = useMemo(() => {
     const out: Record<Team, number> = {} as any
-    TEAMS.forEach((t) => {
+    activeTeams.forEach((t) => {
       out[t] = roundToNearestQuarterWithMidpoint(adjustedFTE[t] || 0)
     })
     return out
-  }, [adjustedFTE])
+  }, [activeTeams, adjustedFTE])
 
   const maxRoundedPending = useMemo(() => {
-    return Math.max(0, ...TEAMS.map((t) => roundedPendingByTeam[t] || 0))
-  }, [roundedPendingByTeam])
+    return Math.max(0, ...activeTeams.map((t) => roundedPendingByTeam[t] || 0))
+  }, [activeTeams, roundedPendingByTeam])
 
   const scarcityMetrics = useMemo(() => {
-    const teamsNeeding = TEAMS.filter((t) => (roundedPendingByTeam[t] || 0) > 0)
+    const teamsNeeding = activeTeams.filter((t) => (roundedPendingByTeam[t] || 0) > 0)
     const teamsNeedingCount = teamsNeeding.length
     const neededSlots = teamsNeeding.reduce((sum, t) => sum + Math.round((roundedPendingByTeam[t] || 0) / 0.25), 0)
 
@@ -348,7 +354,7 @@ export function FloatingPCAConfigDialog({
 
     const slackSlots = availableSlots - neededSlots
     return { teamsNeedingCount, neededSlots, availableSlots, slackSlots }
-  }, [roundedPendingByTeam, floatingPCAs, existingAllocations, staffOverrides])
+  }, [activeTeams, roundedPendingByTeam, floatingPCAs, existingAllocations, staffOverrides])
 
   const shortageSlots = Math.max(0, scarcityMetrics.neededSlots - scarcityMetrics.availableSlots)
 
@@ -399,7 +405,7 @@ export function FloatingPCAConfigDialog({
 
     const hash = (() => {
       const orderKey = teamOrder.join(',')
-      const pendingKey = TEAMS.map((t) => `${t}:${roundedPendingByTeam[t].toFixed(2)}`).join('|')
+      const pendingKey = activeTeams.map((t) => `${t}:${roundedPendingByTeam[t].toFixed(2)}`).join('|')
       const allocKey = [...existingAllocations]
         .sort((a, b) => String(a.staff_id ?? '').localeCompare(String(b.staff_id ?? '')))
         .map((a) => {
@@ -451,7 +457,7 @@ export function FloatingPCAConfigDialog({
 
       if (runId !== previewRunIdRef.current) return
 
-      const teamsNeeding = TEAMS.filter((t) => (roundedPendingByTeam[t] || 0) > 0)
+      const teamsNeeding = activeTeams.filter((t) => (roundedPendingByTeam[t] || 0) > 0)
 
       const standardZeroTeams = teamsNeeding.filter((t) => {
         const count = (standardRes.tracker?.[t]?.assignments || []).filter((a) => a.assignedIn === 'step34').length
@@ -503,6 +509,7 @@ export function FloatingPCAConfigDialog({
     open,
     bufferPCAConfirmed,
     currentMiniStep,
+    activeTeams,
     teamOrder,
     roundedPendingByTeam,
     existingAllocations,
@@ -647,7 +654,7 @@ export function FloatingPCAConfigDialog({
     // 1) From allocations
     existingAllocations.forEach((alloc) => {
       if (!bufferFloatingPCAIds.has(alloc.staff_id)) return
-      TEAMS.forEach((team) => {
+      activeTeams.forEach((team) => {
         if (alloc.slot1 === team) ensure(alloc.staff_id, team).add(1)
         if (alloc.slot2 === team) ensure(alloc.staff_id, team).add(2)
         if (alloc.slot3 === team) ensure(alloc.staff_id, team).add(3)
@@ -660,7 +667,7 @@ export function FloatingPCAConfigDialog({
       const o: any = (staffOverrides as any)?.[pcaId]
       const manual = o?.bufferManualSlotOverrides ?? o?.slotOverrides
       if (!manual) return
-      TEAMS.forEach((team) => {
+      activeTeams.forEach((team) => {
         if (manual.slot1 === team) ensure(pcaId, team).add(1)
         if (manual.slot2 === team) ensure(pcaId, team).add(2)
         if (manual.slot3 === team) ensure(pcaId, team).add(3)
@@ -676,7 +683,7 @@ export function FloatingPCAConfigDialog({
     })
     
     return result
-  }, [bufferStaff, existingAllocations, staffOverrides])
+  }, [activeTeams, bufferStaff, existingAllocations, staffOverrides])
   
   // Calculate non-floating PCA assigned (check if any non-floating PCA exists in allocations)
   // Since existingAllocations includes non-floating PCA from Step 2, we can check by looking at floatingPCAs
@@ -706,7 +713,7 @@ export function FloatingPCAConfigDialog({
       // Round initial values - these are the original values (max allowed)
       // If buffer PCA was assigned, pending FTE should already be updated
       const rounded: Record<Team, number> = {} as Record<Team, number>
-      TEAMS.forEach(team => {
+      activeTeams.forEach(team => {
         rounded[team] = roundToNearestQuarterWithMidpoint(initialPendingFTE[team] || 0)
       })
       
@@ -718,12 +725,12 @@ export function FloatingPCAConfigDialog({
       setCurrentPendingFTE(rounded)
       
       // Initial sort by descending pending FTE
-      const sorted = sortTeamsByPendingFTE(TEAMS, rounded, TEAMS)
+      const sorted = sortTeamsByPendingFTE(activeTeams, rounded, activeTeams)
       setTeamOrder(sorted)
     }
     // We intentionally initialize once per open session to avoid starving Step 3.1 preview.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, bufferPCAConfirmed])
+  }, [open, bufferPCAConfirmed, activeTeams, initialPendingFTE, existingAllocations])
   
   // Compute tie groups from current adjusted FTE
   const tieGroups = useMemo(() => identifyTieGroups(adjustedFTE), [adjustedFTE])
@@ -735,7 +742,7 @@ export function FloatingPCAConfigDialog({
   // Map team -> tie group info for quick lookup
   const teamTieInfo = useMemo(() => {
     const info: Record<Team, { isTied: boolean; groupIndex: number | null }> = {} as Record<Team, { isTied: boolean; groupIndex: number | null }>
-    TEAMS.forEach(team => {
+    activeTeams.forEach(team => {
       info[team] = { isTied: false, groupIndex: null }
     })
     
@@ -746,13 +753,13 @@ export function FloatingPCAConfigDialog({
     })
     
     return info
-  }, [tieGroups])
+  }, [activeTeams, tieGroups])
   
   // Check if step 3.2 should be skipped (no reservations available)
   const hasAnyReservations = useMemo(() => {
     if (!teamReservations) return false
-    return TEAMS.some(team => teamReservations[team] !== null)
-  }, [teamReservations])
+    return activeTeams.some(team => teamReservations[team] !== null)
+  }, [activeTeams, teamReservations])
   
   // DnD sensors
   const sensors = useSensors(
@@ -836,7 +843,7 @@ export function FloatingPCAConfigDialog({
     setAdjustedFTE(newAdjusted)
     
     // Re-sort teams by new values, preserving order within unchanged ties
-    const newOrder = sortTeamsByPendingFTE(TEAMS, newAdjusted, teamOrder)
+    const newOrder = sortTeamsByPendingFTE(activeTeams, newAdjusted, teamOrder)
     setTeamOrder(newOrder)
   }
   
@@ -1208,7 +1215,7 @@ export function FloatingPCAConfigDialog({
   const handleResetToOriginal = () => {
     setAdjustedFTE({ ...originalRoundedFTE })
     // Re-sort teams by original values
-    const sorted = sortTeamsByPendingFTE(TEAMS, originalRoundedFTE, TEAMS)
+    const sorted = sortTeamsByPendingFTE(activeTeams, originalRoundedFTE, activeTeams)
     setTeamOrder(sorted)
   }
 

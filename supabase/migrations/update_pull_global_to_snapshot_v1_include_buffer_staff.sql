@@ -40,6 +40,7 @@ DECLARE
   staff_rows jsonb;
   wards_rows jsonb;
   team_display_names jsonb;
+  team_merge jsonb;
   programs_rows jsonb;
   spt_rows jsonb;
   prefs_rows jsonb;
@@ -117,6 +118,42 @@ BEGIN
     '{}'::jsonb
   );
 
+  team_merge := COALESCE(
+    (
+      SELECT jsonb_build_object(
+        'mergedInto',
+        COALESCE(
+          (
+            SELECT jsonb_object_agg(ts.team::text, ts.merged_into::text)
+            FROM public.team_settings ts
+            WHERE ts.merged_into IS NOT NULL
+          ),
+          '{}'::jsonb
+        ),
+        'mergeLabelOverrideByTeam',
+        COALESCE(
+          (
+            SELECT jsonb_object_agg(ts.team::text, ts.merge_label_override)
+            FROM public.team_settings ts
+            WHERE ts.merge_label_override IS NOT NULL
+              AND btrim(ts.merge_label_override) <> ''
+          ),
+          '{}'::jsonb
+        ),
+        'mergedPcaPreferencesOverrideByTeam',
+        COALESCE(
+          (
+            SELECT jsonb_object_agg(ts.team::text, ts.merged_pca_preferences_override)
+            FROM public.team_settings ts
+            WHERE ts.merged_pca_preferences_override IS NOT NULL
+          ),
+          '{}'::jsonb
+        )
+      )
+    ),
+    '{"mergedInto":{},"mergeLabelOverrideByTeam":{},"mergedPcaPreferencesOverrideByTeam":{}}'::jsonb
+  );
+
   programs_rows := COALESCE(
     (
       SELECT jsonb_agg(to_jsonb(p))
@@ -160,6 +197,7 @@ BEGIN
 
   IF 'teamConfig' = ANY(cats) THEN
     data := jsonb_set(data, '{teamDisplayNames}', team_display_names, true);
+    data := jsonb_set(data, '{teamMerge}', team_merge, true);
   END IF;
 
   IF ('wardConfig' = ANY(cats)) OR ('teamConfig' = ANY(cats)) THEN

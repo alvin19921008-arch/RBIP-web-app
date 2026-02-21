@@ -260,21 +260,51 @@ export function diffBaselineSnapshot(params: {
   staffRemoved.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
   staffChanged.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
 
-  // Team settings (snapshot.teamDisplayNames vs live team_settings.display_name)
+  // Team settings
+  // - Legacy support: snapshot.teamDisplayNames (display labels only)
+  // - New: snapshot.teamMerge (merged_into + merge label override + merged PCA pref override)
   const snapTeamDisplayNames = ((params.snapshot as any)?.teamDisplayNames || {}) as Record<string, unknown>
+  const snapTeamMerge = ((params.snapshot as any)?.teamMerge || {}) as {
+    mergedInto?: Record<string, string>
+    mergeLabelOverrideByTeam?: Record<string, string>
+    mergedPcaPreferencesOverrideByTeam?: Record<string, unknown>
+  }
+  const snapMergedIntoByTeam = (snapTeamMerge?.mergedInto || {}) as Record<string, string>
+  const snapMergeLabelOverrideByTeam = (snapTeamMerge?.mergeLabelOverrideByTeam || {}) as Record<string, string>
+  const snapMergedPcaPrefOverrideByTeam =
+    (snapTeamMerge?.mergedPcaPreferencesOverrideByTeam || {}) as Record<string, unknown>
+
   const liveTeamSettings = (params.live.teamSettings || []) as any[]
   const liveTeamNameByTeam = new Map<string, string>()
+  const liveMergedIntoByTeam = new Map<string, string | null>()
+  const liveMergeLabelOverrideByTeam = new Map<string, string | null>()
+  const liveMergedPcaPrefOverrideByTeam = new Map<string, unknown>()
+
   liveTeamSettings.forEach((r) => {
     const t = r?.team
     const n = r?.display_name
-    if (typeof t === 'string' && typeof n === 'string') {
-      liveTeamNameByTeam.set(t, n)
-    }
+    if (typeof t !== 'string') return
+    if (typeof n === 'string') liveTeamNameByTeam.set(t, n)
+    const mergedInto = typeof r?.merged_into === 'string' ? r.merged_into : null
+    liveMergedIntoByTeam.set(t, mergedInto)
+    const mergeLabelOverride =
+      typeof r?.merge_label_override === 'string' && r.merge_label_override.trim()
+        ? r.merge_label_override.trim()
+        : null
+    liveMergeLabelOverrideByTeam.set(t, mergeLabelOverride)
+    liveMergedPcaPrefOverrideByTeam.set(t, r?.merged_pca_preferences_override ?? null)
   })
 
   const teamKeys = new Set<string>([
+    ...(TEAMS as readonly string[]),
     ...Object.keys(snapTeamDisplayNames || {}),
+    ...Object.keys(snapMergedIntoByTeam || {}),
+    ...Object.keys(snapMergeLabelOverrideByTeam || {}),
+    ...Object.keys(snapMergedPcaPrefOverrideByTeam || {}),
     ...Array.from(liveTeamNameByTeam.keys()),
+    ...Array.from(liveMergedIntoByTeam.keys()),
+    ...Array.from(liveMergeLabelOverrideByTeam.keys()),
+    ...Array.from(liveMergedPcaPrefOverrideByTeam.keys()),
   ])
   const teamSettingsChanged: Array<{ team: Team; changes: FieldChange[] }> = []
   teamKeys.forEach((team) => {
@@ -282,7 +312,36 @@ export function diffBaselineSnapshot(params: {
     const snapNameRaw = (snapTeamDisplayNames as any)?.[team]
     const snapName = typeof snapNameRaw === 'string' && snapNameRaw.trim() ? snapNameRaw : team
     const liveName = liveTeamNameByTeam.get(team) ?? team
-    const changes = shallowDiff([{ key: 'display_name', label: 'display_name', a: snapName, b: liveName }])
+    const snapMergedInto = typeof snapMergedIntoByTeam?.[team] === 'string' ? snapMergedIntoByTeam[team] : null
+    const liveMergedInto = liveMergedIntoByTeam.get(team) ?? null
+    const snapMergeLabelOverride =
+      typeof snapMergeLabelOverrideByTeam?.[team] === 'string' && snapMergeLabelOverrideByTeam[team].trim()
+        ? snapMergeLabelOverrideByTeam[team].trim()
+        : null
+    const liveMergeLabelOverride = liveMergeLabelOverrideByTeam.get(team) ?? null
+    const snapMergedPcaPrefOverride = snapMergedPcaPrefOverrideByTeam?.[team] ?? null
+    const liveMergedPcaPrefOverride = liveMergedPcaPrefOverrideByTeam.get(team) ?? null
+
+    const changes = shallowDiff([
+      { key: 'display_name', label: 'display_name', a: snapName, b: liveName },
+      { key: 'merged_into', label: 'merged_into', a: snapMergedInto, b: liveMergedInto },
+      {
+        key: 'merge_label_override',
+        label: 'merge_label_override',
+        a: snapMergeLabelOverride,
+        b: liveMergeLabelOverride,
+      },
+    ])
+
+    const snapPcaOverrideStr = toStr(snapMergedPcaPrefOverride)
+    const livePcaOverrideStr = toStr(liveMergedPcaPrefOverride)
+    if (snapPcaOverrideStr !== livePcaOverrideStr) {
+      changes.push({
+        field: 'merged_pca_preferences_override',
+        from: snapPcaOverrideStr,
+        to: livePcaOverrideStr,
+      })
+    }
     if (changes.length > 0) teamSettingsChanged.push({ team: team as Team, changes })
   })
   teamSettingsChanged.sort((a, b) => a.team.localeCompare(b.team))

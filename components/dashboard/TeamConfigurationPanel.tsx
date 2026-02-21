@@ -15,10 +15,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
 import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
+import { TeamMergePanel } from '@/components/dashboard/TeamMergePanel'
 
 interface TeamSettings {
   team: Team
   display_name: string
+  merged_into?: Team | null
+  merge_label_override?: string | null
+  merged_pca_preferences_override?: Record<string, unknown> | null
 }
 
 interface PortionPopoverState {
@@ -77,6 +81,7 @@ export function TeamConfigurationPanel() {
   const [editingTeam, setEditingTeam] = useState<Team | null>(null)
   const [saving, setSaving] = useState(false)
   const [portionPopover, setPortionPopover] = useState<PortionPopoverState | null>(null)
+  const [activeTab, setActiveTab] = useState<'teams' | 'team-merge'>('teams')
   const supabase = createClientComponentClient()
   const toast = useToast()
   const teamConfigCheckboxClass =
@@ -450,7 +455,35 @@ export function TeamConfigurationPanel() {
       <Card>
         <CardContent className="pt-6">
           <DashboardConfigMetaBanner />
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="mb-4 inline-flex items-center gap-1 rounded-md border bg-background p-1 w-fit">
+            <button
+              type="button"
+              onClick={() => setActiveTab('teams')}
+              className={[
+                'px-3 py-1.5 text-sm rounded-md transition-colors',
+                activeTab === 'teams'
+                  ? 'bg-amber-100 text-amber-950'
+                  : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+              ].join(' ')}
+            >
+              Teams
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('team-merge')}
+              className={[
+                'px-3 py-1.5 text-sm rounded-md transition-colors',
+                activeTab === 'team-merge'
+                  ? 'bg-amber-100 text-amber-950'
+                  : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+              ].join(' ')}
+            >
+              Team merge
+            </button>
+          </div>
+
+          {activeTab === 'teams' ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {TEAMS.map((team) => {
               const settings = teamSettings[team]
               const isEditing = editingTeam === team
@@ -800,7 +833,10 @@ export function TeamConfigurationPanel() {
                 </Card>
               )
             })}
-          </div>
+            </div>
+          ) : (
+            <TeamMergePanel />
+          )}
         </CardContent>
       </Card>
 

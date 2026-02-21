@@ -11,6 +11,7 @@ const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
 interface TeamPickerPopoverProps {
   title: string
+  teams?: Team[]
   selectedTeam: Team | null
   onSelectTeam: (team: Team) => void
   onClose: () => void
@@ -28,6 +29,7 @@ interface TeamPickerPopoverProps {
 
 export function TeamPickerPopover({
   title,
+  teams = TEAMS,
   selectedTeam,
   onSelectTeam,
   onClose,
@@ -84,7 +86,7 @@ export function TeamPickerPopover({
       ) : null}
 
       <div className="mt-2 grid grid-cols-4 gap-1">
-        {TEAMS.map((t) => {
+        {teams.map((t) => {
           const active = t === selectedTeam
           const disabled = disabledTeamSet.has(t)
           return (

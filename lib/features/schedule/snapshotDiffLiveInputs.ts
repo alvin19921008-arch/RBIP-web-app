@@ -20,7 +20,8 @@ export const SNAPSHOT_DIFF_LIVE_INPUTS_DEFAULT_TTL_MS = 20_000
 
 const STAFF_SNAPSHOT_DIFF_SELECT_FIELDS =
   'id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program'
-const TEAM_SETTINGS_SELECT_FIELDS = 'team,display_name'
+const TEAM_SETTINGS_SELECT_FIELDS =
+  'team,display_name,merged_into,merge_label_override,merged_pca_preferences_override'
 const WARDS_SNAPSHOT_DIFF_SELECT_FIELDS =
   'id,name,total_beds,team_assignments,team_assignment_portions'
 const PCA_PREFS_SNAPSHOT_DIFF_SELECT_FIELDS =
