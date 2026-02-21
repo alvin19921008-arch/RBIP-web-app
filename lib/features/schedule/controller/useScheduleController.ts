@@ -969,6 +969,10 @@ export function useScheduleController(params: {
       sptAllocations: sptAllocations as any,
       wards: wards as any,
       pcaPreferences: pcaPreferences as any,
+      // Preserve existing snapshot-level team config metadata when available.
+      // This prevents saves from accidentally dropping per-date merge/display settings.
+      teamDisplayNames: (baselineSnapshot as any)?.teamDisplayNames,
+      teamMerge: (baselineSnapshot as any)?.teamMerge,
     }
   }
 

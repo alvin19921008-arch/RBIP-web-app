@@ -2,6 +2,7 @@
 name: Team Merge Functionality
 overview: Implement reversible team merge functionality (runtime alias approach) that allows merging two existing teams into one combined team everywhere on the Schedule page/workflow, while storing schedule allocations under a canonical team enum and preserving history via per-schedule merge snapshots.
 todos: []
+isProject: false
 ---
 
 # Team Merge Functionality (Runtime Alias Approach)
@@ -62,7 +63,7 @@ Store per-schedule-date snapshot of merge mapping:
 
 ### Merge Control
 
-Add to [`components/dashboard/TeamConfigurationPanel.tsx`](components/dashboard/TeamConfigurationPanel.tsx):
+Add to `[components/dashboard/TeamConfigurationPanel.tsx](components/dashboard/TeamConfigurationPanel.tsx)`:
 
 - **"Merge Teams" button** at top of panel
 - Opens `MergeTeamsDialog`
@@ -97,10 +98,8 @@ Add to [`components/dashboard/TeamConfigurationPanel.tsx`](components/dashboard/
 
 1. User selects Team A (merged-away) and Team B (canonical)
 2. Update `team_settings`:
-
-   - Set Team A: `merged_into = Team B`
-   - Update Team B: `display_name = merged name` (if provided)
-
+  - Set Team A: `merged_into = Team B`
+  - Update Team B: `display_name = merged name` (if provided)
 3. **No staff table updates** (runtime alias approach)
 
 **Unmerge Logic**:
@@ -112,7 +111,7 @@ Add to [`components/dashboard/TeamConfigurationPanel.tsx`](components/dashboard/
 
 ### Merge Helper Functions
 
-Create [`lib/utils/teamMerge.ts`](lib/utils/teamMerge.ts):
+Create `[lib/utils/teamMerge.ts](lib/utils/teamMerge.ts)`:
 
 ```typescript
 // Load merge config (prefer snapshot, else current)
@@ -240,18 +239,18 @@ const displayName = (team: Team) => getTeamDisplayName(team, mergeConfig.display
 
 ## Files to Create
 
-1. [`lib/utils/teamMerge.ts`](lib/utils/teamMerge.ts) - Merge helper functions
-2. [`components/dashboard/MergeTeamsDialog.tsx`](components/dashboard/MergeTeamsDialog.tsx) - Merge dialog component
-3. [`supabase/migrations/add_team_merge_support.sql`](supabase/migrations/add_team_merge_support.sql) - DB migration
+1. `[lib/utils/teamMerge.ts](lib/utils/teamMerge.ts)` - Merge helper functions
+2. `[components/dashboard/MergeTeamsDialog.tsx](components/dashboard/MergeTeamsDialog.tsx)` - Merge dialog component
+3. `[supabase/migrations/add_team_merge_support.sql](supabase/migrations/add_team_merge_support.sql)` - DB migration
 
 ## Files to Modify
 
-1. [`components/dashboard/TeamConfigurationPanel.tsx`](components/dashboard/TeamConfigurationPanel.tsx) - Add merge button and dialog integration
+1. `[components/dashboard/TeamConfigurationPanel.tsx](components/dashboard/TeamConfigurationPanel.tsx)` - Add merge button and dialog integration
 2. `[app/(dashboard)/schedule/page.tsx](app/\\\(dashboard)/schedule/page.tsx)` - Apply merge config throughout (staff grouping, ward aggregation, column rendering, saving snapshots)
-3. [`hooks/useScheduleState.ts`](hooks/useScheduleState.ts) - May need merge-aware state handling
-4. [`lib/algorithms/bedAllocation.ts`](lib/algorithms/bedAllocation.ts) - Accept canonical-summed ward assignments
-5. [`lib/algorithms/therapistAllocation.ts`](lib/algorithms/therapistAllocation.ts) - May need canonical team awareness
-6. [`lib/algorithms/pcaAllocation.ts`](lib/algorithms/pcaAllocation.ts) - May need canonical team awareness
+3. `[hooks/useScheduleState.ts](hooks/useScheduleState.ts)` - May need merge-aware state handling
+4. `[lib/algorithms/bedAllocation.ts](lib/algorithms/bedAllocation.ts)` - Accept canonical-summed ward assignments
+5. `[lib/algorithms/therapistAllocation.ts](lib/algorithms/therapistAllocation.ts)` - May need canonical team awareness
+6. `[lib/algorithms/pcaAllocation.ts](lib/algorithms/pcaAllocation.ts)` - May need canonical team awareness
 
 ## Data Flow Summary
 
@@ -288,3 +287,4 @@ const displayName = (team: Team) => getTeamDisplayName(team, mergeConfig.display
 - **Per-schedule snapshots** ensure historical schedules render correctly even after unmerge
 - Ward beds are **summed** (CPPC+NSM = sum of both teams' ward beds)
 - Staff are **aggregated** (CPPC+NSM column shows staff from both base teams)
+

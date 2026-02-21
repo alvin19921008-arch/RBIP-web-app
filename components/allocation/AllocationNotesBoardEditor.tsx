@@ -232,8 +232,7 @@ export function AllocationNotesBoardEditor({
 
   return (
     <div className="mt-4">
-      <div className="grid grid-cols-8 gap-2">
-        <div className="col-span-8 border rounded-md">
+      <div className="border rounded-md">
           <div className="flex items-center justify-between px-3 py-2 border-b">
             <div className="text-sm font-semibold">{title}</div>
             <div className="flex items-center gap-1">
@@ -396,7 +395,6 @@ export function AllocationNotesBoardEditor({
           <div className="max-h-[360px] overflow-y-auto">
             <EditorContent editor={editor} />
           </div>
-        </div>
       </div>
     </div>
   )

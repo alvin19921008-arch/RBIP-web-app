@@ -17,8 +17,6 @@ import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
 import { getTeamTheme } from '@/components/allocation/teamThemePalette'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
-const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
-
 // Step 2.1 Wizard team themes are shared via `teamThemePalette`.
 
 interface NonFloatingSubstitutionDialogProps {
@@ -210,7 +208,7 @@ export function NonFloatingSubstitutionDialog({
     isSubstitutionComplete(currentTeam, sub.nonFloatingPCAId, sub.missingSlots)
   )
 
-  const isAllTeamsComplete = TEAMS.filter((t) => (substitutionsByTeam[t] ?? []).length > 0).every((team) =>
+  const isAllTeamsComplete = teams.filter((t) => (substitutionsByTeam[t] ?? []).length > 0).every((team) =>
     (substitutionsByTeam[team] ?? []).every((sub) => isSubstitutionComplete(team, sub.nonFloatingPCAId, sub.missingSlots))
   )
 
@@ -249,13 +247,13 @@ export function NonFloatingSubstitutionDialog({
 
   const nonFloatingNameById = useMemo(() => {
     const names = new Map<string, string>()
-    TEAMS.forEach((team) => {
+    teams.forEach((team) => {
       ;(substitutionsByTeam[team] || []).forEach((sub) => {
         names.set(sub.nonFloatingPCAId, sub.nonFloatingPCAName)
       })
     })
     return names
-  }, [substitutionsByTeam])
+  }, [teams, substitutionsByTeam])
 
   const floatingUsageById = useMemo(() => {
     const usage: Record<string, FloatingPCAUsage[]> = {}

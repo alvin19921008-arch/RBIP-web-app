@@ -245,17 +245,33 @@ BEGIN
     team_assignment_portions = EXCLUDED.team_assignment_portions;
 
   -- Team settings
-  INSERT INTO public.team_settings (team, display_name, updated_at)
+  INSERT INTO public.team_settings (
+    team,
+    display_name,
+    merged_into,
+    merge_label_override,
+    merged_pca_preferences_override,
+    updated_at
+  )
   SELECT
     x.team,
     x.display_name,
+    x.merged_into,
+    x.merge_label_override,
+    x.merged_pca_preferences_override,
     now()
   FROM jsonb_to_recordset(team_settings_rows) AS x(
     team team,
-    display_name text
+    display_name text,
+    merged_into team,
+    merge_label_override text,
+    merged_pca_preferences_override jsonb
   )
   ON CONFLICT (team) DO UPDATE SET
     display_name = EXCLUDED.display_name,
+    merged_into = EXCLUDED.merged_into,
+    merge_label_override = EXCLUDED.merge_label_override,
+    merged_pca_preferences_override = EXCLUDED.merged_pca_preferences_override,
     updated_at = EXCLUDED.updated_at;
 
   -- Special programs
@@ -393,6 +409,7 @@ DECLARE
   ward_rows jsonb;
   pref_rows jsonb;
   team_display_names jsonb;
+  team_merge jsonb;
 BEGIN
   IF NOT public.is_admin_or_developer() THEN
     RAISE EXCEPTION 'not_authorized';
@@ -432,6 +449,10 @@ BEGIN
   ward_rows := COALESCE(data -> 'wards', '[]'::jsonb);
   pref_rows := COALESCE(data -> 'pcaPreferences', '[]'::jsonb);
   team_display_names := COALESCE(data -> 'teamDisplayNames', '{}'::jsonb);
+  team_merge := COALESCE(
+    data -> 'teamMerge',
+    '{"mergedInto":{},"mergeLabelOverrideByTeam":{},"mergedPcaPreferencesOverrideByTeam":{}}'::jsonb
+  );
 
   -- staffProfile: staff fields excluding team assignment
   IF 'staffProfile' = ANY(cats) THEN
@@ -498,15 +519,34 @@ BEGIN
     ) src
     WHERE w.id = src.id;
 
-    -- Team settings display names (teamDisplayNames is a JSON object: { TEAM: displayName })
-    INSERT INTO public.team_settings (team, display_name, updated_at)
+    -- Team settings (display names + merge config).
+    INSERT INTO public.team_settings (
+      team,
+      display_name,
+      merged_into,
+      merge_label_override,
+      merged_pca_preferences_override,
+      updated_at
+    )
     SELECT
-      (kv.key)::team,
-      (kv.value)::text,
+      t.team,
+      COALESCE(team_display_names ->> (t.team)::text, (t.team)::text) AS display_name,
+      CASE
+        WHEN NULLIF(COALESCE(team_merge -> 'mergedInto' ->> (t.team)::text, ''), '') IS NULL THEN NULL
+        ELSE (team_merge -> 'mergedInto' ->> (t.team)::text)::team
+      END AS merged_into,
+      NULLIF(btrim(COALESCE(team_merge -> 'mergeLabelOverrideByTeam' ->> (t.team)::text, '')), '')
+        AS merge_label_override,
+      (team_merge -> 'mergedPcaPreferencesOverrideByTeam' -> (t.team)::text) AS merged_pca_preferences_override,
       now()
-    FROM jsonb_each_text(team_display_names) kv
+    FROM (
+      SELECT unnest(enum_range(NULL::team)) AS team
+    ) t
     ON CONFLICT (team) DO UPDATE SET
       display_name = EXCLUDED.display_name,
+      merged_into = EXCLUDED.merged_into,
+      merge_label_override = EXCLUDED.merge_label_override,
+      merged_pca_preferences_override = EXCLUDED.merged_pca_preferences_override,
       updated_at = EXCLUDED.updated_at;
   END IF;
 
