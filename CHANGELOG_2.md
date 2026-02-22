@@ -6,6 +6,14 @@
 ## [Unreleased] - 2026-02-22
 
 ### Added
+- **Dashboard UI polish for team merge**:
+  - **Team Configuration Panel**: Added `+TeamName` badge showing actual merged team names (e.g., `+NSM`) instead of just count. Badge displays for main teams that have contributing merged-away teams.
+  - **PCA Preferences Panel**: Main teams show `+TeamName` badge with merged team names. Merged-away teams display muted card styling with "Managed by MainTeam" banner and read-only inherited preferences.
+  - **Team Merge Panel**: Complete UI redesign with:
+    - Progressive disclosure: Merge editor only visible when creating/editing
+    - Side-by-side merge preview with full team details (Heads, RPT, Non-floating PCA, Wards, Total beds)
+    - Combined result box showing aggregated team statistics
+    - Categorized merge effects reference (Visual Layer, Patient Care, System Behavior) with icons
 - **Shared team merge utilities (`lib/utils/teamMergeHelpers.tsx`)**: Centralized helper functions (`computeMergedIntoMap`, `getTeamMergeStatus`, `computeDisplayNames`) and `TeamMergeBadge` component for consistent merge badge rendering across dashboards.
 
 ### Changed
