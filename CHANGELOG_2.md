@@ -19,6 +19,7 @@
 - **Schedule draft persistence**: Step 2/4 edits now auto-flush into the in-memory draft cache (with identity checks) whenever dirty, the confirm buttons read “Confirm”, and allocation notes toasts remind you to “Save Schedule” before the data reaches the database.
 - **Step 2/3 footers + Step 2.0 helper**: Step 2.0 cards with multiple slots now show a brief “hover over the PCA name to remove them from a selected slot” helper, the Step 2.1/2.2 footers collapse to a single mobile row (back / +SPT / More / Confirm), the Step 3 mini-step footers show mobile labels like “Continue”, “Skip”, and “Assign”, and the Relieving Beds “Edit” trigger becomes a tighter pill button once Step 4 has run so the control feels more like a button.
 - **Step 3.4 floating PCA gym-avoid behavior**: Cycle 3 cleanup now honors gym avoidance as a first-class constraint, but if a team still needs ≥0.25 FTE and **no** other non-gym slots remain anywhere in the pool, the gym slot is allowed as a deterministic “last resort” so teams aren’t stuck forever.
+- **Step 3.4 preference handling & messaging**: Standard mode now treats Step 3.2/3.3 selections as “select = reserve, deselect = free,” adds a strictness toggle that either guards the whole preferred PCA or only the selected slots, keeps the gym-avoid wording dynamic, and surfaces a dismissible scarcity banner that no longer pushes the method card.
 
 ### Fixed
 - **Mobile navbar width**: Navbar now has `min-w-[1024px]` to match dashboard layout, preventing content overflow on narrow screens.

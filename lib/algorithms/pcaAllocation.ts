@@ -3352,6 +3352,26 @@ export interface FloatingPCAAllocationContextV2 {
    * as "extra coverage" using a deterministic policy.
    */
   extraCoverageMode?: 'none' | 'round-robin-team-order'
+  /**
+   * Preference handling policy for Step 3.4 Standard mode:
+   * - 'legacy': use DB preferences directly (historical behavior)
+   * - 'selected_only': only selected Step 3.2/3.3 picks are treated as active preferences
+   */
+  preferenceSelectionMode?: 'legacy' | 'selected_only'
+  /**
+   * How strict to protect selected preferred PCAs in Step 3.4 Standard mode.
+   * - 'exclusive': selected PCA is protected from other teams (whole-PCA lock)
+   * - 'share': selected slot stays with the team, but remaining PCA slots are shareable
+   */
+  preferenceProtectionMode?: 'exclusive' | 'share'
+  /**
+   * User-selected Step 3.2/3.3 assignments. Used when preferenceSelectionMode='selected_only'.
+   */
+  selectedPreferenceAssignments?: Array<{
+    team: Team
+    slot: number
+    pcaId: string
+  }>
 }
 
 /**
@@ -3366,6 +3386,41 @@ export interface FloatingPCAAllocationResultV2 {
   errors?: {
     preferredSlotUnassigned?: string[]
   }
+}
+
+function buildSelectionDrivenPreferences(
+  basePreferences: PCAPreference[],
+  selectedAssignments: Array<{ team: Team; pcaId: string }>
+): PCAPreference[] {
+  const baseByTeam = new Map<Team, PCAPreference>()
+  for (const pref of basePreferences) {
+    if (!baseByTeam.has(pref.team)) {
+      baseByTeam.set(pref.team, pref)
+    }
+  }
+
+  const selectedPcaByTeam = new Map<Team, Set<string>>()
+  for (const assignment of selectedAssignments) {
+    const existing = selectedPcaByTeam.get(assignment.team) ?? new Set<string>()
+    existing.add(assignment.pcaId)
+    selectedPcaByTeam.set(assignment.team, existing)
+  }
+
+  return TEAMS.map((team) => {
+    const base = baseByTeam.get(team)
+    const selectedPcaIds = Array.from(selectedPcaByTeam.get(team) ?? new Set<string>())
+    return {
+      ...(base ?? {
+        id: `__effective_pref_${team}`,
+        team,
+      }),
+      team,
+      preferred_pca_ids: selectedPcaIds,
+      // Selection-driven mode treats manual picks as the source of truth.
+      // Preferred slots were already assigned in Step 3.2/3.3 if selected.
+      preferred_slots: [],
+    }
+  })
 }
 
 /**
@@ -3387,6 +3442,9 @@ export async function allocateFloatingPCA_v2(
     pcaPool,
     pcaPreferences,
     extraCoverageMode = 'none',
+    preferenceSelectionMode = 'legacy',
+    preferenceProtectionMode = 'exclusive',
+    selectedPreferenceAssignments = [],
   } = context
 
   // Clone allocations and pending FTE to avoid mutating originals
@@ -3440,13 +3498,42 @@ export async function allocateFloatingPCA_v2(
   // Track errors
   const errors: { preferredSlotUnassigned?: string[] } = {}
   
+  const useSelectionDrivenPreferences = mode === 'standard' && preferenceSelectionMode === 'selected_only'
+  const effectivePreferences = useSelectionDrivenPreferences
+    ? buildSelectionDrivenPreferences(
+        pcaPreferences,
+        selectedPreferenceAssignments.map((a) => ({ team: a.team, pcaId: a.pcaId }))
+      )
+    : pcaPreferences
+
+  const buildProtectedPCAMap = (): Map<string, Team[]> => {
+    if (!useSelectionDrivenPreferences) {
+      return buildPreferredPCAMap(effectivePreferences, pendingFTE)
+    }
+
+    if (preferenceProtectionMode !== 'exclusive') {
+      return new Map<string, Team[]>()
+    }
+
+    const map = new Map<string, Team[]>()
+    for (const assignment of selectedPreferenceAssignments) {
+      if ((pendingFTE[assignment.team] ?? 0) <= 0) continue
+      const teams = map.get(assignment.pcaId) ?? []
+      if (!teams.includes(assignment.team)) {
+        teams.push(assignment.team)
+      }
+      map.set(assignment.pcaId, teams)
+    }
+    return map
+  }
+
   // Build preference maps
-  const preferredPCAMap = buildPreferredPCAMap(pcaPreferences, pendingFTE)
+  const preferredPCAMap = buildProtectedPCAMap()
   
   // Get team preference info for all teams
   const teamPrefs: Record<Team, TeamPreferenceInfo> = {} as Record<Team, TeamPreferenceInfo>
   for (const team of TEAMS) {
-    teamPrefs[team] = getTeamPreferenceInfo(team, pcaPreferences)
+    teamPrefs[team] = getTeamPreferenceInfo(team, effectivePreferences)
   }
 
   const applyExtraCoverageRoundRobin = () => {
@@ -3603,19 +3690,65 @@ export async function allocateFloatingPCA_v2(
     switch (pref.condition) {
       case 'A':
         // Condition A: Preferred PCA + Preferred Slot
-        await processConditionA(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, preferredPCAMap, tracker, errors, recordAssignmentWithOrder)
+        await processConditionA(
+          team,
+          pref,
+          allocations,
+          pendingFTE,
+          pcaPool,
+          effectivePreferences,
+          buildProtectedPCAMap(),
+          tracker,
+          errors,
+          recordAssignmentWithOrder,
+          buildProtectedPCAMap
+        )
         break
       case 'B':
         // Condition B: Preferred Slot only
-        await processConditionB(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, preferredPCAMap, tracker, errors, recordAssignmentWithOrder)
+        await processConditionB(
+          team,
+          pref,
+          allocations,
+          pendingFTE,
+          pcaPool,
+          effectivePreferences,
+          buildProtectedPCAMap(),
+          tracker,
+          errors,
+          recordAssignmentWithOrder,
+          buildProtectedPCAMap
+        )
         break
       case 'C':
         // Condition C: Preferred PCA only
-        await processConditionC(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, preferredPCAMap, tracker, recordAssignmentWithOrder)
+        await processConditionC(
+          team,
+          pref,
+          allocations,
+          pendingFTE,
+          pcaPool,
+          effectivePreferences,
+          buildProtectedPCAMap(),
+          tracker,
+          recordAssignmentWithOrder,
+          buildProtectedPCAMap
+        )
         break
       case 'D':
         // Condition D: No preferences
-        await processConditionD(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, preferredPCAMap, tracker, recordAssignmentWithOrder)
+        await processConditionD(
+          team,
+          pref,
+          allocations,
+          pendingFTE,
+          pcaPool,
+          effectivePreferences,
+          buildProtectedPCAMap(),
+          tracker,
+          recordAssignmentWithOrder,
+          buildProtectedPCAMap
+        )
         break
     }
     
@@ -3635,7 +3768,19 @@ export async function allocateFloatingPCA_v2(
       if (isAllocationComplete()) break
       
       const pref = teamPrefs[team]
-      await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 2, recordAssignmentWithOrder, undefined)
+      await processFloorPCAFallback(
+        team,
+        pref,
+        allocations,
+        pendingFTE,
+        pcaPool,
+        effectivePreferences,
+        tracker,
+        2,
+        recordAssignmentWithOrder,
+        undefined,
+        buildProtectedPCAMap
+      )
     }
     
     // Phase 2b: Non-Floor PCA
@@ -3647,7 +3792,17 @@ export async function allocateFloatingPCA_v2(
         if (isAllocationComplete()) break
         
         const pref = teamPrefs[team]
-        await processNonFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, recordAssignmentWithOrder)
+        await processNonFloorPCAFallback(
+          team,
+          pref,
+          allocations,
+          pendingFTE,
+          pcaPool,
+          effectivePreferences,
+          tracker,
+          recordAssignmentWithOrder,
+          buildProtectedPCAMap
+        )
       }
     }
   }
@@ -3867,7 +4022,8 @@ async function processConditionA(
   preferredPCAMap: Map<string, Team[]>,
   tracker: AllocationTracker,
   errors: { preferredSlotUnassigned?: string[] },
-  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void
+  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void,
+  getProtectedPCAMap?: () => Map<string, Team[]>
 ): Promise<void> {
   const { preferredPCAIds, preferredSlot, teamFloor, gymSlot, avoidGym } = pref
 
@@ -4135,7 +4291,19 @@ async function processConditionA(
   
   // Step 5: Fill remaining from floor PCA (excluding preferred of other teams)
   if (pendingFTE[team] > 0) {
-    await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 1, recordAssignmentWithOrder, 'A')
+    await processFloorPCAFallback(
+      team,
+      pref,
+      allocations,
+      pendingFTE,
+      pcaPool,
+      pcaPreferences,
+      tracker,
+      1,
+      recordAssignmentWithOrder,
+      'A',
+      getProtectedPCAMap
+    )
   }
 }
 
@@ -4153,7 +4321,8 @@ async function processConditionB(
   preferredPCAMap: Map<string, Team[]>,
   tracker: AllocationTracker,
   errors: { preferredSlotUnassigned?: string[] },
-  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void
+  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void,
+  getProtectedPCAMap?: () => Map<string, Team[]>
 ): Promise<void> {
   const { preferredSlot, teamFloor, gymSlot, avoidGym } = pref
   
@@ -4346,7 +4515,19 @@ async function processConditionB(
   
   // Step 3: Continue filling from floor PCAs
   if (pendingFTE[team] > 0) {
-    await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 1, recordAssignmentWithOrder, 'B')
+    await processFloorPCAFallback(
+      team,
+      pref,
+      allocations,
+      pendingFTE,
+      pcaPool,
+      pcaPreferences,
+      tracker,
+      1,
+      recordAssignmentWithOrder,
+      'B',
+      getProtectedPCAMap
+    )
   }
 }
 
@@ -4363,7 +4544,8 @@ async function processConditionC(
   pcaPreferences: PCAPreference[],
   preferredPCAMap: Map<string, Team[]>,
   tracker: AllocationTracker,
-  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void
+  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void,
+  getProtectedPCAMap?: () => Map<string, Team[]>
 ): Promise<void> {
   const { preferredPCAIds, teamFloor, gymSlot, avoidGym } = pref
   
@@ -4410,7 +4592,19 @@ async function processConditionC(
   
   // Step 2: Fill remaining from floor PCA
   if (pendingFTE[team] > 0) {
-    await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 1, recordAssignmentWithOrder, 'C')
+    await processFloorPCAFallback(
+      team,
+      pref,
+      allocations,
+      pendingFTE,
+      pcaPool,
+      pcaPreferences,
+      tracker,
+      1,
+      recordAssignmentWithOrder,
+      'C',
+      getProtectedPCAMap
+    )
   }
 }
 
@@ -4427,10 +4621,23 @@ async function processConditionD(
   pcaPreferences: PCAPreference[],
   preferredPCAMap: Map<string, Team[]>,
   tracker: AllocationTracker,
-  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void
+  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void,
+  getProtectedPCAMap?: () => Map<string, Team[]>
 ): Promise<void> {
   // Just use floor PCA fallback directly
-  await processFloorPCAFallback(team, pref, allocations, pendingFTE, pcaPool, pcaPreferences, tracker, 1, recordAssignmentWithOrder, 'D')
+  await processFloorPCAFallback(
+    team,
+    pref,
+    allocations,
+    pendingFTE,
+    pcaPool,
+    pcaPreferences,
+    tracker,
+    1,
+    recordAssignmentWithOrder,
+    'D',
+    getProtectedPCAMap
+  )
 }
 
 // ============================================================================
@@ -4447,11 +4654,14 @@ async function processFloorPCAFallback(
   tracker: AllocationTracker,
   cycle: 1 | 2,
   recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void,
-  condition?: 'A' | 'B' | 'C' | 'D'
+  condition?: 'A' | 'B' | 'C' | 'D',
+  getProtectedPCAMap?: () => Map<string, Team[]>
 ): Promise<void> {
   const { teamFloor, gymSlot, avoidGym } = pref
   
-  const preferredPCAMap = buildPreferredPCAMap(pcaPreferences, pendingFTE)
+  const preferredPCAMap = getProtectedPCAMap
+    ? getProtectedPCAMap()
+    : buildPreferredPCAMap(pcaPreferences, pendingFTE)
   
   // In Cycle 1, exclude preferred PCAs of other teams
   // In Cycle 2, allow them
@@ -4528,11 +4738,14 @@ async function processNonFloorPCAFallback(
   pcaPool: PCAData[],
   pcaPreferences: PCAPreference[],
   tracker: AllocationTracker,
-  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void
+  recordAssignmentWithOrder: (team: Team, log: Parameters<typeof recordAssignment>[2]) => void,
+  getProtectedPCAMap?: () => Map<string, Team[]>
 ): Promise<void> {
   const { teamFloor, gymSlot, avoidGym } = pref
   
-  const preferredPCAMap = buildPreferredPCAMap(pcaPreferences, pendingFTE)
+  const preferredPCAMap = getProtectedPCAMap
+    ? getProtectedPCAMap()
+    : buildPreferredPCAMap(pcaPreferences, pendingFTE)
   
   const nonFloorPCAs = findAvailablePCAs({
     pcaPool,

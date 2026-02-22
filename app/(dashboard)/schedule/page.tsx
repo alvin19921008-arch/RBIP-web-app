@@ -10141,6 +10141,17 @@ function SchedulePageContent() {
                 pcaPreferences,
                 specialPrograms,
                 mode: (mode as any) ?? 'standard',
+                preferenceSelectionMode: ((mode as any) ?? 'standard') === 'standard' ? 'selected_only' : 'legacy',
+                preferenceProtectionMode: 'exclusive',
+                selectedPreferenceAssignments:
+                  (((mode as any) ?? 'standard') === 'standard'
+                    ? [...step32Assignments, ...step33Assignments]
+                    : []
+                  ).map((a) => ({
+                    team: a.team,
+                    slot: a.slot,
+                    pcaId: a.pcaId,
+                  })),
               })
 
               // Add Step 3.0/3.2/3.3 assignments into tracker for visibility, matching wizard behavior.

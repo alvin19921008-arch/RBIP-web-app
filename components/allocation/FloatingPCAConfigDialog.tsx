@@ -11,7 +11,7 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { TeamPendingCard, TIE_BREAKER_COLORS } from './TeamPendingCard'
 import { TeamReservationCard } from './TeamReservationCard'
 import { TeamAdjacentSlotCard } from './TeamAdjacentSlotCard'
-import { ChevronRight, ArrowLeft, ArrowRight, Lightbulb, GripVertical, Check, Circle, AlertTriangle } from 'lucide-react'
+import { ChevronRight, ArrowLeft, ArrowRight, Lightbulb, GripVertical, Check, Circle, AlertTriangle, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { roundDownToQuarter, roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { 
@@ -190,12 +190,16 @@ export function FloatingPCAConfigDialog({
 
   // Step 3.4: allocation mode (Standard vs Balanced)
   const [allocationMode, setAllocationMode] = useState<'standard' | 'balanced'>('standard')
+  // How strict Step 3.4 should honor manually selected preferences.
+  const [preferenceProtectionMode, setPreferenceProtectionMode] = useState<'exclusive' | 'share'>('exclusive')
   // Scarcity config (global head): treat threshold as "shortage slots" (0.25 FTE per slot)
   const [scarcityShortageSlotsThreshold, setScarcityShortageSlotsThreshold] = useState<number>(2)
   const [scarcityAutoSelected, setScarcityAutoSelected] = useState(false)
   // IMPORTANT: default to 'off' until config is loaded, to avoid auto-select firing before RPC returns.
   const [scarcityBehavior, setScarcityBehavior] = useState<'auto_select' | 'remind_only' | 'off'>('off')
   const [scarcityConfigLoaded, setScarcityConfigLoaded] = useState(false)
+  // Scarcity banner dismissal state
+  const [scarcityDismissed, setScarcityDismissed] = useState(false)
 
   type Step31PreviewState =
     | { status: 'idle' }
@@ -357,6 +361,7 @@ export function FloatingPCAConfigDialog({
   }, [activeTeams, roundedPendingByTeam, floatingPCAs, existingAllocations, staffOverrides])
 
   const shortageSlots = Math.max(0, scarcityMetrics.neededSlots - scarcityMetrics.availableSlots)
+  const hasExcessFloatingSlots = scarcityMetrics.availableSlots > scarcityMetrics.neededSlots
 
   const scarcityTriggered =
     scarcityBehavior !== 'off' &&
@@ -388,6 +393,13 @@ export function FloatingPCAConfigDialog({
     scarcityAutoSelected,
   ])
 
+  // Reset scarcity dismissal when scarcity conditions change
+  useEffect(() => {
+    if (scarcityTriggered && scarcityDismissed) {
+      setScarcityDismissed(false)
+    }
+  }, [scarcityTriggered])
+
   // Step 3.1 preview: run BOTH standard + balanced (dry-run) and summarize risks.
   useEffect(() => {
     const canRun =
@@ -417,7 +429,8 @@ export function FloatingPCAConfigDialog({
         .sort((a, b) => String(a.id ?? '').localeCompare(String(b.id ?? '')))
         .map((p) => `${p.id}:${(p.fte_pca ?? 0).toFixed(2)}:${Array.isArray(p.availableSlots) ? p.availableSlots.join('') : ''}`)
         .join('|')
-      return `${orderKey}__${pendingKey}__${allocKey}__${poolKey}`
+      const preferenceModeKey = preferenceProtectionMode
+      return `${orderKey}__${pendingKey}__${allocKey}__${poolKey}__${preferenceModeKey}`
     })()
 
     if (hash === previewLastHashRef.current) return
@@ -443,6 +456,9 @@ export function FloatingPCAConfigDialog({
           pcaPool: floatingPCAs,
           pcaPreferences,
           specialPrograms,
+          preferenceSelectionMode: 'selected_only',
+          preferenceProtectionMode,
+          selectedPreferenceAssignments: [],
         }),
         allocateFloatingPCA_v2({
           mode: 'balanced',
@@ -516,6 +532,7 @@ export function FloatingPCAConfigDialog({
     floatingPCAs,
     pcaPreferences,
     specialPrograms,
+    preferenceProtectionMode,
     cancelPreviewWork,
   ])
   
@@ -1098,6 +1115,16 @@ export function FloatingPCAConfigDialog({
       pcaPreferences: pcaPreferences,
       specialPrograms: specialPrograms,
       extraCoverageMode: 'round-robin-team-order',
+      preferenceSelectionMode: mode === 'standard' ? 'selected_only' : 'legacy',
+      preferenceProtectionMode,
+      selectedPreferenceAssignments:
+        mode === 'standard'
+          ? [...step32Assignments, ...step33Assignments].map((a) => ({
+              team: a.team,
+              slot: a.slot,
+              pcaId: a.pcaId,
+            }))
+          : [],
     })
 
     // Add Step 3.2 and 3.3 assignments to the tracker for visibility.
@@ -1370,16 +1397,31 @@ export function FloatingPCAConfigDialog({
         </ul>
       </details>
 
-      {/* Scarcity callout (inline, no toast) */}
-      {scarcityTriggered ? (
-        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50/90 px-3.5 py-2.5 text-sm text-amber-950">
+      {/* Scarcity callout (inline, no toast, dismissible) */}
+      <div
+        className={cn(
+          'transition-all duration-300 ease-in-out overflow-hidden',
+          scarcityTriggered && !scarcityDismissed ? 'mt-3 max-h-48 opacity-100' : 'max-h-0 opacity-0'
+        )}
+      >
+        <div className="rounded-md border border-amber-200 bg-amber-50/90 px-3.5 py-2.5 text-sm text-amber-950">
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-700 flex-shrink-0" />
-            <div className="min-w-0 space-y-0.5">
-              <div className="font-semibold">
-                {scarcityBehavior === 'auto_select'
-                  ? 'Scarcity detected — Balanced auto-selected'
-                  : 'Scarcity detected — Balanced recommended'}
+            <div className="min-w-0 flex-1 space-y-0.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="font-semibold">
+                  {scarcityBehavior === 'auto_select'
+                    ? 'Scarcity detected — Balanced auto-selected'
+                    : 'Scarcity detected — Balanced recommended'}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setScarcityDismissed(true)}
+                  className="rounded p-1 text-amber-700 hover:bg-amber-100 transition-colors"
+                  aria-label="Dismiss scarcity alert"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
               </div>
               <div className="text-amber-900/80 text-xs leading-relaxed space-y-0.5">
                 <div>
@@ -1397,7 +1439,7 @@ export function FloatingPCAConfigDialog({
             </div>
           </div>
         </div>
-      ) : null}
+      </div>
 
       {/* Tick-to-do list (must be outside DialogDescription since it renders a <p>) */}
       <div className="mt-3 space-y-1.5 text-sm text-muted-foreground">
@@ -1501,7 +1543,7 @@ export function FloatingPCAConfigDialog({
         </DndContext>
       </div>
 
-      <div className="rounded-md border bg-muted/30 p-3">
+      <div className="rounded-md border bg-sky-50/60 p-3">
         <div className="text-sm font-medium text-foreground">Allocation method (Step 3.4)</div>
         <div
           className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2"
@@ -1520,8 +1562,10 @@ export function FloatingPCAConfigDialog({
               }
             }}
             className={cn(
-              'rounded-md border bg-background p-3 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-              allocationMode === 'standard' ? 'border-primary ring-1 ring-primary/30' : 'hover:bg-muted/40'
+              'rounded-md border p-3 text-left transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+              allocationMode === 'standard'
+                ? 'border-primary ring-1 ring-primary/30 bg-primary/5'
+                : 'bg-background hover:bg-muted/40'
             )}
           >
             <div className="flex items-start gap-3">
@@ -1564,10 +1608,89 @@ export function FloatingPCAConfigDialog({
                   <span className="font-medium text-foreground">Cons</span>: under tight manpower, a high-need team can end up with near-zero floating slots.
                 </li>
                 <li>
-                  <span className="font-medium text-foreground">Always enforced</span>: avoid the team’s gym slot.
+                  {hasExcessFloatingSlots ? (
+                    <>
+                      <span className="font-medium text-foreground">May happen</span>: if no other workable slot exists, a team&apos;s gym slot might still be assigned.
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-medium text-foreground">Usually enforced</span>: avoid the team&apos;s gym slot.
+                    </>
+                  )}
                 </li>
               </ul>
             </details>
+
+            {/* Strictness toggle - nested inside Standard card with animated collapse */}
+            <div
+              className={cn(
+                'transition-all duration-300 ease-in-out overflow-hidden',
+                allocationMode === 'standard' ? 'mt-3 max-h-48 opacity-100' : 'max-h-0 opacity-0'
+              )}
+            >
+              <div className="rounded-md border bg-background p-2.5">
+                <div className="text-xs font-semibold text-foreground">How strict to honor preferred picks?</div>
+                <div className="mt-0.5 text-[11px] text-muted-foreground">
+                  Applies to Standard mode after Step 3.2/3.3 selections.
+                </div>
+                <div className="mt-2 grid grid-cols-1 gap-2" role="radiogroup" aria-label="Preference protection strictness">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={preferenceProtectionMode === 'exclusive'}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setPreferenceProtectionMode('exclusive')
+                    }}
+                    className={cn(
+                      'rounded-md border px-2.5 text-left text-xs transition-all duration-200',
+                      preferenceProtectionMode === 'exclusive'
+                        ? 'border-primary ring-1 ring-primary/30 bg-primary/5 py-2'
+                        : 'hover:bg-muted/40 py-1.5'
+                    )}
+                  >
+                    <div className="font-semibold text-foreground">Strict (default) - Exclusive</div>
+                    <div
+                      className={cn(
+                        'text-muted-foreground overflow-hidden transition-all duration-200 text-[11px]',
+                        preferenceProtectionMode === 'exclusive'
+                          ? 'max-h-10 opacity-100 mt-0.5'
+                          : 'max-h-0 opacity-0'
+                      )}
+                    >
+                      Hold <span className="font-medium text-foreground">ALL a/v slots</span> from the preferred PCA for that team.
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={preferenceProtectionMode === 'share'}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setPreferenceProtectionMode('share')
+                    }}
+                    className={cn(
+                      'rounded-md border px-2.5 text-left text-xs transition-all duration-200',
+                      preferenceProtectionMode === 'share'
+                        ? 'border-primary ring-1 ring-primary/30 bg-primary/5 py-2'
+                        : 'hover:bg-muted/40 py-1.5'
+                    )}
+                  >
+                    <div className="font-semibold text-foreground">Flexible sharing - Slot-only</div>
+                    <div
+                      className={cn(
+                        'text-muted-foreground overflow-hidden transition-all duration-200 text-[11px]',
+                        preferenceProtectionMode === 'share'
+                          ? 'max-h-10 opacity-100 mt-0.5'
+                          : 'max-h-0 opacity-0'
+                      )}
+                    >
+                      Keep only <span className="font-medium text-foreground">selected slots</span>; remaining slots can be shared.
+                    </div>
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div
@@ -1582,8 +1705,10 @@ export function FloatingPCAConfigDialog({
               }
             }}
             className={cn(
-              'rounded-md border bg-background p-3 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-              allocationMode === 'balanced' ? 'border-primary ring-1 ring-primary/30' : 'hover:bg-muted/40'
+              'rounded-md border p-3 text-left transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+              allocationMode === 'balanced'
+                ? 'border-primary ring-1 ring-primary/30 bg-primary/5'
+                : 'bg-background hover:bg-muted/40'
             )}
           >
             <div className="flex items-start gap-3">
@@ -1626,7 +1751,15 @@ export function FloatingPCAConfigDialog({
                   <span className="font-medium text-foreground">Cons</span>: skips Step 3.2/3.3 (no preferred/adjacent manual picking).
                 </li>
                 <li>
-                  <span className="font-medium text-foreground">Always enforced</span>: avoid the team’s gym slot.
+                  {hasExcessFloatingSlots ? (
+                    <>
+                      <span className="font-medium text-foreground">May happen</span>: if no other workable slot exists, a team&apos;s gym slot might still be assigned.
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-medium text-foreground">Usually enforced</span>: avoid the team&apos;s gym slot.
+                    </>
+                  )}
                 </li>
                 <li>
                   <span className="font-medium text-foreground">May relax</span>: floor matching and “reserved preferred PCA of other teams” if needed.
