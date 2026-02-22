@@ -2,7 +2,6 @@
 
 import { useMemo, useState, useEffect, useRef } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Staff, StaffRank, Team, StaffStatus, SpecialProgram as StaffSpecialProgram } from '@/types/staff'
 import { TEAMS } from '@/lib/utils/types'
@@ -805,9 +804,8 @@ export function StaffProfilePanel() {
 
   return (
     <>
-      <Card>
-        <CardContent className="pt-6">
-          <DashboardConfigMetaBanner />
+      <div className="pt-6 space-y-4">
+        <DashboardConfigMetaBanner />
           <div className="mb-4 pb-4 border-b">
             <div className="flex flex-wrap gap-4 text-sm" style={{ color: 'black' }}>
               <span>
@@ -1060,8 +1058,7 @@ export function StaffProfilePanel() {
               </div>
             </div>
           )}
-        </CardContent>
-      </Card>
+      </div>
 
       {/* Floating staff status menu (fixed-position) to avoid clipping inside overflow containers */}
       {openStatusMenu ? (

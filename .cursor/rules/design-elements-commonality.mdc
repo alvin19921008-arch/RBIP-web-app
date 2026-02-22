@@ -1,15 +1,56 @@
 ---
-description: Design element commonality rules for consistent UI/UX across the application
+description: Design standards for consistent, pragmatic UI/UX. Favor flat hierarchy, clear visual grouping, and user-friendly density.
 alwaysApply: false
 ---
 
 # Design Elements Commonality
 
-Design standards for consistent UI/UX. Apply intelligently when creating new UI components.
+Pragmatic UI standards that prioritize readability and user efficiency over decorative complexity.
 
-## Icons
+---
 
-**Rule**: Use lucide-react icons instead of emoji icons.
+## 1. Structural Hierarchy (Anti-Nesting)
+
+**Goal**: Minimize "box under box" nesting. Use flat layouts with clear visual grouping.
+
+| Approach | ✅ Do | ❌ Avoid |
+|----------|-------|----------|
+| Container depth | 2 levels max (page → card/section) | 3+ nested borders |
+| Grouping | Spacing, subtle borders (`border-b`), background tints | Multiple nested cards |
+| Separation | `divide-y`, `gap-6`, `py-4` | `border` wrapping every sub-element |
+| Elevation | Single shadow level, subtle | Stacked shadows creating depth illusion |
+
+**Progressive Disclosure**: Show summary info inline; hide details behind expand/collapse or secondary views. Don't put complex forms inside cards inside cards.
+
+```tsx
+// ✅ Flat section with divider grouping
+<div className="space-y-6">
+  <section>
+    <h3 className="text-sm font-medium mb-3">Team Configuration</h3>
+    <div className="grid grid-cols-3 gap-4">
+      {/* Cards are siblings, not nested */}
+    </div>
+  </section>
+  <hr className="border-border" />
+  <section>
+    <h3 className="text-sm font-medium mb-3">Preferences</h3>
+    {/* Content */}
+  </section>
+</div>
+
+// ❌ Deep nesting
+<Card><CardContent>
+  <Card><CardContent>
+    <Card><CardContent>...</CardContent></Card>
+  </CardContent></Card>
+</CardContent></Card>
+```
+
+---
+
+## 2. Icons
+
+Use **lucide-react** icons only. Never use emoji icons.
 
 ```tsx
 // ✅ CORRECT
@@ -20,9 +61,14 @@ import { Info, Edit2, Trash2, Plus } from 'lucide-react'
 <p>ℹ️ Information text</p>
 ```
 
-## Button Colors
+---
 
-**Rule**: Selection buttons (teams, weekdays, slots) use blue. Action buttons (Save, Cancel, Add, Delete) use semantic variants.
+## 3. Buttons
+
+| Type | Style | Example |
+|------|-------|---------|
+| **Selection** (teams, weekdays, slots) | Blue: `bg-blue-600 text-white` when selected, `bg-gray-100 text-gray-700` when idle | Team pickers, slot toggles |
+| **Action** (Save, Cancel, Add, Delete) | Semantic variants | `variant="outline"` Cancel, `variant="destructive"` Delete |
 
 ```tsx
 // ✅ Selection buttons (blue)
@@ -38,9 +84,11 @@ import { Info, Edit2, Trash2, Plus } from 'lucide-react'
 <Button variant="destructive" onClick={handleDelete}>Delete</Button>
 ```
 
-## Dropdown Menus (Select)
+---
 
-**Rule**: Use shared `Select` components (Radix) in dialogs/forms. Avoid native `<select>`.
+## 4. Dropdowns & Select
+
+Always use shared `Select` components (Radix) in dialogs/forms. Avoid native `<select>`.
 
 ```tsx
 // ✅ CORRECT
@@ -63,9 +111,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 </select>
 ```
 
-## Dialog Width
+---
 
-**Rule**: Default to `max-w-lg` (512px). Allow text wrapping. Only use wider dialogs for tables/large forms.
+## 5. Dialog Width
+
+| Content Type | Width | Notes |
+|--------------|-------|-------|
+| Standard forms, confirmations | `max-w-lg` (512px) | Default for most dialogs |
+| Tables, wide forms, side-by-side | `max-w-2xl` or `max-w-4xl` | Only when content genuinely needs space |
+| Wizards, multi-step | `max-w-2xl` | Consistent width across steps |
+
+Always allow text wrapping. Never force single-line text that truncates.
 
 ```tsx
 // ✅ Default (most dialogs)
@@ -79,16 +135,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
   {/* Wide content */}
 </DialogContent>
-
-// ❌ WRONG - unnecessarily wide
-<DialogContent className="max-w-4xl">
-  <p>Short text</p>
-</DialogContent>
 ```
 
-## Tooltip Background
+---
 
-**Rule**: Tooltip background should be white.
+## 6. Tooltips
+
+Background should be **white** with border and shadow for visibility.
 
 ```tsx
 // ✅ CORRECT
@@ -97,12 +150,44 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 </div>
 ```
 
+---
+
+## 7. Cards & Content Grouping
+
+Cards are for **self-contained, modular units**—not for wrapping every sub-element.
+
+| Use Card For | Don't Use Card For |
+|--------------|-------------------|
+| Dashboard widgets | Individual form rows |
+| Team/entity summaries | Inline metadata pairs |
+| Configurable panels | Static text blocks |
+
+Prefer **section headers with spacing** over nested cards:
+
+```tsx
+// ✅ Section with header + grid
+<div className="space-y-3">
+  <div className="flex items-center justify-between">
+    <h3 className="text-sm font-medium">Active Merges</h3>
+    <Button size="sm">Create Merge</Button>
+  </div>
+  <div className="grid grid-cols-2 gap-3">
+    {/* Flat cards, not nested */}
+  </div>
+</div>
+```
+
+---
+
 ## Summary Checklist
 
 When creating new UI components:
-- [ ] Icons use lucide-react (not emojis)
-- [ ] Selection buttons use blue (`bg-blue-600 text-white` when selected)
-- [ ] Dropdowns use `Select` components (not native `<select>`) in dialogs/forms
-- [ ] Action buttons use semantic variants (Save/Cancel/Add/Delete)
-- [ ] Dialog width matches content (default `max-w-lg`, allow text wrapping)
-- [ ] Tooltips use white background
+
+- [ ] **Structure**: Flat hierarchy (max 2 nesting levels), use spacing/dividers not nested borders
+- [ ] **Progressive disclosure**: Show essential info inline, hide complexity behind expand/collapse
+- [ ] **Icons**: lucide-react only (no emojis)
+- [ ] **Buttons**: Selection = blue, Actions = semantic variants
+- [ ] **Dropdowns**: Radix `Select` components (not native `<select>`)
+- [ ] **Dialogs**: `max-w-lg` default, wider only for tables/forms
+- [ ] **Tooltips**: White background with border
+- [ ] **Cards**: Use for modular units, not for every sub-element

@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Calendar } from 'lucide-react'
 import { createClientComponentClient } from '@/lib/supabase/client'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -404,15 +403,10 @@ export function ConfigSyncPanel() {
   const availableSnapshotDateSet = useMemo(() => new Set(availableDates), [availableDates])
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>Sync / Publish</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <div className="text-sm font-semibold">Published configuration (Global)</div>
+    <div className="pt-6 space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <h3 className="text-lg font-semibold">Published configuration (Global)</h3>
               <div className="text-sm text-muted-foreground">
                 Global config:{' '}
                 <span className="font-medium text-foreground">{globalUpdatedAt}</span>
@@ -435,7 +429,7 @@ export function ConfigSyncPanel() {
 
             <div className="space-y-2">
               <div className="flex items-start justify-between gap-3">
-                <div className="text-sm font-semibold">Source snapshot</div>
+                <h3 className="text-lg font-semibold">Source snapshot</h3>
                 <Button
                   variant="outline"
                   size="sm"
@@ -753,8 +747,6 @@ export function ConfigSyncPanel() {
               </div>
             )}
           </div>
-        </CardContent>
-      </Card>
     </div>
   )
 }

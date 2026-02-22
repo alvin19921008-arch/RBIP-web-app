@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
@@ -316,8 +315,8 @@ export function AccountManagementPanel() {
   }
 
   return (
-    <div className="space-y-3">
-      {/* Tabs should live outside the card container */}
+    <div className="space-y-4">
+      {/* Tabs */}
       <div className="inline-flex items-center gap-1 rounded-md border bg-background p-1 w-fit">
         <button
           type="button"
@@ -345,58 +344,49 @@ export function AccountManagementPanel() {
         </button>
       </div>
 
-      <Card>
-        <CardHeader className="space-y-2">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <CardTitle>{activeTab === 'accounts' ? 'Account Management' : 'Access settings'}</CardTitle>
-              <CardDescription>
-                {activeTab === 'accounts' ? 'Manage system accounts.' : 'Configure UI visibility by role.'}
-              </CardDescription>
-            </div>
-            {activeTab === 'accounts' ? (
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={loadAccounts} disabled={loading || !canManageBackend}>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Refresh
-                </Button>
-                <Button onClick={openCreate} disabled={!canManageUi || loading}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add new accounts
-                </Button>
-              </div>
-            ) : null}
+      {/* Description */}
+      <p className="text-sm text-muted-foreground">
+        {activeTab === 'accounts' ? 'Manage system accounts.' : 'Configure UI visibility by role.'}
+      </p>
+
+      {/* Action buttons for accounts tab */}
+      {activeTab === 'accounts' && (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={!canManageUi || selectedIds.size === 0 || loading}
+              onClick={() => deleteAccounts(Array.from(selectedIds))}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete selected
+            </Button>
+            <div className="text-xs text-muted-foreground">Selected: {selectedIds.size}</div>
           </div>
+          <div className="flex items-center gap-2 ml-auto">
+            <Button variant="outline" size="sm" onClick={loadAccounts} disabled={loading || !canManageBackend}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
+            <Button onClick={openCreate} disabled={!canManageUi || loading}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add new accounts
+            </Button>
+            <SearchWithSuggestions
+              value={search}
+              onValueChange={setSearch}
+              items={accountSearchItems}
+              placeholder="Search username/email/role…"
+              className="w-[260px]"
+              onSelect={(it) => setSearch(it.label)}
+            />
+          </div>
+        </div>
+      )}
 
-          {activeTab === 'accounts' ? (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  disabled={!canManageUi || selectedIds.size === 0 || loading}
-                  onClick={() => deleteAccounts(Array.from(selectedIds))}
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete selected
-                </Button>
-                <div className="text-xs text-muted-foreground">Selected: {selectedIds.size}</div>
-              </div>
-              <div className="flex items-center gap-2">
-                <SearchWithSuggestions
-                  value={search}
-                  onValueChange={setSearch}
-                  items={accountSearchItems}
-                  placeholder="Search username/email/role…"
-                  className="w-[260px]"
-                  onSelect={(it) => setSearch(it.label)}
-                />
-              </div>
-            </div>
-          ) : null}
-        </CardHeader>
-
-        <CardContent>
+      {/* Content */}
+      <div className="space-y-4">
           {activeTab === 'access-settings' ? (
             <AccessSettingsPanel />
           ) : !canManageBackend ? (
@@ -666,8 +656,7 @@ export function AccountManagementPanel() {
             })()}
           </div>
         ) : null}
-        </CardContent>
-      </Card>
+      </div>
     </div>
   )
 }

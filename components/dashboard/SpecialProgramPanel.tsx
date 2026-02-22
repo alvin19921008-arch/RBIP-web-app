@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { SpecialProgram } from '@/types/allocation'
 import { Staff, Team } from '@/types/staff'
@@ -539,8 +539,7 @@ export function SpecialProgramPanel() {
 
   return (
     <>
-      <Card>
-        <CardContent className="pt-6">
+      <div className="pt-6 space-y-6">
         <DashboardConfigMetaBanner />
         {loading ? (
           <p>Loading...</p>
@@ -1150,11 +1149,10 @@ export function SpecialProgramPanel() {
             )}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
 
-    {/* Preference Ordering Dialog */}
-    <Dialog open={showPreferenceDialog} onOpenChange={setShowPreferenceDialog}>
+      {/* Preference Ordering Dialog */}
+      <Dialog open={showPreferenceDialog} onOpenChange={setShowPreferenceDialog}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Set Therapist Preference Order</DialogTitle>

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -467,21 +467,18 @@ export function TeamConfigurationPanel() {
 
   if (loading) {
     return (
-      <Card>
-        <CardContent className="pt-6">
-          <DashboardConfigMetaBanner />
-          <p>Loading...</p>
-        </CardContent>
-      </Card>
+      <div className="pt-6">
+        <DashboardConfigMetaBanner />
+        <p>Loading...</p>
+      </div>
     )
   }
 
   return (
     <>
-      <Card>
-        <CardContent className="pt-6">
-          <DashboardConfigMetaBanner />
-          <div className="mb-4 inline-flex items-center gap-1 rounded-md border bg-background p-1 w-fit">
+      <div className="pt-6 space-y-4">
+        <DashboardConfigMetaBanner />
+        <div className="mb-4 inline-flex items-center gap-1 rounded-md border bg-background p-1 w-fit">
             <button
               type="button"
               onClick={() => setActiveTab('teams')}
@@ -869,8 +866,7 @@ export function TeamConfigurationPanel() {
           ) : (
             <TeamMergePanel />
           )}
-        </CardContent>
-      </Card>
+      </div>
 
       {/* Portion Popover Dialog */}
       {portionPopover && (

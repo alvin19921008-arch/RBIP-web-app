@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Ward } from '@/types/allocation'
 import { Team } from '@/types/staff'
@@ -218,9 +218,8 @@ export function WardConfigPanel() {
 
   return (
     <>
-      <Card>
-        <CardContent className="pt-6">
-          <DashboardConfigMetaBanner />
+      <div className="pt-6 space-y-6">
+        <DashboardConfigMetaBanner />
           {loading ? (
             <p>Loading...</p>
           ) : (
@@ -234,8 +233,7 @@ export function WardConfigPanel() {
               {[11, 10, 9, 8, 7].map(floor => renderFloorRow(floor))}
             </div>
           )}
-        </CardContent>
-      </Card>
+      </div>
 
       {/* Edit/Add Dialog */}
       {editingWard !== null && (

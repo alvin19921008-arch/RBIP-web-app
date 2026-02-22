@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { PCAPreference } from '@/types/allocation'
@@ -211,9 +211,8 @@ export function PCAPreferencePanel() {
   }
 
   return (
-    <Card>
-      <CardContent className="pt-6">
-        <DashboardConfigMetaBanner />
+    <div className="pt-6 space-y-4">
+      <DashboardConfigMetaBanner />
         {loading ? (
           <p>Loading...</p>
         ) : (
@@ -529,8 +528,7 @@ export function PCAPreferencePanel() {
             </Card>
           </div>
         ) : null}
-      </CardContent>
-    </Card>
+    </div>
   )
 }
 

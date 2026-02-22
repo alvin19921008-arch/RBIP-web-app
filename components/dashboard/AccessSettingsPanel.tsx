@@ -81,11 +81,23 @@ export function AccessSettingsPanel() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-xl font-semibold">Access settings</h2>
-          <p className="text-sm text-muted-foreground">
-            Controls UI visibility only. Security is still enforced by database RLS and API checks.
-          </p>
+        <div className="inline-flex items-center gap-1 rounded-md border bg-background p-1">
+          {roleTabs.map((r) => {
+            const isActive = r === effectiveActiveRole
+            return (
+              <button
+                key={`role-tab-${r}`}
+                type="button"
+                onClick={() => setActiveRole(r)}
+                className={[
+                  'px-3 py-1.5 text-sm rounded-md transition-colors',
+                  isActive ? roleTabActiveClasses(r) : roleTabInactiveClasses(r),
+                ].join(' ')}
+              >
+                {r === 'user' ? 'User' : r === 'admin' ? 'Admin' : 'Developer'}
+              </button>
+            )
+          })}
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">You are</span>
@@ -93,25 +105,6 @@ export function AccessSettingsPanel() {
             {access.role}
           </Badge>
         </div>
-      </div>
-
-      <div className="inline-flex items-center gap-1 rounded-md border bg-background p-1">
-        {roleTabs.map((r) => {
-          const isActive = r === effectiveActiveRole
-          return (
-            <button
-              key={`role-tab-${r}`}
-              type="button"
-              onClick={() => setActiveRole(r)}
-              className={[
-                'px-3 py-1.5 text-sm rounded-md transition-colors',
-                isActive ? roleTabActiveClasses(r) : roleTabInactiveClasses(r),
-              ].join(' ')}
-            >
-              {r === 'user' ? 'User' : r === 'admin' ? 'Admin' : 'Developer'}
-            </button>
-          )
-        })}
       </div>
 
       {!editable ? (
