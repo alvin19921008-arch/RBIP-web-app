@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { Team } from '@/types/staff'
 import { PCAAllocation } from '@/types/schedule'
 import { PCAPreference, SpecialProgram } from '@/types/allocation'
@@ -92,6 +92,9 @@ export function NonFloatingSubstitutionDialog({
     () => initialSelections ?? {}
   )
   const [isMobileViewport, setIsMobileViewport] = useState(false)
+  const substitutionRefs = useRef<Record<string, HTMLElement | null>>({})
+  const remainingSlotsRefs = useRef<Record<string, HTMLElement | null>>({})
+  const pendingScrollRef = useRef<{ type: 'remaining' | 'next'; key: string; team?: Team } | null>(null)
 
   // When dialog opens, seed selections from initialSelections (if provided)
   useEffect(() => {
@@ -110,6 +113,36 @@ export function NonFloatingSubstitutionDialog({
     window.addEventListener('resize', detect)
     return () => window.removeEventListener('resize', detect)
   }, [])
+
+  useEffect(() => {
+    const pending = pendingScrollRef.current
+    if (!pending) return
+    
+    const timeoutId = setTimeout(() => {
+      if (pending.type === 'remaining') {
+        const el = remainingSlotsRefs.current[pending.key]
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }
+      } else if (pending.type === 'next' && pending.team) {
+        const teamSubs = substitutionsByTeam[pending.team] || []
+        const currentIdx = teamSubs.findIndex(s => getSelectionKey(s.team, s.nonFloatingPCAId) === pending.key)
+        const nextIdx = currentIdx + 1
+        
+        if (nextIdx < teamSubs.length) {
+          const nextSub = teamSubs[nextIdx]
+          const nextKey = getSelectionKey(nextSub.team, nextSub.nonFloatingPCAId)
+          const el = substitutionRefs.current[nextKey]
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+        }
+      }
+      pendingScrollRef.current = null
+    }, 150)
+    
+    return () => clearTimeout(timeoutId)
+  }, [selections, substitutionsByTeam])
 
   // For single team mode, always use the first (and only) team
   const currentTeam = isWizardMode ? teams[currentTeamIndex] : teams[0]
@@ -136,6 +169,18 @@ export function NonFloatingSubstitutionDialog({
 
   const getSelectionKey = (team: Team, nonFloatingPCAId: string) => `${team}-${nonFloatingPCAId}`
 
+  const findSubstitution = useCallback((nonFloatingPCAId: string) => {
+    for (const team of teams) {
+      const sub = (substitutionsByTeam[team] || []).find(s => s.nonFloatingPCAId === nonFloatingPCAId)
+      if (sub) return sub
+    }
+    return undefined
+  }, [teams, substitutionsByTeam])
+
+  const getCurrentDisplayTeam = useCallback(() => {
+    return isWizardMode ? teams[currentTeamIndex] : teams[0]
+  }, [isWizardMode, teams, currentTeamIndex])
+
   const handleSelectionChange = (
     team: Team,
     nonFloatingPCAId: string,
@@ -144,11 +189,26 @@ export function NonFloatingSubstitutionDialog({
     selected: boolean
   ) => {
     const key = getSelectionKey(team, nonFloatingPCAId)
+    const sub = findSubstitution(nonFloatingPCAId)
+    const missingSlots = sub?.missingSlots ?? []
+    const displayTeam = getCurrentDisplayTeam()
+    
     if (selected) {
+      const newSelections = [{ floatingPCAId, slots }]
+      const covered = new Set(slots)
+      const remaining = missingSlots.filter(s => !covered.has(s))
+      
+      const scrollIntent = remaining.length > 0 
+        ? { type: 'remaining' as const, key } 
+        : sub ? { type: 'next' as const, key, team: displayTeam } : null
+      
+      if (scrollIntent) {
+        pendingScrollRef.current = scrollIntent
+      }
+      
       setSelections(prev => ({
         ...prev,
-        // Primary selection replaces any existing selections for this non-floating PCA.
-        [key]: [{ floatingPCAId, slots }]
+        [key]: newSelections
       }))
     } else {
       setSelections((prev) => {
@@ -161,11 +221,22 @@ export function NonFloatingSubstitutionDialog({
 
   const addCoverSelection = (team: Team, nonFloatingPCAId: string, floatingPCAId: string, slots: number[]) => {
     const key = getSelectionKey(team, nonFloatingPCAId)
+    const sub = findSubstitution(nonFloatingPCAId)
+    const missingSlots = sub?.missingSlots ?? []
+    const displayTeam = getCurrentDisplayTeam()
+    
     setSelections((prev) => {
       const existing = prev[key] ?? []
-      // Prevent duplicates of same PCA
       if (existing.some((s) => s.floatingPCAId === floatingPCAId)) return prev
-      return { ...prev, [key]: [...existing, { floatingPCAId, slots }] }
+      const newSelections = [...existing, { floatingPCAId, slots }]
+      const covered = new Set(newSelections.flatMap(s => s.slots))
+      const remaining = missingSlots.filter(s => !covered.has(s))
+      
+      if (remaining.length === 0 && sub) {
+        pendingScrollRef.current = { type: 'next', key, team: displayTeam }
+      }
+      
+      return { ...prev, [key]: newSelections }
     })
   }
 
@@ -468,7 +539,11 @@ export function NonFloatingSubstitutionDialog({
               const extraGroups = groupPCAsByCategory(extraCandidates)
 
               return (
-                <div key={sub.nonFloatingPCAId} className={cn(remainingSlots.length === 0 ? 'pb-0' : 'pb-4')}>
+                <div 
+                  key={sub.nonFloatingPCAId}
+                  ref={(el) => { substitutionRefs.current[selectionKey] = el }}
+                  className={cn(remainingSlots.length === 0 ? 'pb-0' : 'pb-4')}
+                >
                   {/* Streamlined header: PCA name + team badge + missing slots */}
                   <div className="flex items-center gap-3 pb-3 mb-3 border-b">
                     <span className="font-semibold">{sub.nonFloatingPCAName}</span>
@@ -703,7 +778,10 @@ export function NonFloatingSubstitutionDialog({
                       )}
 
                       {currentSelections.length > 0 ? (
-                        <div className={remainingSlots.length === 0 ? 'mt-4 pt-2 sm:mt-6 sm:pt-3' : 'mt-4 pt-4 border-t space-y-2'}>
+                        <div 
+                          ref={(el) => { remainingSlotsRefs.current[selectionKey] = el }}
+                          className={remainingSlots.length === 0 ? 'mt-4 pt-2 sm:mt-6 sm:pt-3' : 'mt-4 pt-4 border-t space-y-2'}
+                        >
                           <div className="text-sm font-medium flex items-center gap-2">
                             {remainingSlots.length === 0 ? (
                               <span className="relative inline-flex h-4 w-4 shrink-0 items-center justify-center">

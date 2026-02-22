@@ -1,21 +1,28 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
 import { Staff, Team } from '@/types/staff'
 import { Ward } from '@/types/allocation'
 import { TEAMS } from '@/lib/utils/types'
 import { Checkbox } from '@/components/ui/checkbox'
-import { X } from 'lucide-react'
+import { X, Users, GitMerge } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
 import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
 import { TeamMergePanel } from '@/components/dashboard/TeamMergePanel'
+import { 
+  computeMergedIntoMap, 
+  getTeamMergeStatus, 
+  computeDisplayNames,
+  TeamMergeBadge 
+} from '@/lib/utils/teamMergeHelpers'
 
 interface TeamSettings {
   team: Team
@@ -88,6 +95,16 @@ export function TeamConfigurationPanel() {
     'data-[state=checked]:bg-blue-600 data-[state=checked]:text-white'
   const expand = useDashboardExpandableCard<string>({ animationMs: 220 })
 
+  // Compute merged-into mapping and contributing teams
+  const mergedIntoMap = useMemo(() => {
+    return computeMergedIntoMap(Object.values(teamSettings))
+  }, [teamSettings])
+
+  // Compute display names from team settings
+  const displayNames = useMemo(() => {
+    return computeDisplayNames(Object.values(teamSettings))
+  }, [teamSettings])
+
   // Edit state for current team
   const [editDisplayName, setEditDisplayName] = useState('')
   const [editSelectedAPPT, setEditSelectedAPPT] = useState<Set<string>>(new Set())
@@ -119,12 +136,21 @@ export function TeamConfigurationPanel() {
           settingsMap[s.team as Team] = {
             team: s.team,
             display_name: s.display_name,
+            merged_into: s.merged_into ?? null,
+            merge_label_override: s.merge_label_override ?? null,
+            merged_pca_preferences_override: s.merged_pca_preferences_override ?? null,
           }
         })
         // Ensure all teams have settings
         TEAMS.forEach(team => {
           if (!settingsMap[team]) {
-            settingsMap[team] = { team, display_name: team }
+            settingsMap[team] = {
+              team,
+              display_name: team,
+              merged_into: null,
+              merge_label_override: null,
+              merged_pca_preferences_override: null,
+            }
           }
         })
         setTeamSettings(settingsMap)
@@ -788,10 +814,16 @@ export function TeamConfigurationPanel() {
               }
 
               // Collapsed preview mode
+              const mergeStatus = getTeamMergeStatus(team, mergedIntoMap)
+              const displayName = displayNames[team] || team
+
               return (
-                <Card key={team} className="p-4">
+                <Card key={team} data-team={team} className="p-4">
                   <div className="flex justify-between items-start mb-2">
-                    <h4 className="font-semibold text-lg">{settings?.display_name || team}</h4>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="font-semibold text-lg">{displayName}</h4>
+                      <TeamMergeBadge mergeStatus={mergeStatus} displayNames={displayNames} />
+                    </div>
                     <Button
                       variant="outline"
                       size="sm"

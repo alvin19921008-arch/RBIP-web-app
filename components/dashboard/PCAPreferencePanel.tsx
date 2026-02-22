@@ -1,11 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { PCAPreference } from '@/types/allocation'
 import { Staff, Team } from '@/types/staff'
+import { TEAMS } from '@/lib/utils/types'
 import { getSlotLabel, getSlotTime } from '@/lib/utils/slotHelpers'
 import { FloorPCAMappingPanel } from '@/components/dashboard/FloorPCAMappingPanel'
 import { useToast } from '@/components/ui/toast-provider'
@@ -14,10 +16,24 @@ import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfi
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAccessControl } from '@/lib/access/useAccessControl'
+import { ArrowRight, Users, GitMerge, ExternalLink } from 'lucide-react'
+import { 
+  computeMergedIntoMap, 
+  getTeamMergeStatus, 
+  computeDisplayNames,
+  TeamMergeStatus 
+} from '@/lib/utils/teamMergeHelpers'
+
+type TeamSettingsRow = {
+  team: Team
+  display_name: string | null
+  merged_into: Team | null
+}
 
 export function PCAPreferencePanel() {
   const [preferences, setPreferences] = useState<PCAPreference[]>([])
   const [staff, setStaff] = useState<Staff[]>([])
+  const [teamSettings, setTeamSettings] = useState<TeamSettingsRow[]>([])
   const [loading, setLoading] = useState(false)
   const [editingPreference, setEditingPreference] = useState<PCAPreference | null>(null)
   const [editingFloorMapping, setEditingFloorMapping] = useState(false)
@@ -31,6 +47,15 @@ export function PCAPreferencePanel() {
   const toast = useToast()
   const access = useAccessControl()
 
+  // Compute merge configuration using shared utilities
+  const mergedIntoMap = useMemo(() => {
+    return computeMergedIntoMap(teamSettings)
+  }, [teamSettings])
+
+  const displayNames = useMemo(() => {
+    return computeDisplayNames(teamSettings)
+  }, [teamSettings])
+
   useEffect(() => {
     loadData()
   }, [])
@@ -38,13 +63,15 @@ export function PCAPreferencePanel() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [preferencesRes, staffRes] = await Promise.all([
+      const [preferencesRes, staffRes, settingsRes] = await Promise.all([
         supabase.from('pca_preferences').select('*').order('team'),
         supabase.from('staff').select('*').eq('rank', 'PCA').order('name'), // Load all PCA for name display
+        supabase.from('team_settings').select('team,display_name,merged_into').order('team'),
       ])
 
       if (preferencesRes.data) setPreferences(preferencesRes.data as any)
       if (staffRes.data) setStaff(staffRes.data)
+      if (settingsRes.data) setTeamSettings(settingsRes.data as TeamSettingsRow[])
 
       // Load global head for scarcity threshold
       const headRes = await supabase.rpc('get_config_global_head_v1')
@@ -168,6 +195,21 @@ export function PCAPreferencePanel() {
 
   const allTeams: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
+  // Helper to scroll to a team card
+  const scrollToTeam = (targetTeam: Team) => {
+    const element = document.querySelector(`[data-team-card="${targetTeam}"]`)
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      element.classList.add('ring-2', 'ring-primary', 'ring-offset-2')
+      setTimeout(() => element.classList.remove('ring-2', 'ring-primary', 'ring-offset-2'), 2000)
+    }
+  }
+
+  // Get preference for a team (used for merged-away teams to show inherited values)
+  const getPreferenceForTeam = (targetTeam: Team) => {
+    return preferences.find(p => p.team === targetTeam)
+  }
+
   return (
     <Card>
       <CardContent className="pt-6">
@@ -179,7 +221,11 @@ export function PCAPreferencePanel() {
             {allTeams.map((team) => {
               const pref = preferences.find(p => p.team === team)
               const isEditing = editingPreference?.team === team
-              
+              const mergeStatus = getTeamMergeStatus(team, mergedIntoMap)
+              const isMergedAway = mergeStatus.type === 'merged-away'
+              const isMainTeam = mergeStatus.type === 'main'
+              const displayName = displayNames[team] || team
+
               if (isEditing) {
                 return (
                   <Card
@@ -188,7 +234,7 @@ export function PCAPreferencePanel() {
                     className={`p-4 border-2 col-span-full ${expand.getExpandedAnimationClass(team)}`}
                   >
                     <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-lg font-semibold">Edit: {team}</h3>
+                      <h3 className="text-lg font-semibold">Edit: {displayName}</h3>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -206,11 +252,85 @@ export function PCAPreferencePanel() {
                   </Card>
                 )
               }
-              
+
+              // Render merged-away team card (muted, read-only)
+              if (isMergedAway && mergeStatus.mainTeam) {
+                const mainTeamPref = getPreferenceForTeam(mergeStatus.mainTeam)
+                const mainTeamDisplayName = displayNames[mergeStatus.mainTeam] || mergeStatus.mainTeam
+
+                return (
+                  <Card
+                    key={team}
+                    data-team-card={team}
+                    className="p-4 bg-muted/30 border-muted"
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="font-semibold text-lg text-muted-foreground">{displayName}</h4>
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal text-muted-foreground flex items-center gap-1">
+                          <GitMerge className="w-3 h-3" />
+                          Merged into {mainTeamDisplayName}
+                        </Badge>
+                      </div>
+                      <Badge variant="secondary" className="text-[10px]">
+                        Follows {mainTeamDisplayName}
+                      </Badge>
+                    </div>
+
+                    {/* Info banner */}
+                    <div className="bg-background/50 rounded-md p-3 mb-3 border border-dashed">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <GitMerge className="w-4 h-4" />
+                        <span>This team's PCA preferences are managed by <strong>{mainTeamDisplayName}</strong></span>
+                      </div>
+                    </div>
+
+                    {/* Read-only display of inherited preferences */}
+                    <div className="space-y-1.5 text-sm text-muted-foreground">
+                      <p>
+                        Floor PCA: <span className="text-foreground">{mainTeamPref?.floor_pca_selection ? (mainTeamPref.floor_pca_selection === 'upper' ? 'Upper' : 'Lower') : 'None'}</span>
+                      </p>
+                      <p>
+                        Preferred PCA: <span className="text-foreground">{mainTeamPref?.preferred_pca_ids && mainTeamPref.preferred_pca_ids.length > 0 ? mainTeamPref.preferred_pca_ids.map((id: string) => {
+                          const pca = staff.find(s => s.id === id)
+                          return pca ? pca.name : id
+                        }).join(', ') : 'None'}</span>
+                      </p>
+                      <p>
+                        Preferred slot: <span className="text-foreground">{mainTeamPref?.preferred_slots && mainTeamPref.preferred_slots.length > 0 ? getSlotTime(mainTeamPref.preferred_slots[0]) : 'None'}</span>
+                      </p>
+                    </div>
+
+                    {/* Action to view main team */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="mt-3 text-xs w-full text-muted-foreground hover:text-foreground"
+                      onClick={() => scrollToTeam(mergeStatus.mainTeam!)}
+                    >
+                      View {mainTeamDisplayName} Preferences <ArrowRight className="w-3 h-3 ml-1" />
+                    </Button>
+                  </Card>
+                )
+              }
+
+              // Render standard team card (or main team with contributing teams badge)
               return (
-                <Card key={team} className="p-4">
+                <Card key={team} data-team-card={team} className="p-4">
                   <div className="flex justify-between items-start mb-2">
-                    <h4 className="font-semibold text-lg">{team}</h4>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="font-semibold text-lg">{displayName}</h4>
+                      {isMainTeam && mergeStatus.contributingTeams && mergeStatus.contributingTeams.length > 0 && (
+                        <Badge 
+                          variant="outline" 
+                          className="text-[10px] px-1.5 py-0 font-normal text-muted-foreground flex items-center gap-1"
+                          title={`Merged with: ${mergeStatus.contributingTeams.map(t => displayNames[t] || t).join(', ')}`}
+                        >
+                          <Users className="w-3 h-3" />
+                          +{mergeStatus.contributingTeams.map(t => displayNames[t] || t).join(', ')}
+                        </Badge>
+                      )}
+                    </div>
                     <Button
                       variant="outline"
                       size="sm"

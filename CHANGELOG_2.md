@@ -3,6 +3,21 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-02-22
+
+### Added
+- **Shared team merge utilities (`lib/utils/teamMergeHelpers.tsx`)**: Centralized helper functions (`computeMergedIntoMap`, `getTeamMergeStatus`, `computeDisplayNames`) and `TeamMergeBadge` component for consistent merge badge rendering across dashboards.
+
+### Changed
+- **TeamConfigurationPanel merge badge display**: Merged-away teams now show "Merged into X" badge next to team name while remaining fully editable. Previously only main teams showed the `+contributing teams` badge.
+- **PCAPreferencePanel refactored**: Replaced local merge status implementations with shared utilities from `teamMergeHelpers.tsx` for consistency across dashboards.
+
+### Fixed
+- **Step 2.1 auto-scroll for merged teams**: Fixed three bugs affecting auto-scroll in merged team scenarios:
+  1. **Wrong team key in scroll lookup**: Scroll handler used `pending.team` instead of `nextSub.team` to construct the next substitution key.
+  2. **Substitution lookup failed**: `handleSelectionChange` and `addCoverSelection` only searched `substitutionsByTeam[team]`, but in merged teams the substitution is filed under the merged team. Added `findSubstitution()` helper that searches across all teams.
+  3. **Wrong team in scroll intent**: Scroll intent stored the substitution's original team instead of the display team (merged team). Now uses `getCurrentDisplayTeam()` for correct team reference.
+
 ## [Unreleased] - 2026-02-19
 
 ### Added
