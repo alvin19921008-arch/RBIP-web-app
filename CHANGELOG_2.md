@@ -3,6 +3,30 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-02-24
+
+### Added
+- **PCA Preference Panel revamp**:
+  - **Floor PCA Selection**: Replaced native `<select>` with button group [None/Upper/Lower]
+  - **Add Preferred PCA**: New selection flow with:
+    - Filter logic: Only show active and buffer status PCAs (exclude inactive)
+    - Regular and buffer PCA separated with divider
+    - Selection → Confirmation panel pattern with removable tags
+    - "Add Selected" and "Clear" buttons for confirmation
+  - **Configured Preferred PCA**:
+    - Numbered list with MoveUp/MoveDown arrows for reordering
+    - Smart arrow display: only show relevant arrows (1 PCA = no arrows, top item = only down arrow, bottom item = only up arrow)
+    - Inline delete confirmation (trash icon shows "Confirm?" button)
+  - **Preferred Slot buttons**: Updated active state styling to blue-600 per design guidelines
+  - **Scarcity Threshold**: Replaced native `<select>` with button group [Auto/Remind/Off]
+  - **Section headers**: Applied uppercase tracking styling per design principles
+
+### Fixed
+- **Special Program Panel state refresh**: Fixed bug where newly added staff didn't appear immediately in the edit form after adding
+
+### Changed
+- **Button active state**: Use `bg-blue-600 text-white` for selection buttons per design-elements-commonality.mdc (except Save button)
+
 ## [Unreleased] - 2026-02-22
 
 ### Added

@@ -16,7 +16,7 @@ import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfi
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAccessControl } from '@/lib/access/useAccessControl'
-import { ArrowRight, Users, GitMerge, ExternalLink } from 'lucide-react'
+import { ArrowRight, Users, GitMerge, ExternalLink, Trash2, MoveUp, MoveDown, X } from 'lucide-react'
 import { 
   computeMergedIntoMap, 
   getTeamMergeStatus, 
@@ -472,22 +472,23 @@ export function PCAPreferencePanel() {
 
               <div className="mt-3 grid gap-3 max-w-sm">
                 <div className="grid gap-2">
-                  <Label htmlFor="scarcity-behavior">When threshold is met</Label>
-                  <select
-                    id="scarcity-behavior"
-                    value={scarcityBehavior}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      if (v === 'auto_select' || v === 'remind_only' || v === 'off') {
-                        setScarcityBehavior(v)
-                      }
-                    }}
-                    className="px-3 py-2 border rounded bg-background text-sm"
-                  >
-                    <option value="auto_select">Auto pre-select Balanced in Step 3.1</option>
-                    <option value="remind_only">Remind only (no auto switch)</option>
-                    <option value="off">Off</option>
-                  </select>
+                  <Label>When threshold is met</Label>
+                  <div className="flex gap-1">
+                    {(['auto_select', 'remind_only', 'off'] as const).map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setScarcityBehavior(v)}
+                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                          scarcityBehavior === v
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                        }`}
+                      >
+                        {v === 'auto_select' ? 'Auto' : v === 'remind_only' ? 'Remind' : 'Off'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="scarcity-shortage-slots">Shortage threshold S (slots)</Label>
@@ -549,10 +550,12 @@ function PCAPreferenceForm({
   const [gymSchedule, setGymSchedule] = useState<number | null>(preference.gym_schedule ?? null)
   const [avoidGymSchedule, setAvoidGymSchedule] = useState<boolean>(preference.avoid_gym_schedule ?? true)
   const [floorPCASelection, setFloorPCASelection] = useState<'upper' | 'lower' | null>(preference.floor_pca_selection ?? null)
+  
+  const [pcaIdsToAdd, setPcaIdsToAdd] = useState<Set<string>>(new Set())
+  const [pcaIdPendingDelete, setPcaIdPendingDelete] = useState<string | null>(null)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    // Validation: max 2 preferred PCAs, max 1 preferred slot
     if (preferredPCA.length > 2) {
       toast.warning('Maximum 2 preferred PCAs allowed')
       return
@@ -571,23 +574,47 @@ function PCAPreferenceForm({
     })
   }
 
-  const togglePCA = (pcaId: string) => {
+  const handleAddPCAs = () => {
+    const newPCAs = Array.from(pcaIdsToAdd)
     setPreferredPCA(prev => {
-      if (prev.includes(pcaId)) {
-        return prev.filter(id => id !== pcaId)
+      const combined = [...prev, ...newPCAs].slice(0, 2)
+      return combined
+    })
+    setPcaIdsToAdd(new Set())
+  }
+
+  const handleRemovePCA = (pcaId: string) => {
+    setPreferredPCA(prev => prev.filter(id => id !== pcaId))
+    setPcaIdPendingDelete(null)
+  }
+
+  const movePCAInOrder = (pcaId: string, direction: 'up' | 'down') => {
+    const index = preferredPCA.indexOf(pcaId)
+    if (index === -1) return
+    if (direction === 'up' && index > 0) {
+      const newOrder = [...preferredPCA]
+      ;[newOrder[index - 1], newOrder[index]] = [newOrder[index], newOrder[index - 1]]
+      setPreferredPCA(newOrder)
+    } else if (direction === 'down' && index < preferredPCA.length - 1) {
+      const newOrder = [...preferredPCA]
+      ;[newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]]
+      setPreferredPCA(newOrder)
+    }
+  }
+
+  const togglePCAToAdd = (pcaId: string) => {
+    setPcaIdsToAdd(prev => {
+      const next = new Set(prev)
+      if (next.has(pcaId)) {
+        next.delete(pcaId)
       } else {
-        // Max 2 preferred PCAs
-        if (prev.length >= 2) {
-          return prev
-        }
-        return [...prev, pcaId]
+        next.add(pcaId)
       }
+      return next
     })
   }
 
   const handleSlotChange = (slot: number) => {
-    // Radio button behavior: select only this slot (max 1)
-    // If clicking the same slot that's already selected, deselect it
     if (preferredSlots.includes(slot)) {
       setPreferredSlots([])
     } else {
@@ -595,75 +622,242 @@ function PCAPreferenceForm({
     }
   }
 
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div>
-        <label className="block text-sm font-medium mb-1">Floor PCA Selection</label>
-        <select
-          value={floorPCASelection || ''}
-          onChange={(e) => setFloorPCASelection(e.target.value === '' ? null : e.target.value as 'upper' | 'lower')}
-          className="px-3 py-1 border rounded w-full"
-        >
-          <option value="">None</option>
-          <option value="upper">Upper</option>
-          <option value="lower">Lower</option>
-        </select>
-        <p className="text-xs text-muted-foreground mt-1">
-          Select the floor type for this team to filter compatible PCAs
-        </p>
-      </div>
+  const eligiblePCAs = staff.filter(s => {
+    if (s.status === 'inactive') return false
+    if (!s.floating) return false
+    return !preferredPCA.includes(s.id)
+  })
+  const regularPCAs = eligiblePCAs.filter(s => s.status !== 'buffer')
+  const bufferPCAs = eligiblePCAs.filter(s => s.status === 'buffer')
 
-      <div>
-        <label className="block text-sm font-medium mb-1">
-          Preferred PCA (max 2) {preferredPCA.length > 0 && `(${preferredPCA.length}/2)`}
-        </label>
-        <div className="max-h-40 overflow-y-auto border rounded p-2 pr-1 scrollbar-visible">
-          {staff.filter(s => s.floating).map((s) => (
-            <label key={s.id} className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                checked={preferredPCA.includes(s.id)}
-                disabled={!preferredPCA.includes(s.id) && preferredPCA.length >= 2}
-                onChange={(e) => togglePCA(s.id)}
-              />
-              <span className={!preferredPCA.includes(s.id) && preferredPCA.length >= 2 ? 'text-muted-foreground' : ''}>
-                {s.name}
-              </span>
-            </label>
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6">
+      <section>
+        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+          Floor PCA Selection
+        </h4>
+        <div className="flex gap-2">
+          {(['none', 'upper', 'lower'] as const).map((opt) => (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => setFloorPCASelection(opt === 'none' ? null : opt)}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                (opt === 'none' ? null : floorPCASelection) === opt
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80'
+              }`}
+            >
+              {opt === 'none' ? 'None' : opt.charAt(0).toUpperCase() + opt.slice(1)}
+            </button>
           ))}
         </div>
+        <p className="text-xs text-muted-foreground mt-2">
+          Select the floor type for this team to filter compatible PCAs
+        </p>
+      </section>
+
+      <hr className="border-border" />
+
+      <section>
+        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+          Add Preferred PCA
+        </h4>
+        <p className="text-xs text-muted-foreground mb-2">
+          Scroll to see full list. Select PCA to add.
+        </p>
+        <div className="max-h-40 overflow-y-auto bg-muted/30 rounded p-2 pr-1 scrollbar-visible">
+          {regularPCAs.map((s) => (
+            <label key={s.id} className="flex items-center space-x-2 py-1 cursor-pointer hover:bg-muted/50 rounded px-1">
+              <input
+                type="checkbox"
+                checked={pcaIdsToAdd.has(s.id)}
+                onChange={() => togglePCAToAdd(s.id)}
+              />
+              <span>{s.name}</span>
+            </label>
+          ))}
+          {bufferPCAs.length > 0 && regularPCAs.length > 0 && (
+            <hr className="border-border my-2" />
+          )}
+          {bufferPCAs.map((s) => (
+            <label key={s.id} className="flex items-center space-x-2 py-1 cursor-pointer hover:bg-muted/50 rounded px-1">
+              <input
+                type="checkbox"
+                checked={pcaIdsToAdd.has(s.id)}
+                onChange={() => togglePCAToAdd(s.id)}
+              />
+              <span>{s.name} (Buffer)</span>
+            </label>
+          ))}
+          {eligiblePCAs.length === 0 && (
+            <p className="text-sm text-muted-foreground py-2">No eligible PCA to add.</p>
+          )}
+        </div>
+
+        {pcaIdsToAdd.size > 0 && (
+          <div className="mt-3 w-full max-w-2xl bg-blue-50/40 border border-blue-100/60 rounded-xl p-3 shadow-sm">
+            <h4 className="text-[13px] font-semibold text-blue-900/90 mb-2">
+              Confirm to add {pcaIdsToAdd.size} PCA to {preference.team}:
+            </h4>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {Array.from(pcaIdsToAdd).map(id => {
+                const s = staff.find(st => st.id === id)
+                if (!s) return null
+                return (
+                  <span key={id} className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-white border border-blue-100/80 rounded-md text-xs font-medium text-blue-700 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+                    {s.name}
+                    <button
+                      type="button"
+                      onClick={() => togglePCAToAdd(id)}
+                      className="hover:text-blue-900 transition-colors"
+                    >
+                      ×
+                    </button>
+                  </span>
+                )
+              })}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                className="h-8 px-3 text-xs font-medium bg-[#0f172a] text-white rounded-md hover:bg-[#1e293b] transition-all"
+                onClick={handleAddPCAs}
+              >
+                Add Selected ({pcaIdsToAdd.size})
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-8 px-3 text-xs font-medium text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200 rounded-md transition-all"
+                onClick={() => setPcaIdsToAdd(new Set())}
+              >
+                Clear
+              </Button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <hr className="border-border" />
+
+      <section>
+        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+          Configured Preferred PCA
+        </h4>
+        <p className="text-xs text-muted-foreground mb-2">(max 2)</p>
+        {preferredPCA.length > 0 ? (
+          <div className="bg-muted/30 rounded p-3 space-y-2">
+            {preferredPCA.map((pcaId, idx) => {
+              const pca = staff.find(s => s.id === pcaId)
+              if (!pca) return null
+              const showUpArrow = preferredPCA.length > 1 && idx > 0
+              const showDownArrow = preferredPCA.length > 1 && idx < preferredPCA.length - 1
+              return (
+                <div key={pcaId} className="flex items-center justify-between py-1">
+                  <div className="flex items-center gap-1">
+                    {showUpArrow && (
+                      <button
+                        type="button"
+                        onClick={() => movePCAInOrder(pcaId, 'up')}
+                        className="p-1 hover:bg-muted rounded"
+                      >
+                        <MoveUp className="h-4 w-4" />
+                      </button>
+                    )}
+                    {showDownArrow && (
+                      <button
+                        type="button"
+                        onClick={() => movePCAInOrder(pcaId, 'down')}
+                        className="p-1 hover:bg-muted rounded"
+                      >
+                        <MoveDown className="h-4 w-4" />
+                      </button>
+                    )}
+                    {!showUpArrow && !showDownArrow && (
+                      <span className="w-8" />
+                    )}
+                    <span className="text-sm font-medium w-6">{idx + 1}.</span>
+                    <span className="text-sm">{pca.name}</span>
+                  </div>
+                  {pcaIdPendingDelete === pcaId ? (
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => handleRemovePCA(pcaId)}
+                      >
+                        Confirm?
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setPcaIdPendingDelete(null)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                      onClick={() => setPcaIdPendingDelete(pcaId)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground py-2">No preferred PCA configured.</p>
+        )}
         {preferredPCA.length > 1 && (
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="text-xs text-muted-foreground mt-2">
             Order: {preferredPCA.map(id => staff.find(s => s.id === id)?.name).join(' → ')}
           </p>
         )}
-      </div>
+      </section>
 
-      <div>
-        <label className="block text-sm font-medium mb-1">Preferred Slot (1 only)</label>
-        <div className="flex space-x-2">
+      <hr className="border-border" />
+
+      <section>
+        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+          Preferred Slot (1 only)
+        </h4>
+        <div className="flex gap-2">
           {[1, 2, 3, 4].map((slot) => (
             <button
               key={slot}
               type="button"
               onClick={() => handleSlotChange(slot)}
-              className={`px-3 py-1 rounded ${
-                preferredSlots.includes(slot) ? 'bg-blue-600 text-white' : 'bg-secondary'
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                preferredSlots.includes(slot)
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80'
               }`}
             >
               {getSlotLabel(slot)}
             </button>
           ))}
         </div>
-      </div>
+      </section>
 
-      <div>
-        <label className="block text-sm font-medium mb-1">Gym Schedule</label>
-        <div className="flex items-center space-x-2">
+      <hr className="border-border" />
+
+      <section>
+        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+          Gym Schedule
+        </h4>
+        <div className="flex items-center gap-2">
           <select
             value={gymSchedule || ''}
             onChange={(e) => setGymSchedule(e.target.value ? parseInt(e.target.value) : null)}
-            className="px-3 py-1 border rounded"
+            className="px-3 py-1.5 border rounded-md bg-background text-sm"
           >
             <option value="">No gym schedule</option>
             {[1, 2, 3, 4].map((slot) => (
@@ -679,7 +873,7 @@ function PCAPreferenceForm({
               className={`px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
                 avoidGymSchedule
                   ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80'
               }`}
             >
               Avoid
@@ -690,21 +884,21 @@ function PCAPreferenceForm({
               className={`px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap border-l border-input ${
                 !avoidGymSchedule
                   ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80'
               }`}
             >
               Not to avoid
             </button>
           </div>
         </div>
-        <p className="text-xs text-muted-foreground mt-1">
+        <p className="text-xs text-muted-foreground mt-2">
           {avoidGymSchedule 
-            ? 'Floating PCA will avoid this team\'s gym schedule slot'
-            : 'Floating PCA can be assigned to this team\'s gym schedule slot'}
+            ? "Floating PCA will avoid this team's gym schedule slot"
+            : "Floating PCA can be assigned to this team's gym schedule slot"}
         </p>
-      </div>
+      </section>
 
-      <div className="flex space-x-2">
+      <div className="flex gap-2 pt-2">
         <Button type="submit">Save</Button>
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel
