@@ -26,6 +26,12 @@
 
 ### Changed
 - **Button active state**: Use `bg-blue-600 text-white` for selection buttons per design-elements-commonality.mdc (except Save button)
+- **SPT Allocation Panel flat design**: Removed border boxes around allocation items, replaced with `divide-y` list layout. Specialty now on dedicated second row. Ghost buttons for lighter visual weight.
+- **Cursor skill/rules consolidation**: Consolidated Playwright smoke testing guidance:
+  - Renamed `playwright-smoke-rbip` → `playwright-smoke` (removed redundant prefix)
+  - Merged two rules (`playwright-smoke-on-demand`, `playwright-config-on-demand`) into single `playwright-smoke.mdc`
+  - Created global `ui-trend-scout` skill for context-aware design trend searching across all projects
+  - Optimized `design-elements-commonality.mdc` to constraint-based format (removed verbose examples)
 
 ## [Unreleased] - 2026-02-22
 

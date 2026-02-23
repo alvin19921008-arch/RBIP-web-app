@@ -127,113 +127,126 @@ export function SPTAllocationPanel() {
               </Button>
             )}
             
-            {allocations.map((alloc) => {
-              const isEditing = editingAllocation?.id === alloc.id
-              
-              if (isEditing) {
+            <div className="divide-y divide-border">
+              {allocations.map((alloc) => {
+                const isEditing = editingAllocation?.id === alloc.id
+                
+                if (isEditing) {
+                  return (
+                    <div
+                      key={alloc.id}
+                      ref={expand.expandedRef}
+                      className={expand.getExpandedAnimationClass(alloc.id)}
+                    >
+                      <Card className="p-4 border-2">
+                        <div className="flex justify-between items-center mb-4">
+                          <h3 className="text-lg font-semibold">
+                            Edit: {staff.find(s => s.id === alloc.staff_id)?.name || 'Unknown'}
+                          </h3>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => expand.close(() => setEditingAllocation(null))}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                        <SPTAllocationForm
+                          allocation={editingAllocation}
+                          staff={staff}
+                          onSave={handleSave}
+                          onCancel={() => expand.close(() => setEditingAllocation(null))}
+                        />
+                      </Card>
+                    </div>
+                  )
+                }
+                
                 return (
-                  <div
-                    key={alloc.id}
-                    ref={expand.expandedRef}
-                    className={expand.getExpandedAnimationClass(alloc.id)}
+                  <div 
+                    key={alloc.id} 
+                    className={`py-4 px-2 hover:bg-muted/30 transition-colors ${alloc.active === false ? 'opacity-50' : ''}`}
                   >
-                    <Card className="p-4 border-2">
-                      <div className="flex justify-between items-center mb-4">
-                        <h3 className="text-lg font-semibold">
-                          Edit: {staff.find(s => s.id === alloc.staff_id)?.name || 'Unknown'}
-                        </h3>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <h3 className="font-semibold text-sm">
+                            {staff.find(s => s.id === alloc.staff_id)?.name || 'Unknown'}
+                          </h3>
+                          {alloc.active === false && (
+                            <span className="text-xs text-muted-foreground">(Inactive)</span>
+                          )}
+                          {alloc.is_rbip_supervisor && (
+                            <span className="text-xs text-primary font-medium">Supervisor</span>
+                          )}
+                        </div>
+                        {alloc.specialty && (
+                          <p className="text-xs text-primary font-medium mb-1">
+                            {alloc.specialty}
+                          </p>
+                        )}
+                        <p className="text-xs text-muted-foreground">
+                          <span className="text-foreground">{alloc.teams.join(', ')}</span>
+                          <span className="mx-1.5 text-border">·</span>
+                          <span>
+                            {(() => {
+                              const cfg = (alloc as any).config_by_weekday as any
+                              const days: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri']
+                              const computeEff = (slots: number[], mode: 'AND' | 'OR') => {
+                                if (slots.length === 0) return 0
+                                if (mode === 'OR' && slots.length > 1) return 1
+                                return slots.length
+                              }
+                              const parts: string[] = []
+                              days.forEach((d) => {
+                                const c = cfg?.[d]
+                                const enabled = c ? c.enabled !== false : false
+                                if (!enabled) return
+                                const contributes = c.contributes_fte !== false
+                                const slots = Array.isArray(c.slots) ? c.slots.filter((n: any) => [1, 2, 3, 4].includes(n)) : []
+                                const modes: { am: 'AND' | 'OR'; pm: 'AND' | 'OR' } = c.slot_modes
+                                  ? {
+                                      am: c.slot_modes.am === 'OR' ? 'OR' : 'AND',
+                                      pm: c.slot_modes.pm === 'OR' ? 'OR' : 'AND',
+                                    }
+                                  : { am: 'AND', pm: 'AND' }
+                                const amSlots = slots.filter((s: number) => s === 1 || s === 2)
+                                const pmSlots = slots.filter((s: number) => s === 3 || s === 4)
+                                const eff = computeEff(amSlots, modes.am) + computeEff(pmSlots, modes.pm)
+                                const fte = contributes ? eff * 0.25 : 0
+                                parts.push(`${d}:${fte.toFixed(2)}`)
+                              })
+                              return parts.length > 0 ? parts.join(', ') : 'No weekday config'
+                            })()}
+                          </span>
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => expand.close(() => setEditingAllocation(null))}
+                          className="h-8 px-2 text-xs"
+                          onClick={() => {
+                            setEditingAllocation(alloc)
+                            expand.open(alloc.id)
+                          }}
                         >
-                          Cancel
+                          Edit
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => handleDelete(alloc.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
-                      <SPTAllocationForm
-                        allocation={editingAllocation}
-                        staff={staff}
-                        onSave={handleSave}
-                        onCancel={() => expand.close(() => setEditingAllocation(null))}
-                      />
-                    </Card>
+                    </div>
                   </div>
                 )
-              }
-              
-              return (
-                <div key={alloc.id} className={`border p-4 rounded ${alloc.active === false ? 'opacity-50' : ''}`}>
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <h3 className="font-semibold">
-                        {staff.find(s => s.id === alloc.staff_id)?.name || 'Unknown'}
-                        {alloc.active === false && (
-                          <span className="ml-2 text-xs text-muted-foreground">(Inactive)</span>
-                        )}
-                      </h3>
-                      <p className="text-sm text-muted-foreground">
-                        Teams: {alloc.teams.join(', ')} | Weekday FTE:{' '}
-                        {(() => {
-                          const cfg = (alloc as any).config_by_weekday as any
-                          const days: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri']
-                          const computeEff = (slots: number[], mode: 'AND' | 'OR') => {
-                            if (slots.length === 0) return 0
-                            if (mode === 'OR' && slots.length > 1) return 1
-                            return slots.length
-                          }
-                          const parts: string[] = []
-                          days.forEach((d) => {
-                            const c = cfg?.[d]
-                            const enabled = c ? c.enabled !== false : false
-                            if (!enabled) return
-                            const contributes = c.contributes_fte !== false
-                            const slots = Array.isArray(c.slots) ? c.slots.filter((n: any) => [1, 2, 3, 4].includes(n)) : []
-                            const modes: { am: 'AND' | 'OR'; pm: 'AND' | 'OR' } = c.slot_modes
-                              ? {
-                                  am: c.slot_modes.am === 'OR' ? 'OR' : 'AND',
-                                  pm: c.slot_modes.pm === 'OR' ? 'OR' : 'AND',
-                                }
-                              : { am: 'AND', pm: 'AND' }
-                            const amSlots = slots.filter((s: number) => s === 1 || s === 2)
-                            const pmSlots = slots.filter((s: number) => s === 3 || s === 4)
-                            const eff = computeEff(amSlots, modes.am) + computeEff(pmSlots, modes.pm)
-                            const fte = contributes ? eff * 0.25 : 0
-                            parts.push(`${d}:${fte.toFixed(2)}`)
-                          })
-                          return parts.length > 0 ? parts.join(', ') : '--'
-                        })()}
-                        {alloc.specialty && (
-                          <span className="ml-2 text-xs font-semibold text-primary">Specialized service: {alloc.specialty}</span>
-                        )}
-                        {alloc.is_rbip_supervisor && (
-                          <span className="ml-2 text-xs font-semibold text-primary">(RBIP Supervisor)</span>
-                        )}
-                      </p>
-                    </div>
-                    <div className="flex space-x-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setEditingAllocation(alloc)
-                          expand.open(alloc.id)
-                        }}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleDelete(alloc.id)}
-                        className="text-destructive hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
+              })}
+            </div>
 
             {editingAllocation && !editingAllocation.id && (
               <div

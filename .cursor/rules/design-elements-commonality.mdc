@@ -1,193 +1,51 @@
 ---
-description: Design standards for consistent, pragmatic UI/UX. Favor flat hierarchy, clear visual grouping, and user-friendly density.
+description: RBIP-specific UI constraints. Applied when building dashboard components.
+globs: ["components/**/*.tsx", "app/**/*.tsx"]
 alwaysApply: false
 ---
 
-# Design Elements Commonality
+# RBIP UI Constraints
 
-Pragmatic UI standards that prioritize readability and user efficiency over decorative complexity.
+## Component Library
 
----
+| Element | Rule |
+|---------|------|
+| Icons | lucide-react only (no emojis) |
+| Select | Radix UI `@/components/ui/select` (never native `<select>`) |
+| Buttons - Selection | `bg-blue-600 text-white` active / `bg-gray-100 text-gray-700` idle |
+| Buttons - Action | Semantic variants: `default`, `outline`, `destructive` |
 
-## 1. Structural Hierarchy (Anti-Nesting)
+## Layout Rules
 
-**Goal**: Minimize "box under box" nesting. Use flat layouts with clear visual grouping.
+- Max nesting: 2 levels (page → section/card)
+- Grouping: use `space-y-6`, `divide-y`, `gap-4` (not nested borders)
+- Dialog widths: `max-w-lg` default, `max-w-2xl` for tables/wide forms
+- Text: allow wrapping (never `whitespace-nowrap` unless icon/button)
 
-| Approach | ✅ Do | ❌ Avoid |
-|----------|-------|----------|
-| Container depth | 2 levels max (page → card/section) | 3+ nested borders |
-| Grouping | Spacing, subtle borders (`border-b`), background tints | Multiple nested cards |
-| Separation | `divide-y`, `gap-6`, `py-4` | `border` wrapping every sub-element |
-| Elevation | Single shadow level, subtle | Stacked shadows creating depth illusion |
+## Visual Tokens
 
-**Progressive Disclosure**: Show summary info inline; hide details behind expand/collapse or secondary views. Don't put complex forms inside cards inside cards.
+| Element | Style |
+|---------|-------|
+| Tooltips | `bg-white border border-border shadow-md` |
+| Cards | Self-contained units only (not wrappers for every sub-element) |
+| Elevation | Single subtle shadow level max |
+| Borders | Use `border-border` or `divide-y`, not harsh solid borders |
 
-```tsx
-// ✅ Flat section with divider grouping
-<div className="space-y-6">
-  <section>
-    <h3 className="text-sm font-medium mb-3">Team Configuration</h3>
-    <div className="grid grid-cols-3 gap-4">
-      {/* Cards are siblings, not nested */}
-    </div>
-  </section>
-  <hr className="border-border" />
-  <section>
-    <h3 className="text-sm font-medium mb-3">Preferences</h3>
-    {/* Content */}
-  </section>
-</div>
+## Anti-Patterns (Never Do)
 
-// ❌ Deep nesting
-<Card><CardContent>
-  <Card><CardContent>
-    <Card><CardContent>...</CardContent></Card>
-  </CardContent></Card>
-</CardContent></Card>
-```
+- ❌ Nested `<Card>` beyond 2 levels
+- ❌ Native `<select>` in dialogs
+- ❌ Emoji icons (ℹ️ ⚠️ ✓)
+- ❌ `max-w-4xl`+ dialogs without justification
+- ❌ 3+ nested border levels
+- ❌ Multiple accent colors
+- ❌ Different hues for different surfaces
 
----
+## Quick Reference: Spacing Scale
 
-## 2. Icons
-
-Use **lucide-react** icons only. Never use emoji icons.
-
-```tsx
-// ✅ CORRECT
-import { Info, Edit2, Trash2, Plus } from 'lucide-react'
-<Info className="h-4 w-4" />
-
-// ❌ WRONG
-<p>ℹ️ Information text</p>
-```
-
----
-
-## 3. Buttons
-
-| Type | Style | Example |
-|------|-------|---------|
-| **Selection** (teams, weekdays, slots) | Blue: `bg-blue-600 text-white` when selected, `bg-gray-100 text-gray-700` when idle | Team pickers, slot toggles |
-| **Action** (Save, Cancel, Add, Delete) | Semantic variants | `variant="outline"` Cancel, `variant="destructive"` Delete |
-
-```tsx
-// ✅ Selection buttons (blue)
-<Button className={cn(
-  isSelected ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
-)}>
-  {team}
-</Button>
-
-// ✅ Action buttons (semantic)
-<Button type="submit">Save</Button>
-<Button variant="outline" onClick={onCancel}>Cancel</Button>
-<Button variant="destructive" onClick={handleDelete}>Delete</Button>
-```
-
----
-
-## 4. Dropdowns & Select
-
-Always use shared `Select` components (Radix) in dialogs/forms. Avoid native `<select>`.
-
-```tsx
-// ✅ CORRECT
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-
-<Select value={staffId} onValueChange={setStaffId}>
-  <SelectTrigger>
-    <SelectValue placeholder="Select SPT" />
-  </SelectTrigger>
-  <SelectContent>
-    {staff.map((s) => (
-      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-    ))}
-  </SelectContent>
-</Select>
-
-// ❌ WRONG - native select in dialogs
-<select value={staffId} onChange={(e) => setStaffId(e.target.value)}>
-  <option value="">Select SPT</option>
-</select>
-```
-
----
-
-## 5. Dialog Width
-
-| Content Type | Width | Notes |
-|--------------|-------|-------|
-| Standard forms, confirmations | `max-w-lg` (512px) | Default for most dialogs |
-| Tables, wide forms, side-by-side | `max-w-2xl` or `max-w-4xl` | Only when content genuinely needs space |
-| Wizards, multi-step | `max-w-2xl` | Consistent width across steps |
-
-Always allow text wrapping. Never force single-line text that truncates.
-
-```tsx
-// ✅ Default (most dialogs)
-<DialogContent className="max-w-lg">
-  <p className="text-xs text-muted-foreground">
-    Instruction text that wraps naturally
-  </p>
-</DialogContent>
-
-// ✅ Wide (only for tables/large forms)
-<DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-  {/* Wide content */}
-</DialogContent>
-```
-
----
-
-## 6. Tooltips
-
-Background should be **white** with border and shadow for visibility.
-
-```tsx
-// ✅ CORRECT
-<div className="px-2 py-1 text-xs bg-white border border-border rounded-md shadow-md">
-  {tooltipContent}
-</div>
-```
-
----
-
-## 7. Cards & Content Grouping
-
-Cards are for **self-contained, modular units**—not for wrapping every sub-element.
-
-| Use Card For | Don't Use Card For |
-|--------------|-------------------|
-| Dashboard widgets | Individual form rows |
-| Team/entity summaries | Inline metadata pairs |
-| Configurable panels | Static text blocks |
-
-Prefer **section headers with spacing** over nested cards:
-
-```tsx
-// ✅ Section with header + grid
-<div className="space-y-3">
-  <div className="flex items-center justify-between">
-    <h3 className="text-sm font-medium">Active Merges</h3>
-    <Button size="sm">Create Merge</Button>
-  </div>
-  <div className="grid grid-cols-2 gap-3">
-    {/* Flat cards, not nested */}
-  </div>
-</div>
-```
-
----
-
-## Summary Checklist
-
-When creating new UI components:
-
-- [ ] **Structure**: Flat hierarchy (max 2 nesting levels), use spacing/dividers not nested borders
-- [ ] **Progressive disclosure**: Show essential info inline, hide complexity behind expand/collapse
-- [ ] **Icons**: lucide-react only (no emojis)
-- [ ] **Buttons**: Selection = blue, Actions = semantic variants
-- [ ] **Dropdowns**: Radix `Select` components (not native `<select>`)
-- [ ] **Dialogs**: `max-w-lg` default, wider only for tables/forms
-- [ ] **Tooltips**: White background with border
-- [ ] **Cards**: Use for modular units, not for every sub-element
+| Context | Value |
+|---------|-------|
+| Icon gaps | `gap-1`, `gap-2` |
+| Component internal | `p-3`, `p-4` |
+| Section gaps | `space-y-6`, `gap-6` |
+| Major separation | `space-y-8` |
