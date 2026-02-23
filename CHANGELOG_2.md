@@ -26,43 +26,22 @@
   2. **Substitution lookup failed**: `handleSelectionChange` and `addCoverSelection` only searched `substitutionsByTeam[team]`, but in merged teams the substitution is filed under the merged team. Added `findSubstitution()` helper that searches across all teams.
   3. **Wrong team in scroll intent**: Scroll intent stored the substitution's original team instead of the display team (merged team). Now uses `getCurrentDisplayTeam()` for correct team reference.
 
-## [Unreleased] - 2026-02-19
-
 ### Added
-- **GifViewer component**: Expandable GIF viewer for help center FAQ answers. Ghost button overlay on thumbnails opens centered modal with backdrop blur; max-width 560px for optimal 720p viewing.
-- **Access context provider**: Server-side role fetching in dashboard layout eliminates "flash" of admin-only features. `AccessProvider` wraps authenticated routes with initial role/settings from server; `useAccessControl` uses context as initial state.
-- **Snapshot reminder FAQ**: Detailed answer explaining yellow alert icon, which categories are compared (staff profile, team config, ward config, special programs, SPT allocations, PCA preferences), and admin sync/publish actions.
-- **Team merge configuration**: Added the new “Team merge” tab, Supabase migrations (merge columns + policies), canonicalization utilities, and merge-aware schedule UI (dynamic grid/columns, substitution wizard inputs, snapshot diffs, and PCA/bed aggregation) so merged teams display like a single main team while keeping split teams canonicalized underneath.
-
--### Changed
-- **Layout width constraints**: Responsive min-width (`1024px` → `1280px` lg → `1440px` xl) and max-width capped at `1600px` via CSS variable `--rbip-app-max-width`. Root container uses `mx-auto` for centering on ultra-wide screens.
-- **StaffCardColorGuideAnswer**: Removed yellow background when displayed in help center; uses neutral card styling. Content colors use semantic `text-foreground`/`text-muted-foreground` for both popover and help center contexts.
-- **Schedule copy performance & resilience**: Copy now prefers the DB RPC path (`rpc:yes`), skips baseline rebase when the source snapshot head matches current Global, and surfaces RPC/rebase diagnostics (including `rpcError`) in the developer timing tooltip. Added atomic long-term RPC `copy_schedule_with_rebase_v1` (copy + rebase in one transaction) with graceful fallback when unavailable.
-- **Developer cache and navigation guards**: The developer cache badge now exposes a tiny chevron menu that clears the per-date cache and reloads the schedule, history deletes + navigation clear the cache/last-open key, and the initial date resolver resets its Strict-Mode guard so “Loading schedule…” can finish even after the cleanup pass.
-- **Schedule draft persistence**: Step 2/4 edits now auto-flush into the in-memory draft cache (with identity checks) whenever dirty, the confirm buttons read “Confirm”, and allocation notes toasts remind you to “Save Schedule” before the data reaches the database.
-- **Step 2/3 footers + Step 2.0 helper**: Step 2.0 cards with multiple slots now show a brief “hover over the PCA name to remove them from a selected slot” helper, the Step 2.1/2.2 footers collapse to a single mobile row (back / +SPT / More / Confirm), the Step 3 mini-step footers show mobile labels like “Continue”, “Skip”, and “Assign”, and the Relieving Beds “Edit” trigger becomes a tighter pill button once Step 4 has run so the control feels more like a button.
-- **Step 3.4 floating PCA gym-avoid behavior**: Cycle 3 cleanup now honors gym avoidance as a first-class constraint, but if a team still needs ≥0.25 FTE and **no** other non-gym slots remain anywhere in the pool, the gym slot is allowed as a deterministic “last resort” so teams aren’t stuck forever.
-- **Step 3.4 preference handling & messaging**: Standard mode now treats Step 3.2/3.3 selections as “select = reserve, deselect = free,” adds a strictness toggle that either guards the whole preferred PCA or only the selected slots, keeps the gym-avoid wording dynamic, and surfaces a dismissible scarcity banner that no longer pushes the method card.
-
-### Fixed
-- **Mobile navbar width**: Navbar now has `min-w-[1024px]` to match dashboard layout, preventing content overflow on narrow screens.
-- **Step 3.1 team order horizontal scroll**: Added visible thin scrollbar on mobile for the team order drag area.
-- **Copy landing step & UX cues**: After copy-to-new-day, Step Indicator lands on Step 1 (Leave & FTE). Date highlight and “Leave setup” CTA pulse are now synchronized on the same “arrival” trigger and share one duration constant.
-
-## [Unreleased] - 2026-02-17
-
-### Added
-- **Step 2.2 SPT dialog custom leave types**: When leave type is "others", dialog now shows a custom text input field that preserves the custom leave description from Step 1. Custom text is displayed in the leave badge and saved as the actual leave type.
-- **Step 2.1 streamlined layout**: Removed outer border boxes, consolidated header to single row (PCA name + team badge + missing slots), removed redundant table caption. Added visual hierarchy with horizontal dividers instead of nested containers.
-- **StaffEditDialog SPT FTE visualization**: Added minus (−) and equals (=) symbols between FTE fields to show equation relationship (FTE − FTE Cost = FTE Remaining). Added instruction text for SPT leave edit.
-- **Step 1 leave setup wizard**: Added a multi-stage dialog that builds the leave draft list, keeps therapist and PCA edits separate, supports quick search/picker interactions, and previews exactly which staff have leave before saving; the draft list now only surfaces staff with a non-on-duty leave type.
-- **Help-focused GIF assist**: Step 2.0 help popover now shows the animated “step 2 PCA cover” clip, and FAQ answers for the summary info box, Staff Pool, and contextual actions render matching GIFs via the shared `helpMedia` helper. Added `scripts/upload-help-media.mjs` + `npm run blob:upload-help-media` so you can batch-upload the clips to Vercel Blob and keep `NEXT_PUBLIC_HELP_MEDIA_*` URLs in sync. This helper and script now include new SHS/student adjustments and saved snapshot diff clips for the Beds and Snapshot FAQ answers.
-
-### Fixed
-- **SpecialProgramOverrideDialog slot re-selection bug**: Fixed issue where deselecting and reselecting a slot would show it as "uncovered" even though the primary PCA could cover it. Now auto-assigns primary PCA to re-added slots.
-- **SPT leave state sync in Step 2.2**: SPTs with any non-on-duty leave type now correctly display as "leave" state in Step 2.2 dialog.
-- **Step 2.0 multi-slot coverage helper**: The “Cover remaining slots” helper now stays visible even when all slots are covered, and the dropdown lists the primary/used PCAs so you can reassign without reopening the dialog.
-- **Help center / tour guidance polish**: Step 1/2/3 help icons now live in dialog headers, the Help Center dialog closes via overlay or Esc, tours/faqs became context-aware (Dashboard vs Schedule), and FAQ answers now reference the shared staff-card color guide + detailed Sync/Publish help.
+- **Dashboard UI refactor - flat hierarchy design**:
+  - **Outer Card removal**: Removed Card wrappers from 9 dashboard panels (SPT Allocation, Special Programs, Account Management, Access Settings, Staff Profile, Ward Config, PCA Preference, Team Configuration, Config Sync) following flat hierarchy design principles (max 2 nesting levels).
+  - **Layout flattening**: Replaced nested "box under box" layouts with horizontal dividers and spacing.
+  - **Duplicate title removal**: Removed redundant titles in Account Management, Access Settings, Config Sync, and PCA Preference panels.
+  - **Special Programs panel**:
+    - Progressive disclosure with collapsible rank sections (THERAPISTS / PCA) using lucide chevron icons
+    - Per-staff expand/collapse with summary view showing weekday FTE individually
+    - Multi-select add staff with confirmation pane showing selected staff as removable tags
+    - Inline delete confirmation (trash icon shows "Confirm?" button)
+  - **PCA Preference panel**:
+    - Inactive staff filtered from preference order
+    - Warning banner ignores buffer PCA (only checks regular staff)
+    - Buffer staff included in list with "(Floating, Buffer)" label
+  - **Add Staff list**: Filtered to exclude inactive staff, with regular staff shown first and buffer staff separated by divider at bottom.
+  - **State refresh**: Fixed state refresh bug where newly added staff appeared immediately without page refresh.
 
 ### Changed
 - **StaffEditDialog AM/PM selection**: Removed AM/PM selection for SPT rank; now only available for RPT and APPT therapists.
@@ -103,7 +82,7 @@
 
 ### Added
 - **Playwright smoke testing scaffold**: Chromium-only Playwright setup for fast refactor safety gates, including `playwright.config.ts`, `tests/smoke/*`, and npm scripts (`test:smoke`, `test:smoke:headed`, `test:smoke:debug`). Smoke tests prefer localhost dev auto-login and fall back to env credentials when needed.
-- **Cursor on-demand smoke skill/rules**: Project skill `.cursor/skills/playwright-smoke-rbip` plus scoped rules (`playwright-smoke-on-demand`, `playwright-config-on-demand`) so smoke-test guidance is loaded only when editing smoke test/config files (token-efficient).
+- **Cursor on-demand smoke skill/rules**: Consolidated project skill `.cursor/skills/playwright-smoke` plus merged rule (`playwright-smoke.mdc`) for smoke test and config files—loaded on-demand for token efficiency.
 - **Phase 2.1 – PCA allocation off main thread**: Web Worker adapter for heavy PCA allocation (`lib/features/schedule/pcaAllocation.worker.ts`, `pcaAllocationEngine.ts`, `pcaAllocationWorkerTypes.ts`). Request/response shape unchanged; optional env flags `NEXT_PUBLIC_SCHEDULE_PCA_WORKER` and `NEXT_PUBLIC_SCHEDULE_PCA_WORKER_SHADOW_COMPARE`; sync fallback when worker is disabled or fails.
 
 ### Changed

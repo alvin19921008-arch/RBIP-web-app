@@ -596,11 +596,7 @@ function PCAPreferenceForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 border p-4 rounded">
-      <div>
-        <label className="block text-sm font-medium mb-1">Team: {preference.team}</label>
-      </div>
-
+    <form onSubmit={handleSubmit} className="space-y-4">
       <div>
         <label className="block text-sm font-medium mb-1">Floor PCA Selection</label>
         <select

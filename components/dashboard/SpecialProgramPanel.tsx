@@ -9,7 +9,7 @@ import { Staff, Team } from '@/types/staff'
 import { Weekday } from '@/types/staff'
 import { getSlotLabel } from '@/lib/utils/slotHelpers'
 import { createEmptyTeamRecordFactory } from '@/lib/utils/types'
-import { Trash2, Edit2, ChevronUp, ChevronDown } from 'lucide-react'
+import { Trash2, Edit2, ChevronUp, ChevronDown, ChevronRight, MoveUp, MoveDown } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
@@ -48,6 +48,10 @@ export function SpecialProgramPanel() {
   const [savedTherapistPreferenceOrder, setSavedTherapistPreferenceOrder] = useState<Record<Team, string[]>>(createEmptyTeamRecordFactory<string[]>(() => []))
   const [showPreferenceDialog, setShowPreferenceDialog] = useState(false)
   const [pendingSave, setPendingSave] = useState<(() => Promise<void>) | null>(null)
+  const [expandedStaffIds, setExpandedStaffIds] = useState<Set<string>>(new Set())
+  const [collapsedRankGroups, setCollapsedRankGroups] = useState<Set<'therapists' | 'pca'>>(new Set(['pca']))
+  const [staffIdsToAdd, setStaffIdsToAdd] = useState<Set<string>>(new Set())
+  const [staffIdPendingDelete, setStaffIdPendingDelete] = useState<string | null>(null)
   const expand = useDashboardExpandableCard<string>({ animationMs: 220 })
   const supabase = createClientComponentClient()
   const toast = useToast()
@@ -94,10 +98,17 @@ export function SpecialProgramPanel() {
     }
   }
 
-  const handleEditStaffProgram = (programName: string) => {
+  const handleEditStaffProgram = (programName: string, newlyAddedStaffIds: string[] = []) => {
     // Find existing program config or create new
     const existingProgram = programs.find(p => p.name === programName)
-    const staffInProgram = staffPrograms.find(sp => sp.name === programName)?.staff || []
+    let staffInProgram = staffPrograms.find(sp => sp.name === programName)?.staff || []
+    
+    // If newly added staff IDs provided (after add operation), include them
+    // This handles the case where state hasn't updated yet in the closure
+    if (newlyAddedStaffIds.length > 0) {
+      const newStaff = staff.filter(s => newlyAddedStaffIds.includes(s.id))
+      staffInProgram = [...staffInProgram, ...newStaff]
+    }
     
     // Build staff configs from existing data or defaults
     const configs: StaffProgramConfig[] = staffInProgram.map(s => {
@@ -183,8 +194,9 @@ export function SpecialProgramPanel() {
     await Promise.all(updates)
     await loadData()
     
-    // Refresh the edit form with new staff
-    handleEditStaffProgram(programName)
+    // Refresh the edit form with new staff - need to pass the newly added staff IDs
+    // because the state hasn't updated in the closure yet
+    handleEditStaffProgram(programName, staffIds)
   }
 
   const handleRemoveStaffFromProgram = async (programName: string, staffId: string) => {
@@ -449,6 +461,8 @@ export function SpecialProgramPanel() {
         setPreferenceOrders(createEmptyTeamRecordFactory<string[]>(() => []))
         setPcaPreferenceOrder([])
         setPendingSave(null)
+        setStaffIdsToAdd(new Set())
+        setStaffIdPendingDelete(null)
       })
     } catch (err) {
       console.error('Error saving staff program:', err)
@@ -545,11 +559,9 @@ export function SpecialProgramPanel() {
           <p>Loading...</p>
         ) : (
           <div className="space-y-6">
-            {/* Existing Special Programs from Staff Data */}
+            {/* Special Programs from Staff Data */}
             {staffPrograms.length > 0 && (
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Existing Special Programs (from Staff Data)</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {staffPrograms.map((sp) => {
                     const existingProgram = programs.find(p => p.name === sp.name)
                     const isEditing = editingStaffProgram?.name === sp.name
@@ -567,7 +579,11 @@ export function SpecialProgramPanel() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => expand.close(() => setEditingStaffProgram(null))}
+                                onClick={() => expand.close(() => {
+                                  setEditingStaffProgram(null)
+                                  setStaffIdsToAdd(new Set())
+                                  setStaffIdPendingDelete(null)
+                                })}
                               >
                                 Cancel
                               </Button>
@@ -575,8 +591,10 @@ export function SpecialProgramPanel() {
                             
                             <div className="space-y-6">
                               {/* Add Staff Section */}
-                              <div className="border p-4 rounded">
-                                <h4 className="font-semibold mb-3">Add Staff to Program</h4>
+                              <div>
+                                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                                  Add Staff to Program
+                                </h4>
                                 {editingStaffProgram.name === 'DRM' && (
                                   <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
                                     <p className="font-medium mb-1">PCA Note:</p>
@@ -589,187 +607,436 @@ export function SpecialProgramPanel() {
                                     <p>The allocation algorithm would only assign PCA to Robotic, so only PCA is needed to be included here.</p>
                                   </div>
                                 )}
-                                <div className="max-h-40 overflow-y-auto border rounded p-2 pr-1 scrollbar-visible">
-                                  {staff
-                                    .filter(s => {
-                                      // For DRM, filter out PCA staff
-                                      if (editingStaffProgram.name === 'DRM' && s.rank === 'PCA') {
-                                        return false
-                                      }
-                                      // For Robotic, filter to only show PCA staff
-                                      if (editingStaffProgram.name === 'Robotic' && s.rank !== 'PCA') {
-                                        return false
-                                      }
-                                      // Filter out staff already in program
+                                <p className="text-xs text-muted-foreground mb-2">
+                                  Scroll to see full list. Select staff to add.
+                                </p>
+                                <div className="max-h-40 overflow-y-auto bg-muted/30 rounded p-2 pr-1 scrollbar-visible">
+                                  {(() => {
+                                    const eligibleStaff = staff.filter(s => {
+                                      if (s.status === 'inactive') return false
+                                      if (editingStaffProgram.name === 'DRM' && s.rank === 'PCA') return false
+                                      if (editingStaffProgram.name === 'Robotic' && s.rank !== 'PCA') return false
                                       return !editingStaffProgram.configs.some(c => c.staff_id === s.id)
                                     })
-                                    .map((s) => (
-                                      <label key={s.id} className="flex items-center space-x-2 py-1">
-                                        <input
-                                          type="checkbox"
-                                          onChange={async (e) => {
-                                            if (e.target.checked) {
-                                              await handleAddStaffToProgram(editingStaffProgram.name, [s.id])
-                                            }
-                                          }}
-                                        />
-                                        <span>{s.name} ({s.rank})</span>
-                                      </label>
-                                    ))}
-                                </div>
-                              </div>
-
-                              {/* Staff Configuration */}
-                              {editingStaffProgram.configs.map((config, idx) => {
-                                return (
-                                  <div key={config.staff_id} className="border p-4 rounded space-y-4">
-                                    <div className="flex items-center justify-between">
-                                      <h4 className="font-semibold">
-                                        {getStaffName(config.staff_id)} ({getStaffRank(config.staff_id)})
-                                      </h4>
-                                      <Button
-                                        variant="outline"
-                                        size="icon"
-                                        className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                        onClick={() => {
-                                          if (confirm(`Remove ${getStaffName(config.staff_id)} from ${editingStaffProgram.name}?`)) {
-                                            handleRemoveStaffFromProgram(editingStaffProgram.name, config.staff_id)
-                                          }
-                                        }}
-                                        title={`Remove ${getStaffName(config.staff_id)} from program`}
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </Button>
-                                    </div>
                                     
-                                    {/* Weekdays Selection */}
-                                    <div>
-                                      <label className="block text-sm font-medium mb-2">Weekdays</label>
-                                      <div className="flex space-x-2">
-                                        {(['mon', 'tue', 'wed', 'thu', 'fri'] as Weekday[]).map((day) => {
-                                          const isEnabled = config.weekdayConfigs[day].enabled ?? 
-                                                            (config.weekdayConfigs[day].slots.length > 0 || 
-                                                             config.weekdayConfigs[day].fte_subtraction > 0)
-                                          return (
+                                    const regularStaff = eligibleStaff.filter(s => s.status !== 'buffer')
+                                    const bufferStaff = eligibleStaff.filter(s => s.status === 'buffer')
+                                    
+                                    const toggleStaffSelection = (staffId: string) => {
+                                      setStaffIdsToAdd(prev => {
+                                        const next = new Set(prev)
+                                        if (next.has(staffId)) {
+                                          next.delete(staffId)
+                                        } else {
+                                          next.add(staffId)
+                                        }
+                                        return next
+                                      })
+                                    }
+                                    
+                                    return (
+                                      <>
+                                        {regularStaff.map((s) => (
+                                          <label key={s.id} className="flex items-center space-x-2 py-1 cursor-pointer hover:bg-muted/50 rounded px-1">
+                                            <input
+                                              type="checkbox"
+                                              checked={staffIdsToAdd.has(s.id)}
+                                              onChange={() => toggleStaffSelection(s.id)}
+                                            />
+                                            <span>{s.name} ({s.rank})</span>
+                                          </label>
+                                        ))}
+                                        {bufferStaff.length > 0 && regularStaff.length > 0 && (
+                                          <hr className="my-1 border-t border-border" />
+                                        )}
+                                        {bufferStaff.map((s) => (
+                                          <label key={s.id} className="flex items-center space-x-2 py-1 cursor-pointer hover:bg-muted/50 rounded px-1">
+                                            <input
+                                              type="checkbox"
+                                              checked={staffIdsToAdd.has(s.id)}
+                                              onChange={() => toggleStaffSelection(s.id)}
+                                            />
+                                            <span>{s.name} ({s.rank}, Buffer)</span>
+                                          </label>
+                                        ))}
+                                        {eligibleStaff.length === 0 && (
+                                          <p className="text-sm text-muted-foreground py-2">No eligible staff to add.</p>
+                                        )}
+                                      </>
+                                    )
+                                  })()}
+                                </div>
+                                
+                                {/* Confirmation section when staff are selected */}
+                                {staffIdsToAdd.size > 0 && (
+                                  <div className="mt-3 w-full max-w-2xl bg-blue-50/40 border border-blue-100/60 rounded-xl p-3 shadow-sm">
+                                    <h4 className="text-[13px] font-semibold text-blue-900/90 mb-2">
+                                      Confirm to add {staffIdsToAdd.size} staff to {editingStaffProgram.name}:
+                                    </h4>
+                                    <div className="flex flex-wrap gap-2 mb-4">
+                                      {Array.from(staffIdsToAdd).map(id => {
+                                        const s = staff.find(st => st.id === id)
+                                        if (!s) return null
+                                        return (
+                                          <span key={id} className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-white border border-blue-100/80 rounded-md text-xs font-medium text-blue-700 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+                                            {s.name} ({s.rank})
                                             <button
-                                              key={day}
                                               type="button"
                                               onClick={() => {
-                                                const newConfigs = [...editingStaffProgram.configs]
-                                                const dayConfig = newConfigs[idx].weekdayConfigs[day]
-                                                
-                                                if (isEnabled) {
-                                                  // Disable: clear slots and FTE
-                                                  dayConfig.slots = []
-                                                  dayConfig.fte_subtraction = 0
-                                                  dayConfig.enabled = false
-                                                } else {
-                                                  // Enable: set enabled flag
-                                                  dayConfig.enabled = true
-                                                }
-                                                setEditingStaffProgram({ ...editingStaffProgram, configs: newConfigs })
+                                                setStaffIdsToAdd(prev => {
+                                                  const next = new Set(prev)
+                                                  next.delete(id)
+                                                  return next
+                                                })
                                               }}
-                                              className={`px-3 py-1 rounded text-sm ${
-                                                isEnabled ? 'bg-blue-600 text-white' : 'bg-secondary'
-                                              }`}
+                                              className="hover:text-blue-900 transition-colors"
                                             >
-                                              {day}
+                                              ×
                                             </button>
-                                          )
-                                        })}
-                                      </div>
+                                          </span>
+                                        )
+                                      })}
                                     </div>
-                                    
-                                    {/* Slots and FTE in Table Format */}
-                                    <div className="overflow-x-auto">
-                                      <label className="block text-sm font-medium mb-2">Schedule Configuration</label>
-                                      <table className="w-full border-collapse text-sm">
-                                        <thead>
-                                          <tr className="border-b">
-                                            <th className="text-left p-2 font-medium">Weekday</th>
-                                            <th className="text-left p-2 font-medium">Slots</th>
-                                            <th className="text-left p-2 font-medium">
-                                              {(() => {
-                                                const programName = editingStaffProgram.name
-                                                const staffRank = getStaffRank(config.staff_id)
-                                                // For CRP and Robotic: always show "FTE cost by special program"
-                                                if (programName === 'CRP' || programName === 'Robotic') {
-                                                  return 'FTE cost by special program'
-                                                }
-                                                // For DRM: only show "FTE cost by special program" for therapist rank
-                                                if (programName === 'DRM' && ['SPT', 'APPT', 'RPT'].includes(staffRank)) {
-                                                  return 'FTE cost by special program'
-                                                }
-                                                // Default: show "FTE"
-                                                return 'FTE'
-                                              })()}
-                                            </th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {(['mon', 'tue', 'wed', 'thu', 'fri'] as Weekday[]).map((day) => {
-                                            const isEnabled = config.weekdayConfigs[day].enabled ?? 
-                                                              (config.weekdayConfigs[day].slots.length > 0 || 
-                                                               config.weekdayConfigs[day].fte_subtraction > 0)
-                                            if (!isEnabled) return null
-                                            
-                                            return (
-                                              <tr key={day} className="border-b">
-                                                <td className="p-2 font-medium capitalize">{day}</td>
-                                                <td className="py-2 pl-2 pr-1">
-                                                  <div className="flex flex-wrap gap-1">
-                                                    {[1, 2, 3, 4].map((slot) => (
-                                                      <button
-                                                        key={slot}
-                                                        type="button"
-                                                        onClick={() => {
-                                                          const newConfigs = [...editingStaffProgram.configs]
-                                                          const dayConfig = newConfigs[idx].weekdayConfigs[day]
-                                                          dayConfig.slots = dayConfig.slots.includes(slot)
-                                                            ? dayConfig.slots.filter(s => s !== slot)
-                                                            : [...dayConfig.slots, slot]
-                                                          setEditingStaffProgram({ ...editingStaffProgram, configs: newConfigs })
-                                                        }}
-                                                        className={`px-2 py-1 rounded text-xs min-w-[2.5rem] ${
-                                                          config.weekdayConfigs[day].slots.includes(slot)
-                                                            ? 'bg-blue-600 text-white'
-                                                            : 'bg-secondary hover:bg-secondary/80'
-                                                        }`}
-                                                      >
-                                                        {getSlotLabel(slot)}
-                                                      </button>
-                                                    ))}
-                                                  </div>
-                                                </td>
-                                                <td className="py-2 pl-1 pr-2">
-                                                  <input
-                                                    type="number"
-                                                    step="0.05"
-                                                    min="0"
-                                                    max="1"
-                                                    value={config.weekdayConfigs[day].fte_subtraction}
-                                                    onChange={(e) => {
-                                                      const newConfigs = [...editingStaffProgram.configs]
-                                                      newConfigs[idx].weekdayConfigs[day].fte_subtraction = parseFloat(e.target.value) || 0
-                                                      setEditingStaffProgram({ ...editingStaffProgram, configs: newConfigs })
-                                                    }}
-                                                    className="w-20 px-2 py-1 border rounded-md text-sm"
-                                                    placeholder="0.00"
-                                                  />
-                                                </td>
-                                              </tr>
-                                            )
-                                          })}
-                                        </tbody>
-                                      </table>
-                                      <p className="text-xs text-muted-foreground mt-2">
-                                        FTE: Example values - 0.4 for therapist, 0.25 for PCA
-                                      </p>
+                                    <div className="flex items-center gap-2">
+                                      <Button
+                                        size="sm"
+                                        className="h-8 px-3 text-xs font-medium bg-[#0f172a] text-white rounded-md hover:bg-[#1e293b] transition-all"
+                                        onClick={async () => {
+                                          const newStaffIds = Array.from(staffIdsToAdd)
+                                          await handleAddStaffToProgram(editingStaffProgram.name, newStaffIds)
+                                          setStaffIdsToAdd(new Set())
+                                        }}
+                                      >
+                                        Add Selected
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-8 px-3 text-xs font-medium text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200 rounded-md transition-all"
+                                        onClick={() => setStaffIdsToAdd(new Set())}
+                                      >
+                                        Clear
+                                      </Button>
                                     </div>
                                   </div>
-                                )
-                              })}
+                                )}
+                              </div>
+
+                              <hr className="border-border" />
+
+                              {/* Staff Configuration - Grouped by Rank */}
+                              <div>
+                                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                                  Configured Staff
+                                </h4>
+                                {(() => {
+                                  const therapistRanks = ['SPT', 'APPT', 'RPT']
+                                  const therapistConfigs = editingStaffProgram.configs.filter(c => {
+                                    const s = staff.find(st => st.id === c.staff_id)
+                                    return s && therapistRanks.includes(s.rank)
+                                  })
+                                  const pcaConfigs = editingStaffProgram.configs.filter(c => {
+                                    const s = staff.find(st => st.id === c.staff_id)
+                                    return s && s.rank === 'PCA'
+                                  })
+
+                                  const toggleStaffExpand = (staffId: string) => {
+                                    setExpandedStaffIds(prev => {
+                                      const next = new Set(prev)
+                                      if (next.has(staffId)) {
+                                        next.delete(staffId)
+                                      } else {
+                                        next.add(staffId)
+                                      }
+                                      return next
+                                    })
+                                  }
+
+                                  const renderStaffConfig = (config: StaffProgramConfig, idx: number) => {
+                                    const staffMember = staff.find(s => s.id === config.staff_id)
+                                    if (!staffMember) return null
+                                    const actualIdx = editingStaffProgram.configs.findIndex(c => c.staff_id === config.staff_id)
+                                    const isExpanded = expandedStaffIds.has(config.staff_id)
+                                    const enabledDays = (['mon', 'tue', 'wed', 'thu', 'fri'] as Weekday[]).filter(day => {
+                                      const dayConfig = config.weekdayConfigs[day]
+                                      return dayConfig.enabled || dayConfig.slots.length > 0 || dayConfig.fte_subtraction > 0
+                                    })
+                                    const totalFte = enabledDays.reduce((sum, day) => sum + (config.weekdayConfigs[day].fte_subtraction || 0), 0)
+                                    const slotsSummary = enabledDays.map(day => {
+                                      const slots = config.weekdayConfigs[day].slots
+                                      return slots.map(s => getSlotLabel(s)).join(',')
+                                    }).join(' | ') || 'None'
+
+                                    return (
+                                      <div key={config.staff_id} className="pl-4">
+                                        <div className="flex items-center justify-between py-2">
+                                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                                            <button
+                                              type="button"
+                                              onClick={() => toggleStaffExpand(config.staff_id)}
+                                              className="text-muted-foreground hover:text-foreground"
+                                            >
+                                              {isExpanded ? (
+                                                <ChevronDown className="h-4 w-4" />
+                                              ) : (
+                                                <ChevronRight className="h-4 w-4" />
+                                              )}
+                                            </button>
+                                            <span className="font-medium truncate">{staffMember.name}</span>
+                                            <span className="text-xs text-muted-foreground">({staffMember.rank})</span>
+                                          </div>
+                                          {staffIdPendingDelete === config.staff_id ? (
+                                            <div className="flex items-center gap-1">
+                                              <Button
+                                                variant="destructive"
+                                                size="sm"
+                                                className="h-7 text-xs"
+                                                onClick={() => {
+                                                  handleRemoveStaffFromProgram(editingStaffProgram.name, config.staff_id)
+                                                  setStaffIdPendingDelete(null)
+                                                }}
+                                              >
+                                                Confirm?
+                                              </Button>
+                                              <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-7 w-7"
+                                                onClick={() => setStaffIdPendingDelete(null)}
+                                              >
+                                                ×
+                                              </Button>
+                                            </div>
+                                          ) : (
+                                            <Button
+                                              variant="ghost"
+                                              size="icon"
+                                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                              onClick={() => setStaffIdPendingDelete(config.staff_id)}
+                                              title={`Remove ${staffMember.name}`}
+                                            >
+                                              <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                          )}
+                                        </div>
+
+                                        {/* Collapsed summary - show each weekday with FTE */}
+                                        {!isExpanded && enabledDays.length > 0 && (
+                                          <div className="pl-6 pb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                                            {enabledDays.map(day => (
+                                              <span key={day}>
+                                                {day.charAt(0).toUpperCase() + day.slice(1)}: {config.weekdayConfigs[day].fte_subtraction?.toFixed(2) || '0.00'}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        )}
+
+                                        {isExpanded && (
+                                          <div className="pl-6 pb-3 space-y-3">
+                                            {/* Weekdays Selection */}
+                                            <div>
+                                              <label className="block text-sm font-medium mb-2">Weekdays</label>
+                                              <div className="flex space-x-2">
+                                                {(['mon', 'tue', 'wed', 'thu', 'fri'] as Weekday[]).map((day) => {
+                                                  const isEnabled = config.weekdayConfigs[day].enabled ?? 
+                                                                    (config.weekdayConfigs[day].slots.length > 0 || 
+                                                                     config.weekdayConfigs[day].fte_subtraction > 0)
+                                                  return (
+                                                    <button
+                                                      key={day}
+                                                      type="button"
+                                                      onClick={() => {
+                                                        const newConfigs = [...editingStaffProgram.configs]
+                                                        const dayConfig = newConfigs[actualIdx].weekdayConfigs[day]
+                                                        
+                                                        if (isEnabled) {
+                                                          dayConfig.slots = []
+                                                          dayConfig.fte_subtraction = 0
+                                                          dayConfig.enabled = false
+                                                        } else {
+                                                          dayConfig.enabled = true
+                                                        }
+                                                        setEditingStaffProgram({ ...editingStaffProgram, configs: newConfigs })
+                                                      }}
+                                                      className={`px-3 py-1 rounded text-sm ${
+                                                        isEnabled ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                                      }`}
+                                                    >
+                                                      {day}
+                                                    </button>
+                                                  )
+                                                })}
+                                              </div>
+                                            </div>
+                                            
+                                            {/* Slots and FTE Table */}
+                                            <div className="overflow-x-auto">
+                                              <label className="block text-sm font-medium mb-2">Schedule Configuration</label>
+                                              <table className="w-full border-collapse text-sm">
+                                                <thead>
+                                                  <tr className="border-b">
+                                                    <th className="text-left p-2 font-medium">Weekday</th>
+                                                    <th className="text-left p-2 font-medium">Slots</th>
+                                                    <th className="text-left p-2 font-medium">
+                                                      {(() => {
+                                                        const programName = editingStaffProgram.name
+                                                        const staffRank = staffMember.rank
+                                                        if (programName === 'CRP' || programName === 'Robotic') {
+                                                          return 'FTE cost by special program'
+                                                        }
+                                                        if (programName === 'DRM' && ['SPT', 'APPT', 'RPT'].includes(staffRank)) {
+                                                          return 'FTE cost by special program'
+                                                        }
+                                                        return 'FTE'
+                                                      })()}
+                                                    </th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody>
+                                                  {(['mon', 'tue', 'wed', 'thu', 'fri'] as Weekday[]).map((day) => {
+                                                    const isEnabled = config.weekdayConfigs[day].enabled ?? 
+                                                                      (config.weekdayConfigs[day].slots.length > 0 || 
+                                                                       config.weekdayConfigs[day].fte_subtraction > 0)
+                                                    if (!isEnabled) return null
+                                                    
+                                                    return (
+                                                      <tr key={day} className="border-b">
+                                                        <td className="p-2 font-medium capitalize">{day}</td>
+                                                        <td className="py-2 pl-2 pr-1">
+                                                          <div className="flex flex-wrap gap-1">
+                                                            {[1, 2, 3, 4].map((slot) => (
+                                                              <button
+                                                                key={slot}
+                                                                type="button"
+                                                                onClick={() => {
+                                                                  const newConfigs = [...editingStaffProgram.configs]
+                                                                  const dayConfig = newConfigs[actualIdx].weekdayConfigs[day]
+                                                                  dayConfig.slots = dayConfig.slots.includes(slot)
+                                                                    ? dayConfig.slots.filter(s => s !== slot)
+                                                                    : [...dayConfig.slots, slot]
+                                                                  setEditingStaffProgram({ ...editingStaffProgram, configs: newConfigs })
+                                                                }}
+                                                                className={`px-2 py-1 rounded text-xs min-w-[2.5rem] ${
+                                                                  config.weekdayConfigs[day].slots.includes(slot)
+                                                                    ? 'bg-blue-600 text-white'
+                                                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                                                }`}
+                                                              >
+                                                                {getSlotLabel(slot)}
+                                                              </button>
+                                                            ))}
+                                                          </div>
+                                                        </td>
+                                                        <td className="py-2 pl-1 pr-2">
+                                                          <input
+                                                            type="number"
+                                                            step="0.05"
+                                                            min="0"
+                                                            max="1"
+                                                            value={config.weekdayConfigs[day].fte_subtraction}
+                                                            onChange={(e) => {
+                                                              const newConfigs = [...editingStaffProgram.configs]
+                                                              newConfigs[actualIdx].weekdayConfigs[day].fte_subtraction = parseFloat(e.target.value) || 0
+                                                              setEditingStaffProgram({ ...editingStaffProgram, configs: newConfigs })
+                                                            }}
+                                                            className="w-20 px-2 py-1 border rounded-md text-sm"
+                                                            placeholder="0.00"
+                                                          />
+                                                        </td>
+                                                      </tr>
+                                                    )
+                                                  })}
+                                                </tbody>
+                                              </table>
+                                              <p className="text-xs text-muted-foreground mt-2">
+                                                FTE: Example values - 0.4 for therapist, 0.25 for PCA
+                                              </p>
+                                            </div>
+                                          </div>
+                                        )}
+                                        <hr className="border-border" />
+                                      </div>
+                                    )
+                                  }
+
+                                  return (
+                                    <div className="space-y-2">
+                                      {/* Therapists Group */}
+                                      {therapistConfigs.length > 0 && (
+                                        <div>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setCollapsedRankGroups(prev => {
+                                                const next = new Set(prev)
+                                                if (next.has('therapists')) {
+                                                  next.delete('therapists')
+                                                } else {
+                                                  next.add('therapists')
+                                                }
+                                                return next
+                                              })
+                                            }}
+                                            className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground w-full py-1"
+                                          >
+                                            {collapsedRankGroups.has('therapists') ? (
+                                              <ChevronRight className="h-4 w-4" />
+                                            ) : (
+                                              <ChevronDown className="h-4 w-4" />
+                                            )}
+                                            THERAPISTS ({therapistConfigs.length})
+                                          </button>
+                                          {!collapsedRankGroups.has('therapists') && (
+                                            <div className="mt-2">
+                                              {therapistConfigs.map((config, idx) => renderStaffConfig(config, idx))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {/* PCA Group */}
+                                      {pcaConfigs.length > 0 && (
+                                        <div>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setCollapsedRankGroups(prev => {
+                                                const next = new Set(prev)
+                                                if (next.has('pca')) {
+                                                  next.delete('pca')
+                                                } else {
+                                                  next.add('pca')
+                                                }
+                                                return next
+                                              })
+                                            }}
+                                            className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground w-full py-1"
+                                          >
+                                            {collapsedRankGroups.has('pca') ? (
+                                              <ChevronRight className="h-4 w-4" />
+                                            ) : (
+                                              <ChevronDown className="h-4 w-4" />
+                                            )}
+                                            PCA ({pcaConfigs.length})
+                                          </button>
+                                          {!collapsedRankGroups.has('pca') && (
+                                            <div className="mt-2">
+                                              {pcaConfigs.map((config, idx) => renderStaffConfig(config, idx))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {editingStaffProgram.configs.length === 0 && (
+                                        <p className="text-sm text-muted-foreground py-2">No staff configured yet.</p>
+                                      )}
+                                    </div>
+                                  )
+                                })()}
+                              </div>
                               
+                              <hr className="border-border" />
+
                               {/* PCA Preference Order Section */}
                               {(() => {
                                 // For DRM, PCA doesn't carry the special program property, so hide this section
@@ -777,27 +1044,34 @@ export function SpecialProgramPanel() {
                                 
                                 const pcaStaffInProgram = editingStaffProgram.configs
                                   .map(c => staff.find(s => s.id === c.staff_id))
-                                  .filter(s => s && s.rank === 'PCA') as Staff[]
+                                  .filter(s => s && s.rank === 'PCA' && s.status !== 'inactive') as Staff[]
                                 
                                 if (pcaStaffInProgram.length === 0) return null
                                 
-                                // Validate: check if non-floating appears before floating
-                                const hasValidationWarning = pcaPreferenceOrder.some((id, index) => {
+                                // Validate: check if non-floating REGULAR PCA appears before floating REGULAR PCA
+                                // Buffer PCA are excluded from this check
+                                const regularPcaOrder = pcaPreferenceOrder.filter(id => {
+                                  const s = pcaStaffInProgram.find(staff => staff.id === id)
+                                  return s && s.status !== 'buffer'
+                                })
+                                const hasValidationWarning = regularPcaOrder.some((id, index) => {
                                   const staffMember = pcaStaffInProgram.find(s => s.id === id)
                                   if (!staffMember) return false
                                   const isNonFloating = !staffMember.floating
                                   if (!isNonFloating) return false
                                   
-                                  // Check if there's a floating PCA after this non-floating one
-                                  return pcaPreferenceOrder.slice(index + 1).some(laterId => {
+                                  // Check if there's a floating REGULAR PCA after this non-floating one
+                                  return regularPcaOrder.slice(index + 1).some(laterId => {
                                     const laterStaff = pcaStaffInProgram.find(s => s.id === laterId)
                                     return laterStaff && laterStaff.floating
                                   })
                                 })
                                 
                                 return (
-                                  <div className="border p-4 rounded">
-                                    <h4 className="font-semibold mb-2">PCA Preference Order</h4>
+                                  <div>
+                                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                                      PCA Preference Order
+                                    </h4>
                                     <p className="text-sm text-muted-foreground mb-3">
                                       Set the priority order for PCA staff in this special program. Floating PCA should be prioritized first.
                                     </p>
@@ -808,21 +1082,18 @@ export function SpecialProgramPanel() {
                                       </div>
                                     )}
                                     
-                                    <div className="space-y-2">
+                                    <div className="space-y-1">
                                       {pcaPreferenceOrder.map((pcaId, index) => {
                                         const pcaStaff = pcaStaffInProgram.find(s => s.id === pcaId)
                                         if (!pcaStaff) return null
                                         
                                         return (
-                                          <div key={pcaId} className="flex items-center gap-2 p-2 border rounded">
-                                            <span className="flex-1">
-                                              {pcaStaff.name} ({pcaStaff.floating ? 'Floating' : 'Non-floating'})
-                                            </span>
-                                            <div className="flex gap-1">
+                                          <div key={pcaId} className="flex items-center gap-2 py-1.5 border-b border-border last:border-0">
+                                            <div className="flex gap-0.5">
                                               <Button
-                                                variant="outline"
+                                                variant="ghost"
                                                 size="icon"
-                                                className="h-8 w-8"
+                                                className="h-6 w-6"
                                                 onClick={() => {
                                                   if (index > 0) {
                                                     const newOrder = [...pcaPreferenceOrder]
@@ -834,26 +1105,30 @@ export function SpecialProgramPanel() {
                                                 }}
                                                 disabled={index === 0}
                                               >
-                                                <ChevronUp className="h-4 w-4" />
+                                                <MoveUp className="h-3.5 w-3.5" />
                                               </Button>
                                               <Button
-                                                variant="outline"
+                                                variant="ghost"
                                                 size="icon"
-                                                className="h-8 w-8"
+                                                className="h-6 w-6"
                                                 onClick={() => {
                                                   if (index < pcaPreferenceOrder.length - 1) {
                                                     const newOrder = [...pcaPreferenceOrder]
-                                                    const temp = newOrder[index]
-                                                    newOrder[index] = newOrder[index + 1]
-                                                    newOrder[index + 1] = temp
+                                                    const temp = newOrder[index + 1]
+                                                    newOrder[index + 1] = newOrder[index]
+                                                    newOrder[index] = temp
                                                     setPcaPreferenceOrder(newOrder)
                                                   }
                                                 }}
                                                 disabled={index === pcaPreferenceOrder.length - 1}
                                               >
-                                                <ChevronDown className="h-4 w-4" />
+                                                <MoveDown className="h-3.5 w-3.5" />
                                               </Button>
                                             </div>
+                                            <span className="font-medium">{pcaStaff.name}</span>
+                                            <span className="text-xs text-muted-foreground">
+                                              ({pcaStaff.floating ? 'Floating' : 'Non-floating'}{pcaStaff.status === 'buffer' ? ', Buffer' : ''})
+                                            </span>
                                           </div>
                                         )
                                       })}
@@ -862,6 +1137,8 @@ export function SpecialProgramPanel() {
                                 )
                               })()}
                               
+                              <hr className="border-border" />
+
                               {/* Therapist Preference Order Display */}
                               {(() => {
                                 const hasTherapistOrder = Object.keys(savedTherapistPreferenceOrder).length > 0
@@ -886,14 +1163,16 @@ export function SpecialProgramPanel() {
                                 if (teamsWithMultipleTherapists.length === 0) return null
                                 
                                 return (
-                                  <div className="border p-4 rounded">
-                                    <h4 className="font-semibold mb-2">Therapist Preference Order</h4>
+                                  <div>
+                                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                                      Therapist Preference Order
+                                    </h4>
                                     <p className="text-sm text-muted-foreground mb-3">
                                       Priority order for therapists when multiple are in the same team for this program.
                                     </p>
                                     
                                     {hasTherapistOrder ? (
-                                      <div className="space-y-3">
+                                      <div className="space-y-2">
                                         {teamsWithMultipleTherapists.map(team => {
                                           const orderForTeam = savedTherapistPreferenceOrder[team] || []
                                           const therapistsInTeam = teamTherapistCounts[team]
@@ -910,9 +1189,9 @@ export function SpecialProgramPanel() {
                                           })
                                           
                                           return (
-                                            <div key={team} className="bg-gray-50 p-2 rounded">
+                                            <div key={team} className="flex items-center gap-2 py-1.5 border-b border-border last:border-0">
                                               <span className="font-medium text-sm">{team}:</span>
-                                              <span className="ml-2 text-sm">
+                                              <span className="text-sm">
                                                 {orderedTherapists.map(t => t.name).join(' → ')}
                                               </span>
                                             </div>
@@ -927,6 +1206,7 @@ export function SpecialProgramPanel() {
                                     
                                     <Button 
                                       variant="outline" 
+                                      size="sm"
                                       className="mt-3"
                                       onClick={() => {
                                         // Detect overlaps and show preference dialog
@@ -935,14 +1215,14 @@ export function SpecialProgramPanel() {
                                           setOverlaps(detectedOverlaps)
                                           
                                           // Initialize preference orders from saved data or default
-                                         const initialOrders: Partial<Record<Team, string[]>> = {}
+                                          const initialOrders: Partial<Record<Team, string[]>> = {}
                                           detectedOverlaps.forEach(overlap => {
                                             if (savedTherapistPreferenceOrder[overlap.team]) {
                                               const existingOrder = savedTherapistPreferenceOrder[overlap.team]
                                               initialOrders[overlap.team] = existingOrder.filter(id => overlap.staffIds.includes(id))
                                               overlap.staffIds.forEach(id => {
-                                               if (!initialOrders[overlap.team]?.includes(id)) {
-                                                 initialOrders[overlap.team]?.push(id)
+                                                if (!initialOrders[overlap.team]?.includes(id)) {
+                                                  initialOrders[overlap.team]?.push(id)
                                                 }
                                               })
                                             } else {
@@ -950,7 +1230,7 @@ export function SpecialProgramPanel() {
                                             }
                                           })
                                           
-                                         setPreferenceOrders(initialOrders as Record<Team, string[]>)
+                                          setPreferenceOrders(initialOrders as Record<Team, string[]>)
                                           setShowPreferenceDialog(true)
                                         }
                                       }}
@@ -968,6 +1248,8 @@ export function SpecialProgramPanel() {
                                     setEditingStaffProgram(null)
                                     setPcaPreferenceOrder([])
                                     setSavedTherapistPreferenceOrder(createEmptyTeamRecordFactory<string[]>(() => []))
+                                    setStaffIdsToAdd(new Set())
+                                    setStaffIdPendingDelete(null)
                                   })
                                 }}>
                                   Cancel
@@ -1055,7 +1337,6 @@ export function SpecialProgramPanel() {
                     )
                   })}
                 </div>
-              </div>
             )}
 
             {/* Configured Special Programs (only those not in staff data) */}
