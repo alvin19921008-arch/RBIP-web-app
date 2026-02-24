@@ -11,7 +11,19 @@ import { Staff, Team } from '@/types/staff'
 import { Ward } from '@/types/allocation'
 import { TEAMS } from '@/lib/utils/types'
 import { Checkbox } from '@/components/ui/checkbox'
-import { X, Users, GitMerge } from 'lucide-react'
+import { 
+  X, 
+  Users, 
+  GitMerge, 
+  MoreVertical, 
+  ArrowRightLeft, 
+  ChevronRight, 
+  ChevronDown,
+  Search,
+  Plus,
+  Info,
+  User
+} from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
@@ -23,6 +35,12 @@ import {
   computeDisplayNames,
   TeamMergeBadge 
 } from '@/lib/utils/teamMergeHelpers'
+import { filterStaff, groupStaffByTeam, sortStaffByName } from '@/lib/utils/staffFilters'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 
 interface TeamSettings {
   team: Team
@@ -113,9 +131,15 @@ export function TeamConfigurationPanel() {
   const [editRemovedAPPT, setEditRemovedAPPT] = useState<Set<string>>(new Set())
   const [editRemovedRPT, setEditRemovedRPT] = useState<Set<string>>(new Set())
   const [editRemovedPCA, setEditRemovedPCA] = useState<Set<string>>(new Set())
+
+  // New state for consolidated "Add Members" section
+  const [showAddMembersPanel, setShowAddMembersPanel] = useState(false)
+  const [addMembersSearchQuery, setAddMembersSearchQuery] = useState('')
+  const [expandedSourceTeams, setExpandedSourceTeams] = useState<Set<string>>(new Set(['unassigned']))
   const [editSelectedWards, setEditSelectedWards] = useState<Set<string>>(new Set())
   const [editWardBeds, setEditWardBeds] = useState<Record<string, number>>({})
   const [editWardPortions, setEditWardPortions] = useState<Record<string, string | null>>({})
+  const [showWardSelector, setShowWardSelector] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -214,6 +238,10 @@ export function TeamConfigurationPanel() {
     expand.close(() => {
       setEditingTeam(null)
       setPortionPopover(null)
+      setShowAddMembersPanel(false)
+      setAddMembersSearchQuery('')
+      setExpandedSourceTeams(new Set(['unassigned']))
+      setShowWardSelector(false)
     })
   }
 
@@ -427,10 +455,12 @@ export function TeamConfigurationPanel() {
 
   // Get staff for a team (for preview) - only active staff
   const getTeamStaff = (team: Team, rank: 'APPT' | 'RPT' | 'PCA') => {
-    if (rank === 'PCA') {
-      return staff.filter(s => s.rank === 'PCA' && s.team === team && !s.floating && (s.active ?? true))
-    }
-    return staff.filter(s => s.rank === rank && s.team === team && (s.active ?? true))
+    return filterStaff(staff, {
+      rank,
+      team,
+      activeOnly: true,
+      floating: rank === 'PCA' ? false : undefined,
+    })
   }
 
   // Get wards for a team (for preview)
@@ -452,10 +482,21 @@ export function TeamConfigurationPanel() {
 
   // Get unassigned staff for a rank (team === null)
   const getUnassignedStaff = (rank: 'APPT' | 'RPT' | 'PCA') => {
-    if (rank === 'PCA') {
-      return staff.filter(s => s.rank === 'PCA' && s.team === null && (s.active ?? true))
-    }
-    return staff.filter(s => s.rank === rank && s.team === null && (s.active ?? true))
+    return filterStaff(staff, {
+      rank,
+      team: null,
+      activeOnly: true,
+      floating: rank === 'PCA' ? false : undefined,
+    })
+  }
+
+  // Get staff from other teams for transfer
+  const getStaffFromOtherTeams = (rank: 'APPT' | 'RPT' | 'PCA', excludeTeam: Team) => {
+    return filterStaff(staff, {
+      rank,
+      activeOnly: true,
+      floating: rank === 'PCA' ? false : undefined,
+    }).filter(s => s.team !== null && s.team !== excludeTeam)
   }
 
   // Sort wards with selected at top
@@ -517,13 +558,18 @@ export function TeamConfigurationPanel() {
               const totalBeds = getTotalBeds(team)
 
               if (isEditing) {
-                // Expanded edit mode - show existing team members and unassigned staff
+                // Expanded edit mode - flat design with inline expand for "Add Members"
                 const currentAPPT = getTeamStaff(team, 'APPT')
                 const currentRPT = getTeamStaff(team, 'RPT')
                 const currentPCA = getTeamStaff(team, 'PCA')
                 const unassignedAPPT = getUnassignedStaff('APPT')
                 const unassignedRPT = getUnassignedStaff('RPT')
                 const unassignedPCA = getUnassignedStaff('PCA')
+                const staffFromOtherTeams = {
+                  APPT: getStaffFromOtherTeams('APPT', team),
+                  RPT: getStaffFromOtherTeams('RPT', team),
+                  PCA: getStaffFromOtherTeams('PCA', team),
+                }
                 const sortedWards = sortWardsWithSelectedFirst(editSelectedWards)
 
                 return (
@@ -532,279 +578,666 @@ export function TeamConfigurationPanel() {
                     ref={expand.expandedRef}
                     className={`p-4 border-2 col-span-full ${expand.getExpandedAnimationClass(team)}`}
                   >
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-lg font-semibold">Edit: {team}</h3>
+                    {/* Header with workflow guidance banner */}
+                    <div className="flex justify-between items-center mb-3">
+                      <h3 className="text-lg font-semibold">Edit: {displayNames[team] || team}</h3>
                       <Button variant="ghost" size="sm" onClick={handleCancelEdit}>
                         Cancel
                       </Button>
                     </div>
 
-                    <div className="space-y-4">
-                      {/* Team name */}
-                      <div>
-                        <Label htmlFor="team-name">Team name</Label>
+                    {/* Workflow guidance banner */}
+                    <div className="mt-3 w-full max-w-2xl bg-blue-50/40 border border-blue-100/60 rounded-xl p-3 shadow-sm">
+                      <div className="flex items-start gap-2 text-sm text-blue-900">
+                        <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600" />
+                        <span>
+                          To add new staff, use the <strong>Staff Profile</strong> panel. Set their rank and team property there, then return here to assign them.
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-5">
+                      {/* Team name - flat, minimal nesting */}
+                      <div className="space-y-1.5">
+                        <Label htmlFor="team-name" className="text-sm font-medium">
+                          Team name
+                        </Label>
                         <Input
                           id="team-name"
                           value={editDisplayName}
                           onChange={(e) => setEditDisplayName(e.target.value)}
-                          className="mt-1"
+                          className="h-9"
                         />
                       </div>
 
-                      {/* Team head (APPT) */}
-                      <div>
-                        <Label>Team head (APPT)</Label>
-                        <div className="max-h-40 overflow-y-auto border rounded p-2 pr-1 mt-1 space-y-2 scrollbar-visible">
-                          {/* Current team members */}
-                          {currentAPPT.length > 0 && (
-                            <div>
-                              <p className="text-xs font-medium text-muted-foreground mb-1">Current:</p>
-                              {currentAPPT.map((s) => (
-                                <label key={s.id} className="flex items-center space-x-2 py-1">
-                                  <Checkbox
-                                    className={teamConfigCheckboxClass}
-                                    checked={!editRemovedAPPT.has(s.id)}
-                                    onCheckedChange={(checked) => {
-                                      setEditRemovedAPPT((prev) => {
-                                        const newRemoved = new Set(prev)
-                                        if (checked) {
-                                          newRemoved.delete(s.id)
-                                        } else {
-                                          newRemoved.add(s.id)
-                                        }
-                                        return newRemoved
-                                      })
-                                    }}
-                                  />
-                                  <span>{s.name}</span>
-                                </label>
-                              ))}
-                            </div>
-                          )}
-                          {/* Unassigned staff available for swapping */}
-                          {unassignedAPPT.length > 0 && (
-                            <div className={currentAPPT.length > 0 ? "border-t pt-2" : ""}>
-                              {currentAPPT.length > 0 && (
-                                <p className="text-xs font-medium text-muted-foreground mb-1">Available to assign:</p>
-                              )}
-                              {unassignedAPPT.map((s) => (
-                            <label key={s.id} className="flex items-center space-x-2 py-1">
-                              <Checkbox
-                                className={teamConfigCheckboxClass}
-                                checked={editSelectedAPPT.has(s.id)}
-                                onCheckedChange={(checked) => {
-                                  const newSet = new Set(editSelectedAPPT)
-                                  if (checked) {
-                                    newSet.add(s.id)
-                                  } else {
-                                    newSet.delete(s.id)
-                                  }
-                                  setEditSelectedAPPT(newSet)
-                                }}
-                              />
-                              <span>{s.name}</span>
-                            </label>
-                          ))}
-                            </div>
-                          )}
-                          {currentAPPT.length === 0 && unassignedAPPT.length === 0 && (
-                            <p className="text-sm text-muted-foreground py-2">
-                              No unassigned APPT staff available. All APPT staff are already assigned to teams.
-                            </p>
-                          )}
+                      {/* Team head (APPT) - flat design with hover-reveal buttons */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm font-medium">Team head (APPT)</Label>
+                          <span className="text-xs text-muted-foreground">
+                            {currentAPPT.length - editRemovedAPPT.size + editSelectedAPPT.size} assigned
+                          </span>
                         </div>
-                      </div>
 
-                      {/* Team's RPT */}
-                      <div>
-                        <Label>Team's RPT</Label>
-                        <div className="max-h-40 overflow-y-auto border rounded p-2 pr-1 mt-1 space-y-2 scrollbar-visible">
-                          {/* Current team members */}
-                          {currentRPT.length > 0 && (
-                            <div>
-                              <p className="text-xs font-medium text-muted-foreground mb-1">Current:</p>
-                              {currentRPT.map((s) => (
-                                <label key={s.id} className="flex items-center space-x-2 py-1">
-                                  <Checkbox
-                                    className={teamConfigCheckboxClass}
-                                    checked={!editRemovedRPT.has(s.id)}
-                                    onCheckedChange={(checked) => {
-                                      setEditRemovedRPT((prev) => {
-                                        const newRemoved = new Set(prev)
-                                        if (checked) {
-                                          newRemoved.delete(s.id)
-                                        } else {
-                                          newRemoved.add(s.id)
-                                        }
-                                        return newRemoved
-                                      })
-                                    }}
-                                  />
-                                  <span>{s.name}</span>
-                                </label>
-                              ))}
-                            </div>
-                          )}
-                          {/* Unassigned staff available for swapping */}
-                          {unassignedRPT.length > 0 && (
-                            <div className={currentRPT.length > 0 ? "border-t pt-2" : ""}>
-                              {currentRPT.length > 0 && (
-                                <p className="text-xs font-medium text-muted-foreground mb-1">Available to assign:</p>
-                              )}
-                              {unassignedRPT.map((s) => (
-                            <label key={s.id} className="flex items-center space-x-2 py-1">
-                              <Checkbox
-                                className={teamConfigCheckboxClass}
-                                checked={editSelectedRPT.has(s.id)}
-                                onCheckedChange={(checked) => {
-                                  const newSet = new Set(editSelectedRPT)
-                                  if (checked) {
-                                    newSet.add(s.id)
-                                  } else {
-                                    newSet.delete(s.id)
-                                  }
-                                  setEditSelectedRPT(newSet)
-                                }}
-                              />
-                              <span>{s.name}</span>
-                            </label>
-                          ))}
-                            </div>
-                          )}
-                          {currentRPT.length === 0 && unassignedRPT.length === 0 && (
-                            <p className="text-sm text-muted-foreground py-2">
-                              No unassigned RPT staff available. All RPT staff are already assigned to teams.
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Team's non-floating PCA */}
-                      <div>
-                        <Label>Team's non-floating PCA</Label>
-                        <div className="max-h-40 overflow-y-auto border rounded p-2 pr-1 mt-1 space-y-2 scrollbar-visible">
-                          {/* Current team members */}
-                          {currentPCA.length > 0 && (
-                            <div>
-                              <p className="text-xs font-medium text-muted-foreground mb-1">Current:</p>
-                              {currentPCA.map((s) => (
-                                <label key={s.id} className="flex items-center space-x-2 py-1">
-                                  <Checkbox
-                                    className={teamConfigCheckboxClass}
-                                    checked={!editRemovedPCA.has(s.id)}
-                                    onCheckedChange={(checked) => {
-                                      setEditRemovedPCA((prev) => {
-                                        const newRemoved = new Set(prev)
-                                        if (checked) {
-                                          newRemoved.delete(s.id)
-                                        } else {
-                                          newRemoved.add(s.id)
-                                        }
-                                        return newRemoved
-                                      })
-                                    }}
-                                  />
-                                  <span>{s.name}</span>
-                                </label>
-                              ))}
-                            </div>
-                          )}
-                          {/* Unassigned staff available for swapping */}
-                          {unassignedPCA.length > 0 && (
-                            <div className={currentPCA.length > 0 ? "border-t pt-2" : ""}>
-                              {currentPCA.length > 0 && (
-                                <p className="text-xs font-medium text-muted-foreground mb-1">Available to assign:</p>
-                              )}
-                              {unassignedPCA.map((s) => (
-                            <label key={s.id} className="flex items-center space-x-2 py-1">
-                              <Checkbox
-                                className={teamConfigCheckboxClass}
-                                checked={editSelectedPCA.has(s.id)}
-                                onCheckedChange={(checked) => {
-                                      setEditSelectedPCA((prev) => {
-                                        const newSet = new Set(prev)
-                                  if (checked) {
-                                    newSet.add(s.id)
-                                  } else {
-                                    newSet.delete(s.id)
-                                  }
-                                        return newSet
-                                      })
-                                }}
-                              />
-                              <span>{s.name}</span>
-                            </label>
-                          ))}
-                            </div>
-                          )}
-                          {currentPCA.length === 0 && unassignedPCA.length === 0 && (
-                            <p className="text-sm text-muted-foreground py-2">
-                              No unassigned PCA staff available. All PCA staff are already assigned to teams.
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Designated wards */}
-                      <div>
-                        <Label>Designated ward & responsible bed number</Label>
-                        <div className="max-h-40 overflow-y-auto border rounded p-2 pr-1 mt-1 scrollbar-visible">
-                          {sortedWards.map((w) => (
-                            <label key={w.id} className="flex items-center space-x-2 py-1">
-                              <Checkbox
-                                className={teamConfigCheckboxClass}
-                                checked={editSelectedWards.has(w.id)}
-                                onCheckedChange={() => handleWardToggle(w.id)}
-                              />
-                              <span>{w.name}</span>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Selected wards list */}
-                      {editSelectedWards.size > 0 && (
-                        <div className="border p-4 rounded-md space-y-2">
-                          <Label>Selected wards</Label>
-                          {Array.from(editSelectedWards).map((wardId) => {
-                            const ward = wards.find(w => w.id === wardId)
-                            if (!ward) return null
-                            const wardLabel = formatWardLabel(ward, team, editWardPortions, editWardBeds)
-                            const beds = editWardBeds[wardId] || ward.team_assignments[team] || 0
-                            const hasPortion = editWardPortions[wardId] !== undefined ? editWardPortions[wardId] : (ward.team_assignment_portions?.[team] || null)
+                        {/* Current members list - CSS Grid for consistent button alignment */}
+                        <div className="space-y-1">
+                          {currentAPPT.map((s) => {
+                            const isMarkedRemoved = editRemovedAPPT.has(s.id)
+                            if (isMarkedRemoved) return null
 
                             return (
-                              <div key={wardId} className="flex items-center gap-3 py-2 border-b last:border-b-0">
-                                  <span className="font-medium">{wardLabel}</span>
-                                <span className="text-sm text-muted-foreground">
-                                    Bed counts: {beds}
-                                  </span>
+                              <div
+                                key={s.id}
+                                className="group grid grid-cols-[1fr_auto_auto] gap-2 items-center rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors"
+                              >
+                                {/* Column 1: Staff name (takes remaining space) */}
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                  <span className="text-sm truncate">{s.name}</span>
+                                </div>
+
+                                {/* Column 2 & 3: Buttons (fixed position via grid) */}
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                    onClick={() => {
+                                      setEditRemovedAPPT(prev => {
+                                        const newSet = new Set(prev)
+                                        newSet.add(s.id)
+                                        return newSet
+                                      })
+                                    }}
+                                    title="Remove from team"
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Popover>
+                                    <PopoverTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7 text-muted-foreground"
+                                      >
+                                        <MoreVertical className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent align="end" className="w-48 p-1">
+                                      <button
+                                        className="w-full text-left px-2 py-1.5 text-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed flex items-center rounded"
+                                        disabled={staffFromOtherTeams.APPT.length === 0}
+                                        onClick={() => {
+                                          toast.show({
+                                            title: 'Team Transfer',
+                                            description: `Transfer ${s.name} is handled via Staff Profile panel.`,
+                                          })
+                                        }}
+                                      >
+                                        <ArrowRightLeft className="mr-2 h-3.5 w-3.5" />
+                                        Transfer from another team…
+                                      </button>
+                                    </PopoverContent>
+                                  </Popover>
+                                </div>
+                              </div>
+                            )
+                          })}
+
+                          {/* Newly selected (from unassigned) - shown inline */}
+                          {Array.from(editSelectedAPPT).map(staffId => {
+                            const staffMember = unassignedAPPT.find(s => s.id === staffId)
+                            if (!staffMember) return null
+                            return (
+                              <div
+                                key={`new-${staffId}`}
+                                className="grid grid-cols-[1fr_auto] gap-2 items-center rounded-md px-2 py-1.5 bg-green-50 border border-green-200"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+                                  <span className="text-sm text-green-900 truncate">{staffMember.name}</span>
+                                  <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700 flex-shrink-0">
+                                    +Add
+                                  </Badge>
+                                </div>
                                 <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handlePortionClick(wardId)}
-                                  className="ml-2 shrink-0"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-green-700 hover:text-green-900"
+                                  onClick={() => {
+                                    setEditSelectedAPPT(prev => {
+                                      const newSet = new Set(prev)
+                                      newSet.delete(staffId)
+                                      return newSet
+                                    })
+                                  }}
                                 >
-                                  {hasPortion ? 'Edit portion' : 'Set portion'}
+                                  <X className="h-3.5 w-3.5" />
                                 </Button>
                               </div>
                             )
                           })}
-                          <div className="pt-2 border-t">
-                            <span className="font-semibold">Total bed counts: {getSelectedWardsTotalBeds()}</span>
-                          </div>
-                        </div>
-                      )}
 
-                      <div className="flex space-x-2">
-                        <Button onClick={handleSave} disabled={saving}>
-                          {saving ? 'Saving...' : 'Save'}
-                        </Button>
-                        <Button type="button" variant="outline" onClick={handleCancelEdit}>
-                          Cancel
-                        </Button>
+                          {currentAPPT.length === 0 && editSelectedAPPT.size === 0 && (
+                            <p className="text-sm text-muted-foreground py-1 px-2">
+                              No APPT staff assigned.
+                            </p>
+                          )}
+                        </div>
                       </div>
+
+                      {/* Team's RPT - CSS Grid alignment */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm font-medium">Team&apos;s RPT</Label>
+                          <span className="text-xs text-muted-foreground">
+                            {currentRPT.length - editRemovedRPT.size + editSelectedRPT.size} assigned
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          {currentRPT.map((s) => {
+                            if (editRemovedRPT.has(s.id)) return null
+                            return (
+                              <div key={s.id} className="group grid grid-cols-[1fr_auto_auto] gap-2 items-center rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                  <span className="text-sm truncate">{s.name}</span>
+                                </div>
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                    onClick={() => setEditRemovedRPT(prev => { const n = new Set(prev); n.add(s.id); return n })} title="Remove">
+                                    <X className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Popover>
+                                    <PopoverTrigger asChild>
+                                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground"><MoreVertical className="h-3.5 w-3.5" /></Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent align="end" className="w-48 p-1">
+                                      <button className="w-full text-left px-2 py-1.5 text-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed flex items-center rounded"
+                                        disabled={staffFromOtherTeams.RPT.length === 0}
+                                        onClick={() => toast.show({ title: 'Team Transfer', description: `Transfer ${s.name} via Staff Profile panel.` })}>
+                                        <ArrowRightLeft className="mr-2 h-3.5 w-3.5" />Transfer from another team…
+                                      </button>
+                                    </PopoverContent>
+                                  </Popover>
+                                </div>
+                              </div>
+                            )
+                          })}
+                          {Array.from(editSelectedRPT).map(id => {
+                            const m = unassignedRPT.find(s => s.id === id)
+                            if (!m) return null
+                            return (
+                              <div key={`new-${id}`} className="grid grid-cols-[1fr_auto] gap-2 items-center rounded-md px-2 py-1.5 bg-green-50 border border-green-200">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+                                  <span className="text-sm text-green-900 truncate">{m.name}</span>
+                                  <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700 flex-shrink-0">+Add</Badge>
+                                </div>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700 hover:text-green-900"
+                                  onClick={() => setEditSelectedRPT(prev => { const n = new Set(prev); n.delete(id); return n })}>
+                                  <X className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            )
+                          })}
+                          {currentRPT.length === 0 && editSelectedRPT.size === 0 && (
+                            <p className="text-sm text-muted-foreground py-1 px-2">No RPT staff assigned.</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Team's non-floating PCA - CSS Grid alignment */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm font-medium">Non-floating PCA</Label>
+                          <span className="text-xs text-muted-foreground">
+                            {currentPCA.length - editRemovedPCA.size + editSelectedPCA.size} assigned
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          {currentPCA.map((s) => {
+                            if (editRemovedPCA.has(s.id)) return null
+                            return (
+                              <div key={s.id} className="group grid grid-cols-[1fr_auto_auto] gap-2 items-center rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                  <span className="text-sm truncate">{s.name}</span>
+                                </div>
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                    onClick={() => setEditRemovedPCA(prev => { const n = new Set(prev); n.add(s.id); return n })} title="Remove">
+                                    <X className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Popover>
+                                    <PopoverTrigger asChild>
+                                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground"><MoreVertical className="h-3.5 w-3.5" /></Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent align="end" className="w-48 p-1">
+                                      <button className="w-full text-left px-2 py-1.5 text-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed flex items-center rounded"
+                                        disabled={staffFromOtherTeams.PCA.length === 0}
+                                        onClick={() => toast.show({ title: 'Team Transfer', description: `Transfer ${s.name} via Staff Profile panel.` })}>
+                                        <ArrowRightLeft className="mr-2 h-3.5 w-3.5" />Transfer from another team…
+                                      </button>
+                                    </PopoverContent>
+                                  </Popover>
+                                </div>
+                              </div>
+                            )
+                          })}
+                          {Array.from(editSelectedPCA).map(id => {
+                            const m = unassignedPCA.find(s => s.id === id)
+                            if (!m) return null
+                            return (
+                              <div key={`new-${id}`} className="grid grid-cols-[1fr_auto] gap-2 items-center rounded-md px-2 py-1.5 bg-green-50 border border-green-200">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+                                  <span className="text-sm text-green-900 truncate">{m.name}</span>
+                                  <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700 flex-shrink-0">+Add</Badge>
+                                </div>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700 hover:text-green-900"
+                                  onClick={() => setEditSelectedPCA(prev => { const n = new Set(prev); n.delete(id); return n })}>
+                                  <X className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            )
+                          })}
+                          {currentPCA.length === 0 && editSelectedPCA.size === 0 && (
+                            <p className="text-sm text-muted-foreground py-1 px-2">No PCA staff assigned.</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Consolidated Add Members Section */}
+                      <div className="pt-4 border-t">
+                        {showAddMembersPanel ? (
+                          <div className="rounded-md border bg-muted/20 p-4 space-y-4">
+                            {/* Header */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-semibold">Add Team Members</span>
+                                <span className="text-xs text-muted-foreground">
+                                  ({unassignedAPPT.length + unassignedRPT.length + unassignedPCA.length} unassigned)
+                                </span>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => {
+                                  setShowAddMembersPanel(false)
+                                  setAddMembersSearchQuery('')
+                                }}
+                              >
+                                <ChevronDown className="mr-1 h-3.5 w-3.5" />
+                                Collapse
+                              </Button>
+                            </div>
+
+                            {/* Search */}
+                            <div className="relative">
+                              <Search className="absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
+                              <Input
+                                placeholder="Search staff by name…"
+                                value={addMembersSearchQuery}
+                                onChange={(e) => setAddMembersSearchQuery(e.target.value)}
+                                className="pl-9 h-9"
+                              />
+                            </div>
+
+                            {/* Unassigned Section - Always Expanded */}
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                                <ChevronDown className="h-3.5 w-3.5" />
+                                Unassigned
+                                <span className="text-muted-foreground">({unassignedAPPT.length + unassignedRPT.length + unassignedPCA.length})</span>
+                              </div>
+                              <div className="pl-4 space-y-1 max-h-40 overflow-y-auto pr-1">
+                                {/* Filter unassigned staff using filterStaff utility */}
+                                {(() => {
+                                  const allUnassigned = filterStaff(staff, {
+                                    rank: ['APPT', 'RPT', 'PCA'],
+                                    team: null,
+                                    activeOnly: true,
+                                  }).filter(s => s.rank !== 'PCA' || !s.floating)
+                                  
+                                  const filtered = addMembersSearchQuery.trim()
+                                    ? filterStaff(allUnassigned, { searchQuery: addMembersSearchQuery, activeOnly: true })
+                                    : allUnassigned
+                                  
+                                  if (filtered.length === 0) {
+                                    return (
+                                      <p className="text-sm text-muted-foreground py-2">
+                                        {addMembersSearchQuery.trim() ? 'No matching staff found.' : 'No unassigned staff available.'}
+                                      </p>
+                                    )
+                                  }
+                                  
+                                  return filtered.map((s) => {
+                                    const isSelected = editSelectedAPPT.has(s.id) || editSelectedRPT.has(s.id) || editSelectedPCA.has(s.id)
+                                    const setSelected = s.rank === 'APPT' ? setEditSelectedAPPT : s.rank === 'RPT' ? setEditSelectedRPT : setEditSelectedPCA
+                                    
+                                    return (
+                                      <label
+                                        key={s.id}
+                                        className="grid grid-cols-[auto_1fr_auto] gap-2 items-center py-1.5 px-2 rounded-md hover:bg-accent cursor-pointer"
+                                      >
+                                        <Checkbox
+                                          className={teamConfigCheckboxClass}
+                                          checked={isSelected}
+                                          onCheckedChange={(checked) => {
+                                            const newSet = new Set(s.rank === 'APPT' ? editSelectedAPPT : s.rank === 'RPT' ? editSelectedRPT : editSelectedPCA)
+                                            if (checked) newSet.add(s.id)
+                                            else newSet.delete(s.id)
+                                            setSelected(newSet)
+                                          }}
+                                        />
+                                        <span className="text-sm">{s.name}</span>
+                                        <Badge variant="outline" className="text-[10px] h-4 px-1 flex-shrink-0">
+                                          {s.rank}
+                                        </Badge>
+                                      </label>
+                                    )
+                                  })
+                                })()}
+                              </div>
+                            </div>
+
+                            {/* From Other Teams - Masonry 2-Column Layout */}
+                            {(() => {
+                              const fromOtherTeams = filterStaff(staff, {
+                                rank: ['APPT', 'RPT', 'PCA'],
+                                activeOnly: true,
+                              }).filter(s => s.team !== null && s.team !== team && (s.rank !== 'PCA' || !s.floating))
+                              
+                              if (fromOtherTeams.length === 0) return null
+                              
+                              // Group by source team
+                              const bySourceTeam = new Map<string, typeof fromOtherTeams>()
+                              fromOtherTeams.forEach(s => {
+                                const key = s.team!
+                                const list = bySourceTeam.get(key) || []
+                                list.push(s)
+                                bySourceTeam.set(key, list)
+                              })
+                              
+                              return (
+                                <div className="space-y-3">
+                                  <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wide pt-2 border-t">
+                                    From Other Teams
+                                  </div>
+                                  {/* Masonry-style 2-column grid */}
+                                  <div className="grid grid-cols-2 gap-3">
+                                    {Array.from(bySourceTeam.entries()).map(([sourceTeam, teamStaff]) => {
+                                      const isExpanded = expandedSourceTeams.has(sourceTeam)
+                                      const filteredTeamStaff = addMembersSearchQuery.trim()
+                                        ? filterStaff(teamStaff, { searchQuery: addMembersSearchQuery, activeOnly: true })
+                                        : teamStaff
+                                      
+                                      if (filteredTeamStaff.length === 0 && addMembersSearchQuery.trim()) return null
+                                      
+                                      return (
+                                        <div 
+                                          key={sourceTeam} 
+                                          className={`bg-muted/20 rounded-md p-2 ${isExpanded ? 'col-span-2' : ''}`}
+                                        >
+                                          {/* Clickable team header - minimal text style */}
+                                          <button
+                                            className="w-full flex items-center justify-between text-sm hover:text-primary transition-colors"
+                                            onClick={() => {
+                                              setExpandedSourceTeams(prev => {
+                                                const next = new Set(prev)
+                                                if (next.has(sourceTeam)) next.delete(sourceTeam)
+                                                else next.add(sourceTeam)
+                                                return next
+                                              })
+                                            }}
+                                          >
+                                            <div className="flex items-center gap-1.5">
+                                              {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+                                              <span className="font-medium">{displayNames[sourceTeam as Team] || sourceTeam}</span>
+                                              <span className="text-xs text-muted-foreground">({filteredTeamStaff.length})</span>
+                                            </div>
+                                          </button>
+                                          
+                                          {/* Expanded content - auto height */}
+                                          {isExpanded && (
+                                            <div className="mt-2 space-y-1 max-h-48 overflow-y-auto pr-1">
+                                              {filteredTeamStaff.map((s) => {
+                                                const isSelected = editSelectedAPPT.has(s.id) || editSelectedRPT.has(s.id) || editSelectedPCA.has(s.id)
+                                                const setSelected = s.rank === 'APPT' ? setEditSelectedAPPT : s.rank === 'RPT' ? setEditSelectedRPT : setEditSelectedPCA
+                                                
+                                                return (
+                                                  <label
+                                                    key={s.id}
+                                                    className="grid grid-cols-[auto_1fr_auto] gap-2 items-center py-1.5 px-1 rounded hover:bg-accent/50 cursor-pointer"
+                                                  >
+                                                    <Checkbox
+                                                      className={teamConfigCheckboxClass}
+                                                      checked={isSelected}
+                                                      onCheckedChange={(checked) => {
+                                                        const newSet = new Set(s.rank === 'APPT' ? editSelectedAPPT : s.rank === 'RPT' ? editSelectedRPT : editSelectedPCA)
+                                                        if (checked) newSet.add(s.id)
+                                                        else newSet.delete(s.id)
+                                                        setSelected(newSet)
+                                                      }}
+                                                    />
+                                                    <span className="text-sm truncate">{s.name}</span>
+                                                    <Badge variant="outline" className="text-[10px] h-4 px-1 flex-shrink-0">
+                                                      {s.rank}
+                                                    </Badge>
+                                                  </label>
+                                                )
+                                              })}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              )
+                            })()}
+                          </div>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full h-9 text-sm"
+                            onClick={() => {
+                              setShowAddMembersPanel(true)
+                              setAddMembersSearchQuery('')
+                            }}
+                            disabled={unassignedAPPT.length + unassignedRPT.length + unassignedPCA.length === 0 && 
+                              staffFromOtherTeams.APPT.length + staffFromOtherTeams.RPT.length + staffFromOtherTeams.PCA.length === 0}
+                          >
+                            <Plus className="mr-2 h-4 w-4" />
+                            Add team members
+                            <span className="ml-2 text-xs text-muted-foreground">
+                              ({unassignedAPPT.length + unassignedRPT.length + unassignedPCA.length} unassigned)
+                            </span>
+                          </Button>
+                        )}
+                      </div>
+
+                      {/* Ward assignment - inline expand design */}
+                      <div className="space-y-3 pt-4 border-t">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm font-medium">Wards assigned</Label>
+                          <span className="text-xs text-muted-foreground">
+                            {editSelectedWards.size} selected
+                          </span>
+                        </div>
+                        
+                        {/* Selected wards - always visible */}
+                        <div className="space-y-2">
+                          {wards.filter(w => editSelectedWards.has(w.id)).map((ward) => {
+                            const teamBeds = editWardBeds[ward.id] || 0
+                            const portion = editWardPortions[ward.id] || null
+                            
+                            return (
+                              <div
+                                key={ward.id}
+                                className="bg-muted/30 rounded-md p-3"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-medium text-sm">{ward.name}</span>
+                                      <span className="text-xs text-muted-foreground">
+                                        ({ward.total_beds} beds total)
+                                      </span>
+                                    </div>
+                                    <div className="mt-2 flex items-center gap-2">
+                                      <Label className="text-xs mb-0 whitespace-nowrap">Beds:</Label>
+                                      <Input
+                                        type="number"
+                                        value={teamBeds}
+                                        onChange={(e) => {
+                                          const value = parseInt(e.target.value, 10) || 0
+                                          const newBeds = { ...editWardBeds }
+                                          newBeds[ward.id] = Math.max(0, Math.min(value, ward.total_beds))
+                                          setEditWardBeds(newBeds)
+                                        }}
+                                        className="w-20 h-8 text-sm"
+                                      />
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => {
+                                          setPortionPopover({
+                                            wardId: ward.id,
+                                            wardName: ward.name,
+                                            totalBeds: ward.total_beds,
+                                            currentBeds: teamBeds,
+                                            currentPortion: portion,
+                                          })
+                                        }}
+                                        className="text-xs h-8"
+                                      >
+                                        {portion ? 'Edit portion' : 'Set portion'}
+                                      </Button>
+                                    </div>
+                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 text-muted-foreground hover:text-destructive flex-shrink-0"
+                                    onClick={() => {
+                                      const newSet = new Set(editSelectedWards)
+                                      const newBeds = { ...editWardBeds }
+                                      newSet.delete(ward.id)
+                                      delete newBeds[ward.id]
+                                      setEditSelectedWards(newSet)
+                                      setEditWardBeds(newBeds)
+                                    }}
+                                    title="Remove ward"
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              </div>
+                            )
+                          })}
+                          
+                          {editSelectedWards.size === 0 && (
+                            <p className="text-sm text-muted-foreground py-2">
+                              No wards assigned to this team.
+                            </p>
+                          )}
+                        </div>
+                        
+                        {/* Total beds summary */}
+                        {editSelectedWards.size > 0 && (
+                          <div className="text-sm">
+                            <span className="font-medium">Total beds: {getSelectedWardsTotalBeds()}</span>
+                          </div>
+                        )}
+                        
+                        {/* Inline expand - Add ward selector */}
+                        {(() => {
+                          const unselectedWards = wards.filter(w => !editSelectedWards.has(w.id))
+                          
+                          if (unselectedWards.length === 0) return null
+                          
+                          return (
+                            <div className="pt-1">
+                              {showWardSelector ? (
+                                <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-sm font-medium">Select wards to assign</span>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 px-2 text-xs"
+                                      onClick={() => setShowWardSelector(false)}
+                                    >
+                                      <ChevronDown className="mr-1 h-3.5 w-3.5" />
+                                      Collapse
+                                    </Button>
+                                  </div>
+                                  <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
+                                    {unselectedWards.map((ward) => (
+                                      <label
+                                        key={ward.id}
+                                        className="flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-accent cursor-pointer"
+                                      >
+                                        <Checkbox
+                                          className={teamConfigCheckboxClass}
+                                          checked={false}
+                                          onCheckedChange={(checked) => {
+                                            if (checked) {
+                                              const newSet = new Set(editSelectedWards)
+                                              const newBeds = { ...editWardBeds }
+                                              newSet.add(ward.id)
+                                              newBeds[ward.id] = ward.total_beds
+                                              setEditSelectedWards(newSet)
+                                              setEditWardBeds(newBeds)
+                                            }
+                                          }}
+                                        />
+                                        <span className="text-sm">{ward.name}</span>
+                                        <span className="text-xs text-muted-foreground">({ward.total_beds} beds)</span>
+                                      </label>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                  onClick={() => setShowWardSelector(true)}
+                                >
+                                  <Plus className="mr-1 h-3.5 w-3.5" />
+                                  Assign wards
+                                  <span className="ml-1 text-muted-foreground">({unselectedWards.length} available)</span>
+                                </Button>
+                              )}
+                            </div>
+                          )
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Action buttons - black only for Save */}
+                    <div className="flex justify-end gap-2 mt-6 pt-4 border-t">
+                      <Button variant="outline" onClick={handleCancelEdit} disabled={saving}>
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={handleSave}
+                        disabled={saving}
+                        className="bg-[#0f172a] hover:bg-[#1e293b] text-white"
+                      >
+                        {saving ? 'Saving…' : 'Save'}
+                      </Button>
                     </div>
                   </Card>
                 )
@@ -829,33 +1262,36 @@ export function TeamConfigurationPanel() {
                       Edit
                     </Button>
                   </div>
-                  <div className="space-y-1 text-sm">
+                  <div className="space-y-1 text-sm text-foreground">
                     {teamAPPT.length > 0 && (
-                      <p className="text-black">
-                        <span className="font-medium">Heads:</span> {teamAPPT.map(s => s.name).join(', ')}
+                      <p>
+                        <span className="font-medium text-muted-foreground">Heads:</span>{' '}
+                        <span className="font-medium">{teamAPPT.map(s => s.name).join(', ')}</span>
                       </p>
                     )}
                     {teamRPT.length > 0 && (
-                      <p className="text-black">
-                        <span className="font-medium">RPT:</span> {teamRPT.map(s => s.name).join(', ')}
+                      <p>
+                        <span className="font-medium text-muted-foreground">RPT:</span>{' '}
+                        <span className="font-medium">{teamRPT.map(s => s.name).join(', ')}</span>
                       </p>
                     )}
                     {teamPCA.length > 0 && (
-                      <p className="text-black">
-                        <span className="font-medium">Non-floating PCA:</span> {teamPCA.map(s => s.name).join(', ')}
+                      <p>
+                        <span className="font-medium text-muted-foreground">Non-floating PCA:</span>{' '}
+                        <span className="font-medium">{teamPCA.map(s => s.name).join(', ')}</span>
                       </p>
                     )}
                     {teamWards.length > 0 && (
-                      <p className="text-black">
-                        <span className="font-medium">Wards:</span>{' '}
-                        {teamWards.map(w => {
+                      <p>
+                        <span className="font-medium text-muted-foreground">Wards:</span>{' '}
+                        <span>{teamWards.map(w => {
                           const label = formatWardLabel(w, team)
                           const beds = w.team_assignments[team] || 0
                           return `${label} (${beds})`
-                        }).join(', ')}
+                        }).join(', ')}</span>
                       </p>
                     )}
-                    <p className="text-black font-semibold">
+                    <p className="font-semibold pt-1">
                       Total bed counts: {totalBeds}
                     </p>
                   </div>

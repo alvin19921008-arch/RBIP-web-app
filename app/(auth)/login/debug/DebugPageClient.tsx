@@ -14,22 +14,14 @@ export function DebugPageClient() {
   const checkSession = useCallback(async () => {
     setLoading(true)
     try {
-      console.log('Calling getSession...')
-      const sessionResult = await supabase.auth.getSession()
-      console.log('Session result:', sessionResult)
-      const { data: { session }, error: sessionError } = sessionResult
-
       console.log('Calling getUser...')
       const userResult = await supabase.auth.getUser()
       console.log('User result:', userResult)
       const { data: { user }, error: userError } = userResult
 
-      setSession(session)
+      setSession(null)
       setUser(user)
 
-      if (sessionError) {
-        console.error('Session Error:', sessionError)
-      }
       if (userError) {
         console.error('User Error:', userError)
       }

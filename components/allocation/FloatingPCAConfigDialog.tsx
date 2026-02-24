@@ -52,6 +52,12 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable'
 import { createClientComponentClient } from '@/lib/supabase/client'
+import {
+  RemountOnOpenDetails,
+  SvgViewer,
+  Step3BalancedModeExplainerSvg,
+  Step3StandardModeExplainerSvg,
+} from '@/components/allocation/Step3ModeExplainerSvgs'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -1596,10 +1602,11 @@ export function FloatingPCAConfigDialog({
               </div>
             ) : null}
 
-            <details className="mt-2 text-xs text-muted-foreground">
-              <summary className="cursor-pointer select-none font-medium text-foreground/90">
-                Pros & cons
-              </summary>
+            <RemountOnOpenDetails
+              className="mt-2 text-xs text-muted-foreground"
+              summaryClassName="cursor-pointer select-none font-medium text-foreground/90"
+              summary="Pros & cons"
+            >
               <ul className="mt-2 list-disc pl-5 space-y-1">
                 <li>
                   <span className="font-medium text-foreground">Pros</span>: continue to Step 3.2/3.3 so you can pick preferred/adjacent slots.
@@ -1619,7 +1626,22 @@ export function FloatingPCAConfigDialog({
                   )}
                 </li>
               </ul>
-            </details>
+              <div className="mt-3">
+                <SvgViewer
+                  label="Standard mode allocation illustration"
+                  className="mx-auto max-w-[720px]"
+                  thumbnailClassName="aspect-[5/2]"
+                  render={(variant) => (
+                    <Step3StandardModeExplainerSvg
+                      className={cn(
+                        'block w-full h-auto',
+                        variant === 'modal' ? 'max-h-[80vh]' : ''
+                      )}
+                    />
+                  )}
+                />
+              </div>
+            </RemountOnOpenDetails>
 
             {/* Strictness toggle - nested inside Standard card with animated collapse */}
             <div
@@ -1739,10 +1761,11 @@ export function FloatingPCAConfigDialog({
               </div>
             ) : null}
 
-            <details className="mt-2 text-xs text-muted-foreground">
-              <summary className="cursor-pointer select-none font-medium text-foreground/90">
-                Pros & cons
-              </summary>
+            <RemountOnOpenDetails
+              className="mt-2 text-xs text-muted-foreground"
+              summaryClassName="cursor-pointer select-none font-medium text-foreground/90"
+              summary="Pros & cons"
+            >
               <ul className="mt-2 list-disc pl-5 space-y-1">
                 <li>
                   <span className="font-medium text-foreground">Pros</span>: gives teams turns (1 slot at a time) to reduce “0-slot” outcomes.
@@ -1765,7 +1788,22 @@ export function FloatingPCAConfigDialog({
                   <span className="font-medium text-foreground">May relax</span>: floor matching and “reserved preferred PCA of other teams” if needed.
                 </li>
               </ul>
-            </details>
+              <div className="mt-3">
+                <SvgViewer
+                  label="Balanced mode allocation illustration"
+                  className="mx-auto max-w-[720px]"
+                  thumbnailClassName="aspect-[5/2]"
+                  render={(variant) => (
+                    <Step3BalancedModeExplainerSvg
+                      className={cn(
+                        'block w-full h-auto',
+                        variant === 'modal' ? 'max-h-[80vh]' : ''
+                      )}
+                    />
+                  )}
+                />
+              </div>
+            </RemountOnOpenDetails>
           </div>
         </div>
       </div>

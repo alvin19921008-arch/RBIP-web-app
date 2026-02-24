@@ -6,6 +6,11 @@
 ## [Unreleased] - 2026-02-24
 
 ### Added
+- **Banner Panel Design (design-elements-commonality.mdc)**: New rule section for informational/confirmation panels: container `rounded-xl`, `bg-{color}-50/40`, `border-{color}-100/60`, `p-3`, `shadow-sm`; inner flex layout and example for workflow banners.
+- **Team Configuration Panel – Add Members & Wards**:
+  - **From Other Teams**: Masonry-style 2-column grid with `bg-muted/20` separation; unselected teams as clickable text (expand/collapse); expanded team spans full width with scrollable staff list.
+  - **Wards assigned**: Inline expand design—only selected wards shown by default; "Assign wards" button reveals scrollable unselected-ward list; remove (X) per selected ward.
+  - **Workflow guidance banner**: Styled per Banner Panel Design (`rounded-xl`, `bg-blue-50/40`, `border-blue-100/60`, `p-3`, `shadow-sm`).
 - **PCA Preference Panel revamp**:
   - **Floor PCA Selection**: Replaced native `<select>` with button group [None/Upper/Lower]
   - **Add Preferred PCA**: New selection flow with:
@@ -23,6 +28,8 @@
 
 ### Fixed
 - **Special Program Panel state refresh**: Fixed bug where newly added staff didn't appear immediately in the edit form after adding
+- **Auth – Supabase session warning**: Replaced `getSession()` with `getUser()` for trusted user identity in `lib/auth.ts` (getCurrentUser), login page (session check and post-login verify), and login debug client; removes console warning about session storage not being authentic.
+- **TeamConfigurationPanel hooks order**: Removed inline `useState` inside ward-selector IIFE; `showWardSelector` uses only the top-level state so hook order is stable (fixes "Rendered more hooks than during the previous render").
 
 ### Changed
 - **Button active state**: Use `bg-blue-600 text-white` for selection buttons per design-elements-commonality.mdc (except Save button)

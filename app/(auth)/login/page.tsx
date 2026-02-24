@@ -27,8 +27,8 @@ export default function LoginPage() {
     if (!mounted) return
     const checkSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session) {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) {
           router.push('/schedule')
         }
       } catch (err) {
@@ -84,10 +84,10 @@ export default function LoginPage() {
         // Wait for session to be set in cookies
         await new Promise(resolve => setTimeout(resolve, 1000))
         
-        // Verify session is set
-        const { data: { session } } = await supabase.auth.getSession()
+        // Verify authenticated user is available
+        const { data: { user } } = await supabase.auth.getUser()
         
-        if (session) {
+        if (user) {
           window.location.href = '/schedule'
         } else {
           setError('Login successful but session not set. Please try again.')

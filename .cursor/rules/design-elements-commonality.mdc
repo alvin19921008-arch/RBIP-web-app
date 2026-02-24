@@ -31,6 +31,34 @@ alwaysApply: false
 | Elevation | Single subtle shadow level max |
 | Borders | Use `border-border` or `divide-y`, not harsh solid borders |
 
+## Banner Panel Design
+
+For inline informational banners and confirmation panels:
+
+### Container
+- **Shape**: `rounded-xl` (not `rounded-md`)
+- **Background**: `bg-{color}-50/40` (translucent tint, e.g., `bg-blue-50/40`)
+- **Border**: `border-{color}-100/60` (subtle translucent, e.g., `border-blue-100/60`)
+- **Shadow**: `shadow-sm` (single subtle elevation)
+- **Padding**: `p-3` (compact inner spacing)
+- **Width**: `w-full max-w-2xl` (constrained, not full-bleed)
+- **Margin**: `mt-3` or context-appropriate
+
+### Inner Content Layout
+- Wrap content in inner div: `flex items-start gap-2 text-sm text-{color}-900`
+- Icon: color-matched (e.g., `text-blue-600`) with `mt-0.5` for alignment
+- Text: standard body text, allows wrapping
+
+### Example
+```tsx
+<div className="mt-3 w-full max-w-2xl bg-blue-50/40 border border-blue-100/60 rounded-xl p-3 shadow-sm">
+  <div className="flex items-start gap-2 text-sm text-blue-900">
+    <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600" />
+    <span>Message content here...</span>
+  </div>
+</div>
+```
+
 ## Anti-Patterns (Never Do)
 
 - ❌ Nested `<Card>` beyond 2 levels
