@@ -6,6 +6,7 @@
 ## [Unreleased] - 2026-02-24
 
 ### Added
+- **Deploy (Vercel + Supabase)**: `DEPLOY.md` and `.env.example` document required env vars (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`) for Vercel; missing vars are a common cause of deploy/runtime failures.
 - **Banner Panel Design (design-elements-commonality.mdc)**: New rule section for informational/confirmation panels: container `rounded-xl`, `bg-{color}-50/40`, `border-{color}-100/60`, `p-3`, `shadow-sm`; inner flex layout and example for workflow banners.
 - **Team Configuration Panel – Add Members & Wards**:
   - **From Other Teams**: Masonry-style 2-column grid with `bg-muted/20` separation; unselected teams as clickable text (expand/collapse); expanded team spans full width with scrollable staff list.
