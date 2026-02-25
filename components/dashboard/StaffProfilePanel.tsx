@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils'
 import { useToast } from '@/components/ui/toast-provider'
 import { SearchWithSuggestions, type SearchSuggestionItem } from '@/components/ui/SearchWithSuggestions'
 import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
+import { matchesStaffName, matchesStaffStatus } from '@/lib/utils/staffFilters'
 
 const RANK_ORDER: StaffRank[] = ['SPT', 'APPT', 'RPT', 'PCA', 'workman']
 
@@ -123,13 +124,9 @@ export function StaffProfilePanel() {
 
   // Filter staff
   const filteredStaff = staff.filter((s) => {
-    const q = search.trim().toLowerCase()
-    if (q && !s.name.toLowerCase().includes(q)) return false
+    if (!matchesStaffName(s, search)) return false
     if (filters.rank && !filters.rank.includes(s.rank)) return false
-    if (filters.status !== null) {
-      const staffStatus = s.status ?? 'active'
-      if (staffStatus !== filters.status) return false
-    }
+    if (!matchesStaffStatus(s, filters.status)) return false
     if (filters.specialProgram && filters.specialProgram.length > 0) {
       const hasProgram = s.special_program?.some((prog) => filters.specialProgram!.includes(prog))
       if (!hasProgram) return false

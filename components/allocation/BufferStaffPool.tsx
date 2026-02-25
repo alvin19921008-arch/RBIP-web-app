@@ -13,6 +13,7 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { DragValidationTooltip } from './DragValidationTooltip'
 import { useToast } from '@/components/ui/toast-provider'
 import { SearchWithSuggestions, type SearchSuggestionItem } from '@/components/ui/SearchWithSuggestions'
+import { normalizeStaffSearchQuery } from '@/lib/utils/staffFilters'
 
 interface BufferStaffPoolProps {
   inactiveStaff: Staff[]
@@ -243,7 +244,7 @@ export function BufferStaffPool({
       id: s.id,
       label: s.name,
       subLabel: [s.rank].filter(Boolean).join(' • ') || undefined,
-      keywords: [s.name, s.rank].filter(Boolean),
+      keywords: [s.name, normalizeStaffSearchQuery(s.name), s.rank].filter(Boolean),
     }))
   }, [allInactiveStaff])
 

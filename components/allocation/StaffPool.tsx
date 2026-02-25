@@ -617,9 +617,11 @@ function StaffPoolComponent({
           {snapshotNotice ? (
             <div className="sticky top-0 z-20 -mt-1">
               <div className="px-1 pt-1 pb-1 bg-background/95 backdrop-blur">
-                <div className="flex w-full items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-950 leading-snug whitespace-normal box-border">
-                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 text-amber-700 flex-shrink-0" />
-                  <span className="break-words">{snapshotNotice}</span>
+                <div className="w-full rounded-md border border-amber-100/60 bg-amber-50/40 px-1.5 py-1 shadow-sm">
+                  <div className="flex items-start gap-1.5 text-[11px] text-amber-900">
+                    <AlertCircle className="mt-0.5 h-3 w-3 flex-shrink-0 text-amber-600" />
+                    <span className="break-words leading-snug">{snapshotNotice}</span>
+                  </div>
                 </div>
               </div>
             </div>

@@ -7,11 +7,12 @@ import { PCAPreference, SpecialProgram } from '@/types/allocation'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
 import { TeamPendingCard, TIE_BREAKER_COLORS } from './TeamPendingCard'
 import { TeamReservationCard } from './TeamReservationCard'
 import { TeamAdjacentSlotCard } from './TeamAdjacentSlotCard'
-import { ChevronRight, ArrowLeft, ArrowRight, Lightbulb, GripVertical, Check, Circle, AlertTriangle, X } from 'lucide-react'
+import { ChevronRight, ChevronDown, ArrowLeft, ArrowRight, Lightbulb, GripVertical, Check, Circle, AlertTriangle, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { roundDownToQuarter, roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { 
@@ -52,12 +53,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable'
 import { createClientComponentClient } from '@/lib/supabase/client'
-import {
-  RemountOnOpenDetails,
-  SvgViewer,
-  Step3BalancedModeExplainerSvg,
-  Step3StandardModeExplainerSvg,
-} from '@/components/allocation/Step3ModeExplainerSvgs'
+import { RemountOnOpenDetails } from '@/components/allocation/Step3ModeExplainerSvgs'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -198,6 +194,7 @@ export function FloatingPCAConfigDialog({
   const [allocationMode, setAllocationMode] = useState<'standard' | 'balanced'>('standard')
   // How strict Step 3.4 should honor manually selected preferences.
   const [preferenceProtectionMode, setPreferenceProtectionMode] = useState<'exclusive' | 'share'>('exclusive')
+  const [allocationMethodExpanded, setAllocationMethodExpanded] = useState(false)
   // Scarcity config (global head): treat threshold as "shortage slots" (0.25 FTE per slot)
   const [scarcityShortageSlotsThreshold, setScarcityShortageSlotsThreshold] = useState<number>(2)
   const [scarcityAutoSelected, setScarcityAutoSelected] = useState(false)
@@ -1410,9 +1407,9 @@ export function FloatingPCAConfigDialog({
           scarcityTriggered && !scarcityDismissed ? 'mt-3 max-h-48 opacity-100' : 'max-h-0 opacity-0'
         )}
       >
-        <div className="rounded-md border border-amber-200 bg-amber-50/90 px-3.5 py-2.5 text-sm text-amber-950">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-700 flex-shrink-0" />
+        <div className="w-full rounded-xl border border-amber-100/60 bg-amber-50/40 p-3 shadow-sm">
+          <div className="flex items-start gap-2 text-sm text-amber-900">
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" />
             <div className="min-w-0 flex-1 space-y-0.5">
               <div className="flex items-start justify-between gap-2">
                 <div className="font-semibold">
@@ -1429,7 +1426,7 @@ export function FloatingPCAConfigDialog({
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
-              <div className="text-amber-900/80 text-xs leading-relaxed space-y-0.5">
+              <div className="text-amber-900 text-xs leading-relaxed space-y-0.5">
                 <div>
                   Trigger: global shortage ≥ {scarcityShortageSlotsThreshold} slot(s)
                 </div>
@@ -1549,13 +1546,30 @@ export function FloatingPCAConfigDialog({
         </DndContext>
       </div>
 
-      <div className="rounded-md border bg-sky-50/60 p-3">
-        <div className="text-sm font-medium text-foreground">Allocation method (Step 3.4)</div>
-        <div
-          className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2"
-          role="radiogroup"
-          aria-label="Allocation method"
+      <div className="rounded-xl border bg-background p-4">
+        <button
+          type="button"
+          className="w-full flex items-center justify-between gap-2 text-left"
+          onClick={() => setAllocationMethodExpanded((prev) => !prev)}
+          aria-expanded={allocationMethodExpanded}
         >
+          <div className="text-[11px] uppercase tracking-wider font-bold text-muted-foreground">
+            Allocation method (Step 3.4)
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">
+              {allocationMode === 'standard' ? 'Standard (keeps 3.2/3.3)' : 'Balanced (take turns)'}
+            </span>
+            {allocationMethodExpanded ? (
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+            )}
+          </div>
+        </button>
+
+        {allocationMethodExpanded && (
+        <div className="space-y-1 mt-4" role="radiogroup" aria-label="Allocation method">
           <div
             role="radio"
             aria-checked={allocationMode === 'standard'}
@@ -1568,18 +1582,14 @@ export function FloatingPCAConfigDialog({
               }
             }}
             className={cn(
-              'rounded-md border p-3 text-left transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+              'relative pl-4 pr-3 py-3 text-left transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border-l-2',
               allocationMode === 'standard'
-                ? 'border-primary ring-1 ring-primary/30 bg-primary/5'
-                : 'bg-background hover:bg-muted/40'
+                ? 'border-l-primary bg-slate-50/40'
+                : 'border-l-transparent hover:bg-slate-50/30'
             )}
           >
-            <div className="flex items-start gap-3">
-              <div className="min-w-0">
-                <div className="text-sm font-semibold text-foreground">Standard</div>
-                <div className="text-xs text-muted-foreground">Manual-friendly (keeps Step 3.2/3.3)</div>
-              </div>
-            </div>
+            <div className="text-sm font-semibold text-foreground">Standard</div>
+            <div className="text-xs text-muted-foreground">Manual-friendly (keeps Step 3.2/3.3)</div>
 
             <div className="mt-2 text-sm text-foreground">
               {step31Preview.status === 'loading' ? (
@@ -1606,6 +1616,7 @@ export function FloatingPCAConfigDialog({
               className="mt-2 text-xs text-muted-foreground"
               summaryClassName="cursor-pointer select-none font-medium text-foreground/90"
               summary="Pros & cons"
+              showChevron
             >
               <ul className="mt-2 list-disc pl-5 space-y-1">
                 <li>
@@ -1626,36 +1637,27 @@ export function FloatingPCAConfigDialog({
                   )}
                 </li>
               </ul>
-              <div className="mt-3">
-                <SvgViewer
-                  label="Standard mode allocation illustration"
-                  className="mx-auto max-w-[720px]"
-                  thumbnailClassName="aspect-[5/2]"
-                  render={(variant) => (
-                    <Step3StandardModeExplainerSvg
-                      className={cn(
-                        'block w-full h-auto',
-                        variant === 'modal' ? 'max-h-[80vh]' : ''
-                      )}
-                    />
-                  )}
-                />
-              </div>
             </RemountOnOpenDetails>
 
-            {/* Strictness toggle - nested inside Standard card with animated collapse */}
+            {/* Strictness settings - flat indented area */}
             <div
               className={cn(
                 'transition-all duration-300 ease-in-out overflow-hidden',
-                allocationMode === 'standard' ? 'mt-3 max-h-48 opacity-100' : 'max-h-0 opacity-0'
+                allocationMode === 'standard' ? 'mt-3 max-h-64 opacity-100' : 'max-h-0 opacity-0'
               )}
             >
-              <div className="rounded-md border bg-background p-2.5">
-                <div className="text-xs font-semibold text-foreground">How strict to honor preferred picks?</div>
+              <div className="pl-3 border-l border-border">
+                <div className="text-[11px] uppercase tracking-wider font-bold text-muted-foreground">
+                  How strict to honor preferred picks?
+                </div>
                 <div className="mt-0.5 text-[11px] text-muted-foreground">
+                  <span className="font-medium text-foreground">Preferred</span> = Step 3.2 picks: preferred PCA, preferred slots, or both.
+                </div>
+                <div className="mt-1 text-[11px] text-muted-foreground">
                   Applies to Standard mode after Step 3.2/3.3 selections.
                 </div>
-                <div className="mt-2 grid grid-cols-1 gap-2" role="radiogroup" aria-label="Preference protection strictness">
+
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Preference protection strictness">
                   <button
                     type="button"
                     role="radio"
@@ -1665,10 +1667,10 @@ export function FloatingPCAConfigDialog({
                       setPreferenceProtectionMode('exclusive')
                     }}
                     className={cn(
-                      'rounded-md border px-2.5 text-left text-xs transition-all duration-200',
+                      'rounded border px-3 py-2 text-left text-xs transition-all duration-200',
                       preferenceProtectionMode === 'exclusive'
-                        ? 'border-primary ring-1 ring-primary/30 bg-primary/5 py-2'
-                        : 'hover:bg-muted/40 py-1.5'
+                        ? 'border-primary bg-white'
+                        : 'border-border bg-background hover:bg-slate-50/60'
                     )}
                   >
                     <div className="font-semibold text-foreground">Strict (default) - Exclusive</div>
@@ -1676,13 +1678,14 @@ export function FloatingPCAConfigDialog({
                       className={cn(
                         'text-muted-foreground overflow-hidden transition-all duration-200 text-[11px]',
                         preferenceProtectionMode === 'exclusive'
-                          ? 'max-h-10 opacity-100 mt-0.5'
+                          ? 'max-h-16 opacity-100 mt-1'
                           : 'max-h-0 opacity-0'
                       )}
                     >
-                      Hold <span className="font-medium text-foreground">ALL a/v slots</span> from the preferred PCA for that team.
+                      Hold <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-normal border-border bg-muted/40">ALL a/v slots</Badge> from <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-normal border-border bg-muted/40">preferred PCA</Badge> for that team.
                     </div>
                   </button>
+
                   <button
                     type="button"
                     role="radio"
@@ -1692,10 +1695,10 @@ export function FloatingPCAConfigDialog({
                       setPreferenceProtectionMode('share')
                     }}
                     className={cn(
-                      'rounded-md border px-2.5 text-left text-xs transition-all duration-200',
+                      'rounded border px-3 py-2 text-left text-xs transition-all duration-200',
                       preferenceProtectionMode === 'share'
-                        ? 'border-primary ring-1 ring-primary/30 bg-primary/5 py-2'
-                        : 'hover:bg-muted/40 py-1.5'
+                        ? 'border-primary bg-white'
+                        : 'border-border bg-background hover:bg-slate-50/60'
                     )}
                   >
                     <div className="font-semibold text-foreground">Flexible sharing - Slot-only</div>
@@ -1703,17 +1706,20 @@ export function FloatingPCAConfigDialog({
                       className={cn(
                         'text-muted-foreground overflow-hidden transition-all duration-200 text-[11px]',
                         preferenceProtectionMode === 'share'
-                          ? 'max-h-10 opacity-100 mt-0.5'
+                          ? 'max-h-16 opacity-100 mt-1'
                           : 'max-h-0 opacity-0'
                       )}
                     >
-                      Keep only <span className="font-medium text-foreground">selected slots</span>; remaining slots can be shared.
+                      Keep only <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-normal border-border bg-muted/40">selected slots</Badge>; remaining slots can be shared.
                     </div>
                   </button>
                 </div>
               </div>
             </div>
           </div>
+
+          {/* Divider between options */}
+          <div className="h-px bg-border my-2" />
 
           <div
             role="radio"
@@ -1727,18 +1733,14 @@ export function FloatingPCAConfigDialog({
               }
             }}
             className={cn(
-              'rounded-md border p-3 text-left transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+              'relative pl-4 pr-3 py-3 text-left transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border-l-2',
               allocationMode === 'balanced'
-                ? 'border-primary ring-1 ring-primary/30 bg-primary/5'
-                : 'bg-background hover:bg-muted/40'
+                ? 'border-l-primary bg-slate-50/40'
+                : 'border-l-transparent hover:bg-slate-50/30'
             )}
           >
-            <div className="flex items-start gap-3">
-              <div className="min-w-0">
-                <div className="text-sm font-semibold text-foreground">Balanced (take turns)</div>
-                <div className="text-xs text-muted-foreground">Fairness-first (skips Step 3.2/3.3)</div>
-              </div>
-            </div>
+            <div className="text-sm font-semibold text-foreground">Balanced (take turns)</div>
+            <div className="text-xs text-muted-foreground">Fairness-first (skips Step 3.2/3.3)</div>
 
             <div className="mt-2 text-sm text-foreground">
               {step31Preview.status === 'loading' ? (
@@ -1765,6 +1767,7 @@ export function FloatingPCAConfigDialog({
               className="mt-2 text-xs text-muted-foreground"
               summaryClassName="cursor-pointer select-none font-medium text-foreground/90"
               summary="Pros & cons"
+              showChevron
             >
               <ul className="mt-2 list-disc pl-5 space-y-1">
                 <li>
@@ -1788,24 +1791,10 @@ export function FloatingPCAConfigDialog({
                   <span className="font-medium text-foreground">May relax</span>: floor matching and “reserved preferred PCA of other teams” if needed.
                 </li>
               </ul>
-              <div className="mt-3">
-                <SvgViewer
-                  label="Balanced mode allocation illustration"
-                  className="mx-auto max-w-[720px]"
-                  thumbnailClassName="aspect-[5/2]"
-                  render={(variant) => (
-                    <Step3BalancedModeExplainerSvg
-                      className={cn(
-                        'block w-full h-auto',
-                        variant === 'modal' ? 'max-h-[80vh]' : ''
-                      )}
-                    />
-                  )}
-                />
-              </div>
             </RemountOnOpenDetails>
           </div>
         </div>
+        )}
       </div>
       
       <DialogFooter className="sticky bottom-0 z-10 mt-4 flex-row flex-wrap items-center gap-2 border-t bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:justify-between sm:px-0">

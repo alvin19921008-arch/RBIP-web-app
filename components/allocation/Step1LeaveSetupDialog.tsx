@@ -16,6 +16,7 @@ import { LEAVE_TYPE_FTE_MAP, LeaveType, Staff, Weekday } from '@/types/staff'
 import { ChevronDown, ChevronRight, CircleHelp, Plus, RotateCcw, Search, X } from 'lucide-react'
 import { getTeamBadgeClass } from '@/components/allocation/teamThemePalette'
 import { TimeIntervalSlider } from '@/components/allocation/TimeIntervalSlider'
+import { matchesStaffName } from '@/lib/utils/staffFilters'
 
 type StaffOverrideLite = {
   leaveType?: LeaveType | null
@@ -409,10 +410,7 @@ export function Step1LeaveSetupDialog({
   const rowIds = new Set(rows.map((row) => row.staffId))
 
   const filteredPickers = useMemo(() => {
-    const query = quickFind.trim().toLowerCase()
-    const filtered = activeStaff.filter((member) =>
-      query.length === 0 ? true : member.name.toLowerCase().includes(query)
-    )
+    const filtered = activeStaff.filter((member) => matchesStaffName(member, quickFind))
     const byRank = {
       SPT: [] as Staff[],
       APPT: [] as Staff[],

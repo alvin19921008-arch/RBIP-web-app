@@ -11,6 +11,7 @@ import { Staff, Team, Weekday } from '@/types/staff'
 import { getSlotLabel } from '@/lib/utils/slotHelpers'
 import { Trash2 } from 'lucide-react'
 import { ChevronUp, ChevronDown } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
 import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
@@ -177,13 +178,21 @@ export function SPTAllocationPanel() {
                             <span className="text-xs text-muted-foreground">(Inactive)</span>
                           )}
                           {alloc.is_rbip_supervisor && (
-                            <span className="text-xs text-primary font-medium">Supervisor</span>
+                            <Badge 
+                              variant="outline" 
+                              className="text-[10px] h-5 px-1.5 font-normal text-amber-700 border-amber-200 bg-amber-100"
+                            >
+                              Supervisor
+                            </Badge>
                           )}
                         </div>
                         {alloc.specialty && (
-                          <p className="text-xs text-primary font-medium mb-1">
+                          <Badge 
+                            variant="outline" 
+                            className="text-[10px] h-5 px-1.5 font-normal text-muted-foreground border-border bg-muted/40"
+                          >
                             {alloc.specialty}
-                          </p>
+                          </Badge>
                         )}
                         <p className="text-xs text-muted-foreground">
                           <span className="text-foreground">{alloc.teams.join(', ')}</span>
@@ -469,7 +478,7 @@ function SPTAllocationForm({
       <div>
         <Label className="text-sm font-medium mb-1.5 block">SPT staff</Label>
         <Select value={selectedStaff} onValueChange={setSelectedStaff} disabled={isEditingExisting}>
-          <SelectTrigger>
+          <SelectTrigger className="w-fit min-w-36">
             <SelectValue placeholder="Select SPT" />
           </SelectTrigger>
           <SelectContent>
@@ -748,7 +757,7 @@ function SPTAllocationForm({
               value={specialty || 'nil'}
               onValueChange={(v) => setSpecialty(v === 'nil' ? '' : v)}
             >
-              <SelectTrigger>
+              <SelectTrigger className="w-fit min-w-36">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

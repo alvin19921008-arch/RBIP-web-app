@@ -754,7 +754,7 @@ function PCAPreferenceForm({
               const showUpArrow = preferredPCA.length > 1 && idx > 0
               const showDownArrow = preferredPCA.length > 1 && idx < preferredPCA.length - 1
               return (
-                <div key={pcaId} className="flex items-center justify-between py-1">
+                <div key={pcaId} className="flex items-center gap-2 py-1">
                   <div className="flex items-center gap-1">
                     {showUpArrow && (
                       <button

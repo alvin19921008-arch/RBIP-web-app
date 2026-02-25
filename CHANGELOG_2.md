@@ -32,6 +32,15 @@
 - **TeamConfigurationPanel hooks order**: Removed inline `useState` inside ward-selector IIFE; `showWardSelector` uses only the top-level state so hook order is stable (fixes "Rendered more hooks than during the previous render").
 
 ### Changed
+- **Step 3.1 (Floating PCA Config) dialog**:
+  - **Allocation method collapsible (Option A)**: Allocation method section is now collapsible and defaults to collapsed; header shows summary (e.g. "Standard (keeps 3.2/3.3)" or "Balanced (take turns)") with chevron; reduces visual load on Step 3.1.
+  - **Preferred / strictness clarity**: Added intro line "Preferred = Step 3.2 picks: preferred PCA, preferred slots, or both." and badge pills for key phrases: `ALL a/v slots`, `preferred PCA`, `selected slots` in the "How strict to honor preferred picks?" section.
+  - **Pros & cons**: Chevron icon on expandable "Pros & cons"; removed still image and enlarge/zoom button (SvgViewer usage dropped from dialog).
+  - **Banners**: Scarcity banner full width to match other dialog content; staff pool snapshot notice smaller font (`text-[11px]`), tighter padding (`px-1.5 py-1`), compact styling for narrow sidebar.
+- **Team Configuration Panel**: Control buttons (remove X) placed next to staff name (no `ml-auto`); "x assigned" / "x selected" counts inline with section labels (no `justify-between`); removed redundant "Transfer from another team" menu; Add Members search auto-expands team when query matches; selected staff from other teams shown inline with green "Transfer" badge; RPT/specialty badges in search results next to name (flex layout).
+- **SPT Allocation Panel**: Specialty and SPT staff dropdowns use `w-fit min-w-36` so they don’t span full width.
+- **PCA Preference Panel**: Remove (trash) button for configured preferred PCA moved next to staff name (`gap-2` instead of `justify-between`).
+- **Wards assigned**: "x selected" label inline with "Wards assigned" (same pattern as staff sections).
 - **Button active state**: Use `bg-blue-600 text-white` for selection buttons per design-elements-commonality.mdc (except Save button)
 - **SPT Allocation Panel flat design**: Removed border boxes around allocation items, replaced with `divide-y` list layout. Specialty now on dedicated second row. Ghost buttons for lighter visual weight.
 - **Cursor skill/rules consolidation**: Consolidated Playwright smoke testing guidance:

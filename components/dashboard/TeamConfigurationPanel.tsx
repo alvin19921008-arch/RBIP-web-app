@@ -11,13 +11,11 @@ import { Staff, Team } from '@/types/staff'
 import { Ward } from '@/types/allocation'
 import { TEAMS } from '@/lib/utils/types'
 import { Checkbox } from '@/components/ui/checkbox'
-import { 
-  X, 
-  Users, 
-  GitMerge, 
-  MoreVertical, 
-  ArrowRightLeft, 
-  ChevronRight, 
+import {
+  X,
+  Users,
+  GitMerge,
+  ChevronRight,
   ChevronDown,
   Search,
   Plus,
@@ -606,20 +604,20 @@ export function TeamConfigurationPanel() {
                           id="team-name"
                           value={editDisplayName}
                           onChange={(e) => setEditDisplayName(e.target.value)}
-                          className="h-9"
+                          className="h-9 max-w-sm"
                         />
                       </div>
 
                       {/* Team head (APPT) - flat design with hover-reveal buttons */}
                       <div className="space-y-2">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
                           <Label className="text-sm font-medium">Team head (APPT)</Label>
                           <span className="text-xs text-muted-foreground">
-                            {currentAPPT.length - editRemovedAPPT.size + editSelectedAPPT.size} assigned
+                            ({currentAPPT.length - editRemovedAPPT.size + editSelectedAPPT.size} assigned)
                           </span>
                         </div>
 
-                        {/* Current members list - CSS Grid for consistent button alignment */}
+                        {/* Current members list */}
                         <div className="space-y-1">
                           {currentAPPT.map((s) => {
                             const isMarkedRemoved = editRemovedAPPT.has(s.id)
@@ -628,15 +626,13 @@ export function TeamConfigurationPanel() {
                             return (
                               <div
                                 key={s.id}
-                                className="group grid grid-cols-[1fr_auto_auto] gap-2 items-center rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors"
+                                className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors"
                               >
-                                {/* Column 1: Staff name (takes remaining space) */}
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                                  <span className="text-sm truncate">{s.name}</span>
-                                </div>
+                                {/* Icon + Name + Button - all in one flex container, tightly packed */}
+                                <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                <span className="text-sm truncate">{s.name}</span>
 
-                                {/* Column 2 & 3: Buttons (fixed position via grid) */}
+                                {/* Control buttons - appear on hover, immediately after name */}
                                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                   <Button
                                     variant="ghost"
@@ -653,34 +649,6 @@ export function TeamConfigurationPanel() {
                                   >
                                     <X className="h-3.5 w-3.5" />
                                   </Button>
-                                </div>
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <Popover>
-                                    <PopoverTrigger asChild>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-7 w-7 text-muted-foreground"
-                                      >
-                                        <MoreVertical className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </PopoverTrigger>
-                                    <PopoverContent align="end" className="w-48 p-1">
-                                      <button
-                                        className="w-full text-left px-2 py-1.5 text-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed flex items-center rounded"
-                                        disabled={staffFromOtherTeams.APPT.length === 0}
-                                        onClick={() => {
-                                          toast.show({
-                                            title: 'Team Transfer',
-                                            description: `Transfer ${s.name} is handled via Staff Profile panel.`,
-                                          })
-                                        }}
-                                      >
-                                        <ArrowRightLeft className="mr-2 h-3.5 w-3.5" />
-                                        Transfer from another team…
-                                      </button>
-                                    </PopoverContent>
-                                  </Popover>
                                 </div>
                               </div>
                             )
@@ -720,6 +688,40 @@ export function TeamConfigurationPanel() {
                             )
                           })}
 
+                          {/* Newly selected (from other teams) - shown inline */}
+                          {Array.from(editSelectedAPPT).map(staffId => {
+                            const staffMember = staffFromOtherTeams.APPT.find(s => s.id === staffId)
+                            if (!staffMember) return null
+                            return (
+                              <div
+                                key={`transfer-${staffId}`}
+                                className="grid grid-cols-[1fr_auto] gap-2 items-center rounded-md px-2 py-1.5 bg-green-50 border border-green-200"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+                                  <span className="text-sm text-green-900 truncate">{staffMember.name}</span>
+                                  <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700 flex-shrink-0">
+                                    Transfer
+                                  </Badge>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-green-700 hover:text-green-900"
+                                  onClick={() => {
+                                    setEditSelectedAPPT(prev => {
+                                      const newSet = new Set(prev)
+                                      newSet.delete(staffId)
+                                      return newSet
+                                    })
+                                  }}
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            )
+                          })}
+
                           {currentAPPT.length === 0 && editSelectedAPPT.size === 0 && (
                             <p className="text-sm text-muted-foreground py-1 px-2">
                               No APPT staff assigned.
@@ -728,42 +730,26 @@ export function TeamConfigurationPanel() {
                         </div>
                       </div>
 
-                      {/* Team's RPT - CSS Grid alignment */}
+                      {/* Team's RPT */}
                       <div className="space-y-2">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
                           <Label className="text-sm font-medium">Team&apos;s RPT</Label>
                           <span className="text-xs text-muted-foreground">
-                            {currentRPT.length - editRemovedRPT.size + editSelectedRPT.size} assigned
+                            ({currentRPT.length - editRemovedRPT.size + editSelectedRPT.size} assigned)
                           </span>
                         </div>
                         <div className="space-y-1">
                           {currentRPT.map((s) => {
                             if (editRemovedRPT.has(s.id)) return null
                             return (
-                              <div key={s.id} className="group grid grid-cols-[1fr_auto_auto] gap-2 items-center rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                                  <span className="text-sm truncate">{s.name}</span>
-                                </div>
+                              <div key={s.id} className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
+                                <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                <span className="text-sm truncate">{s.name}</span>
                                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                   <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                                     onClick={() => setEditRemovedRPT(prev => { const n = new Set(prev); n.add(s.id); return n })} title="Remove">
                                     <X className="h-3.5 w-3.5" />
                                   </Button>
-                                </div>
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <Popover>
-                                    <PopoverTrigger asChild>
-                                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground"><MoreVertical className="h-3.5 w-3.5" /></Button>
-                                    </PopoverTrigger>
-                                    <PopoverContent align="end" className="w-48 p-1">
-                                      <button className="w-full text-left px-2 py-1.5 text-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed flex items-center rounded"
-                                        disabled={staffFromOtherTeams.RPT.length === 0}
-                                        onClick={() => toast.show({ title: 'Team Transfer', description: `Transfer ${s.name} via Staff Profile panel.` })}>
-                                        <ArrowRightLeft className="mr-2 h-3.5 w-3.5" />Transfer from another team…
-                                      </button>
-                                    </PopoverContent>
-                                  </Popover>
                                 </div>
                               </div>
                             )
@@ -785,48 +771,52 @@ export function TeamConfigurationPanel() {
                               </div>
                             )
                           })}
+
+                          {/* Newly selected (from other teams) - shown inline */}
+                          {Array.from(editSelectedRPT).map(id => {
+                            const m = staffFromOtherTeams.RPT.find(s => s.id === id)
+                            if (!m) return null
+                            return (
+                              <div key={`transfer-${id}`} className="grid grid-cols-[1fr_auto] gap-2 items-center rounded-md px-2 py-1.5 bg-green-50 border border-green-200">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+                                  <span className="text-sm text-green-900 truncate">{m.name}</span>
+                                  <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700 flex-shrink-0">Transfer</Badge>
+                                </div>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700 hover:text-green-900"
+                                  onClick={() => setEditSelectedRPT(prev => { const n = new Set(prev); n.delete(id); return n })}>
+                                  <X className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            )
+                          })}
+
                           {currentRPT.length === 0 && editSelectedRPT.size === 0 && (
                             <p className="text-sm text-muted-foreground py-1 px-2">No RPT staff assigned.</p>
                           )}
                         </div>
                       </div>
 
-                      {/* Team's non-floating PCA - CSS Grid alignment */}
+                      {/* Team's non-floating PCA */}
                       <div className="space-y-2">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
                           <Label className="text-sm font-medium">Non-floating PCA</Label>
                           <span className="text-xs text-muted-foreground">
-                            {currentPCA.length - editRemovedPCA.size + editSelectedPCA.size} assigned
+                            ({currentPCA.length - editRemovedPCA.size + editSelectedPCA.size} assigned)
                           </span>
                         </div>
                         <div className="space-y-1">
                           {currentPCA.map((s) => {
                             if (editRemovedPCA.has(s.id)) return null
                             return (
-                              <div key={s.id} className="group grid grid-cols-[1fr_auto_auto] gap-2 items-center rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                                  <span className="text-sm truncate">{s.name}</span>
-                                </div>
+                              <div key={s.id} className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
+                                <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                <span className="text-sm truncate">{s.name}</span>
                                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                   <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                                     onClick={() => setEditRemovedPCA(prev => { const n = new Set(prev); n.add(s.id); return n })} title="Remove">
                                     <X className="h-3.5 w-3.5" />
                                   </Button>
-                                </div>
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <Popover>
-                                    <PopoverTrigger asChild>
-                                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground"><MoreVertical className="h-3.5 w-3.5" /></Button>
-                                    </PopoverTrigger>
-                                    <PopoverContent align="end" className="w-48 p-1">
-                                      <button className="w-full text-left px-2 py-1.5 text-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed flex items-center rounded"
-                                        disabled={staffFromOtherTeams.PCA.length === 0}
-                                        onClick={() => toast.show({ title: 'Team Transfer', description: `Transfer ${s.name} via Staff Profile panel.` })}>
-                                        <ArrowRightLeft className="mr-2 h-3.5 w-3.5" />Transfer from another team…
-                                      </button>
-                                    </PopoverContent>
-                                  </Popover>
                                 </div>
                               </div>
                             )
@@ -848,6 +838,26 @@ export function TeamConfigurationPanel() {
                               </div>
                             )
                           })}
+
+                          {/* Newly selected (from other teams) - shown inline */}
+                          {Array.from(editSelectedPCA).map(id => {
+                            const m = staffFromOtherTeams.PCA.find(s => s.id === id)
+                            if (!m) return null
+                            return (
+                              <div key={`transfer-${id}`} className="grid grid-cols-[1fr_auto] gap-2 items-center rounded-md px-2 py-1.5 bg-green-50 border border-green-200">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+                                  <span className="text-sm text-green-900 truncate">{m.name}</span>
+                                  <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700 flex-shrink-0">Transfer</Badge>
+                                </div>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700 hover:text-green-900"
+                                  onClick={() => setEditSelectedPCA(prev => { const n = new Set(prev); n.delete(id); return n })}>
+                                  <X className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            )
+                          })}
+
                           {currentPCA.length === 0 && editSelectedPCA.size === 0 && (
                             <p className="text-sm text-muted-foreground py-1 px-2">No PCA staff assigned.</p>
                           )}
@@ -887,7 +897,7 @@ export function TeamConfigurationPanel() {
                                 placeholder="Search staff by name…"
                                 value={addMembersSearchQuery}
                                 onChange={(e) => setAddMembersSearchQuery(e.target.value)}
-                                className="pl-9 h-9"
+                                className="pl-9 h-9 max-w-md"
                               />
                             </div>
 
@@ -926,7 +936,7 @@ export function TeamConfigurationPanel() {
                                     return (
                                       <label
                                         key={s.id}
-                                        className="grid grid-cols-[auto_1fr_auto] gap-2 items-center py-1.5 px-2 rounded-md hover:bg-accent cursor-pointer"
+                                        className="flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-accent cursor-pointer"
                                       >
                                         <Checkbox
                                           className={teamConfigCheckboxClass}
@@ -975,16 +985,16 @@ export function TeamConfigurationPanel() {
                                   {/* Masonry-style 2-column grid */}
                                   <div className="grid grid-cols-2 gap-3">
                                     {Array.from(bySourceTeam.entries()).map(([sourceTeam, teamStaff]) => {
-                                      const isExpanded = expandedSourceTeams.has(sourceTeam)
+                                      const isExpanded = expandedSourceTeams.has(sourceTeam) || (addMembersSearchQuery.trim() && filterStaff(teamStaff, { searchQuery: addMembersSearchQuery, activeOnly: true }).length > 0)
                                       const filteredTeamStaff = addMembersSearchQuery.trim()
                                         ? filterStaff(teamStaff, { searchQuery: addMembersSearchQuery, activeOnly: true })
                                         : teamStaff
-                                      
+
                                       if (filteredTeamStaff.length === 0 && addMembersSearchQuery.trim()) return null
-                                      
+
                                       return (
-                                        <div 
-                                          key={sourceTeam} 
+                                        <div
+                                          key={sourceTeam}
                                           className={`bg-muted/20 rounded-md p-2 ${isExpanded ? 'col-span-2' : ''}`}
                                         >
                                           {/* Clickable team header - minimal text style */}
@@ -1005,18 +1015,18 @@ export function TeamConfigurationPanel() {
                                               <span className="text-xs text-muted-foreground">({filteredTeamStaff.length})</span>
                                             </div>
                                           </button>
-                                          
-                                          {/* Expanded content - auto height */}
+
+                                          {/* Expanded content - auto height, also shown when search matches */}
                                           {isExpanded && (
                                             <div className="mt-2 space-y-1 max-h-48 overflow-y-auto pr-1">
                                               {filteredTeamStaff.map((s) => {
                                                 const isSelected = editSelectedAPPT.has(s.id) || editSelectedRPT.has(s.id) || editSelectedPCA.has(s.id)
                                                 const setSelected = s.rank === 'APPT' ? setEditSelectedAPPT : s.rank === 'RPT' ? setEditSelectedRPT : setEditSelectedPCA
-                                                
+
                                                 return (
                                                   <label
                                                     key={s.id}
-                                                    className="grid grid-cols-[auto_1fr_auto] gap-2 items-center py-1.5 px-1 rounded hover:bg-accent/50 cursor-pointer"
+                                                    className="flex items-center gap-2 py-1.5 px-1 rounded hover:bg-accent/50 cursor-pointer"
                                                   >
                                                     <Checkbox
                                                       className={teamConfigCheckboxClass}
@@ -1049,17 +1059,17 @@ export function TeamConfigurationPanel() {
                           <Button
                             variant="outline"
                             size="sm"
-                            className="w-full h-9 text-sm"
+                            className="h-8 px-3 text-xs"
                             onClick={() => {
                               setShowAddMembersPanel(true)
                               setAddMembersSearchQuery('')
                             }}
-                            disabled={unassignedAPPT.length + unassignedRPT.length + unassignedPCA.length === 0 && 
+                            disabled={unassignedAPPT.length + unassignedRPT.length + unassignedPCA.length === 0 &&
                               staffFromOtherTeams.APPT.length + staffFromOtherTeams.RPT.length + staffFromOtherTeams.PCA.length === 0}
                           >
-                            <Plus className="mr-2 h-4 w-4" />
+                            <Plus className="mr-1.5 h-3.5 w-3.5" />
                             Add team members
-                            <span className="ml-2 text-xs text-muted-foreground">
+                            <span className="ml-1.5 text-xs text-muted-foreground">
                               ({unassignedAPPT.length + unassignedRPT.length + unassignedPCA.length} unassigned)
                             </span>
                           </Button>
@@ -1068,10 +1078,10 @@ export function TeamConfigurationPanel() {
 
                       {/* Ward assignment - inline expand design */}
                       <div className="space-y-3 pt-4 border-t">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
                           <Label className="text-sm font-medium">Wards assigned</Label>
                           <span className="text-xs text-muted-foreground">
-                            {editSelectedWards.size} selected
+                            ({editSelectedWards.size} selected)
                           </span>
                         </div>
                         
@@ -1210,14 +1220,14 @@ export function TeamConfigurationPanel() {
                                 </div>
                               ) : (
                                 <Button
-                                  variant="ghost"
+                                  variant="outline"
                                   size="sm"
-                                  className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                  className="h-8 px-3 text-xs"
                                   onClick={() => setShowWardSelector(true)}
                                 >
-                                  <Plus className="mr-1 h-3.5 w-3.5" />
+                                  <Plus className="mr-1.5 h-3.5 w-3.5" />
                                   Assign wards
-                                  <span className="ml-1 text-muted-foreground">({unselectedWards.length} available)</span>
+                                  <span className="ml-1.5 text-xs text-muted-foreground">({unselectedWards.length} available)</span>
                                 </Button>
                               )}
                             </div>
