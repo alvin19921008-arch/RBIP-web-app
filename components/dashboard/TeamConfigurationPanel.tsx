@@ -22,6 +22,7 @@ import {
   Info,
   User
 } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
@@ -130,6 +131,11 @@ export function TeamConfigurationPanel() {
   const [editRemovedRPT, setEditRemovedRPT] = useState<Set<string>>(new Set())
   const [editRemovedPCA, setEditRemovedPCA] = useState<Set<string>>(new Set())
 
+  // Inline confirmation for delete actions
+  const [pendingDeleteAPPT, setPendingDeleteAPPT] = useState<string | null>(null)
+  const [pendingDeleteRPT, setPendingDeleteRPT] = useState<string | null>(null)
+  const [pendingDeletePCA, setPendingDeletePCA] = useState<string | null>(null)
+
   // New state for consolidated "Add Members" section
   const [showAddMembersPanel, setShowAddMembersPanel] = useState(false)
   const [addMembersSearchQuery, setAddMembersSearchQuery] = useState('')
@@ -212,6 +218,11 @@ export function TeamConfigurationPanel() {
     setEditRemovedAPPT(new Set())
     setEditRemovedRPT(new Set())
     setEditRemovedPCA(new Set())
+
+    // Clear pending deletes
+    setPendingDeleteAPPT(null)
+    setPendingDeleteRPT(null)
+    setPendingDeletePCA(null)
 
     // Load current ward assignments
     const selectedWardsSet = new Set<string>()
@@ -633,23 +644,46 @@ export function TeamConfigurationPanel() {
                                 <span className="text-sm truncate">{s.name}</span>
 
                                 {/* Control buttons - appear on hover, immediately after name */}
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                                    onClick={() => {
-                                      setEditRemovedAPPT(prev => {
-                                        const newSet = new Set(prev)
-                                        newSet.add(s.id)
-                                        return newSet
-                                      })
-                                    }}
-                                    title="Remove from team"
-                                  >
-                                    <X className="h-3.5 w-3.5" />
-                                  </Button>
-                                </div>
+                                {pendingDeleteAPPT === s.id ? (
+                                  <div className="flex items-center gap-1">
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      className="h-7 text-xs"
+                                      onClick={() => {
+                                        setEditRemovedAPPT(prev => {
+                                          const newSet = new Set(prev)
+                                          newSet.add(s.id)
+                                          return newSet
+                                        })
+                                        setPendingDeleteAPPT(null)
+                                      }}
+                                    >
+                                      Confirm?
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7"
+                                      onClick={() => setPendingDeleteAPPT(null)}
+                                    >
+                                      ×
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <Tooltip content="Remove from team" side="right">
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                        onClick={() => setPendingDeleteAPPT(s.id)}
+                                      >
+                                        <X className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </Tooltip>
+                                  </div>
+                                )}
                               </div>
                             )
                           })}
@@ -745,12 +779,46 @@ export function TeamConfigurationPanel() {
                               <div key={s.id} className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
                                 <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                                 <span className="text-sm truncate">{s.name}</span>
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                                    onClick={() => setEditRemovedRPT(prev => { const n = new Set(prev); n.add(s.id); return n })} title="Remove">
-                                    <X className="h-3.5 w-3.5" />
-                                  </Button>
-                                </div>
+                                {pendingDeleteRPT === s.id ? (
+                                  <div className="flex items-center gap-1">
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      className="h-7 text-xs"
+                                      onClick={() => {
+                                        setEditRemovedRPT(prev => {
+                                          const n = new Set(prev)
+                                          n.add(s.id)
+                                          return n
+                                        })
+                                        setPendingDeleteRPT(null)
+                                      }}
+                                    >
+                                      Confirm?
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7"
+                                      onClick={() => setPendingDeleteRPT(null)}
+                                    >
+                                      ×
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <Tooltip content="Remove" side="right">
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                        onClick={() => setPendingDeleteRPT(s.id)}
+                                      >
+                                        <X className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </Tooltip>
+                                  </div>
+                                )}
                               </div>
                             )
                           })}
@@ -812,12 +880,46 @@ export function TeamConfigurationPanel() {
                               <div key={s.id} className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
                                 <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                                 <span className="text-sm truncate">{s.name}</span>
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                                    onClick={() => setEditRemovedPCA(prev => { const n = new Set(prev); n.add(s.id); return n })} title="Remove">
-                                    <X className="h-3.5 w-3.5" />
-                                  </Button>
-                                </div>
+                                {pendingDeletePCA === s.id ? (
+                                  <div className="flex items-center gap-1">
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      className="h-7 text-xs"
+                                      onClick={() => {
+                                        setEditRemovedPCA(prev => {
+                                          const n = new Set(prev)
+                                          n.add(s.id)
+                                          return n
+                                        })
+                                        setPendingDeletePCA(null)
+                                      }}
+                                    >
+                                      Confirm?
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7"
+                                      onClick={() => setPendingDeletePCA(null)}
+                                    >
+                                      ×
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <Tooltip content="Remove" side="right">
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                        onClick={() => setPendingDeletePCA(s.id)}
+                                      >
+                                        <X className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </Tooltip>
+                                  </div>
+                                )}
                               </div>
                             )
                           })}
@@ -1135,22 +1237,23 @@ export function TeamConfigurationPanel() {
                                       </Button>
                                     </div>
                                   </div>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 text-muted-foreground hover:text-destructive flex-shrink-0"
-                                    onClick={() => {
-                                      const newSet = new Set(editSelectedWards)
-                                      const newBeds = { ...editWardBeds }
-                                      newSet.delete(ward.id)
-                                      delete newBeds[ward.id]
-                                      setEditSelectedWards(newSet)
-                                      setEditWardBeds(newBeds)
-                                    }}
-                                    title="Remove ward"
-                                  >
-                                    <X className="h-3.5 w-3.5" />
-                                  </Button>
+                                  <Tooltip content="Remove ward" side="right">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 text-muted-foreground hover:text-destructive flex-shrink-0"
+                                      onClick={() => {
+                                        const newSet = new Set(editSelectedWards)
+                                        const newBeds = { ...editWardBeds }
+                                        newSet.delete(ward.id)
+                                        delete newBeds[ward.id]
+                                        setEditSelectedWards(newSet)
+                                        setEditWardBeds(newBeds)
+                                      }}
+                                    >
+                                      <X className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </Tooltip>
                                 </div>
                               </div>
                             )

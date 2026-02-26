@@ -812,6 +812,8 @@ function SchedulePageContent() {
       resolveTeamMergeConfig({
         teamSettingsRows,
         snapshotMerge: (baselineSnapshot as any)?.teamMerge ?? null,
+        snapshotDisplayNames: (baselineSnapshot as any)?.teamDisplayNames ?? null,
+        hasBaselineSnapshot: !!baselineSnapshot,
       }),
     [teamSettingsRows, baselineSnapshot]
   )
@@ -12535,6 +12537,8 @@ function SplitReferencePortal(props: {
       resolveTeamMergeConfig({
         teamSettingsRows: props.liveTeamSettingsRows,
         snapshotMerge: (refScheduleState.baselineSnapshot as any)?.teamMerge ?? null,
+        snapshotDisplayNames: (refScheduleState.baselineSnapshot as any)?.teamDisplayNames ?? null,
+        hasBaselineSnapshot: !!refScheduleState.baselineSnapshot,
       }),
     [props.liveTeamSettingsRows, refScheduleState.baselineSnapshot]
   )

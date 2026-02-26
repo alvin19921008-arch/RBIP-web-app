@@ -16,7 +16,8 @@ import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfi
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAccessControl } from '@/lib/access/useAccessControl'
-import { ArrowRight, Users, GitMerge, ExternalLink, Trash2, MoveUp, MoveDown, X } from 'lucide-react'
+import { ArrowRight, Users, GitMerge, ExternalLink, MoveUp, MoveDown, X } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
 import { 
   computeMergedIntoMap, 
   getTeamMergeStatus, 
@@ -754,7 +755,7 @@ function PCAPreferenceForm({
               const showUpArrow = preferredPCA.length > 1 && idx > 0
               const showDownArrow = preferredPCA.length > 1 && idx < preferredPCA.length - 1
               return (
-                <div key={pcaId} className="flex items-center gap-2 py-1">
+                <div key={pcaId} className="group flex items-center gap-2 py-1.5 rounded-md px-2 hover:bg-muted/50 transition-colors">
                   <div className="flex items-center gap-1">
                     {showUpArrow && (
                       <button
@@ -780,6 +781,8 @@ function PCAPreferenceForm({
                     <span className="text-sm font-medium w-6">{idx + 1}.</span>
                     <span className="text-sm">{pca.name}</span>
                   </div>
+
+                  {/* Delete button - appears on hover, next to name */}
                   {pcaIdPendingDelete === pcaId ? (
                     <div className="flex items-center gap-1">
                       <Button
@@ -792,22 +795,26 @@ function PCAPreferenceForm({
                       </Button>
                       <Button
                         variant="ghost"
-                        size="sm"
-                        className="h-7 text-xs"
+                        size="icon"
+                        className="h-7 w-7"
                         onClick={() => setPcaIdPendingDelete(null)}
                       >
-                        Cancel
+                        ×
                       </Button>
                     </div>
                   ) : (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                      onClick={() => setPcaIdPendingDelete(pcaId)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Tooltip content={`Remove ${pca.name}`} side="right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                          onClick={() => setPcaIdPendingDelete(pcaId)}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </Tooltip>
+                    </div>
                   )}
                 </div>
               )

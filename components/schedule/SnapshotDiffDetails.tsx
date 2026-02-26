@@ -1,9 +1,26 @@
 'use client'
 
+import { useMemo, useRef, useState, useEffect } from 'react'
 import type { SnapshotDiffResult } from '@/lib/features/schedule/snapshotDiff'
 
 export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
   const MAX = 20
+
+  // Build staff name lookup from all staff sections in the diff result
+  const staffNameById = useMemo(() => {
+    const map = new Map<string, string>()
+    const allStaff = [
+      ...props.result.staff.added,
+      ...props.result.staff.removed,
+      ...props.result.staff.changed.map((s) => ({ id: s.id, name: s.name })),
+    ]
+    allStaff.forEach((s) => {
+      if (s.id && s.name) map.set(s.id, s.name.trim())
+    })
+    return map
+  }, [props.result.staff])
+
+  const resolveStaffName = (id: string) => staffNameById.get(id) || id
 
   const staffLabel = (args: { id: string; name?: string | null }) => {
     const name = typeof args.name === 'string' ? args.name.trim() : ''
@@ -12,6 +29,46 @@ export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
 
   type Change = { field: string; from: string; to: string }
   type ChangeTableRow = { item: string; field: string; saved: string; dashboard: string }
+
+  const toBoolLabel = (value: unknown) => (value === true ? 'Yes' : value === false ? 'No' : 'Not set')
+
+  const prettyMergeSource = (value: unknown) => {
+    if (value === 'main') return 'Main team'
+    if (value === 'mergedAway') return 'Merged-away team'
+    if (value === 'custom') return 'Custom'
+    return value == null ? 'Not set' : String(value)
+  }
+
+  const renderMergedPcaOverride = (raw: string) => {
+    const trimmed = (raw || '').trim()
+    if (!trimmed || trimmed === '∅') return trimmed || '∅'
+    if (trimmed === 'null') return 'Not set'
+    try {
+      const parsed = JSON.parse(trimmed) as any
+      if (!parsed || typeof parsed !== 'object') return trimmed
+      const preferredSlots = Array.isArray(parsed.preferred_slots) ? parsed.preferred_slots.filter((n: any) => typeof n === 'number') : []
+      const preferredPcaIds = Array.isArray(parsed.preferred_pca_ids) ? parsed.preferred_pca_ids.filter((s: any) => typeof s === 'string') : []
+      const lines = [
+        `Source: ${prettyMergeSource(parsed.source)}`,
+        `Updated at: ${parsed.updatedAt ? String(parsed.updatedAt) : 'Not set'}`,
+        `Preferred slots: ${preferredSlots.length > 0 ? preferredSlots.join(', ') : 'None'}`,
+        `Gym slot: ${typeof parsed.gym_schedule === 'number' ? parsed.gym_schedule : 'None'}`,
+        `Avoid gym schedule: ${toBoolLabel(parsed.avoid_gym_schedule)}`,
+        `Floor: ${parsed.floor_pca_selection ? String(parsed.floor_pca_selection) : 'None'}`,
+        `Preferred non-floating PCA: ${preferredPcaIds.length > 0 ? preferredPcaIds.map((id) => resolveStaffName(id)).join(', ') : 'None'}`,
+      ]
+      return lines.join('\n')
+    } catch {
+      return trimmed
+    }
+  }
+
+  const formatCellValue = (field: string, value: string) => {
+    if (field === 'merged_pca_preferences_override') {
+      return renderMergedPcaOverride(value)
+    }
+    return value
+  }
 
   const buildChangeRows = (items: Array<{ item: string; changes: Change[] }>): ChangeTableRow[] => {
     const rows: ChangeTableRow[] = []
@@ -38,6 +95,46 @@ export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
     )
   }
 
+  const ScrollHintTable = ({ children }: { children: React.ReactNode }) => {
+    const containerRef = useRef<HTMLDivElement>(null)
+    const [showHint, setShowHint] = useState(false)
+
+    useEffect(() => {
+      const el = containerRef.current
+      if (!el) return
+      const check = () => {
+        const hasOverflow = el.scrollWidth > el.clientWidth
+        const isAtEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 2
+        setShowHint(hasOverflow && !isAtEnd)
+      }
+      check()
+      el.addEventListener('scroll', check, { passive: true })
+      window.addEventListener('resize', check)
+      const id = window.setInterval(check, 500)
+      return () => {
+        el.removeEventListener('scroll', check)
+        window.removeEventListener('resize', check)
+        window.clearInterval(id)
+      }
+    }, [])
+
+    return (
+      <div className="relative">
+        <div ref={containerRef} className="w-full overflow-x-auto">
+          {children}
+        </div>
+        {showHint ? (
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-16 bg-gradient-to-l from-amber-100/90 to-transparent" />
+        ) : null}
+        <div className="pt-1">
+          <div className="text-[10px] text-amber-700/80">
+            {showHint ? 'Scroll right for more →' : '\u00A0'}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const renderChangeTable = (rows: ChangeTableRow[]) => {
     const shown = rows.slice(0, MAX)
     const rest = Math.max(0, rows.length - shown.length)
@@ -53,8 +150,8 @@ export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
     }
     return (
       <div className="space-y-1">
-        <div className="w-full">
-          <table className="w-full table-fixed text-[11px] border border-amber-200/60 rounded-md overflow-hidden">
+        <ScrollHintTable>
+          <table className="w-full min-w-[720px] table-fixed text-[11px] border border-amber-200/60 rounded-md overflow-hidden">
             <colgroup>
               <col style={{ width: '22%' }} />
               <col style={{ width: '16%' }} />
@@ -87,10 +184,10 @@ export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
                         {r.field}
                       </td>
                       <td className="px-2 py-1 border-b border-amber-200/40 text-muted-foreground whitespace-pre-wrap break-words">
-                        {r.saved}
+                        {formatCellValue(r.field, r.saved)}
                       </td>
                       <td className="px-2 py-1 border-b border-amber-200/40 text-muted-foreground whitespace-pre-wrap break-words">
-                        {r.dashboard}
+                        {formatCellValue(r.field, r.dashboard)}
                       </td>
                     </tr>
                   )
@@ -98,7 +195,7 @@ export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
               })}
             </tbody>
           </table>
-        </div>
+        </ScrollHintTable>
         {rest > 0 ? <div className="text-xs text-muted-foreground">…and {rest} more</div> : null}
       </div>
     )

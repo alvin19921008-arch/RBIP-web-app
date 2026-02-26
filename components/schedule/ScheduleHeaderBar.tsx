@@ -196,7 +196,7 @@ export function ScheduleHeaderBar(props: {
                         props.snapshotDiffExpanded ? 'max-h-[70vh] opacity-100' : 'max-h-0 opacity-0'
                       )}
                     >
-                      <div className="pt-1 pb-1">
+                      <div className="pt-1 pb-1 max-h-[62vh] overflow-y-auto pr-1">
                         {/* Divider */}
                         <div className="h-px bg-amber-200/60 w-full mb-3" />
 
@@ -363,7 +363,7 @@ export function ScheduleHeaderBar(props: {
                       <button
                         type="button"
                         aria-label="Developer cache actions"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full border-l border-border bg-background text-muted-foreground ring-offset-background transition-colors hover:bg-muted/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-transparent text-muted-foreground ring-offset-background transition-colors hover:border hover:border-border hover:bg-muted/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
                       >
                         <ChevronDown className="h-4 w-4" />
                       </button>

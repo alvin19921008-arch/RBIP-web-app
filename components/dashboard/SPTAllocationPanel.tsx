@@ -9,8 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { SPTAllocation } from '@/types/allocation'
 import { Staff, Team, Weekday } from '@/types/staff'
 import { getSlotLabel } from '@/lib/utils/slotHelpers'
-import { Trash2 } from 'lucide-react'
-import { ChevronUp, ChevronDown } from 'lucide-react'
+import { X, ChevronUp, ChevronDown, ChevronRight } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
@@ -23,6 +22,8 @@ export function SPTAllocationPanel() {
   const [staff, setStaff] = useState<Staff[]>([])
   const [loading, setLoading] = useState(false)
   const [editingAllocation, setEditingAllocation] = useState<SPTAllocation | null>(null)
+  const [expandedAllocIds, setExpandedAllocIds] = useState<Set<string>>(new Set())
+  const [pendingDeleteAllocId, setPendingDeleteAllocId] = useState<string | null>(null)
   const expand = useDashboardExpandableCard<string>({ animationMs: 220 })
   const supabase = createClientComponentClient()
   const toast = useToast()
@@ -52,10 +53,6 @@ export function SPTAllocationPanel() {
   }
 
   const handleDelete = async (allocationId: string) => {
-    if (!confirm('Are you sure you want to remove this SPT allocation from work schedules? The data will be kept in the database.')) {
-      return
-    }
-    
     try {
       const { error } = await supabase
         .from('spt_allocations')
@@ -163,29 +160,49 @@ export function SPTAllocationPanel() {
                   )
                 }
                 
+                const isExpanded = expandedAllocIds.has(alloc.id)
+                const staffMember = staff.find(s => s.id === alloc.staff_id)
+                
                 return (
                   <div 
                     key={alloc.id} 
-                    className={`py-4 px-2 hover:bg-muted/30 transition-colors ${alloc.active === false ? 'opacity-50' : ''}`}
+                    className={`py-3 px-2 hover:bg-muted/30 transition-colors ${alloc.active === false ? 'opacity-50' : ''}`}
                   >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <h3 className="font-semibold text-sm">
-                            {staff.find(s => s.id === alloc.staff_id)?.name || 'Unknown'}
-                          </h3>
-                          {alloc.active === false && (
-                            <span className="text-xs text-muted-foreground">(Inactive)</span>
-                          )}
-                          {alloc.is_rbip_supervisor && (
-                            <Badge 
-                              variant="outline" 
-                              className="text-[10px] h-5 px-1.5 font-normal text-amber-700 border-amber-200 bg-amber-100"
-                            >
-                              Supervisor
-                            </Badge>
-                          )}
-                        </div>
+                    {/* Header row with chevron, name, badges, and delete */}
+                    <div className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
+                      {/* Chevron for expand/collapse */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpandedAllocIds(prev => {
+                            const next = new Set(prev)
+                            if (next.has(alloc.id)) {
+                              next.delete(alloc.id)
+                            } else {
+                              next.add(alloc.id)
+                            }
+                            return next
+                          })
+                          if (!isExpanded) {
+                            setEditingAllocation(alloc)
+                          } else {
+                            setEditingAllocation(null)
+                          }
+                        }}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        {isExpanded ? (
+                          <ChevronDown className="h-4 w-4" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4" />
+                        )}
+                      </button>
+                      
+                      {/* Name + Specialty badge (inline) + Supervisor badge + Delete button */}
+                      <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
+                        <h3 className="font-semibold text-sm truncate">
+                          {staffMember?.name || 'Unknown'}
+                        </h3>
                         {alloc.specialty && (
                           <Badge 
                             variant="outline" 
@@ -194,6 +211,61 @@ export function SPTAllocationPanel() {
                             {alloc.specialty}
                           </Badge>
                         )}
+                        {alloc.is_rbip_supervisor && (
+                          <Badge 
+                            variant="outline" 
+                            className="text-[10px] h-5 px-1.5 font-normal text-amber-700 border-amber-200 bg-amber-100"
+                          >
+                            Supervisor
+                          </Badge>
+                        )}
+                        {alloc.active === false && (
+                          <span className="text-xs text-muted-foreground">(Inactive)</span>
+                        )}
+                        
+                        {/* Delete button - appears on hover, next to name/badges */}
+                        {pendingDeleteAllocId === alloc.id ? (
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => {
+                                handleDelete(alloc.id)
+                                setPendingDeleteAllocId(null)
+                              }}
+                            >
+                              Confirm?
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => setPendingDeleteAllocId(null)}
+                            >
+                              ×
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Tooltip content={`Remove ${staffMember?.name || 'Unknown'}`} side="right">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                onClick={() => setPendingDeleteAllocId(alloc.id)}
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </Button>
+                            </Tooltip>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* Collapsed summary - teams and weekday config */}
+                    {!isExpanded && (
+                      <div className="pl-6 pt-1">
                         <p className="text-xs text-muted-foreground">
                           <span className="text-foreground">{alloc.teams.join(', ')}</span>
                           <span className="mx-1.5 text-border">·</span>
@@ -230,28 +302,7 @@ export function SPTAllocationPanel() {
                           </span>
                         </p>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 px-2 text-xs"
-                          onClick={() => {
-                            setEditingAllocation(alloc)
-                            expand.open(alloc.id)
-                          }}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                          onClick={() => handleDelete(alloc.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
+                    )}
                   </div>
                 )
               })}

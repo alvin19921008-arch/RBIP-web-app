@@ -9,7 +9,8 @@ import { Staff, Team } from '@/types/staff'
 import { Weekday } from '@/types/staff'
 import { getSlotLabel } from '@/lib/utils/slotHelpers'
 import { createEmptyTeamRecordFactory } from '@/lib/utils/types'
-import { Trash2, Edit2, ChevronUp, ChevronDown, ChevronRight, MoveUp, MoveDown } from 'lucide-react'
+import { Trash2, Edit2, ChevronUp, ChevronDown, ChevronRight, MoveUp, MoveDown, X } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
@@ -33,6 +34,16 @@ interface OverlapInfo {
   team: Team
   weekday: Weekday
   staffIds: string[]
+}
+
+import { Badge } from '@/components/ui/badge'
+
+function RankBadge({ rank, className = '' }: { rank: string; className?: string }) {
+  return (
+    <Badge variant="outline" className={`text-[10px] h-5 px-1.5 font-medium ${className}`}>
+      {rank}
+    </Badge>
+  )
 }
 
 export function SpecialProgramPanel() {
@@ -637,26 +648,29 @@ export function SpecialProgramPanel() {
                                     return (
                                       <>
                                         {regularStaff.map((s) => (
-                                          <label key={s.id} className="flex items-center space-x-2 py-1 cursor-pointer hover:bg-muted/50 rounded px-1">
+                                          <label key={s.id} className="flex items-center gap-2 py-1 cursor-pointer hover:bg-muted/50 rounded px-1">
                                             <input
                                               type="checkbox"
                                               checked={staffIdsToAdd.has(s.id)}
                                               onChange={() => toggleStaffSelection(s.id)}
                                             />
-                                            <span>{s.name} ({s.rank})</span>
+                                            <span className="font-medium">{s.name}</span>
+                                            <RankBadge rank={s.rank} />
                                           </label>
                                         ))}
                                         {bufferStaff.length > 0 && regularStaff.length > 0 && (
                                           <hr className="my-1 border-t border-border" />
                                         )}
                                         {bufferStaff.map((s) => (
-                                          <label key={s.id} className="flex items-center space-x-2 py-1 cursor-pointer hover:bg-muted/50 rounded px-1">
+                                          <label key={s.id} className="flex items-center gap-2 py-1 cursor-pointer hover:bg-muted/50 rounded px-1">
                                             <input
                                               type="checkbox"
                                               checked={staffIdsToAdd.has(s.id)}
                                               onChange={() => toggleStaffSelection(s.id)}
                                             />
-                                            <span>{s.name} ({s.rank}, Buffer)</span>
+                                            <span className="font-medium">{s.name}</span>
+                                            <RankBadge rank={s.rank} />
+                                            <span className="text-xs text-muted-foreground">Buffer</span>
                                           </label>
                                         ))}
                                         {eligibleStaff.length === 0 && (
@@ -769,22 +783,22 @@ export function SpecialProgramPanel() {
 
                                     return (
                                       <div key={config.staff_id} className="pl-4">
-                                        <div className="flex items-center justify-between py-2">
-                                          <div className="flex items-center gap-2 flex-1 min-w-0">
-                                            <button
-                                              type="button"
-                                              onClick={() => toggleStaffExpand(config.staff_id)}
-                                              className="text-muted-foreground hover:text-foreground"
-                                            >
-                                              {isExpanded ? (
-                                                <ChevronDown className="h-4 w-4" />
-                                              ) : (
-                                                <ChevronRight className="h-4 w-4" />
-                                              )}
-                                            </button>
-                                            <span className="font-medium truncate">{staffMember.name}</span>
-                                            <span className="text-xs text-muted-foreground">({staffMember.rank})</span>
-                                          </div>
+                                        <div className="group flex items-center gap-2 py-2 rounded-md px-2 hover:bg-muted/50 transition-colors">
+                                          <button
+                                            type="button"
+                                            onClick={() => toggleStaffExpand(config.staff_id)}
+                                            className="text-muted-foreground hover:text-foreground"
+                                          >
+                                            {isExpanded ? (
+                                              <ChevronDown className="h-4 w-4" />
+                                            ) : (
+                                              <ChevronRight className="h-4 w-4" />
+                                            )}
+                                          </button>
+                                          <span className="font-medium truncate">{staffMember.name}</span>
+                                          <RankBadge rank={staffMember.rank} />
+
+                                          {/* Delete button - appears on hover, next to name */}
                                           {staffIdPendingDelete === config.staff_id ? (
                                             <div className="flex items-center gap-1">
                                               <Button
@@ -808,15 +822,18 @@ export function SpecialProgramPanel() {
                                               </Button>
                                             </div>
                                           ) : (
-                                            <Button
-                                              variant="ghost"
-                                              size="icon"
-                                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                                              onClick={() => setStaffIdPendingDelete(config.staff_id)}
-                                              title={`Remove ${staffMember.name}`}
-                                            >
-                                              <Trash2 className="h-4 w-4" />
-                                            </Button>
+                                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                              <Tooltip content={`Remove ${staffMember.name}`} side="right">
+                                                <Button
+                                                  variant="ghost"
+                                                  size="icon"
+                                                  className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                                  onClick={() => setStaffIdPendingDelete(config.staff_id)}
+                                                >
+                                                  <X className="h-3.5 w-3.5" />
+                                                </Button>
+                                              </Tooltip>
+                                            </div>
                                           )}
                                         </div>
 
@@ -1089,7 +1106,7 @@ export function SpecialProgramPanel() {
                                         
                                         return (
                                           <div key={pcaId} className="flex items-center gap-2 py-1.5 border-b border-border last:border-0">
-                                            <div className="flex gap-0.5">
+                                            <div className="flex gap-0.5 shrink-0">
                                               <Button
                                                 variant="ghost"
                                                 size="icon"
@@ -1127,7 +1144,7 @@ export function SpecialProgramPanel() {
                                             </div>
                                             <span className="font-medium">{pcaStaff.name}</span>
                                             <span className="text-xs text-muted-foreground">
-                                              ({pcaStaff.floating ? 'Floating' : 'Non-floating'}{pcaStaff.status === 'buffer' ? ', Buffer' : ''})
+                                              {pcaStaff.floating ? 'Floating' : 'Non-floating'}{pcaStaff.status === 'buffer' ? ', Buffer' : ''}
                                             </span>
                                           </div>
                                         )
@@ -1279,47 +1296,30 @@ export function SpecialProgramPanel() {
                         <div className="mt-2">
                           <p className="text-sm font-medium mb-1">Assigned Staff:</p>
                           {(() => {
-                            // Separate therapists and PCAs
-                            const therapists = sp.staff.filter(s => ['SPT', 'APPT', 'RPT'].includes(s.rank))
-                            const pcas = sp.staff.filter(s => s.rank === 'PCA')
-                            
-                            // Sort therapists: SPT -> APPT -> RPT
-                            const rankOrder = ['SPT', 'APPT', 'RPT']
-                            const sortedTherapists = therapists.sort((a, b) => {
-                              const aIndex = rankOrder.indexOf(a.rank)
-                              const bIndex = rankOrder.indexOf(b.rank)
-                              return aIndex - bIndex
+                            // Group staff by rank
+                            const staffByRank: Record<string, Staff[]> = {}
+                            sp.staff.forEach(s => {
+                              if (!staffByRank[s.rank]) staffByRank[s.rank] = []
+                              staffByRank[s.rank].push(s)
                             })
+                            
+                            // Define rank display order
+                            const rankOrder = ['SPT', 'APPT', 'RPT', 'PCA']
+                            const sortedRanks = rankOrder.filter(rank => staffByRank[rank] && staffByRank[rank].length > 0)
                             
                             return (
                               <>
-                                {/* Therapists on first line */}
-                                {sortedTherapists.length > 0 && (
-                                  <div className="flex flex-wrap gap-1 mb-1">
-                                    {sortedTherapists.map((s) => (
-                                      <span
-                                        key={s.id}
-                                        className="text-xs px-2 py-1 bg-secondary rounded"
-                                      >
-                                        {s.name} ({s.rank})
-                                      </span>
-                                    ))}
+                                {/* Grouped by Rank */}
+                                {sortedRanks.map((rank) => (
+                                  <div key={rank} className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1.5">
+                                    <RankBadge rank={rank} />
+                                    <span className="text-muted-foreground">:</span>
+                                    <span className="text-sm text-foreground">
+                                      {staffByRank[rank].map(s => s.name).join(', ')}
+                                    </span>
                                   </div>
-                                )}
-                                {/* PCAs on second line */}
-                                {pcas.length > 0 && (
-                                  <div className="flex flex-wrap gap-1 mb-2">
-                                    {pcas.map((s) => (
-                                      <span
-                                        key={s.id}
-                                        className="text-xs px-2 py-1 bg-secondary rounded"
-                                      >
-                                        {s.name} ({s.rank})
-                                      </span>
-                                    ))}
-                                  </div>
-                                )}
-                                {sortedTherapists.length === 0 && pcas.length === 0 && (
+                                ))}
+                                {sortedRanks.length === 0 && (
                                   <div className="mb-2">
                                     <span className="text-xs text-muted-foreground">No staff assigned</span>
                                   </div>
@@ -1460,8 +1460,11 @@ export function SpecialProgramPanel() {
                 <div className="space-y-2">
                   {orderedStaff.map((staffMember, staffIdx) => (
                     <div key={staffMember.id} className="flex items-center gap-2 p-2 border rounded">
-                      <span className="flex-1">{staffMember.name} ({staffMember.rank})</span>
-                      <div className="flex gap-1">
+                      <span className="flex-1 flex items-center gap-2">
+                        <span className="font-medium">{staffMember.name}</span>
+                        <RankBadge rank={staffMember.rank} />
+                      </span>
+                      <div className="flex gap-1 shrink-0">
                         <Button
                           variant="outline"
                           size="icon"

@@ -43,6 +43,7 @@ import {
   normalizeSubstitutionForBySlot,
   removeSubstitutionForTeamsFromOverride,
 } from '@/lib/utils/substitutionFor'
+import { buildTeamMergeSnapshotFromTeamSettings } from '@/lib/utils/teamMerge'
 import {
   normalizeFTE,
   prepareTherapistAllocationForDb,
@@ -75,6 +76,31 @@ function loadPcaEngine() {
 function loadBedAlgo() {
   bedAlgoImport = bedAlgoImport ?? import('@/lib/algorithms/bedAllocation')
   return bedAlgoImport
+}
+
+async function fetchLiveTeamSettingsSnapshot(supabase: any): Promise<{
+  teamDisplayNames: Partial<Record<Team, string>>
+  teamMerge: ReturnType<typeof buildTeamMergeSnapshotFromTeamSettings>
+}> {
+  const result = await supabase
+    .from('team_settings')
+    .select('team,display_name,merged_into,merge_label_override,merged_pca_preferences_override')
+    .order('team')
+  if (result.error) {
+    throw result.error
+  }
+  const rows = (result.data || []) as any[]
+  const teamDisplayNames: Partial<Record<Team, string>> = {}
+  rows.forEach((row) => {
+    const team = row?.team as Team | undefined
+    if (!team) return
+    const raw = typeof row?.display_name === 'string' ? row.display_name.trim() : ''
+    if (raw) teamDisplayNames[team] = raw
+  })
+  return {
+    teamDisplayNames,
+    teamMerge: buildTeamMergeSnapshotFromTeamSettings(rows as any),
+  }
 }
 
 function jsonDeepEqual(a: unknown, b: unknown): boolean {
@@ -1221,11 +1247,19 @@ export function useScheduleController(params: {
     let scheduleId: string
     let effectiveWorkflowState: WorkflowState | null = null
     if (!scheduleData) {
-      const baselineSnapshotToSave = buildBaselineSnapshotFromCurrentState()
-      const [globalHeadAtCreation, seededStaffOverrides] = await Promise.all([
+      const baselineSnapshotToSaveBase = buildBaselineSnapshotFromCurrentState()
+      const [globalHeadAtCreation, seededStaffOverrides, liveTeamConfig] = await Promise.all([
         fetchGlobalHeadAtCreation(supabase),
         seedAllocationNotesForNewSchedule({ supabase, date, dateStr }),
+        fetchLiveTeamSettingsSnapshot(supabase).catch(() => null),
       ])
+      const baselineSnapshotToSave: BaselineSnapshot = {
+        ...(baselineSnapshotToSaveBase as any),
+        teamDisplayNames:
+          (liveTeamConfig as any)?.teamDisplayNames ??
+          (baselineSnapshotToSaveBase as any)?.teamDisplayNames,
+        teamMerge: (liveTeamConfig as any)?.teamMerge ?? (baselineSnapshotToSaveBase as any)?.teamMerge,
+      }
       const baselineEnvelopeToSave = buildBaselineSnapshotEnvelope({
         data: baselineSnapshotToSave,
         source: 'save',
@@ -2895,6 +2929,15 @@ export function useScheduleController(params: {
             })
             nextSnapshot = { ...(nextSnapshot as any), staff: patchedStaff }
           }
+
+          // Preserve date-local team config metadata from snapshot state.
+          // Never overwrite from live team_settings during save, or old dates can drift.
+          nextSnapshot = {
+            ...(nextSnapshot as any),
+            teamDisplayNames:
+              (nextSnapshot as any)?.teamDisplayNames ?? (baselineSnapshot as any)?.teamDisplayNames,
+            teamMerge: (nextSnapshot as any)?.teamMerge ?? (baselineSnapshot as any)?.teamMerge,
+          } as any
 
           const minifiedSnapshot: BaselineSnapshot = {
             ...(nextSnapshot as any),

@@ -48,6 +48,18 @@ function sanitizeMergedInto(input: Partial<Record<Team, Team>> | null | undefine
   return out
 }
 
+function sanitizeDisplayNames(input: Partial<Record<Team, string>> | null | undefined): Partial<Record<Team, string>> {
+  const out: Partial<Record<Team, string>> = {}
+  for (const team of TEAMS) {
+    const raw = input?.[team]
+    if (typeof raw !== 'string') continue
+    const trimmed = raw.trim()
+    if (!trimmed) continue
+    out[team] = trimmed
+  }
+  return out
+}
+
 export function sanitizeTeamMergeSnapshot(
   snapshot: TeamMergeSnapshot | null | undefined
 ): TeamMergeSnapshot | null {
@@ -93,26 +105,45 @@ export function buildTeamMergeSnapshotFromTeamSettings(
 export function resolveTeamMergeConfig(params: {
   teamSettingsRows?: TeamSettingsMergeRow[] | null
   snapshotMerge?: TeamMergeSnapshot | null
+  snapshotDisplayNames?: Partial<Record<Team, string>> | null
+  hasBaselineSnapshot?: boolean
 }): TeamMergeResolvedConfig {
+  const hasBaselineSnapshot = !!params.hasBaselineSnapshot
   const liveSnapshot = buildTeamMergeSnapshotFromTeamSettings(params.teamSettingsRows || [])
   const frozen = sanitizeTeamMergeSnapshot(params.snapshotMerge)
-  const effective = frozen || liveSnapshot
-
-  const displayNames: Partial<Record<Team, string>> = {}
+  const frozenDisplayNames = sanitizeDisplayNames(params.snapshotDisplayNames)
+  const liveDisplayNames: Partial<Record<Team, string>> = {}
   for (const row of params.teamSettingsRows || []) {
     if (!row || !isTeam(row.team)) continue
     const name = (row.display_name || '').trim()
-    displayNames[row.team] = name || row.team
-  }
-  for (const team of TEAMS) {
-    if (!displayNames[team]) displayNames[team] = team
+    liveDisplayNames[row.team] = name || row.team
   }
 
+  const displayNames: Partial<Record<Team, string>> = {}
+  for (const team of TEAMS) {
+    if (hasBaselineSnapshot) {
+      // Snapshot dates must never leak live display names from current global team settings.
+      displayNames[team] = frozenDisplayNames[team] || team
+    } else {
+      displayNames[team] = frozenDisplayNames[team] || liveDisplayNames[team] || team
+    }
+  }
+
+  const mergedInto = hasBaselineSnapshot
+    ? frozen?.mergedInto || {}
+    : frozen?.mergedInto || liveSnapshot.mergedInto
+  const mergeLabelOverrideByTeam = hasBaselineSnapshot
+    ? frozen?.mergeLabelOverrideByTeam || {}
+    : frozen?.mergeLabelOverrideByTeam || liveSnapshot.mergeLabelOverrideByTeam
+  const mergedPcaPreferencesOverrideByTeam = hasBaselineSnapshot
+    ? frozen?.mergedPcaPreferencesOverrideByTeam || {}
+    : frozen?.mergedPcaPreferencesOverrideByTeam || liveSnapshot.mergedPcaPreferencesOverrideByTeam
+
   return {
-    mergedInto: effective?.mergedInto || {},
+    mergedInto,
     displayNames,
-    mergeLabelOverrideByTeam: effective?.mergeLabelOverrideByTeam || {},
-    mergedPcaPreferencesOverrideByTeam: effective?.mergedPcaPreferencesOverrideByTeam || {},
+    mergeLabelOverrideByTeam,
+    mergedPcaPreferencesOverrideByTeam,
   }
 }
 

@@ -19,6 +19,7 @@ import type { BaselineSnapshot, BaselineSnapshotStored, GlobalHeadAtCreation } f
 import { unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { diffBaselineSnapshot } from '@/lib/features/schedule/snapshotDiff'
 import type { SnapshotDiffResult } from '@/lib/features/schedule/snapshotDiff'
+import type { TeamSettingsMergeRow } from '@/lib/utils/teamMerge'
 import {
   fetchSnapshotDiffLiveInputs,
   SNAPSHOT_DIFF_LIVE_INPUTS_DEFAULT_TTL_MS,
@@ -85,6 +86,23 @@ function getThresholdFromHead(head: any): { value: number; unit: ThresholdUnit }
   return { value: Number.isFinite(value) && value >= 0 ? value : 30, unit }
 }
 
+function summarizeActiveGlobalMerges(rows: TeamSettingsMergeRow[]): Array<{ from: string; to: string; label?: string }> {
+  const byTeam = new Map<string, TeamSettingsMergeRow>()
+  rows.forEach((row) => {
+    if (row?.team) byTeam.set(row.team, row)
+  })
+  const out: Array<{ from: string; to: string; label?: string }> = []
+  rows.forEach((row) => {
+    const from = row?.team
+    const to = row?.merged_into ?? null
+    if (!from || !to || to === from) return
+    const label = (byTeam.get(to)?.merge_label_override || '').trim() || undefined
+    out.push({ from, to, label })
+  })
+  out.sort((a, b) => `${a.to}:${a.from}`.localeCompare(`${b.to}:${b.from}`))
+  return out
+}
+
 export function ConfigSyncPanel() {
   const supabase = createClientComponentClient()
   const toast = useToast()
@@ -123,6 +141,7 @@ export function ConfigSyncPanel() {
 
   const [backupNote, setBackupNote] = useState('')
   const [backups, setBackups] = useState<any[]>([])
+  const [teamSettingsRows, setTeamSettingsRows] = useState<TeamSettingsMergeRow[]>([])
 
   const reloadGlobalHead = async () => {
     const res = await supabase.rpc('get_config_global_head_v1')
@@ -172,6 +191,12 @@ export function ConfigSyncPanel() {
 
         await reloadGlobalHead()
         await reloadBackups()
+        const teamSettingsRes = await supabase
+          .from('team_settings')
+          .select('team,display_name,merged_into,merge_label_override,merged_pca_preferences_override')
+          .order('team')
+        if (teamSettingsRes.error) throw teamSettingsRes.error
+        if (!cancelled) setTeamSettingsRows((teamSettingsRes.data || []) as TeamSettingsMergeRow[])
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         if (!cancelled) toast.error('Failed to load sync data.', msg)
@@ -379,7 +404,26 @@ export function ConfigSyncPanel() {
       toast.warning('Select at least 1 category to pull.')
       return
     }
-    if (!confirm(`Pull Global into snapshot ${selectedDate} for selected categories? This overwrites the snapshot slices.`)) return
+    const activeMerges = summarizeActiveGlobalMerges(teamSettingsRows)
+    const includesTeamConfig = cats.includes('teamConfig')
+    let confirmMessage = `Pull Global into snapshot ${selectedDate} for selected categories? This overwrites the snapshot slices.`
+    if (includesTeamConfig && activeMerges.length > 0) {
+      const mergeLines = activeMerges
+        .map((m) => `- ${m.from} -> ${m.to}${m.label ? ` (${m.label})` : ''}`)
+        .join('\n')
+      confirmMessage = [
+        `WARNING: Global Team Merge is active.`,
+        '',
+        `Pulling Team Configuration into this snapshot will write current merge mapping into that date.`,
+        `This can alter historical view/allocations for that schedule date if it previously had no teamMerge snapshot.`,
+        '',
+        `Active global merges:`,
+        mergeLines,
+        '',
+        `Proceed with pull for ${selectedDate}?`,
+      ].join('\n')
+    }
+    if (!confirm(confirmMessage)) return
     try {
       const res = await supabase.rpc('pull_global_to_snapshot_v1', {
         p_date: selectedDate,
@@ -401,6 +445,7 @@ export function ConfigSyncPanel() {
   const snapshotCreatedAt = formatFriendlyDateTime(snapshotEnvelope?.createdAt)
   const snapshotGlobalUpdatedAt = formatFriendlyDateTime(snapshotHead?.global_updated_at)
   const availableSnapshotDateSet = useMemo(() => new Set(availableDates), [availableDates])
+  const activeGlobalMerges = useMemo(() => summarizeActiveGlobalMerges(teamSettingsRows), [teamSettingsRows])
 
   return (
     <div className="pt-6 space-y-6">
@@ -672,6 +717,20 @@ export function ConfigSyncPanel() {
                 </Button>
               </div>
             </div>
+
+            {activeGlobalMerges.length > 0 ? (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <div className="font-medium">Global team merge detected</div>
+                <div className="mt-1">
+                  Pulling with Team Configuration selected will copy the active merge mapping into this snapshot date.
+                </div>
+                <div className="mt-1">
+                  {activeGlobalMerges
+                    .map((m) => `${m.from} -> ${m.to}${m.label ? ` (${m.label})` : ''}`)
+                    .join(', ')}
+                </div>
+              </div>
+            ) : null}
 
             {diffError ? (
               <div className="text-sm text-destructive">Failed to compute differences: {diffError}</div>
