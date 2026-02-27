@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, type SetStateAction } from 'react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -55,6 +55,44 @@ interface PortionPopoverState {
   totalBeds: number
   currentBeds: number
   currentPortion: string | null
+}
+
+type Rank = 'APPT' | 'RPT' | 'PCA'
+type RankBucket<T> = Record<Rank, T>
+
+function createRankBucket<T>(factory: () => T): RankBucket<T> {
+  return {
+    APPT: factory(),
+    RPT: factory(),
+    PCA: factory(),
+  }
+}
+
+function resolveSetStateAction<T>(prev: T, updater: SetStateAction<T>): T {
+  return typeof updater === 'function' ? (updater as (value: T) => T)(prev) : updater
+}
+
+type StaffUpdatePayload = {
+  team: Team | null
+  floating?: boolean
+}
+
+const rankStaffUpdateConfig: Record<Rank, {
+  assign: (team: Team) => StaffUpdatePayload
+  unassign: StaffUpdatePayload
+}> = {
+  APPT: {
+    assign: (team) => ({ team }),
+    unassign: { team: null },
+  },
+  RPT: {
+    assign: (team) => ({ team }),
+    unassign: { team: null },
+  },
+  PCA: {
+    assign: (team) => ({ team, floating: false }),
+    unassign: { team: null, floating: true },
+  },
 }
 
 // Helper to compute fraction from numeric values
@@ -124,17 +162,48 @@ export function TeamConfigurationPanel() {
 
   // Edit state for current team
   const [editDisplayName, setEditDisplayName] = useState('')
-  const [editSelectedAPPT, setEditSelectedAPPT] = useState<Set<string>>(new Set())
-  const [editSelectedRPT, setEditSelectedRPT] = useState<Set<string>>(new Set())
-  const [editSelectedPCA, setEditSelectedPCA] = useState<Set<string>>(new Set())
-  const [editRemovedAPPT, setEditRemovedAPPT] = useState<Set<string>>(new Set())
-  const [editRemovedRPT, setEditRemovedRPT] = useState<Set<string>>(new Set())
-  const [editRemovedPCA, setEditRemovedPCA] = useState<Set<string>>(new Set())
+  const [editSelectedByRank, setEditSelectedByRank] = useState<RankBucket<Set<string>>>(() => createRankBucket(() => new Set<string>()))
+  const [editRemovedByRank, setEditRemovedByRank] = useState<RankBucket<Set<string>>>(() => createRankBucket(() => new Set<string>()))
+  const [pendingDeleteByRank, setPendingDeleteByRank] = useState<RankBucket<string | null>>(() => createRankBucket(() => null))
 
-  // Inline confirmation for delete actions
-  const [pendingDeleteAPPT, setPendingDeleteAPPT] = useState<string | null>(null)
-  const [pendingDeleteRPT, setPendingDeleteRPT] = useState<string | null>(null)
-  const [pendingDeletePCA, setPendingDeletePCA] = useState<string | null>(null)
+  // Backward-compatible aliases during migration (keeps JSX stable)
+  const editSelectedAPPT = editSelectedByRank.APPT
+  const editSelectedRPT = editSelectedByRank.RPT
+  const editSelectedPCA = editSelectedByRank.PCA
+  const editRemovedAPPT = editRemovedByRank.APPT
+  const editRemovedRPT = editRemovedByRank.RPT
+  const editRemovedPCA = editRemovedByRank.PCA
+  const pendingDeleteAPPT = pendingDeleteByRank.APPT
+  const pendingDeleteRPT = pendingDeleteByRank.RPT
+  const pendingDeletePCA = pendingDeleteByRank.PCA
+
+  const setEditSelectedAPPT = (updater: SetStateAction<Set<string>>) => {
+    setEditSelectedByRank(prev => ({ ...prev, APPT: resolveSetStateAction(prev.APPT, updater) }))
+  }
+  const setEditSelectedRPT = (updater: SetStateAction<Set<string>>) => {
+    setEditSelectedByRank(prev => ({ ...prev, RPT: resolveSetStateAction(prev.RPT, updater) }))
+  }
+  const setEditSelectedPCA = (updater: SetStateAction<Set<string>>) => {
+    setEditSelectedByRank(prev => ({ ...prev, PCA: resolveSetStateAction(prev.PCA, updater) }))
+  }
+  const setEditRemovedAPPT = (updater: SetStateAction<Set<string>>) => {
+    setEditRemovedByRank(prev => ({ ...prev, APPT: resolveSetStateAction(prev.APPT, updater) }))
+  }
+  const setEditRemovedRPT = (updater: SetStateAction<Set<string>>) => {
+    setEditRemovedByRank(prev => ({ ...prev, RPT: resolveSetStateAction(prev.RPT, updater) }))
+  }
+  const setEditRemovedPCA = (updater: SetStateAction<Set<string>>) => {
+    setEditRemovedByRank(prev => ({ ...prev, PCA: resolveSetStateAction(prev.PCA, updater) }))
+  }
+  const setPendingDeleteAPPT = (updater: SetStateAction<string | null>) => {
+    setPendingDeleteByRank(prev => ({ ...prev, APPT: resolveSetStateAction(prev.APPT, updater) }))
+  }
+  const setPendingDeleteRPT = (updater: SetStateAction<string | null>) => {
+    setPendingDeleteByRank(prev => ({ ...prev, RPT: resolveSetStateAction(prev.RPT, updater) }))
+  }
+  const setPendingDeletePCA = (updater: SetStateAction<string | null>) => {
+    setPendingDeleteByRank(prev => ({ ...prev, PCA: resolveSetStateAction(prev.PCA, updater) }))
+  }
 
   // New state for consolidated "Add Members" section
   const [showAddMembersPanel, setShowAddMembersPanel] = useState(false)
@@ -144,6 +213,13 @@ export function TeamConfigurationPanel() {
   const [editWardBeds, setEditWardBeds] = useState<Record<string, number>>({})
   const [editWardPortions, setEditWardPortions] = useState<Record<string, string | null>>({})
   const [showWardSelector, setShowWardSelector] = useState(false)
+  const [pendingWardId, setPendingWardId] = useState<string | null>(null)
+
+  const resetRankEditState = () => {
+    setEditSelectedByRank(createRankBucket(() => new Set<string>()))
+    setEditRemovedByRank(createRankBucket(() => new Set<string>()))
+    setPendingDeleteByRank(createRankBucket(() => null))
+  }
 
   useEffect(() => {
     loadData()
@@ -211,18 +287,8 @@ export function TeamConfigurationPanel() {
     const settings = teamSettings[team]
     setEditDisplayName(settings?.display_name || team)
 
-    // Clear selections for new unassigned staff
-    setEditSelectedAPPT(new Set())
-    setEditSelectedRPT(new Set())
-    setEditSelectedPCA(new Set())
-    setEditRemovedAPPT(new Set())
-    setEditRemovedRPT(new Set())
-    setEditRemovedPCA(new Set())
-
-    // Clear pending deletes
-    setPendingDeleteAPPT(null)
-    setPendingDeleteRPT(null)
-    setPendingDeletePCA(null)
+    // Clear selections and pending delete state
+    resetRankEditState()
 
     // Load current ward assignments
     const selectedWardsSet = new Set<string>()
@@ -251,6 +317,7 @@ export function TeamConfigurationPanel() {
       setAddMembersSearchQuery('')
       setExpandedSourceTeams(new Set(['unassigned']))
       setShowWardSelector(false)
+      setPendingWardId(null)
     })
   }
 
@@ -259,6 +326,16 @@ export function TeamConfigurationPanel() {
 
     setSaving(true)
     try {
+      const runChecked = async (
+        label: string,
+        op: Promise<{ error: unknown }>
+      ) => {
+        const res = await op
+        if (res.error) {
+          throw new Error(`${label}: ${String(res.error)}`)
+        }
+      }
+
       // Validate ward over-allocation
       const wardTotals: Record<string, number> = {}
       wards.forEach(ward => {
@@ -288,61 +365,49 @@ export function TeamConfigurationPanel() {
       }
 
       // Save team settings
-      await supabase
-        .from('team_settings')
-        .upsert({
-          team: editingTeam,
-          display_name: editDisplayName,
-          updated_at: new Date().toISOString(),
-        })
+      await runChecked(
+        `Save team settings for ${editingTeam}`,
+        supabase
+          .from('team_settings')
+          .upsert({
+            team: editingTeam,
+            display_name: editDisplayName,
+            updated_at: new Date().toISOString(),
+          })
+      )
 
-      // Update staff assignments
-      // Remove existing APPT members that were unchecked
-      for (const staffId of editRemovedAPPT) {
-        await supabase
-          .from('staff')
-          .update({ team: null })
-          .eq('id', staffId)
+      // Update staff assignments by rank
+      const selectedByRank: RankBucket<Set<string>> = {
+        APPT: editSelectedAPPT,
+        RPT: editSelectedRPT,
+        PCA: editSelectedPCA,
+      }
+      const removedByRank: RankBucket<Set<string>> = {
+        APPT: editRemovedAPPT,
+        RPT: editRemovedRPT,
+        PCA: editRemovedPCA,
       }
 
-      // Assign new unassigned APPT staff to the team
-      for (const staffId of editSelectedAPPT) {
-          await supabase
-            .from('staff')
-            .update({ team: editingTeam })
-          .eq('id', staffId)
-      }
-
-      // Remove existing RPT members that were unchecked
-      for (const staffId of editRemovedRPT) {
-          await supabase
-            .from('staff')
-            .update({ team: null })
-          .eq('id', staffId)
-      }
-
-      // Assign new unassigned RPT staff to the team
-      for (const staffId of editSelectedRPT) {
-          await supabase
-            .from('staff')
-            .update({ team: editingTeam })
-          .eq('id', staffId)
-      }
-
-      // Remove existing PCA members that were unchecked
-      for (const staffId of editRemovedPCA) {
-          await supabase
-            .from('staff')
-          .update({ team: null, floating: true })
-          .eq('id', staffId)
-      }
-
-      // Assign new unassigned PCA staff to the team
-      for (const staffId of editSelectedPCA) {
-          await supabase
-            .from('staff')
-            .update({ team: editingTeam, floating: false })
-          .eq('id', staffId)
+      for (const rank of ['APPT', 'RPT', 'PCA'] as const) {
+        const config = rankStaffUpdateConfig[rank]
+        for (const staffId of removedByRank[rank]) {
+          await runChecked(
+            `Unassign ${rank} staff ${staffId}`,
+            supabase
+              .from('staff')
+              .update(config.unassign)
+              .eq('id', staffId)
+          )
+        }
+        for (const staffId of selectedByRank[rank]) {
+          await runChecked(
+            `Assign ${rank} staff ${staffId} to ${editingTeam}`,
+            supabase
+              .from('staff')
+              .update(config.assign(editingTeam))
+              .eq('id', staffId)
+          )
+        }
       }
 
       // Update ward assignments
@@ -365,14 +430,17 @@ export function TeamConfigurationPanel() {
             delete updatedPortions[editingTeam]
           }
 
-          await supabase
-            .from('wards')
-            .update({
-              team_assignments: updatedAssignments,
-              team_assignment_portions: updatedPortions,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', ward.id)
+          await runChecked(
+            `Update ward assignment for ${ward.name}`,
+            supabase
+              .from('wards')
+              .update({
+                team_assignments: updatedAssignments,
+                team_assignment_portions: updatedPortions,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', ward.id)
+          )
         } else if (currentBeds > 0) {
           // Remove team assignment
           const updatedAssignments = { ...ward.team_assignments }
@@ -381,14 +449,17 @@ export function TeamConfigurationPanel() {
           const updatedPortions = { ...(ward.team_assignment_portions || {}) }
           delete updatedPortions[editingTeam]
 
-          await supabase
-            .from('wards')
-            .update({
-              team_assignments: updatedAssignments,
-              team_assignment_portions: updatedPortions,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', ward.id)
+          await runChecked(
+            `Remove ward assignment for ${ward.name}`,
+            supabase
+              .from('wards')
+              .update({
+                team_assignments: updatedAssignments,
+                team_assignment_portions: updatedPortions,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', ward.id)
+          )
         }
       }
 
@@ -580,6 +651,24 @@ export function TeamConfigurationPanel() {
                   PCA: getStaffFromOtherTeams('PCA', team),
                 }
                 const sortedWards = sortWardsWithSelectedFirst(editSelectedWards)
+                const selectedUnassignedAPPT = Array.from(editSelectedAPPT)
+                  .map(id => unassignedAPPT.find(s => s.id === id))
+                  .filter((s): s is Staff => !!s)
+                const selectedUnassignedRPT = Array.from(editSelectedRPT)
+                  .map(id => unassignedRPT.find(s => s.id === id))
+                  .filter((s): s is Staff => !!s)
+                const selectedUnassignedPCA = Array.from(editSelectedPCA)
+                  .map(id => unassignedPCA.find(s => s.id === id))
+                  .filter((s): s is Staff => !!s)
+                const selectedTransferAPPT = Array.from(editSelectedAPPT)
+                  .map(id => staffFromOtherTeams.APPT.find(s => s.id === id))
+                  .filter((s): s is Staff => !!s)
+                const selectedTransferRPT = Array.from(editSelectedRPT)
+                  .map(id => staffFromOtherTeams.RPT.find(s => s.id === id))
+                  .filter((s): s is Staff => !!s)
+                const selectedTransferPCA = Array.from(editSelectedPCA)
+                  .map(id => staffFromOtherTeams.PCA.find(s => s.id === id))
+                  .filter((s): s is Staff => !!s)
 
                 return (
                   <Card
@@ -615,356 +704,96 @@ export function TeamConfigurationPanel() {
                           id="team-name"
                           value={editDisplayName}
                           onChange={(e) => setEditDisplayName(e.target.value)}
-                          className="h-9 max-w-sm"
+                          className="h-9 w-24 max-w-[120px]"
                         />
                       </div>
 
-                      {/* Team head (APPT) - flat design with hover-reveal buttons */}
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Label className="text-sm font-medium">Team head (APPT)</Label>
-                          <span className="text-xs text-muted-foreground">
-                            ({currentAPPT.length - editRemovedAPPT.size + editSelectedAPPT.size} assigned)
-                          </span>
-                        </div>
+                      <RankMemberSection
+                        title="Team head (APPT)"
+                        assignedCount={currentAPPT.length - editRemovedAPPT.size + editSelectedAPPT.size}
+                        currentStaff={currentAPPT}
+                        removedIds={editRemovedAPPT}
+                        pendingDeleteId={pendingDeleteAPPT}
+                        removeTooltip="Remove from team"
+                        unassignedSelectedStaff={selectedUnassignedAPPT}
+                        transferSelectedStaff={selectedTransferAPPT}
+                        emptyText="No APPT staff assigned."
+                        onSetPendingDelete={setPendingDeleteAPPT}
+                        onCancelPendingDelete={() => setPendingDeleteAPPT(null)}
+                        onConfirmRemoveCurrent={(staffId) => {
+                          setEditRemovedAPPT(prev => {
+                            const next = new Set(prev)
+                            next.add(staffId)
+                            return next
+                          })
+                          setPendingDeleteAPPT(null)
+                        }}
+                        onRemoveSelected={(staffId) => {
+                          setEditSelectedAPPT(prev => {
+                            const next = new Set(prev)
+                            next.delete(staffId)
+                            return next
+                          })
+                        }}
+                      />
 
-                        {/* Current members list */}
-                        <div className="space-y-1">
-                          {currentAPPT.map((s) => {
-                            const isMarkedRemoved = editRemovedAPPT.has(s.id)
-                            if (isMarkedRemoved) return null
+                      <RankMemberSection
+                        title="Team's RPT"
+                        assignedCount={currentRPT.length - editRemovedRPT.size + editSelectedRPT.size}
+                        currentStaff={currentRPT}
+                        removedIds={editRemovedRPT}
+                        pendingDeleteId={pendingDeleteRPT}
+                        removeTooltip="Remove"
+                        unassignedSelectedStaff={selectedUnassignedRPT}
+                        transferSelectedStaff={selectedTransferRPT}
+                        emptyText="No RPT staff assigned."
+                        onSetPendingDelete={setPendingDeleteRPT}
+                        onCancelPendingDelete={() => setPendingDeleteRPT(null)}
+                        onConfirmRemoveCurrent={(staffId) => {
+                          setEditRemovedRPT(prev => {
+                            const next = new Set(prev)
+                            next.add(staffId)
+                            return next
+                          })
+                          setPendingDeleteRPT(null)
+                        }}
+                        onRemoveSelected={(staffId) => {
+                          setEditSelectedRPT(prev => {
+                            const next = new Set(prev)
+                            next.delete(staffId)
+                            return next
+                          })
+                        }}
+                      />
 
-                            return (
-                              <div
-                                key={s.id}
-                                className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors"
-                              >
-                                {/* Icon + Name + Button - all in one flex container, tightly packed */}
-                                <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                                <span className="text-sm truncate">{s.name}</span>
-
-                                {/* Control buttons - appear on hover, immediately after name */}
-                                {pendingDeleteAPPT === s.id ? (
-                                  <div className="flex items-center gap-1">
-                                    <Button
-                                      variant="destructive"
-                                      size="sm"
-                                      className="h-7 text-xs"
-                                      onClick={() => {
-                                        setEditRemovedAPPT(prev => {
-                                          const newSet = new Set(prev)
-                                          newSet.add(s.id)
-                                          return newSet
-                                        })
-                                        setPendingDeleteAPPT(null)
-                                      }}
-                                    >
-                                      Confirm?
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-7 w-7"
-                                      onClick={() => setPendingDeleteAPPT(null)}
-                                    >
-                                      ×
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <Tooltip content="Remove from team" side="right">
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                                        onClick={() => setPendingDeleteAPPT(s.id)}
-                                      >
-                                        <X className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </Tooltip>
-                                  </div>
-                                )}
-                              </div>
-                            )
-                          })}
-
-                          {/* Newly selected (from unassigned) - shown inline */}
-                          {Array.from(editSelectedAPPT).map(staffId => {
-                            const staffMember = unassignedAPPT.find(s => s.id === staffId)
-                            if (!staffMember) return null
-                            return (
-                              <div
-                                key={`new-${staffId}`}
-                                className="grid grid-cols-[1fr_auto] gap-2 items-center rounded-md px-2 py-1.5 bg-green-50 border border-green-200"
-                              >
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
-                                  <span className="text-sm text-green-900 truncate">{staffMember.name}</span>
-                                  <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700 flex-shrink-0">
-                                    +Add
-                                  </Badge>
-                                </div>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 text-green-700 hover:text-green-900"
-                                  onClick={() => {
-                                    setEditSelectedAPPT(prev => {
-                                      const newSet = new Set(prev)
-                                      newSet.delete(staffId)
-                                      return newSet
-                                    })
-                                  }}
-                                >
-                                  <X className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            )
-                          })}
-
-                          {/* Newly selected (from other teams) - shown inline */}
-                          {Array.from(editSelectedAPPT).map(staffId => {
-                            const staffMember = staffFromOtherTeams.APPT.find(s => s.id === staffId)
-                            if (!staffMember) return null
-                            return (
-                              <div
-                                key={`transfer-${staffId}`}
-                                className="grid grid-cols-[1fr_auto] gap-2 items-center rounded-md px-2 py-1.5 bg-green-50 border border-green-200"
-                              >
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
-                                  <span className="text-sm text-green-900 truncate">{staffMember.name}</span>
-                                  <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700 flex-shrink-0">
-                                    Transfer
-                                  </Badge>
-                                </div>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 text-green-700 hover:text-green-900"
-                                  onClick={() => {
-                                    setEditSelectedAPPT(prev => {
-                                      const newSet = new Set(prev)
-                                      newSet.delete(staffId)
-                                      return newSet
-                                    })
-                                  }}
-                                >
-                                  <X className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            )
-                          })}
-
-                          {currentAPPT.length === 0 && editSelectedAPPT.size === 0 && (
-                            <p className="text-sm text-muted-foreground py-1 px-2">
-                              No APPT staff assigned.
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Team's RPT */}
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Label className="text-sm font-medium">Team&apos;s RPT</Label>
-                          <span className="text-xs text-muted-foreground">
-                            ({currentRPT.length - editRemovedRPT.size + editSelectedRPT.size} assigned)
-                          </span>
-                        </div>
-                        <div className="space-y-1">
-                          {currentRPT.map((s) => {
-                            if (editRemovedRPT.has(s.id)) return null
-                            return (
-                              <div key={s.id} className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
-                                <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                                <span className="text-sm truncate">{s.name}</span>
-                                {pendingDeleteRPT === s.id ? (
-                                  <div className="flex items-center gap-1">
-                                    <Button
-                                      variant="destructive"
-                                      size="sm"
-                                      className="h-7 text-xs"
-                                      onClick={() => {
-                                        setEditRemovedRPT(prev => {
-                                          const n = new Set(prev)
-                                          n.add(s.id)
-                                          return n
-                                        })
-                                        setPendingDeleteRPT(null)
-                                      }}
-                                    >
-                                      Confirm?
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-7 w-7"
-                                      onClick={() => setPendingDeleteRPT(null)}
-                                    >
-                                      ×
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <Tooltip content="Remove" side="right">
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                                        onClick={() => setPendingDeleteRPT(s.id)}
-                                      >
-                                        <X className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </Tooltip>
-                                  </div>
-                                )}
-                              </div>
-                            )
-                          })}
-                          {Array.from(editSelectedRPT).map(id => {
-                            const m = unassignedRPT.find(s => s.id === id)
-                            if (!m) return null
-                            return (
-                              <div key={`new-${id}`} className="grid grid-cols-[1fr_auto] gap-2 items-center rounded-md px-2 py-1.5 bg-green-50 border border-green-200">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
-                                  <span className="text-sm text-green-900 truncate">{m.name}</span>
-                                  <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700 flex-shrink-0">+Add</Badge>
-                                </div>
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700 hover:text-green-900"
-                                  onClick={() => setEditSelectedRPT(prev => { const n = new Set(prev); n.delete(id); return n })}>
-                                  <X className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            )
-                          })}
-
-                          {/* Newly selected (from other teams) - shown inline */}
-                          {Array.from(editSelectedRPT).map(id => {
-                            const m = staffFromOtherTeams.RPT.find(s => s.id === id)
-                            if (!m) return null
-                            return (
-                              <div key={`transfer-${id}`} className="grid grid-cols-[1fr_auto] gap-2 items-center rounded-md px-2 py-1.5 bg-green-50 border border-green-200">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
-                                  <span className="text-sm text-green-900 truncate">{m.name}</span>
-                                  <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700 flex-shrink-0">Transfer</Badge>
-                                </div>
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700 hover:text-green-900"
-                                  onClick={() => setEditSelectedRPT(prev => { const n = new Set(prev); n.delete(id); return n })}>
-                                  <X className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            )
-                          })}
-
-                          {currentRPT.length === 0 && editSelectedRPT.size === 0 && (
-                            <p className="text-sm text-muted-foreground py-1 px-2">No RPT staff assigned.</p>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Team's non-floating PCA */}
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Label className="text-sm font-medium">Non-floating PCA</Label>
-                          <span className="text-xs text-muted-foreground">
-                            ({currentPCA.length - editRemovedPCA.size + editSelectedPCA.size} assigned)
-                          </span>
-                        </div>
-                        <div className="space-y-1">
-                          {currentPCA.map((s) => {
-                            if (editRemovedPCA.has(s.id)) return null
-                            return (
-                              <div key={s.id} className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
-                                <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                                <span className="text-sm truncate">{s.name}</span>
-                                {pendingDeletePCA === s.id ? (
-                                  <div className="flex items-center gap-1">
-                                    <Button
-                                      variant="destructive"
-                                      size="sm"
-                                      className="h-7 text-xs"
-                                      onClick={() => {
-                                        setEditRemovedPCA(prev => {
-                                          const n = new Set(prev)
-                                          n.add(s.id)
-                                          return n
-                                        })
-                                        setPendingDeletePCA(null)
-                                      }}
-                                    >
-                                      Confirm?
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-7 w-7"
-                                      onClick={() => setPendingDeletePCA(null)}
-                                    >
-                                      ×
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <Tooltip content="Remove" side="right">
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                                        onClick={() => setPendingDeletePCA(s.id)}
-                                      >
-                                        <X className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </Tooltip>
-                                  </div>
-                                )}
-                              </div>
-                            )
-                          })}
-                          {Array.from(editSelectedPCA).map(id => {
-                            const m = unassignedPCA.find(s => s.id === id)
-                            if (!m) return null
-                            return (
-                              <div key={`new-${id}`} className="grid grid-cols-[1fr_auto] gap-2 items-center rounded-md px-2 py-1.5 bg-green-50 border border-green-200">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
-                                  <span className="text-sm text-green-900 truncate">{m.name}</span>
-                                  <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700 flex-shrink-0">+Add</Badge>
-                                </div>
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700 hover:text-green-900"
-                                  onClick={() => setEditSelectedPCA(prev => { const n = new Set(prev); n.delete(id); return n })}>
-                                  <X className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            )
-                          })}
-
-                          {/* Newly selected (from other teams) - shown inline */}
-                          {Array.from(editSelectedPCA).map(id => {
-                            const m = staffFromOtherTeams.PCA.find(s => s.id === id)
-                            if (!m) return null
-                            return (
-                              <div key={`transfer-${id}`} className="grid grid-cols-[1fr_auto] gap-2 items-center rounded-md px-2 py-1.5 bg-green-50 border border-green-200">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
-                                  <span className="text-sm text-green-900 truncate">{m.name}</span>
-                                  <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700 flex-shrink-0">Transfer</Badge>
-                                </div>
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700 hover:text-green-900"
-                                  onClick={() => setEditSelectedPCA(prev => { const n = new Set(prev); n.delete(id); return n })}>
-                                  <X className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            )
-                          })}
-
-                          {currentPCA.length === 0 && editSelectedPCA.size === 0 && (
-                            <p className="text-sm text-muted-foreground py-1 px-2">No PCA staff assigned.</p>
-                          )}
-                        </div>
-                      </div>
+                      <RankMemberSection
+                        title="Non-floating PCA"
+                        assignedCount={currentPCA.length - editRemovedPCA.size + editSelectedPCA.size}
+                        currentStaff={currentPCA}
+                        removedIds={editRemovedPCA}
+                        pendingDeleteId={pendingDeletePCA}
+                        removeTooltip="Remove"
+                        unassignedSelectedStaff={selectedUnassignedPCA}
+                        transferSelectedStaff={selectedTransferPCA}
+                        emptyText="No PCA staff assigned."
+                        onSetPendingDelete={setPendingDeletePCA}
+                        onCancelPendingDelete={() => setPendingDeletePCA(null)}
+                        onConfirmRemoveCurrent={(staffId) => {
+                          setEditRemovedPCA(prev => {
+                            const next = new Set(prev)
+                            next.add(staffId)
+                            return next
+                          })
+                          setPendingDeletePCA(null)
+                        }}
+                        onRemoveSelected={(staffId) => {
+                          setEditSelectedPCA(prev => {
+                            const next = new Set(prev)
+                            next.delete(staffId)
+                            return next
+                          })
+                        }}
+                      />
 
                       {/* Consolidated Add Members Section */}
                       <div className="pt-4 border-t">
@@ -999,7 +828,7 @@ export function TeamConfigurationPanel() {
                                 placeholder="Search staff by name…"
                                 value={addMembersSearchQuery}
                                 onChange={(e) => setAddMembersSearchQuery(e.target.value)}
-                                className="pl-9 h-9 max-w-md"
+                                className="pl-9 h-9 max-w-xs"
                               />
                             </div>
 
@@ -1289,7 +1118,10 @@ export function TeamConfigurationPanel() {
                                       variant="ghost"
                                       size="sm"
                                       className="h-7 px-2 text-xs"
-                                      onClick={() => setShowWardSelector(false)}
+                                      onClick={() => {
+                                        setShowWardSelector(false)
+                                        setPendingWardId(null)
+                                      }}
                                     >
                                       <ChevronDown className="mr-1 h-3.5 w-3.5" />
                                       Collapse
@@ -1297,27 +1129,65 @@ export function TeamConfigurationPanel() {
                                   </div>
                                   <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
                                     {unselectedWards.map((ward) => (
-                                      <label
+                                      <div
                                         key={ward.id}
-                                        className="flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-accent cursor-pointer"
+                                        className={`flex items-center gap-2 py-1.5 px-2 rounded-md ${
+                                          pendingWardId === ward.id ? 'bg-green-50/50' : 'hover:bg-accent cursor-pointer'
+                                        }`}
                                       >
-                                        <Checkbox
-                                          className={teamConfigCheckboxClass}
-                                          checked={false}
-                                          onCheckedChange={(checked) => {
-                                            if (checked) {
-                                              const newSet = new Set(editSelectedWards)
-                                              const newBeds = { ...editWardBeds }
-                                              newSet.add(ward.id)
-                                              newBeds[ward.id] = ward.total_beds
-                                              setEditSelectedWards(newSet)
-                                              setEditWardBeds(newBeds)
-                                            }
-                                          }}
-                                        />
-                                        <span className="text-sm">{ward.name}</span>
-                                        <span className="text-xs text-muted-foreground">({ward.total_beds} beds)</span>
-                                      </label>
+                                        {pendingWardId === ward.id ? (
+                                          <>
+                                            <span className="text-sm text-green-900 truncate">{ward.name}</span>
+                                            <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700">
+                                              +Assign
+                                            </Badge>
+                                            <span className="text-xs text-green-700">({ward.total_beds} beds)</span>
+                                            <div className="flex items-center gap-1">
+                                              <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-7 px-2 text-xs text-green-700 hover:text-green-900 hover:bg-green-100"
+                                                onClick={() => {
+                                                  const newSet = new Set(editSelectedWards)
+                                                  const newBeds = { ...editWardBeds }
+                                                  newSet.add(ward.id)
+                                                  newBeds[ward.id] = ward.total_beds
+                                                  setEditSelectedWards(newSet)
+                                                  setEditWardBeds(newBeds)
+                                                  setPendingWardId(null)
+                                                }}
+                                              >
+                                                Confirm
+                                              </Button>
+                                              <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-7 w-7 text-green-700 hover:text-green-900"
+                                                onClick={() => setPendingWardId(null)}
+                                              >
+                                                <X className="h-3.5 w-3.5" />
+                                              </Button>
+                                            </div>
+                                          </>
+                                        ) : (
+                                          <div
+                                            className="flex items-center gap-2 w-full cursor-pointer"
+                                            onClick={() => setPendingWardId(ward.id)}
+                                          >
+                                            <Checkbox
+                                              className={teamConfigCheckboxClass}
+                                              checked={false}
+                                              onCheckedChange={(checked) => {
+                                                if (checked) {
+                                                  setPendingWardId(ward.id)
+                                                }
+                                              }}
+                                            />
+                                            <span className="text-sm">{ward.name}</span>
+                                            <span className="text-xs text-muted-foreground">({ward.total_beds} beds)</span>
+                                          </div>
+                                        )}
+                                      </div>
                                     ))}
                                   </div>
                                 </div>
@@ -1426,6 +1296,141 @@ export function TeamConfigurationPanel() {
         />
       )}
     </>
+  )
+}
+
+interface RankMemberSectionProps {
+  title: string
+  assignedCount: number
+  currentStaff: Staff[]
+  removedIds: Set<string>
+  pendingDeleteId: string | null
+  removeTooltip: string
+  unassignedSelectedStaff: Staff[]
+  transferSelectedStaff: Staff[]
+  emptyText: string
+  onSetPendingDelete: (staffId: string) => void
+  onCancelPendingDelete: () => void
+  onConfirmRemoveCurrent: (staffId: string) => void
+  onRemoveSelected: (staffId: string) => void
+}
+
+function RankMemberSection({
+  title,
+  assignedCount,
+  currentStaff,
+  removedIds,
+  pendingDeleteId,
+  removeTooltip,
+  unassignedSelectedStaff,
+  transferSelectedStaff,
+  emptyText,
+  onSetPendingDelete,
+  onCancelPendingDelete,
+  onConfirmRemoveCurrent,
+  onRemoveSelected,
+}: RankMemberSectionProps) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Label className="text-sm font-medium">{title}</Label>
+        <span className="text-xs text-muted-foreground">({assignedCount} assigned)</span>
+      </div>
+
+      <div className="space-y-1">
+        {currentStaff.map((s) => {
+          if (removedIds.has(s.id)) return null
+
+          return (
+            <div key={s.id} className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
+              <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+              <span className="text-sm truncate">{s.name}</span>
+              {pendingDeleteId === s.id ? (
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => onConfirmRemoveCurrent(s.id)}
+                  >
+                    Confirm?
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={onCancelPendingDelete}
+                  >
+                    ×
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Tooltip content={removeTooltip} side="right">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => onSetPendingDelete(s.id)}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </Tooltip>
+                </div>
+              )}
+            </div>
+          )
+        })}
+
+        {unassignedSelectedStaff.map((s) => (
+          <div key={`new-${s.id}`} className="flex items-center gap-2 rounded-md px-2 py-1.5 bg-green-50 border border-green-200">
+            <div className="flex items-center gap-2 min-w-0">
+              <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+              <span className="text-sm text-green-900 truncate">{s.name}</span>
+            </div>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700">
+                +Add
+              </Badge>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-green-700 hover:text-green-900"
+                onClick={() => onRemoveSelected(s.id)}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        ))}
+
+        {transferSelectedStaff.map((s) => (
+          <div key={`transfer-${s.id}`} className="flex items-center gap-2 rounded-md px-2 py-1.5 bg-green-50 border border-green-200">
+            <div className="flex items-center gap-2 min-w-0">
+              <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+              <span className="text-sm text-green-900 truncate">{s.name}</span>
+            </div>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700">
+                Transfer
+              </Badge>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-green-700 hover:text-green-900"
+                onClick={() => onRemoveSelected(s.id)}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        ))}
+
+        {currentStaff.length === 0 && unassignedSelectedStaff.length === 0 && transferSelectedStaff.length === 0 && (
+          <p className="text-sm text-muted-foreground py-1 px-2">{emptyText}</p>
+        )}
+      </div>
+    </div>
   )
 }
 

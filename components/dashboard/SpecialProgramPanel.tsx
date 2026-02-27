@@ -783,10 +783,21 @@ export function SpecialProgramPanel() {
 
                                     return (
                                       <div key={config.staff_id} className="pl-4">
-                                        <div className="group flex items-center gap-2 py-2 rounded-md px-2 hover:bg-muted/50 transition-colors">
+                                        <div
+                                          className="group flex items-center gap-2 py-2 rounded-md px-2 hover:bg-muted/50 transition-colors cursor-pointer"
+                                          onClick={(e) => {
+                                            // Don't toggle if clicking on interactive elements
+                                            const target = e.target as HTMLElement
+                                            if (target.closest('button') || target.closest('input')) return
+                                            toggleStaffExpand(config.staff_id)
+                                          }}
+                                        >
                                           <button
                                             type="button"
-                                            onClick={() => toggleStaffExpand(config.staff_id)}
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              toggleStaffExpand(config.staff_id)
+                                            }}
                                             className="text-muted-foreground hover:text-foreground"
                                           >
                                             {isExpanded ? (
@@ -805,7 +816,8 @@ export function SpecialProgramPanel() {
                                                 variant="destructive"
                                                 size="sm"
                                                 className="h-7 text-xs"
-                                                onClick={() => {
+                                                onClick={(e) => {
+                                                  e.stopPropagation()
                                                   handleRemoveStaffFromProgram(editingStaffProgram.name, config.staff_id)
                                                   setStaffIdPendingDelete(null)
                                                 }}
@@ -816,7 +828,10 @@ export function SpecialProgramPanel() {
                                                 variant="ghost"
                                                 size="icon"
                                                 className="h-7 w-7"
-                                                onClick={() => setStaffIdPendingDelete(null)}
+                                                onClick={(e) => {
+                                                  e.stopPropagation()
+                                                  setStaffIdPendingDelete(null)
+                                                }}
                                               >
                                                 ×
                                               </Button>
@@ -828,7 +843,10 @@ export function SpecialProgramPanel() {
                                                   variant="ghost"
                                                   size="icon"
                                                   className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                                                  onClick={() => setStaffIdPendingDelete(config.staff_id)}
+                                                  onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    setStaffIdPendingDelete(config.staff_id)
+                                                  }}
                                                 >
                                                   <X className="h-3.5 w-3.5" />
                                                 </Button>

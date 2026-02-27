@@ -3,6 +3,27 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-02-27
+
+### Added
+- **Team Config Dashboard – UX Polish**:
+  - **Ward Assignment**: Inline confirm flow for adding wards; selecting a ward enters preview state with "+Assign" badge and Confirm/X buttons; actual assignment only after confirmation.
+  - **Transfer/Save Reminders**: Tiny amber reminder text shown when staff transfers or new ward assignments are pending: "Only clicking 'Save' confirms...".
+  - **Input Widths**: Narrowed "Team name" field (`w-24`) and "Search staff" field (`max-w-xs`) to better match actual content width.
+- **Schedule Page – UX Polish**:
+  - **Split Slot Disabled State**: SPT cards at 0.25 FTE now show disabled "Split slot" menu item with tooltip: "SPT at 0.25 FTE cannot be split further."
+- **Special Program Dashboard – UX Polish**:
+  - **Configured Staff Expand**: Entire row is now clickable to expand/collapse staff configuration (not just chevron icon).
+- **SPT Allocation Dashboard – UX Polish**:
+  - **Retracted State Expand**: Clicking anywhere on allocation row expands/collapses details (matches Special Program behavior).
+- **Export Mode – PCA Dedicated Schedule**:
+  - Split tables (for 14+ PCAs) now use consistent natural width sizing; chunk cards align top and bottom edges; Slot 1-4 column width stays consistent across chunks.
+
+### Changed
+- **Team Config Dashboard – Code Refactor**:
+  - Unified rank state (APPT/RPT/PCA) into `RankBucket` model; extracted `RankMemberSection` component replacing 350+ lines of duplicated JSX.
+  - Hardened save path with checked Supabase operations and rank-driven update loop (prevents silent partial failures).
+
 ## [Unreleased] - 2026-02-24
 
 ### Added

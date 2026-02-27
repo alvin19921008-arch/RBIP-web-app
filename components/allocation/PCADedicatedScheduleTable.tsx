@@ -663,15 +663,16 @@ export function PCADedicatedScheduleTable({
     return null
   }
 
-  const tableNodeForColumns = (cols: Staff[], keyPrefix: string, opts?: { stickyLeft?: boolean }) => {
+  const tableNodeForColumns = (cols: Staff[], keyPrefix: string, opts?: { stickyLeft?: boolean; naturalWidth?: boolean }) => {
     const sticky = opts?.stickyLeft !== false
+    const naturalWidth = opts?.naturalWidth === true
     // Keep sticky just above normal cells, but below overlay controls (scroll buttons).
     // NOTE: Table paint order with border-collapse can cause sticky cells to appear "non-sticky"
     // if they are painted underneath scrolled cells. Give them a high z-index so they always stay visible.
     const stickyClass = sticky ? 'sticky left-0 z-50 rbip-sticky-col-divider' : ''
     const stickyBg = 'bg-background'
     return (
-      <table className={cn('border-collapse', sticky ? 'w-full min-w-max' : 'w-full')}>
+      <table className={cn('border-collapse', sticky ? 'w-full min-w-max' : naturalWidth ? 'w-auto min-w-max' : 'w-full')}>
         <thead>
           <tr>
             <th
@@ -741,16 +742,16 @@ export function PCADedicatedScheduleTable({
           <h3 className="text-xs font-semibold text-center">PCA Dedicated Schedule</h3>
         </div>
 
-        <div className="space-y-2">
+        <div className="flex flex-wrap items-stretch gap-2">
           {exportChunks.map((cols, idx) => (
-            <div key={`export-chunk-${idx}`} className="w-full border rounded-md overflow-hidden">
+            <div key={`export-chunk-${idx}`} className="w-auto max-w-full border rounded-md overflow-hidden flex flex-col self-stretch">
               {exportChunks.length > 1 ? (
                 <div className="border-b border-border px-2 py-1 text-[11px] text-muted-foreground">
                   PCA columns {idx + 1}/{exportChunks.length}
                 </div>
               ) : null}
-              <div className="w-full">
-                {tableNodeForColumns(cols, `export-${idx}`, { stickyLeft: false })}
+              <div className="w-auto">
+                {tableNodeForColumns(cols, `export-${idx}`, { stickyLeft: false, naturalWidth: true })}
               </div>
             </div>
           ))}

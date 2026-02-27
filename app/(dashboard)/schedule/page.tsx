@@ -7606,6 +7606,10 @@ function SchedulePageContent() {
     const therapistDisabledTooltip =
       'Therapist slot actions are only available in Step 2 (Therapist & Non-floating PCA).'
     const pcaDisabledTooltip = 'PCA slot actions are only available in Step 3 (Floating PCA).'
+    const splitMinFteTooltip = 'SPT at 0.25 FTE cannot be split further.'
+    const sourceFte = isTherapist ? (getTherapistFteByTeam(staffId)[team] ?? 0) : 0
+    const staffMember = staff.find((x) => x.id === staffId) || bufferStaff.find((x) => x.id === staffId)
+    const cannotSplitFurtherSpt = isTherapist && staffMember?.rank === 'SPT' && sourceFte <= 0.250001
 
     return [
       {
@@ -7658,8 +7662,12 @@ function SchedulePageContent() {
               key: 'split-slot',
               label: 'Split slot',
               icon: <Split className="h-4 w-4" />,
-              disabled: !canTherapistActions,
-              disabledTooltip: therapistDisabledTooltip,
+              disabled: !canTherapistActions || cannotSplitFurtherSpt,
+              disabledTooltip: !canTherapistActions
+                ? therapistDisabledTooltip
+                : cannotSplitFurtherSpt
+                  ? splitMinFteTooltip
+                  : undefined,
               onSelect: () => {
                 const pos = staffContextMenu.position ?? { x: 100, y: 100 }
                 closeStaffContextMenu()
@@ -7705,8 +7713,11 @@ function SchedulePageContent() {
     staffContextMenu.position,
     currentStep,
     staffOverrides,
+    staff,
+    bufferStaff,
     closeStaffContextMenu,
     handleEditStaff,
+    getTherapistFteByTeam,
     startPcaContextAction,
     startTherapistContextAction,
     setColorContextAction,
@@ -7759,6 +7770,9 @@ function SchedulePageContent() {
 
     const needsTeamTooltip =
       'This action requires a single team allocation. Please use the team-grid card (per-team) instead.'
+    const splitMinFteTooltip = 'SPT at 0.25 FTE cannot be split further.'
+    const inferredSourceFte = isTherapistRank && inferredTeam ? (getTherapistFteByTeam(staffId)[inferredTeam] ?? 0) : 0
+    const cannotSplitFurtherSpt = isSPT && !!inferredTeam && inferredSourceFte <= 0.250001
 
     // Compute remaining slots (floating PCA only) for Assign slot.
     const computeRemainingSlots = (): number[] => {
@@ -7978,8 +7992,14 @@ function SchedulePageContent() {
         key: 'split-slot',
         label: 'Split slot',
         icon: <Split className="h-4 w-4" />,
-        disabled: therapistActionDisabled || !inferredTeam,
-        disabledTooltip: therapistActionDisabled ? therapistDisabledTooltip : !inferredTeam ? needsTeamTooltip : undefined,
+        disabled: therapistActionDisabled || !inferredTeam || cannotSplitFurtherSpt,
+        disabledTooltip: therapistActionDisabled
+          ? therapistDisabledTooltip
+          : !inferredTeam
+            ? needsTeamTooltip
+            : cannotSplitFurtherSpt
+              ? splitMinFteTooltip
+              : undefined,
         onSelect: () => {
           if (!inferredTeam) return
           closeStaffPoolContextMenu()

@@ -164,16 +164,36 @@ export function SPTAllocationPanel() {
                 const staffMember = staff.find(s => s.id === alloc.staff_id)
                 
                 return (
-                  <div 
-                    key={alloc.id} 
-                    className={`py-3 px-2 hover:bg-muted/30 transition-colors ${alloc.active === false ? 'opacity-50' : ''}`}
+                  <div
+                    key={alloc.id}
+                    className={`py-3 px-2 hover:bg-muted/30 transition-colors cursor-pointer ${alloc.active === false ? 'opacity-50' : ''}`}
+                    onClick={(e) => {
+                      // Don't toggle if clicking on interactive elements
+                      const target = e.target as HTMLElement
+                      if (target.closest('button') || target.closest('input') || target.closest('select')) return
+                      setExpandedAllocIds(prev => {
+                        const next = new Set(prev)
+                        if (next.has(alloc.id)) {
+                          next.delete(alloc.id)
+                        } else {
+                          next.add(alloc.id)
+                        }
+                        return next
+                      })
+                      if (!isExpanded) {
+                        setEditingAllocation(alloc)
+                      } else {
+                        setEditingAllocation(null)
+                      }
+                    }}
                   >
                     {/* Header row with chevron, name, badges, and delete */}
                     <div className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
                       {/* Chevron for expand/collapse */}
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation()
                           setExpandedAllocIds(prev => {
                             const next = new Set(prev)
                             if (next.has(alloc.id)) {
@@ -197,23 +217,23 @@ export function SPTAllocationPanel() {
                           <ChevronRight className="h-4 w-4" />
                         )}
                       </button>
-                      
+
                       {/* Name + Specialty badge (inline) + Supervisor badge + Delete button */}
                       <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
                         <h3 className="font-semibold text-sm truncate">
                           {staffMember?.name || 'Unknown'}
                         </h3>
                         {alloc.specialty && (
-                          <Badge 
-                            variant="outline" 
+                          <Badge
+                            variant="outline"
                             className="text-[10px] h-5 px-1.5 font-normal text-muted-foreground border-border bg-muted/40"
                           >
                             {alloc.specialty}
                           </Badge>
                         )}
                         {alloc.is_rbip_supervisor && (
-                          <Badge 
-                            variant="outline" 
+                          <Badge
+                            variant="outline"
                             className="text-[10px] h-5 px-1.5 font-normal text-amber-700 border-amber-200 bg-amber-100"
                           >
                             Supervisor
@@ -222,7 +242,7 @@ export function SPTAllocationPanel() {
                         {alloc.active === false && (
                           <span className="text-xs text-muted-foreground">(Inactive)</span>
                         )}
-                        
+
                         {/* Delete button - appears on hover, next to name/badges */}
                         {pendingDeleteAllocId === alloc.id ? (
                           <div className="flex items-center gap-1">
@@ -230,7 +250,8 @@ export function SPTAllocationPanel() {
                               variant="destructive"
                               size="sm"
                               className="h-7 text-xs"
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.stopPropagation()
                                 handleDelete(alloc.id)
                                 setPendingDeleteAllocId(null)
                               }}
@@ -241,7 +262,10 @@ export function SPTAllocationPanel() {
                               variant="ghost"
                               size="icon"
                               className="h-7 w-7"
-                              onClick={() => setPendingDeleteAllocId(null)}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setPendingDeleteAllocId(null)
+                              }}
                             >
                               ×
                             </Button>
@@ -253,7 +277,10 @@ export function SPTAllocationPanel() {
                                 variant="ghost"
                                 size="icon"
                                 className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                                onClick={() => setPendingDeleteAllocId(alloc.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setPendingDeleteAllocId(alloc.id)
+                                }}
                               >
                                 <X className="h-3.5 w-3.5" />
                               </Button>
