@@ -6,6 +6,14 @@
 ## [Unreleased] - 2026-02-27
 
 ### Added
+- **Step 3.1 Allocation Mode – Animated Explainers**:
+  - New `Step3ModeExplainerAnimated.tsx` component replacing placeholder SVGs with interactive Framer Motion animations.
+  - Standard mode explainer: 4-step animation showing greedy allocation (FO → CPPC → NSM).
+  - Balanced mode explainer: 6-step animation showing round-robin turns across teams.
+  - Animated flying blocks with real DOM coordinate measurement (source/target slot anchors) for pixel-perfect alignment.
+  - Playback controls (play/pause, prev/next step) with liquid-glass styled control bar.
+  - Blue tone scheme: light blue (PCA available) → bright blue (flying) → deep blue (team filled).
+  - Hidden by default; revealed inside "Pros & cons" collapsible with side-by-side layout (text left, animation right).
 - **Team Config Dashboard – UX Polish**:
   - **Ward Assignment**: Inline confirm flow for adding wards; selecting a ward enters preview state with "+Assign" badge and Confirm/X buttons; actual assignment only after confirmation.
   - **Transfer/Save Reminders**: Tiny amber reminder text shown when staff transfers or new ward assignments are pending: "Only clicking 'Save' confirms...".

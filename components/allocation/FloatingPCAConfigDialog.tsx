@@ -53,7 +53,12 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable'
 import { createClientComponentClient } from '@/lib/supabase/client'
-import { RemountOnOpenDetails } from '@/components/allocation/Step3ModeExplainerSvgs'
+import {
+  RemountOnOpenDetails,
+  SvgViewer,
+  Step3StandardModeExplainerSvg,
+  Step3BalancedModeExplainerSvg,
+} from '@/components/allocation/Step3ModeExplainerAnimated'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -1588,56 +1593,70 @@ export function FloatingPCAConfigDialog({
                 : 'border-l-transparent hover:bg-slate-50/30'
             )}
           >
-            <div className="text-sm font-semibold text-foreground">Standard</div>
-            <div className="text-xs text-muted-foreground">Manual-friendly (keeps Step 3.2/3.3)</div>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-foreground">Standard</div>
+                <div className="text-xs text-muted-foreground">Manual-friendly (keeps Step 3.2/3.3)</div>
 
-            <div className="mt-2 text-sm text-foreground">
-              {step31Preview.status === 'loading' ? (
-                <span className="text-muted-foreground">Preview: calculating…</span>
-              ) : step31Preview.status === 'idle' ? (
-                <span className="text-muted-foreground">Preview: preparing…</span>
-              ) : step31Preview.status === 'error' ? (
-                <span className="text-muted-foreground">Preview: unavailable</span>
-              ) : (
-                <>
-                  Teams with 0 floating PCA (if run now):{' '}
-                  <span className="font-semibold">{step31Preview.standardZeroTeams.length}</span>
-                </>
-              )}
-            </div>
-            {step31Preview.status === 'ready' && step31Preview.standardZeroTeams.length > 0 ? (
-              <div className="mt-1 text-xs text-muted-foreground">
-                {step31Preview.standardZeroTeams.slice(0, 4).join(', ')}
-                {step31Preview.standardZeroTeams.length > 4 ? ` +${step31Preview.standardZeroTeams.length - 4}` : ''}
-              </div>
-            ) : null}
-
-            <RemountOnOpenDetails
-              className="mt-2 text-xs text-muted-foreground"
-              summaryClassName="cursor-pointer select-none font-medium text-foreground/90"
-              summary="Pros & cons"
-              showChevron
-            >
-              <ul className="mt-2 list-disc pl-5 space-y-1">
-                <li>
-                  <span className="font-medium text-foreground">Pros</span>: continue to Step 3.2/3.3 so you can pick preferred/adjacent slots.
-                </li>
-                <li>
-                  <span className="font-medium text-foreground">Cons</span>: under tight manpower, a high-need team can end up with near-zero floating slots.
-                </li>
-                <li>
-                  {hasExcessFloatingSlots ? (
-                    <>
-                      <span className="font-medium text-foreground">May happen</span>: if no other workable slot exists, a team&apos;s gym slot might still be assigned.
-                    </>
+                <div className="mt-2 text-sm text-foreground">
+                  {step31Preview.status === 'loading' ? (
+                    <span className="text-muted-foreground">Preview: calculating…</span>
+                  ) : step31Preview.status === 'idle' ? (
+                    <span className="text-muted-foreground">Preview: preparing…</span>
+                  ) : step31Preview.status === 'error' ? (
+                    <span className="text-muted-foreground">Preview: unavailable</span>
                   ) : (
                     <>
-                      <span className="font-medium text-foreground">Usually enforced</span>: avoid the team&apos;s gym slot.
+                      Teams with 0 floating PCA (if run now):{' '}
+                      <span className="font-semibold">{step31Preview.standardZeroTeams.length}</span>
                     </>
                   )}
-                </li>
-              </ul>
-            </RemountOnOpenDetails>
+                </div>
+                {step31Preview.status === 'ready' && step31Preview.standardZeroTeams.length > 0 ? (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {step31Preview.standardZeroTeams.slice(0, 4).join(', ')}
+                    {step31Preview.standardZeroTeams.length > 4 ? ` +${step31Preview.standardZeroTeams.length - 4}` : ''}
+                  </div>
+                ) : null}
+
+                <RemountOnOpenDetails
+                  className="mt-2 text-xs text-muted-foreground"
+                  summaryClassName="cursor-pointer select-none font-medium text-foreground/90"
+                  summary="Pros & cons"
+                  showChevron
+                >
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_220px] lg:grid-cols-[minmax(0,1fr)_240px] xl:grid-cols-[minmax(0,1fr)_260px] gap-3 items-start">
+                    <ul className="list-disc pl-5 space-y-1">
+                      <li>
+                        <span className="font-medium text-foreground">Pros</span>: continue to Step 3.2/3.3 so you can pick preferred/adjacent slots.
+                      </li>
+                      <li>
+                        <span className="font-medium text-foreground">Cons</span>: under tight manpower, a high-need team can end up with near-zero floating slots.
+                      </li>
+                      <li>
+                        {hasExcessFloatingSlots ? (
+                          <>
+                            <span className="font-medium text-foreground">May happen</span>: if no other workable slot exists, a team&apos;s gym slot might still be assigned.
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-medium text-foreground">Usually enforced</span>: avoid the team&apos;s gym slot.
+                          </>
+                        )}
+                      </li>
+                    </ul>
+                    <div className="hidden sm:block w-[220px] lg:w-[240px] xl:w-[260px]">
+                      <SvgViewer
+                        label="Standard allocation flow"
+                        className="bg-background/60"
+                        thumbnailClassName="p-2"
+                        render={() => <Step3StandardModeExplainerSvg className="w-full h-auto" />}
+                      />
+                    </div>
+                  </div>
+                </RemountOnOpenDetails>
+              </div>
+            </div>
 
             {/* Strictness settings - flat indented area */}
             <div
@@ -1739,59 +1758,73 @@ export function FloatingPCAConfigDialog({
                 : 'border-l-transparent hover:bg-slate-50/30'
             )}
           >
-            <div className="text-sm font-semibold text-foreground">Balanced (take turns)</div>
-            <div className="text-xs text-muted-foreground">Fairness-first (skips Step 3.2/3.3)</div>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-foreground">Balanced (take turns)</div>
+                <div className="text-xs text-muted-foreground">Fairness-first (skips Step 3.2/3.3)</div>
 
-            <div className="mt-2 text-sm text-foreground">
-              {step31Preview.status === 'loading' ? (
-                <span className="text-muted-foreground">Preview: calculating…</span>
-              ) : step31Preview.status === 'idle' ? (
-                <span className="text-muted-foreground">Preview: preparing…</span>
-              ) : step31Preview.status === 'error' ? (
-                <span className="text-muted-foreground">Preview: unavailable</span>
-              ) : (
-                <>
-                  Teams still short after allocation (if run now):{' '}
-                  <span className="font-semibold">{step31Preview.balancedShortTeams.length}</span>
-                </>
-              )}
-            </div>
-            {step31Preview.status === 'ready' && step31Preview.balancedShortTeams.length > 0 ? (
-              <div className="mt-1 text-xs text-muted-foreground">
-                {step31Preview.balancedShortTeams.slice(0, 4).join(', ')}
-                {step31Preview.balancedShortTeams.length > 4 ? ` +${step31Preview.balancedShortTeams.length - 4}` : ''}
-              </div>
-            ) : null}
-
-            <RemountOnOpenDetails
-              className="mt-2 text-xs text-muted-foreground"
-              summaryClassName="cursor-pointer select-none font-medium text-foreground/90"
-              summary="Pros & cons"
-              showChevron
-            >
-              <ul className="mt-2 list-disc pl-5 space-y-1">
-                <li>
-                  <span className="font-medium text-foreground">Pros</span>: gives teams turns (1 slot at a time) to reduce “0-slot” outcomes.
-                </li>
-                <li>
-                  <span className="font-medium text-foreground">Cons</span>: skips Step 3.2/3.3 (no preferred/adjacent manual picking).
-                </li>
-                <li>
-                  {hasExcessFloatingSlots ? (
-                    <>
-                      <span className="font-medium text-foreground">May happen</span>: if no other workable slot exists, a team&apos;s gym slot might still be assigned.
-                    </>
+                <div className="mt-2 text-sm text-foreground">
+                  {step31Preview.status === 'loading' ? (
+                    <span className="text-muted-foreground">Preview: calculating…</span>
+                  ) : step31Preview.status === 'idle' ? (
+                    <span className="text-muted-foreground">Preview: preparing…</span>
+                  ) : step31Preview.status === 'error' ? (
+                    <span className="text-muted-foreground">Preview: unavailable</span>
                   ) : (
                     <>
-                      <span className="font-medium text-foreground">Usually enforced</span>: avoid the team&apos;s gym slot.
+                      Teams still short after allocation (if run now):{' '}
+                      <span className="font-semibold">{step31Preview.balancedShortTeams.length}</span>
                     </>
                   )}
-                </li>
-                <li>
-                  <span className="font-medium text-foreground">May relax</span>: floor matching and “reserved preferred PCA of other teams” if needed.
-                </li>
-              </ul>
-            </RemountOnOpenDetails>
+                </div>
+                {step31Preview.status === 'ready' && step31Preview.balancedShortTeams.length > 0 ? (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {step31Preview.balancedShortTeams.slice(0, 4).join(', ')}
+                    {step31Preview.balancedShortTeams.length > 4 ? ` +${step31Preview.balancedShortTeams.length - 4}` : ''}
+                  </div>
+                ) : null}
+
+                <RemountOnOpenDetails
+                  className="mt-2 text-xs text-muted-foreground"
+                  summaryClassName="cursor-pointer select-none font-medium text-foreground/90"
+                  summary="Pros & cons"
+                  showChevron
+                >
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_220px] lg:grid-cols-[minmax(0,1fr)_240px] xl:grid-cols-[minmax(0,1fr)_260px] gap-3 items-start">
+                    <ul className="list-disc pl-5 space-y-1">
+                      <li>
+                        <span className="font-medium text-foreground">Pros</span>: gives teams turns (1 slot at a time) to reduce “0-slot” outcomes.
+                      </li>
+                      <li>
+                        <span className="font-medium text-foreground">Cons</span>: skips Step 3.2/3.3 (no preferred/adjacent manual picking).
+                      </li>
+                      <li>
+                        {hasExcessFloatingSlots ? (
+                          <>
+                            <span className="font-medium text-foreground">May happen</span>: if no other workable slot exists, a team&apos;s gym slot might still be assigned.
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-medium text-foreground">Usually enforced</span>: avoid the team&apos;s gym slot.
+                          </>
+                        )}
+                      </li>
+                      <li>
+                        <span className="font-medium text-foreground">May relax</span>: floor matching and “reserved preferred PCA of other teams” if needed.
+                      </li>
+                    </ul>
+                    <div className="hidden sm:block w-[220px] lg:w-[240px] xl:w-[260px]">
+                      <SvgViewer
+                        label="Balanced allocation flow"
+                        className="bg-background/60"
+                        thumbnailClassName="p-2"
+                        render={() => <Step3BalancedModeExplainerSvg className="w-full h-auto" />}
+                      />
+                    </div>
+                  </div>
+                </RemountOnOpenDetails>
+              </div>
+            </div>
           </div>
         </div>
         )}
