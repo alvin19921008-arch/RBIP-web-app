@@ -75,6 +75,7 @@ function resolveSetStateAction<T>(prev: T, updater: SetStateAction<T>): T {
 type StaffUpdatePayload = {
   team: Team | null
   floating?: boolean
+  status?: 'active'
 }
 
 const rankStaffUpdateConfig: Record<Rank, {
@@ -213,7 +214,8 @@ export function TeamConfigurationPanel() {
   const [editWardBeds, setEditWardBeds] = useState<Record<string, number>>({})
   const [editWardPortions, setEditWardPortions] = useState<Record<string, string | null>>({})
   const [showWardSelector, setShowWardSelector] = useState(false)
-  const [pendingWardId, setPendingWardId] = useState<string | null>(null)
+  const [newlyAddedWardIds, setNewlyAddedWardIds] = useState<Set<string>>(new Set())
+  const [pendingDeleteWardId, setPendingDeleteWardId] = useState<string | null>(null)
 
   const resetRankEditState = () => {
     setEditSelectedByRank(createRankBucket(() => new Set<string>()))
@@ -307,6 +309,8 @@ export function TeamConfigurationPanel() {
     setEditSelectedWards(selectedWardsSet)
     setEditWardBeds(wardBedsMap)
     setEditWardPortions(wardPortionsMap)
+    setNewlyAddedWardIds(new Set())
+    setPendingDeleteWardId(null)
   }
 
   const handleCancelEdit = () => {
@@ -317,7 +321,8 @@ export function TeamConfigurationPanel() {
       setAddMembersSearchQuery('')
       setExpandedSourceTeams(new Set(['unassigned']))
       setShowWardSelector(false)
-      setPendingWardId(null)
+      setNewlyAddedWardIds(new Set())
+      setPendingDeleteWardId(null)
     })
   }
 
@@ -328,7 +333,7 @@ export function TeamConfigurationPanel() {
     try {
       const runChecked = async (
         label: string,
-        op: Promise<{ error: unknown }>
+        op: PromiseLike<{ error: unknown }>
       ) => {
         const res = await op
         if (res.error) {
@@ -400,11 +405,16 @@ export function TeamConfigurationPanel() {
           )
         }
         for (const staffId of selectedByRank[rank]) {
+          const selectedStaff = staff.find((s) => s.id === staffId)
+          const assignPayload: StaffUpdatePayload =
+            selectedStaff?.status === 'inactive'
+              ? { ...config.assign(editingTeam), status: 'active' }
+              : config.assign(editingTeam)
           await runChecked(
             `Assign ${rank} staff ${staffId} to ${editingTeam}`,
             supabase
               .from('staff')
-              .update(config.assign(editingTeam))
+              .update(assignPayload)
               .eq('id', staffId)
           )
         }
@@ -669,6 +679,24 @@ export function TeamConfigurationPanel() {
                 const selectedTransferPCA = Array.from(editSelectedPCA)
                   .map(id => staffFromOtherTeams.PCA.find(s => s.id === id))
                   .filter((s): s is Staff => !!s)
+                const inactiveByRank = {
+                  APPT: filterStaff(staff, { rank: 'APPT' }).filter(s => s.status === 'inactive'),
+                  RPT: filterStaff(staff, { rank: 'RPT' }).filter(s => s.status === 'inactive'),
+                  PCA: filterStaff(staff, { rank: 'PCA', floating: false }).filter(s => s.status === 'inactive'),
+                }
+                const selectedInactiveAPPT = Array.from(editSelectedAPPT)
+                  .map(id => inactiveByRank.APPT.find(s => s.id === id))
+                  .filter((s): s is Staff => !!s)
+                const selectedInactiveRPT = Array.from(editSelectedRPT)
+                  .map(id => inactiveByRank.RPT.find(s => s.id === id))
+                  .filter((s): s is Staff => !!s)
+                const selectedInactivePCA = Array.from(editSelectedPCA)
+                  .map(id => inactiveByRank.PCA.find(s => s.id === id))
+                  .filter((s): s is Staff => !!s)
+                const selectedInactiveTotal =
+                  selectedInactiveAPPT.length + selectedInactiveRPT.length + selectedInactivePCA.length
+                const selectedTransferTotal =
+                  selectedTransferAPPT.length + selectedTransferRPT.length + selectedTransferPCA.length
 
                 return (
                   <Card
@@ -685,7 +713,7 @@ export function TeamConfigurationPanel() {
                     </div>
 
                     {/* Workflow guidance banner */}
-                    <div className="mt-3 w-full max-w-2xl bg-blue-50/40 border border-blue-100/60 rounded-xl p-3 shadow-sm">
+                      <div className="mt-3 w-full bg-blue-50/40 border border-blue-100/60 rounded-xl p-3 shadow-sm">
                       <div className="flex items-start gap-2 text-sm text-blue-900">
                         <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600" />
                         <span>
@@ -717,6 +745,8 @@ export function TeamConfigurationPanel() {
                         removeTooltip="Remove from team"
                         unassignedSelectedStaff={selectedUnassignedAPPT}
                         transferSelectedStaff={selectedTransferAPPT}
+                        inactiveSelectedStaff={selectedInactiveAPPT}
+                        displayNames={displayNames}
                         emptyText="No APPT staff assigned."
                         onSetPendingDelete={setPendingDeleteAPPT}
                         onCancelPendingDelete={() => setPendingDeleteAPPT(null)}
@@ -746,6 +776,8 @@ export function TeamConfigurationPanel() {
                         removeTooltip="Remove"
                         unassignedSelectedStaff={selectedUnassignedRPT}
                         transferSelectedStaff={selectedTransferRPT}
+                        inactiveSelectedStaff={selectedInactiveRPT}
+                        displayNames={displayNames}
                         emptyText="No RPT staff assigned."
                         onSetPendingDelete={setPendingDeleteRPT}
                         onCancelPendingDelete={() => setPendingDeleteRPT(null)}
@@ -775,6 +807,8 @@ export function TeamConfigurationPanel() {
                         removeTooltip="Remove"
                         unassignedSelectedStaff={selectedUnassignedPCA}
                         transferSelectedStaff={selectedTransferPCA}
+                        inactiveSelectedStaff={selectedInactivePCA}
+                        displayNames={displayNames}
                         emptyText="No PCA staff assigned."
                         onSetPendingDelete={setPendingDeletePCA}
                         onCancelPendingDelete={() => setPendingDeletePCA(null)}
@@ -985,6 +1019,62 @@ export function TeamConfigurationPanel() {
                                 </div>
                               )
                             })()}
+                            {(() => {
+                              const search = addMembersSearchQuery.trim()
+                              if (!search) return null
+
+                              const inactiveMatches = filterStaff(staff, {
+                                rank: ['APPT', 'RPT', 'PCA'],
+                                searchQuery: search,
+                              }).filter(s => s.status === 'inactive' && (s.rank !== 'PCA' || !s.floating))
+
+                              if (inactiveMatches.length === 0) return null
+
+                              return (
+                                <div className="space-y-2 pt-2 border-t">
+                                  <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                                    Inactive Staff
+                                    <span className="text-muted-foreground">({inactiveMatches.length})</span>
+                                  </div>
+                                  <div className="pl-4 space-y-1 max-h-40 overflow-y-auto pr-1">
+                                    {inactiveMatches.map((s) => {
+                                      const isSelected = editSelectedAPPT.has(s.id) || editSelectedRPT.has(s.id) || editSelectedPCA.has(s.id)
+                                      const setSelected = s.rank === 'APPT' ? setEditSelectedAPPT : s.rank === 'RPT' ? setEditSelectedRPT : setEditSelectedPCA
+
+                                      return (
+                                        <label
+                                          key={s.id}
+                                          className="flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-accent cursor-pointer"
+                                        >
+                                          <Checkbox
+                                            className={teamConfigCheckboxClass}
+                                            checked={isSelected}
+                                            onCheckedChange={(checked) => {
+                                              const newSet = new Set(s.rank === 'APPT' ? editSelectedAPPT : s.rank === 'RPT' ? editSelectedRPT : editSelectedPCA)
+                                              if (checked) newSet.add(s.id)
+                                              else newSet.delete(s.id)
+                                              setSelected(newSet)
+                                            }}
+                                          />
+                                          <span className="text-sm">{s.name}</span>
+                                          <Badge variant="outline" className="text-[10px] h-4 px-1 flex-shrink-0">
+                                            {s.rank}
+                                          </Badge>
+                                          <Badge variant="outline" className="text-[10px] h-4 px-1 text-muted-foreground border-muted-foreground/30 flex-shrink-0">
+                                            Inactive
+                                          </Badge>
+                                          {s.team && (
+                                            <span className="text-xs text-muted-foreground truncate">
+                                              Last team: {displayNames[s.team] || s.team}
+                                            </span>
+                                          )}
+                                        </label>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              )
+                            })()}
                           </div>
                         ) : (
                           <Button
@@ -1021,68 +1111,96 @@ export function TeamConfigurationPanel() {
                           {wards.filter(w => editSelectedWards.has(w.id)).map((ward) => {
                             const teamBeds = editWardBeds[ward.id] || 0
                             const portion = editWardPortions[ward.id] || null
+                            const isNew = newlyAddedWardIds.has(ward.id)
+                            const isPendingDelete = pendingDeleteWardId === ward.id
                             
                             return (
                               <div
                                 key={ward.id}
-                                className="bg-muted/30 rounded-md p-3"
+                                className={`rounded-md p-3 ${isNew ? 'bg-green-50 border border-green-200' : 'bg-muted/30'}`}
                               >
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                      <span className="font-medium text-sm">{ward.name}</span>
-                                      <span className="text-xs text-muted-foreground">
-                                        ({ward.total_beds} beds total)
-                                      </span>
-                                    </div>
-                                    <div className="mt-2 flex items-center gap-2">
-                                      <Label className="text-xs mb-0 whitespace-nowrap">Beds:</Label>
-                                      <Input
-                                        type="number"
-                                        value={teamBeds}
-                                        onChange={(e) => {
-                                          const value = parseInt(e.target.value, 10) || 0
-                                          const newBeds = { ...editWardBeds }
-                                          newBeds[ward.id] = Math.max(0, Math.min(value, ward.total_beds))
-                                          setEditWardBeds(newBeds)
-                                        }}
-                                        className="w-20 h-8 text-sm"
-                                      />
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className={`font-medium text-sm ${isNew ? 'text-green-900' : ''}`}>{ward.name}</span>
+                                  {isNew && (
+                                    <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700">
+                                      +Assign
+                                    </Badge>
+                                  )}
+                                  <span className="text-xs text-muted-foreground">
+                                    ({ward.total_beds} beds total)
+                                  </span>
+                                </div>
+                                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                                  <Label className="text-xs mb-0 whitespace-nowrap">Beds:</Label>
+                                  <Input
+                                    type="number"
+                                    value={teamBeds}
+                                    onChange={(e) => {
+                                      const value = parseInt(e.target.value, 10) || 0
+                                      const newBeds = { ...editWardBeds }
+                                      newBeds[ward.id] = Math.max(0, Math.min(value, ward.total_beds))
+                                      setEditWardBeds(newBeds)
+                                    }}
+                                    className="w-20 h-8 text-sm"
+                                  />
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      setPortionPopover({
+                                        wardId: ward.id,
+                                        wardName: ward.name,
+                                        totalBeds: ward.total_beds,
+                                        currentBeds: teamBeds,
+                                        currentPortion: portion,
+                                      })
+                                    }}
+                                    className="text-xs h-8"
+                                  >
+                                    {portion ? 'Edit portion' : 'Set portion'}
+                                  </Button>
+                                  {isPendingDelete ? (
+                                    <div className="flex items-center gap-1">
                                       <Button
-                                        variant="outline"
+                                        variant="destructive"
                                         size="sm"
+                                        className="h-7 text-xs"
                                         onClick={() => {
-                                          setPortionPopover({
-                                            wardId: ward.id,
-                                            wardName: ward.name,
-                                            totalBeds: ward.total_beds,
-                                            currentBeds: teamBeds,
-                                            currentPortion: portion,
+                                          const newSet = new Set(editSelectedWards)
+                                          const newBeds = { ...editWardBeds }
+                                          newSet.delete(ward.id)
+                                          delete newBeds[ward.id]
+                                          setEditSelectedWards(newSet)
+                                          setEditWardBeds(newBeds)
+                                          setNewlyAddedWardIds(prev => {
+                                            const next = new Set(prev)
+                                            next.delete(ward.id)
+                                            return next
                                           })
+                                          setPendingDeleteWardId(null)
                                         }}
-                                        className="text-xs h-8"
                                       >
-                                        {portion ? 'Edit portion' : 'Set portion'}
+                                        Confirm?
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7"
+                                        onClick={() => setPendingDeleteWardId(null)}
+                                      >
+                                        ×
                                       </Button>
                                     </div>
-                                  </div>
-                                  <Tooltip content="Remove ward" side="right">
+                                  ) : (
                                     <Button
                                       variant="ghost"
                                       size="icon"
-                                      className="h-7 w-7 text-muted-foreground hover:text-destructive flex-shrink-0"
-                                      onClick={() => {
-                                        const newSet = new Set(editSelectedWards)
-                                        const newBeds = { ...editWardBeds }
-                                        newSet.delete(ward.id)
-                                        delete newBeds[ward.id]
-                                        setEditSelectedWards(newSet)
-                                        setEditWardBeds(newBeds)
-                                      }}
+                                      className={`h-7 w-7 flex-shrink-0 ${isNew ? 'text-green-700 hover:text-green-900' : 'text-muted-foreground hover:text-destructive'}`}
+                                      onClick={() => setPendingDeleteWardId(ward.id)}
                                     >
                                       <X className="h-3.5 w-3.5" />
                                     </Button>
-                                  </Tooltip>
+                                  )}
                                 </div>
                               </div>
                             )
@@ -1118,10 +1236,7 @@ export function TeamConfigurationPanel() {
                                       variant="ghost"
                                       size="sm"
                                       className="h-7 px-2 text-xs"
-                                      onClick={() => {
-                                        setShowWardSelector(false)
-                                        setPendingWardId(null)
-                                      }}
+                                      onClick={() => setShowWardSelector(false)}
                                     >
                                       <ChevronDown className="mr-1 h-3.5 w-3.5" />
                                       Collapse
@@ -1129,65 +1244,28 @@ export function TeamConfigurationPanel() {
                                   </div>
                                   <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
                                     {unselectedWards.map((ward) => (
-                                      <div
+                                      <label
                                         key={ward.id}
-                                        className={`flex items-center gap-2 py-1.5 px-2 rounded-md ${
-                                          pendingWardId === ward.id ? 'bg-green-50/50' : 'hover:bg-accent cursor-pointer'
-                                        }`}
+                                        className="flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-accent cursor-pointer"
                                       >
-                                        {pendingWardId === ward.id ? (
-                                          <>
-                                            <span className="text-sm text-green-900 truncate">{ward.name}</span>
-                                            <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700">
-                                              +Assign
-                                            </Badge>
-                                            <span className="text-xs text-green-700">({ward.total_beds} beds)</span>
-                                            <div className="flex items-center gap-1">
-                                              <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                className="h-7 px-2 text-xs text-green-700 hover:text-green-900 hover:bg-green-100"
-                                                onClick={() => {
-                                                  const newSet = new Set(editSelectedWards)
-                                                  const newBeds = { ...editWardBeds }
-                                                  newSet.add(ward.id)
-                                                  newBeds[ward.id] = ward.total_beds
-                                                  setEditSelectedWards(newSet)
-                                                  setEditWardBeds(newBeds)
-                                                  setPendingWardId(null)
-                                                }}
-                                              >
-                                                Confirm
-                                              </Button>
-                                              <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-7 w-7 text-green-700 hover:text-green-900"
-                                                onClick={() => setPendingWardId(null)}
-                                              >
-                                                <X className="h-3.5 w-3.5" />
-                                              </Button>
-                                            </div>
-                                          </>
-                                        ) : (
-                                          <div
-                                            className="flex items-center gap-2 w-full cursor-pointer"
-                                            onClick={() => setPendingWardId(ward.id)}
-                                          >
-                                            <Checkbox
-                                              className={teamConfigCheckboxClass}
-                                              checked={false}
-                                              onCheckedChange={(checked) => {
-                                                if (checked) {
-                                                  setPendingWardId(ward.id)
-                                                }
-                                              }}
-                                            />
-                                            <span className="text-sm">{ward.name}</span>
-                                            <span className="text-xs text-muted-foreground">({ward.total_beds} beds)</span>
-                                          </div>
-                                        )}
-                                      </div>
+                                        <Checkbox
+                                          className={teamConfigCheckboxClass}
+                                          checked={false}
+                                          onCheckedChange={(checked) => {
+                                            if (checked) {
+                                              const newSet = new Set(editSelectedWards)
+                                              const newBeds = { ...editWardBeds }
+                                              newSet.add(ward.id)
+                                              newBeds[ward.id] = ward.total_beds
+                                              setEditSelectedWards(newSet)
+                                              setEditWardBeds(newBeds)
+                                              setNewlyAddedWardIds(prev => new Set(prev).add(ward.id))
+                                            }
+                                          }}
+                                        />
+                                        <span className="text-sm">{ward.name}</span>
+                                        <span className="text-xs text-muted-foreground">({ward.total_beds} beds)</span>
+                                      </label>
                                     ))}
                                   </div>
                                 </div>
@@ -1208,6 +1286,17 @@ export function TeamConfigurationPanel() {
                         })()}
                       </div>
                     </div>
+
+                    {selectedInactiveTotal > 0 && (
+                      <div className="mt-3 w-full max-w-2xl bg-amber-50/40 border border-amber-100/60 rounded-xl p-3 shadow-sm">
+                        <div className="flex items-start gap-2 text-sm text-amber-900">
+                          <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" />
+                          <span>
+                            Saving will activate {selectedInactiveTotal} inactive {selectedInactiveTotal === 1 ? 'staff member' : 'staff members'} and assign them to this team.
+                          </span>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Action buttons - black only for Save */}
                     <div className="flex justify-end gap-2 mt-6 pt-4 border-t">
@@ -1308,6 +1397,8 @@ interface RankMemberSectionProps {
   removeTooltip: string
   unassignedSelectedStaff: Staff[]
   transferSelectedStaff: Staff[]
+  inactiveSelectedStaff: Staff[]
+  displayNames: Partial<Record<Team, string>>
   emptyText: string
   onSetPendingDelete: (staffId: string) => void
   onCancelPendingDelete: () => void
@@ -1324,6 +1415,8 @@ function RankMemberSection({
   removeTooltip,
   unassignedSelectedStaff,
   transferSelectedStaff,
+  inactiveSelectedStaff,
+  displayNames,
   emptyText,
   onSetPendingDelete,
   onCancelPendingDelete,
@@ -1404,6 +1497,12 @@ function RankMemberSection({
           </div>
         ))}
 
+        {transferSelectedStaff.length > 0 && (
+          <p className="text-xs text-amber-600 pt-1">
+            Pending transfer — applies only after Save.
+          </p>
+        )}
+
         {transferSelectedStaff.map((s) => (
           <div key={`transfer-${s.id}`} className="flex items-center gap-2 rounded-md px-2 py-1.5 bg-green-50 border border-green-200">
             <div className="flex items-center gap-2 min-w-0">
@@ -1426,7 +1525,34 @@ function RankMemberSection({
           </div>
         ))}
 
-        {currentStaff.length === 0 && unassignedSelectedStaff.length === 0 && transferSelectedStaff.length === 0 && (
+        {inactiveSelectedStaff.map((s) => (
+          <div key={`inactive-${s.id}`} className="flex items-center gap-2 rounded-md px-2 py-1.5 bg-green-50 border border-green-200">
+            <div className="flex items-center gap-2 min-w-0">
+              <User className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+              <span className="text-sm text-green-900 truncate">{s.name}</span>
+            </div>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <Badge variant="outline" className="text-[10px] h-4 px-1 border-green-300 text-green-700">
+                Inactive to Active
+              </Badge>
+              {s.team && (
+                <span className="text-xs text-green-700">
+                  Last team: {displayNames[s.team] || s.team}
+                </span>
+              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-green-700 hover:text-green-900"
+                onClick={() => onRemoveSelected(s.id)}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        ))}
+
+        {currentStaff.length === 0 && unassignedSelectedStaff.length === 0 && transferSelectedStaff.length === 0 && inactiveSelectedStaff.length === 0 && (
           <p className="text-sm text-muted-foreground py-1 px-2">{emptyText}</p>
         )}
       </div>

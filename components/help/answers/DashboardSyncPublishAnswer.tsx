@@ -20,13 +20,17 @@ export function DashboardSyncPublishAnswer() {
       <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
         <div className="text-xs font-medium text-foreground">Use these actions when you mean it</div>
         <div className="flex flex-wrap items-center gap-2 pt-1">
-          <Button type="button" aria-disabled="true" tabIndex={-1} variant="outline" className="pointer-events-none select-none">
-            <CloudUpload className="mr-2 h-4 w-4" />
-            Publish snapshot → Global
+          <Button type="button" aria-disabled="true" tabIndex={-1} className="pointer-events-none select-none">
+            <CloudUpload className="mr-2 h-4 w-4 flex-shrink-0" />
+            Publish
+            <span className="ml-1 text-[11px] font-normal opacity-80">(date)</span>
+            <span className="ml-1">snapshot → Global</span>
           </Button>
           <Button type="button" aria-disabled="true" tabIndex={-1} variant="outline" className="pointer-events-none select-none">
-            <CloudDownload className="mr-2 h-4 w-4" />
-            Pull Global → snapshot
+            <CloudDownload className="mr-2 h-4 w-4 flex-shrink-0" />
+            Pull Global →
+            <span className="ml-1 text-[11px] font-normal opacity-80">(date)</span>
+            <span className="ml-1">snapshot</span>
           </Button>
         </div>
         <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">

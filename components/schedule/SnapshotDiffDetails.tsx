@@ -55,7 +55,7 @@ export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
         `Gym slot: ${typeof parsed.gym_schedule === 'number' ? parsed.gym_schedule : 'None'}`,
         `Avoid gym schedule: ${toBoolLabel(parsed.avoid_gym_schedule)}`,
         `Floor: ${parsed.floor_pca_selection ? String(parsed.floor_pca_selection) : 'None'}`,
-        `Preferred non-floating PCA: ${preferredPcaIds.length > 0 ? preferredPcaIds.map((id) => resolveStaffName(id)).join(', ') : 'None'}`,
+        `Preferred non-floating PCA: ${preferredPcaIds.length > 0 ? preferredPcaIds.map((id: string) => resolveStaffName(id)).join(', ') : 'None'}`,
       ]
       return lines.join('\n')
     } catch {

@@ -25,6 +25,12 @@ function formatFriendlyDateTime(value: unknown): string {
   }
 }
 
+function formatDisplayConfigId(value: unknown): string {
+  const n = typeof value === 'number' ? value : Number(value ?? 0)
+  if (!Number.isFinite(n) || n <= 0) return '#00000'
+  return `#${String(Math.trunc(n)).padStart(5, '0')}`
+}
+
 export function DashboardConfigMetaBanner() {
   const supabase = createClientComponentClient()
   const access = useAccessControl()
@@ -46,31 +52,36 @@ export function DashboardConfigMetaBanner() {
   }, [supabase])
 
   return (
-    <div className="mb-4 rounded-md border border-border bg-muted/20 px-3 py-2">
+    <div className="mb-4 w-full bg-blue-50/40 border border-blue-100/60 rounded-xl p-3 shadow-sm">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-sm font-semibold">Published configuration (Global)</div>
-          <div className="text-xs text-muted-foreground">
-            Global config{' '}
-            <span className="font-medium text-foreground">{formatFriendlyDateTime(head?.global_updated_at)}</span>
-            {canShowInternalVersion && typeof head?.global_version === 'number' ? (
-              <Tooltip
-                side="top"
-                content={
-                  <>
-                    Internal Config ID: <span className="font-medium">v{head.global_version}</span>
-                  </>
-                }
-              >
-                <span className="ml-2 text-xs text-muted-foreground underline decoration-dotted underline-offset-2 cursor-help">
-                  v{head.global_version}
-                </span>
-              </Tooltip>
-            ) : null}
+        <div className="flex items-start gap-2 min-w-0">
+          <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600" />
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-blue-900">Published configuration (Global)</div>
+            <div className="text-xs text-blue-800/70">
+              Global config{' '}
+              <span className="font-medium text-blue-900">{formatFriendlyDateTime(head?.global_updated_at)}</span>
+              {canShowInternalVersion && typeof head?.global_version === 'number' ? (
+                <Tooltip
+                  side="top"
+                  content={
+                    <>
+                      Display ID: <span className="font-medium">{formatDisplayConfigId(head.global_version)}</span>
+                      <br />
+                      Internal Config ID: <span className="font-medium">v{head.global_version}</span>
+                    </>
+                  }
+                >
+                  <span className="ml-2 text-xs text-blue-800/60 underline decoration-dotted underline-offset-2 cursor-help">
+                    {formatDisplayConfigId(head.global_version)}
+                  </span>
+                </Tooltip>
+              ) : null}
+            </div>
           </div>
         </div>
         <Tooltip content="Schedules can use saved snapshots per date. Use Dashboard → Sync / Publish to compare/sync.">
-          <div className="mt-0.5 text-muted-foreground">
+          <div className="mt-0.5 text-blue-400 flex-shrink-0">
             <Info className="h-4 w-4" />
           </div>
         </Tooltip>

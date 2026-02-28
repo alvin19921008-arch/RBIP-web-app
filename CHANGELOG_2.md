@@ -3,6 +3,26 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-02-28
+
+### Fixed
+- **Vercel build failures (TypeScript strict errors)**:
+  - `TeamConfigurationPanel`: `runChecked` helper type widened from `Promise` to `PromiseLike` to accept Supabase `PostgrestFilterBuilder` (which is a thenable, not a native Promise).
+  - `SnapshotDiffDetails`: Added explicit `string` type annotation to `preferredPcaIds.map((id: string) => ...)` callback.
+  - `lib/utils/teamMerge.ts`: Added `|| {}` fallback for `mergeLabelOverrideByTeam` and `mergedPcaPreferencesOverrideByTeam` when reading from `liveSnapshot` (both are optional in `TeamMergeSnapshot` but required in `TeamMergeResolvedConfig`).
+
+### Added / Changed
+- **Team Config – Inactive Staff search**: Inactive staff now appear in a dedicated "Inactive Staff" section when search query matches their name. Shows name, rank badge, muted "Inactive" badge, and "Last team: X". Selecting an inactive staff member stages them with an "Inactive to Active" badge; saving activates them and assigns them to the team.
+- **Team Config – Transfer pre-save reminder**: Flat amber reminder text ("Pending transfer — applies only after Save.") shown above each rank's pending transfer rows (no banner box). Global inactive-activation reminder banner shown above action buttons only when inactive staff are staged.
+- **Team Config – Info banner**: Expanded from `max-w-2xl` to `w-full`.
+- **Team Config – Ward assignment flow**: Selecting a checkbox immediately adds the ward to "Wards assigned" with green background and "+Assign" badge (no inline Confirm step). Remove (X) button moved inline next to ward controls; clicking triggers Confirm/× inline confirmation.
+- **Team Merge Panel**: Active merges show `(since <timestamp>)` in smaller bracketed font using `updated_at`.
+- **Config Sync / Meta Banner – Version display**: Raw `v###` replaced with 5-digit GitHub-style `#00070` display ID. Tooltip shows both display ID and internal `v###`. Sync status badge ("In sync" / "Snapshot behind") added next to Source snapshot header.
+- **Config Sync – Backups section revamp**: Removed outer bordered container; uppercase tracking header; "Create backup" styled as subtle form pane; backup list uses `divide-y`; "Restore" button has inline Confirm/Cancel confirmation.
+- **Config Sync – Team merge banner**: Explanatory sentence and merge details moved to second line for cleaner layout.
+- **Config Sync – Publish / Pull buttons**: `CloudUpload` / `CloudDownload` icons added; snapshot date shown in smaller font as `(Feb 26, 2026)`; inline Confirm/Cancel flow for both actions. Mock buttons in help center (`DashboardSyncPublishAnswer.tsx`) updated to match.
+- **Help Center – GifViewer**: Removed ring border; rounded corners to `rounded-xl` on thumbnail and `rounded-2xl` on lightbox modal for liquid-glass consistency.
+
 ## [Unreleased] - 2026-02-27
 
 ### Added

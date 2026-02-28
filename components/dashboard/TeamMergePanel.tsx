@@ -33,6 +33,7 @@ type TeamSettingsRow = {
   merged_into: Team | null
   merge_label_override: string | null
   merged_pca_preferences_override: MergedPcaPreferencesOverride | null
+  updated_at: string | null
 }
 
 type PcaPreferenceRow = {
@@ -73,6 +74,21 @@ function toOverrideFromPreference(pref: PcaPreferenceRow | undefined, source: Ov
     gym_schedule: pref.gym_schedule ?? null,
     floor_pca_selection: pref.floor_pca_selection ?? null,
     source,
+  }
+}
+
+function formatSinceDate(value: string | null | undefined): string {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+    }).format(d)
+  } catch {
+    return d.toLocaleDateString()
   }
 }
 
@@ -126,7 +142,7 @@ export function TeamMergePanel() {
       const [settingsRes, prefRes, staffRes, wardsRes] = await Promise.all([
         supabase
           .from('team_settings')
-          .select('team,display_name,merged_into,merge_label_override,merged_pca_preferences_override')
+          .select('team,display_name,merged_into,merge_label_override,merged_pca_preferences_override,updated_at')
           .order('team'),
         supabase
           .from('pca_preferences')
@@ -548,13 +564,20 @@ export function TeamMergePanel() {
                     },
                   })
 
+                  const sinceLabel = formatSinceDate(row.updated_at)
+
                   return (
                     <div key={`merge-${row.team}`} className="flex items-center justify-between py-3 border-b last:border-0">
-                      <div className="flex items-center gap-3 text-sm">
+                      <div className="flex items-center gap-3 text-sm flex-wrap">
                         <Badge variant="outline" className="font-mono">{row.team}</Badge>
                         <ArrowRight className="w-4 h-4 text-muted-foreground" />
                         <Badge variant="secondary" className="font-mono">{main}</Badge>
                         <span className="text-muted-foreground ml-2">→ {mainLabel}</span>
+                        {sinceLabel && (
+                          <span className="text-[11px] text-muted-foreground">
+                            (since {sinceLabel})
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         <Button size="sm" variant="ghost" onClick={() => openEdit(row)} disabled={saving}>

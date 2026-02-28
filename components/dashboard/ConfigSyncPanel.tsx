@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Calendar } from 'lucide-react'
+import { Calendar, Info, CloudUpload, CloudDownload } from 'lucide-react'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -79,6 +80,12 @@ function formatFriendlyDateTime(value: unknown): string {
   }
 }
 
+function formatDisplayConfigId(value: unknown): string {
+  const n = typeof value === 'number' ? value : Number(value ?? 0)
+  if (!Number.isFinite(n) || n <= 0) return '#00000'
+  return `#${String(Math.trunc(n)).padStart(5, '0')}`
+}
+
 function getThresholdFromHead(head: any): { value: number; unit: ThresholdUnit } {
   const raw = head?.drift_notification_threshold
   const unit: ThresholdUnit = raw?.unit === 'weeks' || raw?.unit === 'months' ? raw.unit : 'days'
@@ -139,8 +146,11 @@ export function ConfigSyncPanel() {
   const [customThresholdUnit, setCustomThresholdUnit] = useState<ThresholdUnit>('days')
   const [thresholdUiMode, setThresholdUiMode] = useState<ThresholdMode>('custom')
 
+  const [pendingPublish, setPendingPublish] = useState(false)
+  const [pendingPull, setPendingPull] = useState(false)
   const [backupNote, setBackupNote] = useState('')
   const [backups, setBackups] = useState<any[]>([])
+  const [pendingRestoreId, setPendingRestoreId] = useState<string | null>(null)
   const [teamSettingsRows, setTeamSettingsRows] = useState<TeamSettingsMergeRow[]>([])
 
   const reloadGlobalHead = async () => {
@@ -446,6 +456,16 @@ export function ConfigSyncPanel() {
   const snapshotGlobalUpdatedAt = formatFriendlyDateTime(snapshotHead?.global_updated_at)
   const availableSnapshotDateSet = useMemo(() => new Set(availableDates), [availableDates])
   const activeGlobalMerges = useMemo(() => summarizeActiveGlobalMerges(teamSettingsRows), [teamSettingsRows])
+  const hasSnapshotDrift = !!categorySummary && Object.values(categorySummary.changed).some(Boolean)
+  const syncStatusBadge = !selectedDate
+    ? null
+    : diffError
+      ? { label: 'Status unavailable', className: 'bg-destructive/10 text-destructive border-destructive/20' }
+      : !diff
+        ? { label: 'Checking sync...', className: 'bg-muted text-muted-foreground border-border' }
+        : hasSnapshotDrift
+          ? { label: 'Snapshot behind', className: 'bg-amber-100 text-amber-950 border-amber-200' }
+          : { label: 'In sync', className: 'bg-emerald-100 text-emerald-900 border-emerald-200' }
 
   return (
     <div className="pt-6 space-y-6">
@@ -460,12 +480,14 @@ export function ConfigSyncPanel() {
                     side="top"
                     content={
                       <>
+                        Display ID: <span className="font-medium">{formatDisplayConfigId(globalHead.global_version)}</span>
+                        <br />
                         Internal Config ID: <span className="font-medium">v{globalHead.global_version}</span>
                       </>
                     }
                   >
                     <span className="ml-2 text-xs text-muted-foreground underline decoration-dotted underline-offset-2 cursor-help">
-                      v{globalHead.global_version}
+                      {formatDisplayConfigId(globalHead.global_version)}
                     </span>
                   </Tooltip>
                 ) : null}
@@ -474,7 +496,14 @@ export function ConfigSyncPanel() {
 
             <div className="space-y-2">
               <div className="flex items-start justify-between gap-3">
-                <h3 className="text-lg font-semibold">Source snapshot</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-semibold">Source snapshot</h3>
+                  {syncStatusBadge ? (
+                    <Badge variant="outline" className={`text-[11px] ${syncStatusBadge.className}`}>
+                      {syncStatusBadge.label}
+                    </Badge>
+                  ) : null}
+                </div>
                 <Button
                   variant="outline"
                   size="sm"
@@ -541,13 +570,16 @@ export function ConfigSyncPanel() {
                         side="top"
                         content={
                           <>
+                            Display ID at snapshot creation:{' '}
+                            <span className="font-medium">{formatDisplayConfigId(snapshotHead.global_version)}</span>
+                            <br />
                             Internal Config ID at snapshot creation:{' '}
                             <span className="font-medium">v{snapshotHead.global_version}</span>
                           </>
                         }
                       >
                         <span className="ml-2 text-xs text-muted-foreground underline decoration-dotted underline-offset-2 cursor-help">
-                          v{snapshotHead.global_version}
+                          {formatDisplayConfigId(snapshotHead.global_version)}
                         </span>
                       </Tooltip>
                     ) : null}
@@ -719,15 +751,20 @@ export function ConfigSyncPanel() {
             </div>
 
             {activeGlobalMerges.length > 0 ? (
-              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                <div className="font-medium">Global team merge detected</div>
-                <div className="mt-1">
-                  Pulling with Team Configuration selected will copy the active merge mapping into this snapshot date.
-                </div>
-                <div className="mt-1">
-                  {activeGlobalMerges
-                    .map((m) => `${m.from} -> ${m.to}${m.label ? ` (${m.label})` : ''}`)
-                    .join(', ')}
+              <div className="w-full bg-amber-50/40 border border-amber-100/60 rounded-xl p-3 shadow-sm">
+                <div className="flex items-start gap-2 text-sm text-amber-900">
+                  <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" />
+                  <div>
+                    <div className="font-medium">Global team merge detected.</div>
+                    <div className="mt-0.5">
+                      Pulling with Team Configuration selected will copy the active merge mapping into this snapshot date.{' '}
+                      <span className="text-amber-700">
+                        {activeGlobalMerges
+                          .map((m) => `${m.from} → ${m.to}${m.label ? ` (${m.label})` : ''}`)
+                          .join(', ')}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -764,24 +801,71 @@ export function ConfigSyncPanel() {
               </div>
             )}
 
-            <div className="flex flex-wrap items-center gap-2 pt-2">
-              <Button onClick={handlePublish}>Publish snapshot → Global</Button>
-              <Tooltip content="Secondary action. Overwrites selected parts of the snapshot with current Global config.">
-                <Button variant="outline" onClick={handlePull}>
-                  Pull Global → snapshot
-                </Button>
-              </Tooltip>
-            </div>
+            {(() => {
+              const dateLabel = selectedDate ? formatDateDisplay(selectedDate) : null
+              return (
+                <div className="flex flex-wrap items-center gap-3 pt-2">
+                  {/* Publish */}
+                  {pendingPublish ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        Publish{dateLabel ? <> (<span className="font-medium text-foreground">{dateLabel}</span>)</> : ''} snapshot → Global?
+                      </span>
+                      <Button size="sm" className="h-7 text-xs" onClick={() => { setPendingPublish(false); void handlePublish() }}>
+                        Confirm
+                      </Button>
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setPendingPublish(false)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button onClick={() => setPendingPublish(true)}>
+                      <CloudUpload className="mr-2 h-4 w-4 flex-shrink-0" />
+                      Publish
+                      {dateLabel && <span className="ml-1 text-[11px] font-normal opacity-80">({dateLabel})</span>}
+                      <span className="ml-1">snapshot → Global</span>
+                    </Button>
+                  )}
+
+                  {/* Pull */}
+                  {pendingPull ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        Pull Global →{dateLabel ? <> (<span className="font-medium text-foreground">{dateLabel}</span>)</> : ''} snapshot?
+                      </span>
+                      <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setPendingPull(false); void handlePull() }}>
+                        Confirm
+                      </Button>
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setPendingPull(false)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <Tooltip content="Secondary action. Overwrites selected parts of the snapshot with current Global config.">
+                      <Button variant="outline" onClick={() => setPendingPull(true)}>
+                        <CloudDownload className="mr-2 h-4 w-4 flex-shrink-0" />
+                        Pull Global →
+                        {dateLabel && <span className="ml-1 text-[11px] font-normal opacity-80">({dateLabel})</span>}
+                        <span className="ml-1">snapshot</span>
+                      </Button>
+                    </Tooltip>
+                  )}
+                </div>
+              )
+            })()}
           </div>
 
-          <div className="rounded-md border border-border p-3 space-y-3">
-            <div className="text-sm font-semibold">Backups</div>
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="space-y-3 pt-4 border-t">
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Backups
+            </h4>
+
+            <div className="flex flex-wrap items-center gap-2 bg-muted/30 rounded-md p-3">
               <Input
                 placeholder="Optional note for backup…"
                 value={backupNote}
                 onChange={(e) => setBackupNote(e.target.value)}
-                className="min-w-[260px] flex-1"
+                className="min-w-[240px] flex-1"
               />
               <Button variant="outline" onClick={handleCreateBackup}>
                 Create backup now
@@ -789,18 +873,47 @@ export function ConfigSyncPanel() {
             </div>
 
             {backups.length === 0 ? (
-              <div className="text-sm text-muted-foreground">No backups found.</div>
+              <p className="text-sm text-muted-foreground">No backups found.</p>
             ) : (
-              <div className="space-y-2">
+              <div className="divide-y">
                 {backups.map((b) => (
-                  <div key={b.id} className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
+                  <div key={b.id} className="flex items-center justify-between gap-3 py-2.5">
                     <div className="min-w-0">
                       <div className="text-sm truncate">{b.note || '(no note)'}</div>
                       <div className="text-xs text-muted-foreground">{formatFriendlyDateTime(b.created_at)}</div>
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => handleRestoreBackup(String(b.id))}>
-                      Restore
-                    </Button>
+                    {pendingRestoreId === b.id ? (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => {
+                            void handleRestoreBackup(String(b.id))
+                            setPendingRestoreId(null)
+                          }}
+                        >
+                          Confirm?
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => setPendingRestoreId(null)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="flex-shrink-0 text-muted-foreground hover:text-destructive"
+                        onClick={() => setPendingRestoreId(String(b.id))}
+                      >
+                        Restore
+                      </Button>
+                    )}
                   </div>
                 ))}
               </div>

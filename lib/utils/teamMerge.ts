@@ -134,10 +134,10 @@ export function resolveTeamMergeConfig(params: {
     : frozen?.mergedInto || liveSnapshot.mergedInto
   const mergeLabelOverrideByTeam = hasBaselineSnapshot
     ? frozen?.mergeLabelOverrideByTeam || {}
-    : frozen?.mergeLabelOverrideByTeam || liveSnapshot.mergeLabelOverrideByTeam
+    : frozen?.mergeLabelOverrideByTeam || liveSnapshot.mergeLabelOverrideByTeam || {}
   const mergedPcaPreferencesOverrideByTeam = hasBaselineSnapshot
     ? frozen?.mergedPcaPreferencesOverrideByTeam || {}
-    : frozen?.mergedPcaPreferencesOverrideByTeam || liveSnapshot.mergedPcaPreferencesOverrideByTeam
+    : frozen?.mergedPcaPreferencesOverrideByTeam || liveSnapshot.mergedPcaPreferencesOverrideByTeam || {}
 
   return {
     mergedInto,
