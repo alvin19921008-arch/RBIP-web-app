@@ -3,6 +3,24 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-03-01 (cache/draft/snapshot hardening)
+
+### Fixed / Hardened
+- **Cache · Draft · Snapshot system hardening (F1–F11)** — Full details in `WIP2.md`.
+  - **F1 (CRITICAL)**: Post-save `currentScheduleUpdatedAt` was client-fabricated, causing silent post-save draft discard on date switch. Now reads actual DB `updated_at` from both the non-RPC update path (`.select('updated_at')`) and the RPC path (separate lightweight fetch).
+  - **F2 (HIGH)**: Source date cache was not cleared after the copy-schedule route mutated the source snapshot. `clearCachedSchedule(fromDate)` added alongside the existing target clear in `handleConfirmCopy`.
+  - **F3 (HIGH)**: New schedule baseline snapshot was built from the previous date's stale React state. Replaced with a parallel batch of live DB fetches (`staff`, `special_programs`, `spt_allocations`, `wards`, `pca_preferences`) at schedule creation time.
+  - **F4**: Null-wildcard in draft identity `updatedAtMatches` was too permissive (a `null` draft matched any non-null base). Now requires both sides to be null or both to match as non-null strings.
+  - **F5**: Snapshot repair was ephemeral — the repaired envelope was never written back to DB, so the repair staff query re-fired on every cold load. Repair result now fire-and-forget persisted to `daily_schedules.baseline_snapshot` immediately after repair.
+  - **F6**: Epoch bump (global Publish/Pull) silently destroyed all in-flight drafts with no user notification. `bumpEpochAndGetEvictedDraftDates()` now captures live drafts before bumping; `ConfigSyncPanel` shows a `toast.warning` listing affected dates.
+  - **F7**: `MAX_DIRTY_DATES = 5` overflow only evicted the sessionStorage pointer, leaving the in-memory draft as an invisible orphan. `markDirtyScheduleDate` now also calls `draftCache.delete()` for the evicted entry.
+  - **F8**: Added JSDoc constraint comment at `cacheSchedule()` and the cache-hit read site documenting that `overrides` must always represent DB-persisted state.
+  - **F9**: Removed dead `writeThrough` code — the source-type union member, persist guard, and read-path legacy-entry guard were all protecting an abandoned design pattern with no active callers.
+  - **F10**: `DraftScheduleData` no longer stores `baselineSnapshot` — the field was serialised on every flush but unconditionally ignored at restore, adding unnecessary memory overhead (can be hundreds of KB per dirty date).
+  - **F11**: Added JSDoc to `getScheduleCacheEpoch()` and `bumpScheduleCacheEpoch()` documenting the two symmetric sessionStorage-unavailable failure modes (perpetual over-eviction vs epoch-protection bypass).
+
+---
+
 ## [Unreleased] - 2026-03-01
 
 ### Fixed

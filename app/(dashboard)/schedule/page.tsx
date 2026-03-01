@@ -5289,6 +5289,11 @@ function SchedulePageContent() {
       setCopyTargetDateKey(targetKey)
       clearCachedSchedule(targetKey)
       clearDraftSchedule(targetKey)
+      // The copy route may write back to the source schedule's baseline_snapshot
+      // (legacy upgrade / missing snapshot backfill). Clear its cache so the next
+      // navigation to the source date reads the updated row from DB instead of
+      // serving a stale pre-copy cache entry.
+      clearCachedSchedule(formatDateForInput(fromDate))
 
       // Navigate to copied schedule date and reload schedule metadata
       queueDateTransition(toDate, { resetLoadedForDate: true, useLocalTopBar: false })

@@ -27,11 +27,10 @@ interface CachedScheduleData {
   calculations: Record<string, any> | null
   cachedAt: number // timestamp
   /**
-   * Optional diagnostics about where the cache entry came from.
-   * - 'db': loaded from database/RPC then cached
-   * - 'writeThrough': in-memory unsaved state written on date switch (Option A)
+   * Diagnostics — where the cache entry came from.
+   * - 'db': loaded from database/RPC then cached (the only active path)
    */
-  __source?: 'db' | 'writeThrough' | string
+  __source?: 'db' | string
   /** Populated when a cache entry was rehydrated from sessionStorage. */
   __cacheLayer?: 'memory' | 'sessionStorage'
   /** Cache epoch marker used to invalidate stale entries in bulk. */
@@ -82,9 +81,6 @@ function writePersistIndex(ids: string[]): void {
 function persistSchedule(dateStr: string, data: CachedScheduleData): void {
   if (!canUseSessionStorage()) return
   try {
-    // Never persist write-through (unsaved) cache across refresh.
-    // These entries are meant to be in-memory only and can become stale or cross-date polluted.
-    if ((data as any)?.__source === 'writeThrough') return
     const json = JSON.stringify(data)
     if (json.length > PERSIST_MAX_BYTES) return
     window.sessionStorage.setItem(persistKey(dateStr), json)
@@ -116,11 +112,6 @@ function readPersistedSchedule(dateStr: string): CachedScheduleData | null {
     if (!parsed || typeof parsed !== 'object') return null
     if (typeof parsed.scheduleId !== 'string') return null
     if (typeof parsed.cachedAt !== 'number') return null
-    // If a legacy/buggy client persisted a write-through cache entry, treat it as invalid.
-    if (parsed.__source === 'writeThrough') {
-      window.sessionStorage.removeItem(persistKey(dateStr))
-      return null
-    }
     // validate epoch
     if (!isEpochCurrent(parsed as CachedScheduleData)) {
       window.sessionStorage.removeItem(persistKey(dateStr))
@@ -183,7 +174,17 @@ export function getCachedSchedule(dateStr: string): CachedScheduleData | null {
 }
 
 /**
- * Cache schedule data for a date
+ * Cache schedule data for a date.
+ *
+ * CONSTRAINT: `data.overrides` must always represent the DB-persisted staff_overrides
+ * value — never an unsaved in-memory state. This is because the cache hit path sets
+ * both `staffOverrides` and `savedOverrides` from the same `overrides` field, which
+ * resets the current/saved version counters to equal and suppresses dirty-state detection.
+ * If unsaved state were stored here, post-cache-hit dirty checking would be silently broken.
+ *
+ * Safe partial-cache-update pattern (e.g. notes patch):
+ *   cacheSchedule(dateStr, { ...cached, allocationNotesDoc: newDoc })
+ *   ← only non-overrides fields patched; overrides stays DB-accurate.
  */
 export function cacheSchedule(
   dateStr: string,
@@ -198,7 +199,7 @@ export function cacheSchedule(
     __epoch: getScheduleCacheEpoch(),
   }
   scheduleCache.set(dateStr, stored)
-  const shouldPersist = opts?.persist !== false && (stored as any).__source !== 'writeThrough'
+  const shouldPersist = opts?.persist !== false
   if (shouldPersist) persistSchedule(dateStr, stored as any)
 }
 

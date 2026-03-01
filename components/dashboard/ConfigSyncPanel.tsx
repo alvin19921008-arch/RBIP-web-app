@@ -25,6 +25,7 @@ import {
   fetchSnapshotDiffLiveInputs,
   SNAPSHOT_DIFF_LIVE_INPUTS_DEFAULT_TTL_MS,
 } from '@/lib/features/schedule/snapshotDiffLiveInputs'
+import { bumpEpochAndGetEvictedDraftDates } from '@/lib/utils/scheduleCacheEpoch'
 
 type CategoryKey =
   | 'staffProfile'
@@ -401,6 +402,15 @@ export function ConfigSyncPanel() {
         const d = await computeDiff(snapshotData)
         setDiff(d)
       }
+      // Invalidate schedule cache so any open schedule tab re-fetches fresh data.
+      // Capture evicted draft dates first so we can warn the user if they had unsaved work.
+      const evicted = bumpEpochAndGetEvictedDraftDates()
+      if (evicted.length > 0) {
+        toast.warning(
+          'Unsaved schedule edits were discarded.',
+          `Global config changed. Unsaved edits on ${evicted.join(', ')} were lost. Please re-enter any changes.`
+        )
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       toast.error('Publish failed.', msg)
@@ -444,6 +454,14 @@ export function ConfigSyncPanel() {
       toast.success('Snapshot refreshed from Global.')
       // Reload snapshot + diff
       setSnapshotReloadToken((n) => n + 1)
+      // Invalidate schedule cache and warn if any unsaved drafts were killed.
+      const evicted = bumpEpochAndGetEvictedDraftDates()
+      if (evicted.length > 0) {
+        toast.warning(
+          'Unsaved schedule edits were discarded.',
+          `Global config changed. Unsaved edits on ${evicted.join(', ')} were lost. Please re-enter any changes.`
+        )
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       toast.error('Pull failed.', msg)

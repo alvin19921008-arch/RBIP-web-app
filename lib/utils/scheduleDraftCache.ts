@@ -32,7 +32,8 @@ export interface DraftScheduleData {
   bedAllocs: any[]
   calculations: Record<string, any> | null
   tieBreakDecisions?: Record<string, any>
-  baselineSnapshot?: any
+  // baselineSnapshot is intentionally NOT stored in the draft: restore always uses the
+  // freshly-loaded snapshot from the DB/cache path to avoid stale teamMerge flicker.
   workflowState?: any
   currentStep?: string
   stepStatus?: Record<string, any>
@@ -114,7 +115,12 @@ export function markDirtyScheduleDate(pointer: Omit<DirtyScheduleDatePointer, 'd
   }
   const next = readDirtyDatePointers().filter((it) => it.dateStr !== pointer.dateStr)
   next.push(nextItem)
-  while (next.length > MAX_DIRTY_DATES) next.shift()
+  // Evict oldest entries when the list is full. Also remove the corresponding
+  // in-memory draft so it doesn't become an orphan invisible to the dirty-date UI.
+  while (next.length > MAX_DIRTY_DATES) {
+    const evicted = next.shift()
+    if (evicted) draftCache.delete(evicted.dateStr)
+  }
   writeDirtyDatePointers(next)
 }
 
@@ -181,5 +187,20 @@ export function getMostRecentDirtyScheduleDate(): DirtyScheduleDatePointer | nul
 
 export function getDraftCacheSize(): number {
   return draftCache.size
+}
+
+/**
+ * Returns the date strings for all live (epoch-current) draft entries.
+ * Used before bumping the cache epoch so callers can warn the user that
+ * unsaved work on those dates will be lost.
+ */
+export function getActiveDraftDateStrings(): string[] {
+  const result: string[] = []
+  for (const [dateStr] of draftCache) {
+    if (hasLiveDraftSchedule(dateStr)) {
+      result.push(dateStr)
+    }
+  }
+  return result
 }
 

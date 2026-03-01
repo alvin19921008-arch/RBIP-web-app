@@ -772,7 +772,6 @@ export function useScheduleController(params: {
       bedAllocs: deepCloneSnapshotValue((bedAllocations as any) || []),
       calculations: deepCloneSnapshotValue((calculations as any) || null),
       tieBreakDecisions: deepCloneSnapshotValue((tieBreakDecisions as any) || {}),
-      baselineSnapshot: deepCloneSnapshotValue((baselineSnapshot as any) || null),
       workflowState: workflowStateForCache,
       currentStep: (currentStep as any) ?? 'leave-fte',
       stepStatus: deepCloneSnapshotValue((stepStatus as any) || {}),
@@ -1148,6 +1147,10 @@ export function useScheduleController(params: {
         } else {
           setTieBreakDecisions({})
         }
+        // Both current and saved overrides are set from the same cached value because
+        // cacheSchedule() guarantees overrides == DB-persisted state (see scheduleCache.ts).
+        // This resets version counters to equal, which is correct: no unsaved work exists
+        // at the point a cache hit is served.
         setStaffOverrides(cached.overrides || {})
         setSavedOverrides(cached.overrides || {})
         setBedCountsOverridesByTeam((cached as any).bedCountsOverridesByTeam || {})
@@ -1247,18 +1250,35 @@ export function useScheduleController(params: {
     let scheduleId: string
     let effectiveWorkflowState: WorkflowState | null = null
     if (!scheduleData) {
-      const baselineSnapshotToSaveBase = buildBaselineSnapshotFromCurrentState()
-      const [globalHeadAtCreation, seededStaffOverrides, liveTeamConfig] = await Promise.all([
+      // For a brand-new schedule we must build the baseline snapshot from live DB tables,
+      // NOT from in-memory React state. React state at this point still holds the previous
+      // date's applied snapshot (applyBaselineSnapshot for the new date hasn't run yet), so
+      // using buildBaselineSnapshotFromCurrentState() would embed the wrong date's data.
+      const [globalHeadAtCreation, seededStaffOverrides, liveTeamConfig, liveStaffRes, liveSpecialProgramsRes, liveSptRes, liveWardsRes, livePcaPrefRes] = await Promise.all([
         fetchGlobalHeadAtCreation(supabase),
         seedAllocationNotesForNewSchedule({ supabase, date, dateStr }),
         fetchLiveTeamSettingsSnapshot(supabase).catch(() => null),
+        supabase.from('staff').select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program'),
+        supabase.from('special_programs').select('id,name,staff_ids,weekdays,slots,fte_subtraction,pca_required,therapist_preference_order,pca_preference_order'),
+        supabase.from('spt_allocations').select('id,staff_id,specialty,teams,weekdays,slots,slot_modes,fte_addon,config_by_weekday,substitute_team_head,is_rbip_supervisor,active,created_at,updated_at'),
+        supabase.from('wards').select('id,name,total_beds,team_assignments,team_assignment_portions'),
+        supabase.from('pca_preferences').select('id,team,preferred_pca_ids,preferred_slots,avoid_gym_schedule,gym_schedule,floor_pca_selection'),
       ])
+
+      const liveStaff = (liveStaffRes?.data || []) as any[]
+      const liveSpecialPrograms = (liveSpecialProgramsRes?.data || []) as any[]
+      const liveSptAllocations = (liveSptRes?.data || []) as any[]
+      const liveWards = (liveWardsRes?.data || []) as any[]
+      const livePcaPreferences = (livePcaPrefRes?.data || []) as any[]
+
       const baselineSnapshotToSave: BaselineSnapshot = {
-        ...(baselineSnapshotToSaveBase as any),
-        teamDisplayNames:
-          (liveTeamConfig as any)?.teamDisplayNames ??
-          (baselineSnapshotToSaveBase as any)?.teamDisplayNames,
-        teamMerge: (liveTeamConfig as any)?.teamMerge ?? (baselineSnapshotToSaveBase as any)?.teamMerge,
+        staff: liveStaff as any,
+        specialPrograms: minifySpecialProgramsForSnapshot(liveSpecialPrograms) as any,
+        sptAllocations: liveSptAllocations as any,
+        wards: liveWards as any,
+        pcaPreferences: livePcaPreferences as any,
+        teamDisplayNames: (liveTeamConfig as any)?.teamDisplayNames,
+        teamMerge: (liveTeamConfig as any)?.teamMerge,
       }
       const baselineEnvelopeToSave = buildBaselineSnapshotEnvelope({
         data: baselineSnapshotToSave,
@@ -1386,6 +1406,16 @@ export function useScheduleController(params: {
         innerTimer.stage('validate:baseline_snapshot')
         setSnapshotHealthReport(validated.report)
         applyBaselineSnapshot(validated.data, overrides)
+
+        // Persist the repaired envelope back to DB so subsequent cold loads don't have to
+        // re-repair and re-query live staff. Fire-and-forget: never block the load path.
+        if (validated.report.status === 'repaired' && scheduleId) {
+          supabase
+            .from('daily_schedules')
+            .update({ baseline_snapshot: validated.envelope as any })
+            .eq('id', scheduleId)
+            .then(() => {}) // intentionally fire-and-forget
+        }
       } catch {
         setSnapshotHealthReport(null)
       }
@@ -1858,8 +1888,17 @@ export function useScheduleController(params: {
                 ? (resultAny.meta.scheduleUpdatedAt as string)
                 : null) ?? null
           const idMatches = !!baseScheduleId && draft.scheduleId === baseScheduleId
+          // Exact match when both sides have a timestamp.
+          // Allow only when BOTH are null (brand-new schedule that was never saved).
+          // Reject if one side is null and the other is not — indicates a stale draft from
+          // a different schedule lifecycle (e.g. row deleted + recreated) or a client clock
+          // that wasn't updated correctly.
           const updatedAtMatches =
-            !draft.scheduleUpdatedAt || !baseScheduleUpdatedAt || draft.scheduleUpdatedAt === baseScheduleUpdatedAt
+            draft.scheduleUpdatedAt === null && baseScheduleUpdatedAt === null
+              ? true
+              : draft.scheduleUpdatedAt !== null && baseScheduleUpdatedAt !== null
+                ? draft.scheduleUpdatedAt === baseScheduleUpdatedAt
+                : false
 
           if (idMatches && updatedAtMatches) {
             draftIdentityMatched = true
@@ -2844,7 +2883,6 @@ export function useScheduleController(params: {
       const dateStr = `${y}-${m}-${d}`
       clearCachedSchedule(dateStr)
       clearDraftSchedule(dateStr)
-      setCurrentScheduleUpdatedAt(new Date().toISOString())
 
       // Conditional snapshot refresh (same logic as page.tsx previously)
       try {
@@ -2975,8 +3013,13 @@ export function useScheduleController(params: {
       timer.stage('snapshotRefresh')
       onProgress(0.92)
 
+      // Read the real DB-generated updated_at after save so the draft identity check
+      // (draft.scheduleUpdatedAt === baseScheduleUpdatedAt) uses a trustworthy value.
+      // A client-fabricated new Date() would cause every post-save draft to be silently discarded.
+      let savedUpdatedAt: string | null = null
+
       if (!usedRpc) {
-        const { error: scheduleMetaError } = await params.supabase
+        const { data: metaData, error: scheduleMetaError } = await params.supabase
           .from('daily_schedules')
           .update({
             tie_break_decisions: tieBreakDecisions,
@@ -2984,15 +3027,28 @@ export function useScheduleController(params: {
             workflow_state: workflowStateToSave,
           })
           .eq('id', scheduleId)
+          .select('updated_at')
+          .single()
         if (!scheduleMetaError) {
           setPersistedWorkflowState(workflowStateToSave)
+          savedUpdatedAt = (metaData as any)?.updated_at ?? null
         }
       } else {
         setPersistedWorkflowState(workflowStateToSave)
+        // RPC does not return updated_at — fetch it with a minimal select.
+        const { data: tsData } = await params.supabase
+          .from('daily_schedules')
+          .select('updated_at')
+          .eq('id', scheduleId)
+          .single()
+        savedUpdatedAt = (tsData as any)?.updated_at ?? null
       }
 
       timer.stage('metadata')
       onProgress(0.96)
+
+      // Apply the real DB updated_at (or fall back to a client timestamp only if the fetch failed).
+      setCurrentScheduleUpdatedAt(savedUpdatedAt ?? new Date().toISOString())
 
       toast('Saved successfully.', 'success')
     } catch (e) {
