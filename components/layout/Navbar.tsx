@@ -20,10 +20,13 @@ import {
   ChevronDown,
   UserRoundCog,
   CircleHelp,
+  MessageSquarePlus,
+  ClipboardList,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { ChangePasswordDialog } from '@/components/auth/ChangePasswordDialog'
 import { EditProfileDialog } from '@/components/auth/EditProfileDialog'
+import { FeedbackButton } from '@/components/feedback/FeedbackButton'
 
 type AccountRole = 'user' | 'admin' | 'developer'
 
@@ -45,6 +48,7 @@ export function Navbar() {
   const [changePwOpen, setChangePwOpen] = useState(false)
   const [editProfileOpen, setEditProfileOpen] = useState(false)
   const [profileRefreshKey, setProfileRefreshKey] = useState(0)
+  const [newReportCount, setNewReportCount] = useState(0)
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -53,12 +57,16 @@ export function Navbar() {
     router.refresh()
   }
 
-  const navItems = [
+  const baseNavItems = [
     { href: '/schedule', label: 'Schedule', icon: CalendarDays },
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/history', label: 'History', icon: History },
     { href: '/help', label: 'Help', icon: CircleHelp },
   ]
+
+  const navItems = profileRole === 'developer'
+    ? [...baseNavItems, { href: '/feedback/review', label: 'Reports', icon: ClipboardList }]
+    : baseNavItems
 
   useEffect(() => {
     let cancelled = false
@@ -97,9 +105,27 @@ export function Navbar() {
     }
   }, [supabase, profileRefreshKey])
 
+  // Fetch unread "new" report count for developer badge
+  useEffect(() => {
+    if (profileRole !== 'developer') return
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch('/api/feedback?mode=review&status=new')
+        if (!res.ok || cancelled) return
+        const data = await res.json()
+        if (!cancelled) setNewReportCount((data.reports ?? []).length)
+      } catch {}
+    }
+    load()
+    const interval = setInterval(load, 60_000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [profileRole])
+
   useOnClickOutside(menuRef, () => setMenuOpen(false), { enabled: menuOpen, event: 'pointerdown' })
 
   return (
+    <>
     <nav className={cn('border-b bg-background', RBIP_APP_MIN_WIDTH_CLASS)}>
       <div
         className="mx-auto flex w-full px-4 py-3 sm:px-6 lg:px-8 items-center justify-between"
@@ -110,22 +136,34 @@ export function Navbar() {
             RBIP Duty List
           </Link>
           <div className="flex space-x-4">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => navLoading.start(item.href)}
-                className={cn(
-                  "text-sm font-medium transition-colors rbip-hover-scale hover:text-primary inline-flex items-center gap-1.5 rounded-md px-2 py-1",
-                  pathname === item.href
-                    ? "bg-muted/50 text-foreground"
-                    : "text-muted-foreground hover:bg-muted/50"
-                )}
-              >
-                <item.icon className="h-4 w-4" />
-                <span>{item.label}</span>
-              </Link>
-            ))}
+            {navItems.map((item) => {
+              const isReports = item.href === '/feedback/review'
+              const badge = isReports && newReportCount > 0 ? newReportCount : 0
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => {
+                    navLoading.start(item.href)
+                    if (isReports) setNewReportCount(0)
+                  }}
+                  className={cn(
+                    "relative text-sm font-medium transition-colors rbip-hover-scale hover:text-primary inline-flex items-center gap-1.5 rounded-md px-2 py-1",
+                    pathname === item.href
+                      ? "bg-muted/50 text-foreground"
+                      : "text-muted-foreground hover:bg-muted/50"
+                  )}
+                >
+                  <item.icon className="h-4 w-4" />
+                  <span>{item.label}</span>
+                  {badge > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-4 text-center tabular-nums">
+                      {badge > 99 ? '99+' : badge}
+                    </span>
+                  )}
+                </Link>
+              )
+            })}
           </div>
         </div>
         <div className="relative" ref={menuRef}>
@@ -164,6 +202,16 @@ export function Navbar() {
                   <KeyRound className="h-4 w-4 mr-2" />
                   Change password
                 </button>
+                <div className="my-1 h-px bg-slate-100 dark:bg-slate-700" />
+                <a
+                  href="/feedback"
+                  className="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-slate-100 dark:hover:bg-slate-800 rounded text-muted-foreground"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  <MessageSquarePlus className="h-4 w-4 mr-2" />
+                  Report an issue
+                </a>
+                <div className="my-1 h-px bg-slate-100 dark:bg-slate-700" />
                 <button
                   className="w-full flex items-center px-3 py-2 text-sm text-left hover:bg-slate-100 dark:hover:bg-slate-800 rounded text-red-600 dark:text-red-400"
                   onClick={() => {
@@ -186,6 +234,12 @@ export function Navbar() {
         </div>
       </div>
     </nav>
+
+    {/* Floating feedback button — shown to all non-developer roles */}
+    {profileRole !== 'developer' && (
+      <FeedbackButton userRole={profileRole} userName={profileName} />
+    )}
+    </>
   )
 }
 

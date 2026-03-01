@@ -3,6 +3,21 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-03-01 (feedback system)
+
+### Added
+- **Bug / Feedback Reporting System** — full in-app feedback loop for users and developer.
+  - **Floating draggable button** (`MessageSquarePlus`, bottom-right) with Framer Motion micro-interactions: spring hover/press, icon tilt on drag, origin-expand drawer animation, unread-reply badge.
+  - **Submission drawer** (slide-in overlay, no navigation): "Similar issues" panel with +1 upvoting, new-report form (type, severity, category, sub-category, description, steps to reproduce), manual screenshot capture ("Capture now" / Retake / Crop region / Discard), CSS-keyframe indeterminate progress bar during capture, `flushSync` + double-`requestAnimationFrame` to show loading state before main-thread capture work.
+  - **Region selector** — snipping-tool crop overlay; drawer slides off-screen while selecting, returns with cropped preview.
+  - **`/feedback` page** — full-page version for all authenticated roles; developer role auto-redirects to `/feedback/review`.
+  - **`/feedback/review` page** — developer-only: sidebar filters (status, type, category, severity), flat report list with severity left-strip colour coding, slide-in detail panel (auto-context viewer, status selector, internal dev notes, optional reply to submitter, delete).
+  - **Navbar** — "Reports" nav link added for developer role with iOS-style red unread badge (count of `status = 'new'` reports, polled every 60s, clears on click); "Report an issue" entry added to account dropdown for all roles.
+  - **Database** — `feedback_reports` + `feedback_upvotes` tables with RLS, `upvote_count` sync trigger, `updated_at` trigger (`supabase/migrations/20260301_add_feedback_system.sql`).
+  - **API routes** — `GET/POST/PATCH/DELETE /api/feedback`, `POST/GET /api/feedback/upvote`, `POST /api/feedback/screenshot` (Vercel Blob), `POST /api/feedback/mark-read`.
+
+---
+
 ## [Unreleased] - 2026-03-01 (cache/draft/snapshot hardening)
 
 ### Fixed / Hardened

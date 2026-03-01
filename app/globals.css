@@ -139,6 +139,13 @@
       transform: translate(var(--ctx-from-x, 0px), var(--ctx-from-y, 0px)) scale(0.88);
     }
   }
+
+}
+
+/* Indeterminate progress bar — GPU-friendly, survives main-thread blocking */
+@keyframes rbip-progress-slide {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(200%); }
 }
 
 /* Recreate Tailwind v3 container behavior (center + padding + 2xl=1400px) */
