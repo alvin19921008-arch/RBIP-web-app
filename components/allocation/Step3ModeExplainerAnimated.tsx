@@ -129,27 +129,27 @@ function Controls({
       className={cn(
         'absolute top-2 left-1/2 -translate-x-1/2 z-30',
         'flex items-center gap-1 px-1 py-0.5',
-        'rounded-2xl border border-white/18 dark:border-white/10',
-        'bg-white/10 dark:bg-white/5',
+        'rounded-2xl border border-slate-300/45 dark:border-white/10',
+        'bg-slate-200/50 dark:bg-white/5',
         'backdrop-blur-xl supports-[backdrop-filter]:backdrop-blur-xl',
         'supports-[backdrop-filter]:[backdrop-filter:blur(18px)_saturate(165%)]',
-        'shadow-[0_6px_20px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.28),inset_0_-1px_0_rgba(255,255,255,0.12)]',
+        'shadow-[0_6px_20px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.35),inset_0_-1px_0_rgba(255,255,255,0.15)]',
         'dark:shadow-[0_6px_20px_rgba(0,0,0,0.24),inset_0_1px_0_rgba(255,255,255,0.1),inset_0_-1px_0_rgba(255,255,255,0.06)]'
       )}
     >
       {/* Specular highlight strip for liquid-glass feel */}
-      <div className="pointer-events-none absolute inset-x-1 top-0 h-[42%] rounded-t-xl bg-gradient-to-b from-white/30 to-transparent dark:from-white/10" />
+      <div className="pointer-events-none absolute inset-x-1 top-0 h-[42%] rounded-t-xl bg-gradient-to-b from-white/40 to-transparent dark:from-white/10" />
       <div className="relative text-[9px] font-semibold text-slate-600/90 dark:text-slate-200/90 px-1.5 min-w-[24px] text-center">
         {stepIdx + 1}/{total}
       </div>
       <div className="relative w-px h-3 bg-white/35 dark:bg-white/16 mx-0.5" />
-      <button onClick={onPrev} className="p-1 rounded-md hover:bg-white/22 dark:hover:bg-white/12 transition-colors" aria-label="Previous step">
+      <button onClick={onPrev} className="p-1 rounded-md hover:bg-white/30 dark:hover:bg-white/12 transition-colors" aria-label="Previous step">
         <SkipBack className="w-3 h-3 text-slate-700/80 dark:text-slate-200/80" />
       </button>
-      <button onClick={onToggle} className="p-1 rounded-md hover:bg-white/22 dark:hover:bg-white/12 transition-colors" aria-label={isPlaying ? 'Pause' : 'Play'}>
+      <button onClick={onToggle} className="p-1 rounded-md hover:bg-white/30 dark:hover:bg-white/12 transition-colors" aria-label={isPlaying ? 'Pause' : 'Play'}>
         {isPlaying ? <Pause className="w-3 h-3 text-slate-700/80 dark:text-slate-200/80" /> : <Play className="w-3 h-3 text-slate-700/80 dark:text-slate-200/80 ml-[0.5px]" />}
       </button>
-      <button onClick={onNext} className="p-1 rounded-md hover:bg-white/22 dark:hover:bg-white/12 transition-colors" aria-label="Next step">
+      <button onClick={onNext} className="p-1 rounded-md hover:bg-white/30 dark:hover:bg-white/12 transition-colors" aria-label="Next step">
         <SkipForward className="w-3 h-3 text-slate-700/80 dark:text-slate-200/80" />
       </button>
     </div>
@@ -224,7 +224,7 @@ function ModeExplainer({
     <div className={cn('relative flex flex-col w-full font-sans text-foreground overflow-hidden bg-background rounded-md', className)} style={{ aspectRatio: '4/3' }}>
       <Controls stepIdx={stepIdx} total={steps.length} isPlaying={isPlaying} onPrev={prev} onNext={next} onToggle={() => setIsPlaying((v) => !v)} />
 
-      <div ref={containerRef} className="flex-1 flex px-3 pt-8 pb-2 gap-4 relative">
+      <div ref={containerRef} className="flex-1 flex px-3 pt-9 pb-2 gap-4 relative">
         {flights.length > 0 ? (
           <svg className="absolute inset-0 w-full h-full pointer-events-none z-20 overflow-visible">
             {flights.map((f) => (

@@ -126,13 +126,6 @@ function getFurthestPCAStage(stepStatus: StepStatus, initializedSteps: Set<strin
   return 'none'
 }
 
-function chunkArray<T>(arr: T[], size: number): T[][] {
-  const n = Math.max(1, Math.floor(size || 1))
-  const out: T[][] = []
-  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))
-  return out
-}
-
 export function PCADedicatedScheduleTable({
   allPCAStaff,
   pcaAllocationsByTeam,
@@ -176,8 +169,9 @@ export function PCADedicatedScheduleTable({
   const isExport = renderMode === 'export'
   const exportChunks = useMemo(() => {
     if (!isExport) return [columns]
-    return chunkArray(columns, maxColumnsPerChunk)
-  }, [columns, isExport, maxColumnsPerChunk])
+    // Export as a single wide table (no split) so layout stays consistent.
+    return [columns]
+  }, [columns, isExport])
 
   const allAllocations = useMemo(() => {
     // Flatten, de-dupe by allocation id + staff_id + team (defensive; schedule page sometimes duplicates in slot teams)

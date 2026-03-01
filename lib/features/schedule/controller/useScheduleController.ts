@@ -1887,7 +1887,8 @@ export function useScheduleController(params: {
               calculations: deepCloneSnapshotValue((draft.calculations as any) || null),
               hasLoadedStoredCalculations: !!draft.calculations,
               tieBreakDecisions: deepCloneSnapshotValue((draft.tieBreakDecisions as any) || {}),
-              baselineSnapshot: deepCloneSnapshotValue((draft.baselineSnapshot as any) || baselineSnapshot),
+              // baselineSnapshot is per-date config from the schedule load; must not be overwritten by draft (avoids stale teamMerge flicker).
+              baselineSnapshot: deepCloneSnapshotValue(resultAny?.baselineSnapshot ?? baselineSnapshot),
               persistedWorkflowState: deepCloneSnapshotValue((draft.persistedWorkflowState as any) || persistedWorkflowState),
               currentStep: (draft.currentStep as any) ?? currentStep,
               stepStatus: deepCloneSnapshotValue((draft.stepStatus as any) || stepStatus),

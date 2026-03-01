@@ -132,7 +132,6 @@ export const AllocationExportView = React.forwardRef<HTMLDivElement, AllocationE
             stepStatus={props.stepStatus}
             initializedSteps={props.initializedSteps}
             renderMode="export"
-            maxColumnsPerChunk={10}
           />
         ) : null}
       </div>

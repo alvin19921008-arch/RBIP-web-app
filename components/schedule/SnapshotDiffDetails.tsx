@@ -1,30 +1,16 @@
 'use client'
 
-import { useMemo, useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import type { SnapshotDiffResult } from '@/lib/features/schedule/snapshotDiff'
 
 export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
   const MAX = 20
 
-  // Build staff name lookup from all staff sections in the diff result
-  const staffNameById = useMemo(() => {
-    const map = new Map<string, string>()
-    const allStaff = [
-      ...props.result.staff.added,
-      ...props.result.staff.removed,
-      ...props.result.staff.changed.map((s) => ({ id: s.id, name: s.name })),
-    ]
-    allStaff.forEach((s) => {
-      if (s.id && s.name) map.set(s.id, s.name.trim())
-    })
-    return map
-  }, [props.result.staff])
-
-  const resolveStaffName = (id: string) => staffNameById.get(id) || id
+  const resolveStaffName = (id: string) => props.result.staffIdToName?.[id]?.trim() || id
 
   const staffLabel = (args: { id: string; name?: string | null }) => {
     const name = typeof args.name === 'string' ? args.name.trim() : ''
-    return name ? name : args.id
+    return name || resolveStaffName(args.id)
   }
 
   type Change = { field: string; from: string; to: string }
@@ -153,10 +139,10 @@ export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
         <ScrollHintTable>
           <table className="w-full min-w-[720px] table-fixed text-[11px] border border-amber-200/60 rounded-md overflow-hidden">
             <colgroup>
-              <col style={{ width: '22%' }} />
-              <col style={{ width: '16%' }} />
-              <col style={{ width: '31%' }} />
-              <col style={{ width: '31%' }} />
+              <col style={{ width: '14%' }} />
+              <col style={{ width: '15%' }} />
+              <col style={{ width: '35.5%' }} />
+              <col style={{ width: '35.5%' }} />
             </colgroup>
             <thead className="bg-amber-100/60">
               <tr className="text-amber-950/80">

@@ -50,6 +50,8 @@ type SptAllocationLite = {
 type FieldChange = { field: string; from: string; to: string }
 
 export type SnapshotDiffResult = {
+  /** Full staff id→name map for resolving UUIDs to human-readable names in all categories */
+  staffIdToName: Record<string, string>
   staff: {
     added: StaffLite[]
     removed: StaffLite[]
@@ -546,7 +548,13 @@ export function diffBaselineSnapshot(params: {
     }
   })
 
+  const staffIdToName: Record<string, string> = {}
+  idToName.forEach((name, id) => {
+    staffIdToName[id] = name
+  })
+
   return {
+    staffIdToName,
     staff: { added: staffAdded, removed: staffRemoved, changed: staffChanged },
     teamSettings: { changed: teamSettingsChanged },
     wards: { added: wardsAdded, removed: wardsRemoved, changed: wardsChanged },

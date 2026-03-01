@@ -40,17 +40,13 @@ export function GifViewer({ src, alt, className, thumbnailClassName, frame = tru
 
   return (
     <>
-      <div
-        className={cn(
-          'relative group block w-full max-w-[360px] overflow-hidden rounded-2xl bg-transparent',
-          className
-        )}
-      >
-        <img
+      <div className={cn('block w-full max-w-[360px]', className)}>
+        <div className="relative group inline-flex w-fit max-w-full overflow-hidden rounded-2xl bg-transparent">
+          <img
           src={src}
           alt={alt}
           className={cn(
-            'block h-auto max-h-[220px] w-full object-contain object-top !rounded-2xl',
+            'block max-w-full max-h-[220px] w-auto h-auto self-start !rounded-2xl',
             thumbnailClassName
           )}
           loading="lazy"
@@ -70,6 +66,7 @@ export function GifViewer({ src, alt, className, thumbnailClassName, frame = tru
         >
           <Maximize2 className="h-4 w-4 text-white" />
         </button>
+        </div>
       </div>
 
       {isOpen && (

@@ -3,6 +3,19 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-03-01
+
+### Fixed
+- **GifViewer – Rounded corners on all thumbnails**: Replaced `object-contain` + `w-full` on the thumbnail `<img>` with `max-w-full max-h-[220px] w-auto h-auto` so `border-radius` clips correctly on all GIF aspect ratios. Outer wrapper restructured to `block w-full max-w-[360px]` (block-level for new-line placement) + inner `inline-flex w-fit` (shrink-wraps to image width so the expand button tracks the thumbnail).
+- **Snapshot diff – UUID in Team Settings**: `SnapshotDiffResult` now exports a `staffIdToName` record built from the full `idToName` map. `SnapshotDiffDetails` uses this map to resolve UUID strings to human-readable names in all categories (Team Settings, PCA Preferences, etc.).
+- **Team merge non-deterministic flicker on 23/2**: Draft restore was overwriting `baselineSnapshot` (which carries per-date `teamMerge` config) with a potentially stale draft snapshot, causing CPPC+NSM to briefly show merged then revert to unmerged. Draft patch now preserves the `baselineSnapshot` from the schedule load; comment added to document the invariant.
+- **Export – PCA Dedicated Schedule split-table layout**: Removed the two-table export split. PCA Dedicated Schedule now exports as a single wide table containing all staff columns, giving a consistent single-table layout in the exported PNG.
+
+### Changed
+- **Step 3 Animated Controls – liquid-glass tint**: Control panel background updated from `bg-white/10` (invisible over white) to `bg-slate-200/50` with `border-slate-300/45` so the frosted panel reads clearly over the white animation canvas. Shadow opacity and specular highlight strengthened for light mode; button hover updated to `hover:bg-white/30`. Space below controls increased from `pt-8` to `pt-9` to give a small gap above the "Teams (Need)" / "PCAS (AVAIL)" headers.
+- **Snapshot diff – Item column narrowed**: Item column reduced from 22% to 14%; Saved snapshot and Dashboard columns each grow from 31% to 35.5%, reducing horizontal scroll and giving more room for cell content.
+- **Export – PCA Dedicated Schedule**: Removed the now-unused `maxColumnsPerChunk` prop and `chunkArray` helper.
+
 ## [Unreleased] - 2026-02-28
 
 ### Fixed
