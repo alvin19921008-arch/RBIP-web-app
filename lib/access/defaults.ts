@@ -32,9 +32,17 @@ export const DEFAULT_ACCESS_CONTROL_SETTINGS: AccessControlSettingsV1 = {
       'schedule.diagnostics.save': false,
       'schedule.diagnostics.snapshot-health': false,
       'schedule.tools.reset-to-baseline': false,
+      // Admins can submit feedback but cannot access the review page
+      'feedback.review': false,
     },
     // Users can access /dashboard, but start with no panels enabled until configured.
-    user: dashboardOnly([]),
+    // Users get feedback nav link + float button by default; review is developer-only.
+    user: {
+      ...dashboardOnly([]),
+      'feedback.nav-link': true,
+      'feedback.float-button': true,
+      'feedback.review': false,
+    },
   },
 }
 

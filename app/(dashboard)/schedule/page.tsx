@@ -9497,7 +9497,7 @@ function SchedulePageContent() {
             />
           </div>
         ) : null}
-        <div className={cn(!isSplitMode && 'inline-block min-w-full align-top')}>
+        <div className={cn(!isSplitMode && 'inline-block min-w-full align-top', isSplitMode && 'flex-1 min-h-0 flex flex-col')}>
         {!isSplitMode && (
         <ScheduleHeaderBar
           userRole={userRole}

@@ -246,6 +246,15 @@ export function Step1LeaveSetupDialog({
     })
   }
 
+  const getSpecialProgramNameForToday = (staffId: string): string | null => {
+    const program = specialPrograms.find((p) => {
+      if (p.name === 'DRO') return false
+      if (!p.weekdays.includes(weekday)) return false
+      return p.staff_ids.includes(staffId)
+    })
+    return program?.name ?? null
+  }
+
   const buildDraftRow = (member: Staff, sourceOverride: StaffOverrideLite | undefined): DraftRow => {
     const sptBaseFromConfig = member.rank === 'SPT' ? sptBaseFteByStaffId.get(member.id) ?? 0 : 1
     const baseCapacity = getCapacity(member, sptBaseFromConfig)
@@ -798,7 +807,9 @@ export function Step1LeaveSetupDialog({
 
   const renderTherapistRow = (row: DraftRow, member: Staff) => {
     const showAmPm = (member.rank === 'APPT' || member.rank === 'RPT') && (row.fteRemaining === 0.25 || row.fteRemaining === 0.5)
-    const showSpecialProgram = hasSpecialProgramForToday(member.id)
+    // If FTE remaining is 0, the therapist is fully absent — they cannot attend any special program slot.
+    const specialProgramName = getSpecialProgramNameForToday(member.id)
+    const showSpecialProgram = specialProgramName !== null && row.fteRemaining > 0
     return (
       <div key={row.staffId} className="py-3">
             <div className="flex items-center gap-2">
@@ -964,7 +975,7 @@ export function Step1LeaveSetupDialog({
                 checked={row.specialProgramAvailable}
                 onChange={(event) => setRow(row.staffId, (current) => ({ ...current, specialProgramAvailable: event.target.checked }))}
               />
-              Available during special program slot
+              Available during <strong className="font-semibold">{specialProgramName}</strong> slot
             </label>
           ) : null}
         </div>
@@ -1568,7 +1579,7 @@ export function Step1LeaveSetupDialog({
 
                 {/* Mobile: keep box; lg+: flat with top/bottom rules only */}
                 <div className="rounded-md border border-border overflow-hidden lg:rounded-none lg:border-0 lg:border-t lg:border-b lg:overflow-visible">
-                  <div className="grid gap-0 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,0.85fr)] lg:divide-x divide-border items-stretch">
+                  <div className="grid gap-0 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,0.6fr)] lg:divide-x divide-border items-stretch">
                     {/* Left: pickers */}
                     <div
                       className={cn(
@@ -1710,7 +1721,7 @@ export function Step1LeaveSetupDialog({
               {rows.filter((r) => r.leaveChoice !== '__none__').length === 0 ? (
                 <p className="py-10 text-center text-sm text-muted-foreground">No leave entries in draft.</p>
               ) : (
-                <div className="divide-y divide-border rounded-md border border-border overflow-hidden">
+                <div className="rounded-md border border-border overflow-hidden divide-y divide-border lg:divide-y-0 lg:grid lg:grid-cols-2 lg:gap-px lg:bg-border">
                   {rows
                     .slice()
                     .sort((a, b) => {
@@ -1735,7 +1746,7 @@ export function Step1LeaveSetupDialog({
                       const avSlots = Array.isArray(finalEdit.availableSlots) ? finalEdit.availableSlots : []
                       const partial = Array.isArray(finalEdit.invalidSlots) ? finalEdit.invalidSlots : []
                       return (
-                        <div key={`preview-${row.staffId}`} className="flex items-center justify-between px-3 py-2 hover:bg-muted/30">
+                        <div key={`preview-${row.staffId}`} className="flex items-center justify-between px-3 py-2 hover:bg-muted/30 bg-background">
                           <div className="min-w-0">
                             <div className="flex items-center gap-2 min-w-0">
                               <div className="truncate text-sm font-medium">{member.name}</div>
@@ -1773,7 +1784,7 @@ export function Step1LeaveSetupDialog({
                               </div>
                             ) : null}
                           </div>
-                          <div className="text-xs text-muted-foreground">FTE {finalEdit.fteRemaining.toFixed(2)}</div>
+                          <div className="text-xs text-muted-foreground shrink-0 pl-3">FTE {finalEdit.fteRemaining.toFixed(2)}</div>
                         </div>
                       )
                     })}

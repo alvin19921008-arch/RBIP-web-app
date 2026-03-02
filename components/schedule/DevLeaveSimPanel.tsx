@@ -14,10 +14,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip } from '@/components/ui/tooltip'
-import { X } from 'lucide-react'
+import { ChevronDown, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatDateForInput } from '@/lib/features/schedule/date'
 import { serializeDevLeaveSimBundle, parseDevLeaveSimBundle } from '@/lib/dev/leaveSim/bundle'
+import { getSptWeekdayConfigMap } from '@/lib/features/schedule/sptConfig'
 import { generateDevLeaveSimDraft } from '@/lib/dev/leaveSim/generator'
 import {
   ALL_SLOTS,
@@ -71,12 +72,36 @@ function safeNumberInput(v: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback
 }
 
-function patchToOverride(p: DevLeaveSimStaffPatch): StaffOverrideLike[string] {
+function patchToOverride(
+  p: DevLeaveSimStaffPatch,
+  sptBaseFteMap?: Record<string, number>,
+): StaffOverrideLike[string] {
   const inv = p.invalidSlots?.[0]?.slot
   const availableSlots = Array.isArray(p.availableSlots) ? p.availableSlots.filter((s) => isValidSlot(s)) : undefined
   const invalidSlots = Array.isArray(p.invalidSlots) ? p.invalidSlots.filter((x) => isValidSlot(x.slot)) : undefined
   const filteredSlots = inv && availableSlots ? availableSlots.filter((s) => s !== inv) : availableSlots
   const derivedPcaFteRemaining = p.rank === 'PCA' ? pcaSlotFteFromAvailableSlots(filteredSlots) : p.fteRemaining
+
+  // For SPT staff the generator always produces fteRemaining/fteSubtraction relative to a base
+  // of 1.0, because it doesn't know the configured SPT FTE. Re-scale to the real base here so
+  // that Step 1.2's buildDraftRow infers the correct sptBaseFTE.
+  if (p.rank === 'SPT' && sptBaseFteMap) {
+    const realBase = sptBaseFteMap[p.staffId] ?? 0
+    if (realBase > 0 && realBase <= 1) {
+      // p.fteRemaining is a fraction of 1.0 → scale to realBase
+      const scaledRemaining = round2(clampNumber(p.fteRemaining * realBase, 0, realBase))
+      const scaledSubtraction = round2(clampNumber(realBase - scaledRemaining, 0, realBase))
+      return {
+        leaveType: p.leaveType,
+        fteRemaining: scaledRemaining,
+        fteSubtraction: scaledSubtraction,
+        availableSlots: filteredSlots,
+        invalidSlots,
+        invalidSlot: inv,
+      }
+    }
+  }
+
   return {
     leaveType: p.leaveType,
     fteRemaining: derivedPcaFteRemaining,
@@ -88,11 +113,14 @@ function patchToOverride(p: DevLeaveSimStaffPatch): StaffOverrideLike[string] {
   }
 }
 
-function buildOverridesFromDraft(draft: DevLeaveSimDraft | null): StaffOverrideLike {
+function buildOverridesFromDraft(
+  draft: DevLeaveSimDraft | null,
+  sptBaseFteMap?: Record<string, number>,
+): StaffOverrideLike {
   const next: StaffOverrideLike = {}
   if (!draft) return next
   for (const p of draft.patches || []) {
-    next[p.staffId] = patchToOverride(p)
+    next[p.staffId] = patchToOverride(p, sptBaseFteMap)
   }
   return next
 }
@@ -174,6 +202,15 @@ export function DevLeaveSimPanel(props: {
   const [sickCountInput, setSickCountInput] = useState<string>(() => String(config.sickCount))
   const [urgentCountInput, setUrgentCountInput] = useState<string>(() => String(config.urgentCount))
   const [pcaUrgentInvalidProbInput, setPcaUrgentInvalidProbInput] = useState<string>(() => String(config.pcaUrgentInvalidSlotProbability))
+  // Randomizer range inputs
+  const [plannedTherapistMinInput, setPlannedTherapistMinInput] = useState<string>(() => String(config.plannedTherapistMin))
+  const [sickCountMinInput, setSickCountMinInput] = useState<string>(() => String(config.sickCountMin))
+  const [sickCountMaxInput, setSickCountMaxInput] = useState<string>(() => String(config.sickCountMax))
+  const [urgentCountMinInput, setUrgentCountMinInput] = useState<string>(() => String(config.urgentCountMin))
+  const [urgentCountMaxInput, setUrgentCountMaxInput] = useState<string>(() => String(config.urgentCountMax))
+  const [pcaBudgetMinInput, setPcaBudgetMinInput] = useState<string>(() => String(config.plannedPcaFteBudgetMin))
+  const [pcaBudgetMaxInput, setPcaBudgetMaxInput] = useState<string>(() => String(config.plannedPcaFteBudgetMax))
+  const [randomizerRangesOpen, setRandomizerRangesOpen] = useState(false)
   const [rankWeightInputs, setRankWeightInputs] = useState<Record<'SPT' | 'APPT' | 'RPT' | 'PCA', string>>(() => ({
     SPT: String((config.rankWeights as any)?.SPT ?? 1),
     APPT: String((config.rankWeights as any)?.APPT ?? 1),
@@ -183,6 +220,8 @@ export function DevLeaveSimPanel(props: {
   const [plannedLeaveTypeWeightInputs, setPlannedLeaveTypeWeightInputs] = useState<string[]>(
     () => (config.plannedLeaveTypeWeights || []).map((x) => String(x.weight))
   )
+  // Per-patch FTE remaining inputs — allows free typing before blur commits the value.
+  const [fteInputs, setFteInputs] = useState<Record<string, string>>({})
   const [urgentLeaveTypeWeightInputs, setUrgentLeaveTypeWeightInputs] = useState<string[]>(
     () => (config.urgentLeaveTypeWeights || []).map((x) => String(x.weight))
   )
@@ -195,6 +234,13 @@ export function DevLeaveSimPanel(props: {
     setSickCountInput(String(next.sickCount))
     setUrgentCountInput(String(next.urgentCount))
     setPcaUrgentInvalidProbInput(String(next.pcaUrgentInvalidSlotProbability))
+    setPlannedTherapistMinInput(String(next.plannedTherapistMin))
+    setSickCountMinInput(String(next.sickCountMin))
+    setSickCountMaxInput(String(next.sickCountMax))
+    setUrgentCountMinInput(String(next.urgentCountMin))
+    setUrgentCountMaxInput(String(next.urgentCountMax))
+    setPcaBudgetMinInput(String(next.plannedPcaFteBudgetMin))
+    setPcaBudgetMaxInput(String(next.plannedPcaFteBudgetMax))
     setRankWeightInputs({
       SPT: String((next.rankWeights as any)?.SPT ?? 1),
       APPT: String((next.rankWeights as any)?.APPT ?? 1),
@@ -338,11 +384,19 @@ export function DevLeaveSimPanel(props: {
   const randomizeCountsAndSeed = () => {
     // Randomize the quotas in a visible way (so dev can still tweak before generating).
     const nextSeed = String(Date.now())
-    const therapistCount = Math.floor(Math.random() * (config.plannedTherapistMax + 1))
-    const pcaBudgetChoices = [0, 0.5, 1.0, Math.min(1.5, config.plannedPcaFteBudgetMax), Math.min(2, config.plannedPcaFteBudgetMax)]
-    const pcaBudget = pcaBudgetChoices[Math.floor(Math.random() * pcaBudgetChoices.length)] ?? 0
-    const sick = Math.floor(Math.random() * 7) // 0..6
-    const urgent = Math.floor(Math.random() * 3) // 0..2
+    const therapistMin = Math.max(0, config.plannedTherapistMin)
+    const therapistMax = Math.max(therapistMin, config.plannedTherapistMax)
+    const therapistCount = therapistMin + Math.floor(Math.random() * (therapistMax - therapistMin + 1))
+    const pcaMin = Math.max(0, config.plannedPcaFteBudgetMin)
+    const pcaMax = Math.max(pcaMin, config.plannedPcaFteBudgetMax)
+    const pcaBudgetChoices = [0, 0.5, 1.0, 1.5, 2.0].filter((v) => v >= pcaMin && v <= pcaMax)
+    const pcaBudget = pcaBudgetChoices.length > 0 ? (pcaBudgetChoices[Math.floor(Math.random() * pcaBudgetChoices.length)] ?? pcaMin) : pcaMin
+    const sickMin = Math.max(0, config.sickCountMin)
+    const sickMax = Math.max(sickMin, config.sickCountMax)
+    const sick = sickMin + Math.floor(Math.random() * (sickMax - sickMin + 1))
+    const urgentMin = Math.max(0, config.urgentCountMin)
+    const urgentMax = Math.max(urgentMin, config.urgentCountMax)
+    const urgent = urgentMin + Math.floor(Math.random() * (urgentMax - urgentMin + 1))
     const next: DevLeaveSimConfig = {
       ...config,
       seed: nextSeed,
@@ -357,7 +411,12 @@ export function DevLeaveSimPanel(props: {
 
   const applyMergedOverrides = (mode: 'clean' | 'merge') => {
     if (!draft) return
-    const patchOverrides = buildOverridesFromDraft(draft)
+    const sptBaseFteMap: Record<string, number> = {}
+    const sptConfigMap = getSptWeekdayConfigMap({ weekday: props.weekday, sptAllocations: props.sptAllocations })
+    Object.entries(sptConfigMap).forEach(([staffId, cfg]) => {
+      if (cfg.baseFte > 0) sptBaseFteMap[staffId] = cfg.baseFte
+    })
+    const patchOverrides = buildOverridesFromDraft(draft, sptBaseFteMap)
 
     // Capture originals so we can reset generated-only.
     const originals: Record<string, any> = {}
@@ -654,13 +713,17 @@ export function DevLeaveSimPanel(props: {
               <Input value={String(pcaDerivedFteRemaining ?? 0)} disabled />
             ) : (
               <Input
-                value={String(p.fteRemaining)}
+                value={fteInputs[p.staffId] ?? String(p.fteRemaining)}
                 onChange={(e) => {
-                  const n = safeNumberInput(e.target.value, p.fteRemaining)
+                  setFteInputs((prev) => ({ ...prev, [p.staffId]: e.target.value }))
+                }}
+                onBlur={(e) => {
+                  const n = round2(clampNumber(safeNumberInput(e.target.value, p.fteRemaining), 0, 1))
+                  setFteInputs((prev) => ({ ...prev, [p.staffId]: String(n) }))
                   updatePatch(p.staffId, (prev) => ({
                     ...prev,
-                    fteRemaining: round2(clampNumber(n, 0, 1)),
-                    fteSubtraction: round2(1 - clampNumber(n, 0, 1)),
+                    fteRemaining: n,
+                    fteSubtraction: round2(1 - n),
                   }))
                 }}
               />
@@ -750,35 +813,37 @@ export function DevLeaveSimPanel(props: {
                 </SelectContent>
               </Select>
               {invSlot != null ? (
-                <div className="flex items-center gap-2">
-                  <Input
-                    className="w-24"
-                    value={inv?.timeRange.start ?? ''}
-                    onChange={(e) => {
-                      const val = e.target.value
-                      updatePatch(p.staffId, (prev) => {
-                        const cur = prev.invalidSlots?.[0]
-                        if (!cur) return prev
-                        return { ...prev, invalidSlots: [{ ...cur, timeRange: { ...cur.timeRange, start: val } }] }
-                      })
-                    }}
-                    placeholder="HHMM"
-                  />
-                  <span className="text-xs text-muted-foreground">-</span>
-                  <Input
-                    className="w-24"
-                    value={inv?.timeRange.end ?? ''}
-                    onChange={(e) => {
-                      const val = e.target.value
-                      updatePatch(p.staffId, (prev) => {
-                        const cur = prev.invalidSlots?.[0]
-                        if (!cur) return prev
-                        return { ...prev, invalidSlots: [{ ...cur, timeRange: { ...cur.timeRange, end: val } }] }
-                      })
-                    }}
-                    placeholder="HHMM"
-                  />
-                  <span className="text-[11px] text-muted-foreground">present interval</span>
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">Present interval</Label>
+                  <div className="flex items-center gap-1">
+                    <Input
+                      className="w-20"
+                      value={inv?.timeRange.start ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        updatePatch(p.staffId, (prev) => {
+                          const cur = prev.invalidSlots?.[0]
+                          if (!cur) return prev
+                          return { ...prev, invalidSlots: [{ ...cur, timeRange: { ...cur.timeRange, start: val } }] }
+                        })
+                      }}
+                      placeholder="HHMM"
+                    />
+                    <span className="text-xs text-muted-foreground shrink-0">–</span>
+                    <Input
+                      className="w-20"
+                      value={inv?.timeRange.end ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        updatePatch(p.staffId, (prev) => {
+                          const cur = prev.invalidSlots?.[0]
+                          if (!cur) return prev
+                          return { ...prev, invalidSlots: [{ ...cur, timeRange: { ...cur.timeRange, end: val } }] }
+                        })
+                      }}
+                      placeholder="HHMM"
+                    />
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -1049,22 +1114,6 @@ export function DevLeaveSimPanel(props: {
                   >
                     Run Step 3{props.runStep3V2Auto ? ' (auto)' : ''}
                   </Button>
-                  {props.openStep3Wizard ? (
-                    <Tooltip
-                      side="bottom"
-                      content="Open the real Step 3 wizard (3.0–3.4) so you can adjust pending FTE, team order, preferred slots (3.2) and adjacent slots (3.3) before final allocation."
-                    >
-                      <Button
-                        variant="outline"
-                        disabled={isRunningSteps}
-                        onClick={() => {
-                          props.openStep3Wizard?.()
-                        }}
-                      >
-                        Open Step 3 wizard
-                      </Button>
-                    </Tooltip>
-                  ) : null}
                   <Button
                     variant="outline"
                     disabled={isRunningSteps}
@@ -1189,6 +1238,132 @@ export function DevLeaveSimPanel(props: {
                   }}
                 />
               </div>
+            </div>
+
+            <div className="rounded-md border border-border overflow-hidden">
+              <button
+                type="button"
+                className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium hover:bg-muted/50 transition-colors"
+                onClick={() => setRandomizerRangesOpen((v) => !v)}
+              >
+                <Tooltip
+                  side="bottom"
+                  content="Set the min/max bounds used by the Random button when randomizing counts."
+                >
+                  <span className="cursor-default">Randomizer ranges</span>
+                </Tooltip>
+                <ChevronDown className={cn('h-3.5 w-3.5 text-muted-foreground transition-transform', randomizerRangesOpen && 'rotate-180')} />
+              </button>
+              {randomizerRangesOpen && (
+                <div className="px-3 pb-3 space-y-2 border-t border-border pt-2">
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">Therapist min</Label>
+                      <Input
+                        value={plannedTherapistMinInput}
+                        onChange={(e) => setPlannedTherapistMinInput(e.target.value)}
+                        onBlur={() => {
+                          const n = Math.floor(clampNumber(safeNumberInput(plannedTherapistMinInput, config.plannedTherapistMin), 0, config.plannedTherapistMax))
+                          const next = { ...config, plannedTherapistMin: n }
+                          setConfig(next)
+                          syncInputsFromConfig(next)
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">Therapist max</Label>
+                      <Input
+                        value={String(config.plannedTherapistMax)}
+                        onChange={(e) => {
+                          const n = Math.floor(clampNumber(safeNumberInput(e.target.value, config.plannedTherapistMax), 0, 50))
+                          setConfig((c) => ({ ...c, plannedTherapistMax: n }))
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">PCA budget min</Label>
+                      <Input
+                        value={pcaBudgetMinInput}
+                        onChange={(e) => setPcaBudgetMinInput(e.target.value)}
+                        onBlur={() => {
+                          const n = clampNumber(safeNumberInput(pcaBudgetMinInput, config.plannedPcaFteBudgetMin), 0, 2)
+                          const next = { ...config, plannedPcaFteBudgetMin: n, plannedPcaFteBudgetMax: Math.max(config.plannedPcaFteBudgetMax, n) }
+                          setConfig(next)
+                          syncInputsFromConfig(next)
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">PCA budget max</Label>
+                      <Input
+                        value={pcaBudgetMaxInput}
+                        onChange={(e) => setPcaBudgetMaxInput(e.target.value)}
+                        onBlur={() => {
+                          const n = clampNumber(safeNumberInput(pcaBudgetMaxInput, config.plannedPcaFteBudgetMax), 0, 2)
+                          const next = { ...config, plannedPcaFteBudgetMax: n, plannedPcaFteBudgetMin: Math.min(config.plannedPcaFteBudgetMin, n) }
+                          setConfig(next)
+                          syncInputsFromConfig(next)
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">Sick min</Label>
+                      <Input
+                        value={sickCountMinInput}
+                        onChange={(e) => setSickCountMinInput(e.target.value)}
+                        onBlur={() => {
+                          const n = Math.floor(clampNumber(safeNumberInput(sickCountMinInput, config.sickCountMin), 0, 50))
+                          const next = { ...config, sickCountMin: n, sickCountMax: Math.max(config.sickCountMax, n) }
+                          setConfig(next)
+                          syncInputsFromConfig(next)
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">Sick max</Label>
+                      <Input
+                        value={sickCountMaxInput}
+                        onChange={(e) => setSickCountMaxInput(e.target.value)}
+                        onBlur={() => {
+                          const n = Math.floor(clampNumber(safeNumberInput(sickCountMaxInput, config.sickCountMax), 0, 50))
+                          const next = { ...config, sickCountMax: n, sickCountMin: Math.min(config.sickCountMin, n) }
+                          setConfig(next)
+                          syncInputsFromConfig(next)
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">Urgent min</Label>
+                      <Input
+                        value={urgentCountMinInput}
+                        onChange={(e) => setUrgentCountMinInput(e.target.value)}
+                        onBlur={() => {
+                          const n = Math.floor(clampNumber(safeNumberInput(urgentCountMinInput, config.urgentCountMin), 0, 50))
+                          const next = { ...config, urgentCountMin: n, urgentCountMax: Math.max(config.urgentCountMax, n) }
+                          setConfig(next)
+                          syncInputsFromConfig(next)
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">Urgent max</Label>
+                      <Input
+                        value={urgentCountMaxInput}
+                        onChange={(e) => setUrgentCountMaxInput(e.target.value)}
+                        onBlur={() => {
+                          const n = Math.floor(clampNumber(safeNumberInput(urgentCountMaxInput, config.urgentCountMax), 0, 50))
+                          const next = { ...config, urgentCountMax: n, urgentCountMin: Math.min(config.urgentCountMin, n) }
+                          setConfig(next)
+                          syncInputsFromConfig(next)
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    "Random" picks a value within [min, max] for each field. PCA budget snaps to 0 / 0.5 / 1.0 / 1.5 / 2.0.
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="space-y-1">

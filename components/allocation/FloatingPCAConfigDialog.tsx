@@ -1561,14 +1561,39 @@ export function FloatingPCAConfigDialog({
           <div className="text-[11px] uppercase tracking-wider font-bold text-muted-foreground">
             Allocation method (Step 3.4)
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">
-              {allocationMode === 'standard' ? 'Standard (keeps 3.2/3.3)' : 'Balanced (take turns)'}
-            </span>
+          <div className="flex items-center gap-2 min-w-0">
+            {!allocationMethodExpanded && (
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="text-xs text-muted-foreground shrink-0">
+                  {allocationMode === 'standard' ? 'Standard (keeps 3.2/3.3)' : 'Balanced (take turns)'}
+                </span>
+                {step31Preview.status === 'loading' ? (
+                  <span className="text-[11px] text-muted-foreground/60 shrink-0">·  computing…</span>
+                ) : step31Preview.status === 'ready' ? (
+                  allocationMode === 'standard' ? (
+                    step31Preview.standardZeroTeams.length === 0 ? (
+                      <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0">· 0-slot teams: nil</span>
+                    ) : (
+                      <span className="text-[11px] text-amber-600 dark:text-amber-400 truncate">
+                        · 0-slot teams: {step31Preview.standardZeroTeams.join(', ')}
+                      </span>
+                    )
+                  ) : (
+                    step31Preview.balancedShortTeams.length === 0 ? (
+                      <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0">· short teams: nil</span>
+                    ) : (
+                      <span className="text-[11px] text-amber-600 dark:text-amber-400 truncate">
+                        · short teams: {step31Preview.balancedShortTeams.join(', ')}
+                      </span>
+                    )
+                  )
+                ) : null}
+              </div>
+            )}
             {allocationMethodExpanded ? (
-              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             ) : (
-              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             )}
           </div>
         </button>

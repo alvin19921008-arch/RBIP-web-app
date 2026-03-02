@@ -1,6 +1,6 @@
 import type { FeatureId } from '@/lib/access/types'
 
-export type FeatureGroupId = 'dashboard' | 'schedule' | 'history' | 'accounts'
+export type FeatureGroupId = 'dashboard' | 'schedule' | 'history' | 'accounts' | 'feedback'
 
 export type FeatureDefinition = {
   id: FeatureId
@@ -110,6 +110,26 @@ export const FEATURE_CATALOG: FeatureDefinition[] = [
     group: 'history',
     label: 'Delete schedules',
     description: 'Show delete schedule UI on History page (still enforced by RLS)',
+  },
+
+  // Feedback system
+  {
+    id: 'feedback.nav-link',
+    group: 'feedback',
+    label: 'Feedback nav link',
+    description: 'Show "Feedback" link in the top navigation bar',
+  },
+  {
+    id: 'feedback.float-button',
+    group: 'feedback',
+    label: 'Floating "Report a Bug" button',
+    description: 'Show the draggable floating feedback button on all pages',
+  },
+  {
+    id: 'feedback.review',
+    group: 'feedback',
+    label: 'Feedback review page',
+    description: 'Show the "Reports" nav link and access /feedback/review (developer-only by default)',
   },
 
   // Account actions

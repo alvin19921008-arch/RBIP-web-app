@@ -140,6 +140,23 @@
     }
   }
 
+  /* Step 2.1: Next-team CTA pulse — rings when current team is complete and more teams remain */
+  --animate-rbip-next-cta-pulse: rbip-next-cta-pulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+
+  @keyframes rbip-next-cta-pulse {
+    0%, 100% {
+      box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+      transform: scale(1);
+    }
+    40% {
+      box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.28);
+      transform: scale(1.04);
+    }
+    70% {
+      box-shadow: 0 0 0 10px rgba(59, 130, 246, 0.08);
+      transform: scale(1.01);
+    }
+  }
 }
 
 /* Indeterminate progress bar — GPU-friendly, survives main-thread blocking */

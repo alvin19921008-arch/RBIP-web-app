@@ -67,34 +67,51 @@ export function ReferenceSchedulePane(props: {
     return (
       <div
         className={cn(
-          'h-full bg-background flex items-center justify-start relative overflow-hidden',
+          'bg-background flex items-center justify-start shrink-0',
           isSideBySide
-            ? 'w-[56px] flex-col py-2 border-l border-border'
+            ? 'h-full w-[56px] flex-col py-2 border-l border-border'
             : 'h-[44px] flex-row px-2 border-t border-border w-full'
         )}
       >
-        <Tooltip side={isSideBySide ? 'left' : 'top'} content="Show reference">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={onExpand}
-            className={cn('shrink-0', isSideBySide ? 'h-8 w-8 p-0' : 'h-8 px-2')}
-          >
-            {isSideBySide ? <PanelRightOpen className="h-4 w-4" /> : <PanelBottomOpen className="h-4 w-4" />}
-            {!isSideBySide ? <span className="ml-2 text-xs">Reference</span> : null}
-          </Button>
-        </Tooltip>
-
         {isSideBySide ? (
-          // Vertical "Reference" label (rotated 90°) like the mock.
-          // Use absolute positioning so it never affects layout / overflows horizontally.
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="select-none whitespace-nowrap text-sm font-semibold text-amber-700/90 dark:text-amber-400/90 -rotate-90">
-              Reference
+          <>
+            <Tooltip side="left" content="Show reference">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onExpand}
+                className="shrink-0 h-8 w-8 p-0"
+              >
+                <PanelRightOpen className="h-4 w-4" />
+              </Button>
+            </Tooltip>
+            {/* Vertical "Reference Hidden" label (rotated 90°). flex-1 centres in remaining space below button. */}
+            <div className="flex-1 flex items-center justify-center pointer-events-none overflow-hidden">
+              <div className="select-none whitespace-nowrap text-sm font-semibold text-amber-700/90 dark:text-amber-400/90 -rotate-90">
+                Reference Hidden
+              </div>
             </div>
+          </>
+        ) : (
+          // Top-down: button + orange label grouped together and centred as a unit.
+          <div className="flex-1 flex items-center justify-center gap-1.5 overflow-hidden">
+            <Tooltip side="top" content="Show reference">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onExpand}
+                className="shrink-0 h-8 w-8 p-0"
+              >
+                <PanelBottomOpen className="h-4 w-4" />
+              </Button>
+            </Tooltip>
+            <span className="select-none whitespace-nowrap text-sm font-semibold text-amber-700/90 dark:text-amber-400/90">
+              Reference Hidden
+            </span>
           </div>
-        ) : null}
+        )}
       </div>
     )
   }

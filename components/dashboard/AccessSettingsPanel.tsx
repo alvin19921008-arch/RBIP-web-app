@@ -68,6 +68,7 @@ export function AccessSettingsPanel() {
     schedule: 'Schedule diagnostics/tools',
     history: 'History actions',
     accounts: 'Account management UI',
+    feedback: 'Feedback system',
   }
 
   const handleToggle = async (featureId: FeatureId, nextValue: boolean) => {
@@ -118,7 +119,7 @@ export function AccessSettingsPanel() {
       ) : null}
 
       <div className="grid gap-4">
-        {(['dashboard', 'schedule', 'history', 'accounts'] as const).map((groupId) => {
+        {(['feedback', 'dashboard', 'schedule', 'history', 'accounts'] as const).map((groupId) => {
           const items = groups[groupId] || []
           if (items.length === 0) return null
           return (

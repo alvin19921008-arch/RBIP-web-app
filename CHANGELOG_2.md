@@ -3,11 +3,26 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
-## [Unreleased] - 2026-03-02 (dialog UX polish)
+## [Unreleased] - 2026-03-02 (UX polish — leave sim, split pane, step dialogs)
 
 ### Changed
 - **Step 1–3 dialog headers** — added metadata line (`Step X.x · label`) in `text-xs text-muted-foreground` above the instruction text, with `mt-1` on the instruction span and `pt-4` on the scrollable content area, consistent across all steps.
 - **Step 1.1 "Add staff" panel (wide view)** — flattened nested box-in-box layout at `lg+`: outer wrapper becomes top/bottom rules only (`border-t border-b`, no left/right box), "Add staff" and "Draft list" headers lose their `border-b` separator, rank column headers lose their inner `border-b`; column separators remain via `divide-x divide-y`. Mobile layout (`< lg`) is unchanged.
+- **Step 1.1 "Add staff / Draft list" column ratio** — widened Add Staff pane from `1.45fr` to `1.7fr` and narrowed Draft List from `0.85fr` to `0.6fr` at `lg+` so the four rank columns have more room and staff names are less truncated. Draft List only shows name, rank/team, and a remove button so the narrower column is comfortable.
+- **Step 1.2 – Special program checkbox smart suppression** — "Available during special program slot" checkbox is now hidden when the therapist's FTE remaining is already 0 (fully absent = cannot attend any slot; no ambiguity). Also, the checkbox label now names the specific program (e.g. "Available during **CRP** slot") with the program name in bold, pulled from `specialPrograms` filtered to today's weekday.
+- **Step 1.4 review — 2-column layout on wide viewports** — at `lg+` (≥1024px) the review list switches from a single `divide-y` column to a 2-column `grid grid-cols-2 gap-px bg-border` layout; each card gets `bg-background` to punch through the gap colour. Each card keeps its internal `flex justify-between` so FTE stays at the right edge of a half-width card, dramatically reducing horizontal eye-tracking distance. Mobile keeps the existing single-column layout.
+- **Step 3.1 allocation method — collapsed header metadata** — when the "Allocation method (Step 3.4)" card is collapsed, the header now shows a preview result next to the mode label:
+  - *Standard, no issues*: `· 0-slot teams: nil` (green)
+  - *Standard, problems*: `· 0-slot teams: FO, SMM` (amber, with team names)
+  - *Balanced, no issues*: `· short teams: nil` (green)
+  - *Balanced, problems*: `· short teams: DRO, MC` (amber, with team names)
+  - Shows `· computing…` while the dry-run preview is in-flight. Metadata only visible when collapsed; hidden when expanded since full details are shown inside.
+- **SPT Allocation Panel — layout alignment on wide viewports** — "FTE / Remove" row and "Contributes FTE / AM·PM summary" row both previously used `justify-between`, pushing info to the far right on wide screens. Both rows now use `flex gap-3` / `flex gap-4` (left-aligned) so the FTE value, Remove button, and AM·PM summary stay clustered with the controls.
+
+### Fixed
+- **Split pane — reference hidden, top-down mode** — when split mode was active with top-down direction and the reference pane retracted, the main pane could not scroll and the "Show reference" button was unresponsive. Root cause: the outer wrapper div was missing flex layout classes in split mode. Fixed by adding `flex-1 min-h-0 flex flex-col` when `isSplitMode`, and `shrink-0` on the collapsed strip so it keeps its fixed height.
+- **Split pane — "Reference Hidden" label overlap (side-by-side)** — the rotated amber "Reference" text used `absolute inset-0` which overlapped the "Show reference" button at the top of the strip. Replaced with `flex-1 flex items-center justify-center` (in-flow) so the label centres in the space below the button.
+- **Split pane — "Reference Hidden" label (top-down collapsed strip)** — top-down retracted strip now shows the same amber "Reference Hidden" text (same font/colour as side-by-side) centred horizontally in the strip, grouped with the expand button as a unit (`flex-1 flex items-center justify-center gap-1.5`). Previously the strip showed only the icon with generic text inside the button.
 
 ---
 

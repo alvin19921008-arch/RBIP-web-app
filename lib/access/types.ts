@@ -25,6 +25,10 @@ export type FeatureId =
   | 'accounts.manage'
   | 'accounts.view-auth-email'
   | 'accounts.reset-others-password'
+  // Feedback system
+  | 'feedback.nav-link'
+  | 'feedback.float-button'
+  | 'feedback.review'
 
 export type RoleFeatureMap = Partial<Record<FeatureId, boolean>>
 

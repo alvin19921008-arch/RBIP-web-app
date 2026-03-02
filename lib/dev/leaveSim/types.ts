@@ -58,13 +58,19 @@ export type DevLeaveSimConfig = {
 
   // Planned leave knobs (developer-specified)
   plannedTherapistCount: number // therapists excluding SPT
-  plannedTherapistMax: number // quota cap (default 3)
+  plannedTherapistMin: number // randomizer lower bound (default 0)
+  plannedTherapistMax: number // quota cap / randomizer upper bound (default 3)
   plannedPcaFteBudget: number // 0..2.0, in chunks of 0.5/1.0
-  plannedPcaFteBudgetMax: number // quota cap (default 2.0)
+  plannedPcaFteBudgetMin: number // randomizer lower bound (default 0)
+  plannedPcaFteBudgetMax: number // quota cap / randomizer upper bound (default 2.0)
 
   // Unplanned leave knobs
   sickCount: number // 0..N
+  sickCountMin: number // randomizer lower bound (default 0)
+  sickCountMax: number // randomizer upper bound (default 6)
   urgentCount: number // 0..Y
+  urgentCountMin: number // randomizer lower bound (default 0)
+  urgentCountMax: number // randomizer upper bound (default 2)
 
   // Selection policy
   rankWeightMode: DevLeaveSimRankWeightMode
@@ -127,11 +133,17 @@ export function defaultDevLeaveSimConfig(): DevLeaveSimConfig {
   return {
     seed: String(Date.now()),
     plannedTherapistCount: 0,
+    plannedTherapistMin: 0,
     plannedTherapistMax: 3,
     plannedPcaFteBudget: 0,
+    plannedPcaFteBudgetMin: 0,
     plannedPcaFteBudgetMax: 2,
     sickCount: 0,
+    sickCountMin: 0,
+    sickCountMax: 6,
     urgentCount: 0,
+    urgentCountMin: 0,
+    urgentCountMax: 2,
     rankWeightMode: 'pool_proportional',
     rankWeights: defaultDevLeaveSimRankWeights(),
     specialProgramTargeting: 'pure_random',

@@ -613,22 +613,20 @@ function SPTAllocationForm({
                   return (
                     <div key={day} className="py-4">
                       {index > 0 && <hr className="border-border mb-4" />}
-                      <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3 mb-3">
                         <span className="font-semibold">{weekdayLabel[day]}</span>
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs font-medium text-muted-foreground">
-                            FTE: {derived.fte.toFixed(2)}
-                          </span>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                            onClick={() => removeDay(day)}
-                          >
-                            Remove
-                          </Button>
-                        </div>
+                        <span className="text-xs font-medium text-muted-foreground">
+                          FTE: {derived.fte.toFixed(2)}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                          onClick={() => removeDay(day)}
+                        >
+                          Remove
+                        </Button>
                       </div>
 
                       <div className="flex items-center gap-2 flex-wrap">
@@ -739,7 +737,7 @@ function SPTAllocationForm({
                         </button>
                       </div>
 
-                      <div className="flex items-center justify-between mt-3">
+                      <div className="flex items-center gap-4 mt-3">
                         <label className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
