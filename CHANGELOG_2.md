@@ -3,6 +3,14 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-03-02 (dialog UX polish)
+
+### Changed
+- **Step 1–3 dialog headers** — added metadata line (`Step X.x · label`) in `text-xs text-muted-foreground` above the instruction text, with `mt-1` on the instruction span and `pt-4` on the scrollable content area, consistent across all steps.
+- **Step 1.1 "Add staff" panel (wide view)** — flattened nested box-in-box layout at `lg+`: outer wrapper becomes top/bottom rules only (`border-t border-b`, no left/right box), "Add staff" and "Draft list" headers lose their `border-b` separator, rank column headers lose their inner `border-b`; column separators remain via `divide-x divide-y`. Mobile layout (`< lg`) is unchanged.
+
+---
+
 ## [Unreleased] - 2026-03-01 (feedback system)
 
 ### Added

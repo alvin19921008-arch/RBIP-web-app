@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { Fragment, useState, useEffect, useMemo, useRef } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -11,6 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Staff, StaffRank, Team, Weekday, SpecialProgram as StaffSpecialProgram } from '@/types/staff'
 import { SpecialProgram } from '@/types/allocation'
 import { AlertCircle, CircleHelp, Edit2, ChevronDown, X } from 'lucide-react'
+import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { RBIP_WIDE_DIALOG_WIDTH_CLASS } from '@/lib/layoutWidth'
 import { BufferStaffCreateDialog } from './BufferStaffCreateDialog'
@@ -97,7 +98,27 @@ export function SpecialProgramOverrideDialog({
 }: SpecialProgramOverrideDialogProps) {
   // State for each program's overrides
   const [programOverrides, setProgramOverrides] = useState<Record<string, ProgramOverride>>({})
-  
+  // Programs marked as "not running today" — their staff/slots are released and excluded from confirm output
+  const [disabledPrograms, setDisabledPrograms] = useState<Set<string>>(new Set())
+
+  const toggleProgramDisabled = (programId: string) => {
+    setDisabledPrograms((prev) => {
+      const next = new Set(prev)
+      if (next.has(programId)) {
+        next.delete(programId)
+      } else {
+        next.add(programId)
+        // Clear the override so staff are released immediately in the UI
+        setProgramOverrides((po) => {
+          const updated = { ...po }
+          delete updated[programId]
+          return updated
+        })
+      }
+      return next
+    })
+  }
+
   // State for edit dialogs
   const [editingTherapist, setEditingTherapist] = useState<{ programId: string } | null>(null)
   
@@ -1314,6 +1335,8 @@ export function SpecialProgramOverrideDialog({
     }> = {}
 
     Object.values(programOverrides).forEach(override => {
+      // Skip programs marked as not running today — their staff are fully released
+      if (disabledPrograms.has(override.programId)) return
       const program = activePrograms.find(p => p.id === override.programId)
       const requiredSlots = (override.slots ?? [])
         .filter((slot): slot is SpecialProgramSlot => SPECIAL_PROGRAM_SLOTS.includes(slot as SpecialProgramSlot))
@@ -1396,10 +1419,25 @@ export function SpecialProgramOverrideDialog({
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className={`${RBIP_WIDE_DIALOG_WIDTH_CLASS} max-h-[90vh] overflow-y-auto`}>
-          <div className="absolute right-3 top-3 sm:right-4 sm:top-4">
+          {/* Wide: stepper + help top-right; narrow: stepper under instruction */}
+          <div className="absolute right-3 top-3 hidden sm:flex sm:right-4 sm:top-4 items-center gap-2">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              {[
+                { step: '2.0', label: 'Programs' },
+                { step: '2.1', label: 'Substitute' },
+                { step: '2.2', label: 'SPT' },
+              ].map(({ step, label }, i) => (
+                <Fragment key={step}>
+                  {i > 0 ? <span aria-hidden="true">·</span> : null}
+                  <span className={cn('px-2.5 py-1 rounded-md', step === '2.0' && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>
+                    {step} {label}
+                  </span>
+                </Fragment>
+              ))}
+            </div>
             <Popover>
               <PopoverTrigger asChild>
-                <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label="Step 2.0 help">
+                <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0" aria-label="Step 2.0 help">
                   <CircleHelp className="h-4 w-4 text-muted-foreground" />
                 </Button>
               </PopoverTrigger>
@@ -1429,21 +1467,57 @@ export function SpecialProgramOverrideDialog({
             </Popover>
           </div>
 
-          <DialogHeader className="pr-10">
+          <DialogHeader className="pr-4 sm:pr-32">
             <DialogTitle>Special program overrides</DialogTitle>
             <DialogDescription>
               <span className="block text-xs text-muted-foreground">Step 2.0 · Before allocation</span>
               <span className="mt-1 block">Configure special program assignments before algorithm runs.</span>
+              <div className="mt-3 flex sm:hidden flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
+                {[
+                  { step: '2.0', label: 'Programs' },
+                  { step: '2.1', label: 'Substitute' },
+                  { step: '2.2', label: 'SPT' },
+                ].map(({ step, label }, i) => (
+                  <Fragment key={step}>
+                    {i > 0 ? <span aria-hidden="true">·</span> : null}
+                    <span className={cn('px-2.5 py-1 rounded-md', step === '2.0' && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>
+                      {step} {label}
+                    </span>
+                  </Fragment>
+                ))}
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0" aria-label="Step 2.0 help">
+                      <CircleHelp className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-[340px] rounded-md border border-border bg-white p-3 shadow-md">
+                    <div className="space-y-2 text-xs">
+                      <div className="font-medium text-foreground">Tip</div>
+                      {helpMedia.step2PcaCoverGif ? (
+                        <div className="overflow-hidden rounded-md border border-border">
+                          <img
+                            src={helpMedia.step2PcaCoverGif}
+                            alt="Demo showing how to remove a PCA assignment from a required slot"
+                            className="h-auto max-h-56 w-full object-cover object-top"
+                            loading="lazy"
+                          />
+                        </div>
+                      ) : (
+                        <div className="rounded-md border border-dashed border-border px-2 py-1.5 text-[11px] text-muted-foreground">
+                          Add `NEXT_PUBLIC_HELP_MEDIA_STEP2_PCA_COVER_GIF_URL` to show the demo clip.
+                        </div>
+                      )}
+                      <p className="text-muted-foreground">
+                        To de-select a PCA from a specific slot, hover over the PCA name shown under the slot button, then click the{' '}
+                        <span className="font-medium text-foreground">X</span>.
+                      </p>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
             </DialogDescription>
           </DialogHeader>
-
-          <div className="mb-2 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
-            <span className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-700 font-semibold text-primary">2.0 Programs</span>
-            <span aria-hidden="true">·</span>
-            <span className="px-2.5 py-1 rounded-md">2.1 Substitute</span>
-            <span aria-hidden="true">·</span>
-            <span className="px-2.5 py-1 rounded-md">2.2 SPT</span>
-          </div>
 
           <div className="py-4">
             {activePrograms.length === 0 ? (
@@ -1517,14 +1591,36 @@ export function SpecialProgramOverrideDialog({
                       ? currentSlots.length * 0.25
                       : override.pcaFTESubtraction
 
+                    const isProgramDisabled = disabledPrograms.has(program.id)
                     return (
                       <Card
                         key={program.id}
-                        className="min-w-[280px] sm:min-w-[360px] max-w-[420px] w-[min(420px,calc(100vw-40px))] sm:w-[min(420px,calc(100vw-120px))] flex-shrink-0"
+                        className={cn(
+                          "min-w-[280px] sm:min-w-[360px] max-w-[420px] w-[min(420px,calc(100vw-40px))] sm:w-[min(420px,calc(100vw-120px))] flex-shrink-0",
+                          isProgramDisabled && "opacity-60"
+                        )}
                       >
-                        <CardHeader>
+                        <CardHeader className="flex flex-row items-center justify-between pb-2">
                           <CardTitle>{program.name}</CardTitle>
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <span className={cn("text-xs", isProgramDisabled ? "text-muted-foreground line-through" : "text-muted-foreground")}>
+                              Running today
+                            </span>
+                            <Switch
+                              checked={!isProgramDisabled}
+                              onCheckedChange={() => toggleProgramDisabled(program.id)}
+                              aria-label={`${program.name} running today`}
+                            />
+                          </label>
                         </CardHeader>
+                        {isProgramDisabled ? (
+                          <CardContent>
+                            <div className="flex flex-col items-center justify-center gap-1 py-8 text-center text-muted-foreground/50">
+                              <p className="text-sm">Not running today</p>
+                              <p className="text-xs">Staff and slots released</p>
+                            </div>
+                          </CardContent>
+                        ) : (
                         <CardContent className="space-y-4">
                           {/* Therapist Section - Skip for Robotic */}
                           {program.name !== 'Robotic' && (
@@ -1938,6 +2034,7 @@ export function SpecialProgramOverrideDialog({
                         </div>
                       )}
                     </CardContent>
+                        )}
                   </Card>
                   )
                   })}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
+import { Fragment, useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { Team } from '@/types/staff'
 import { PCAAllocation } from '@/types/schedule'
 import { PCAPreference, SpecialProgram } from '@/types/allocation'
@@ -404,7 +404,25 @@ export function NonFloatingSubstitutionDialog({
   return (
     <Dialog open={open} onOpenChange={(open) => !open && onCancel()}>
       <DialogContent className="flex h-[calc(100dvh-16px)] w-[calc(100vw-16px)] max-w-4xl flex-col overflow-hidden sm:h-auto sm:w-full sm:max-h-[90dvh]">
-        <DialogHeader>
+        {/* Wide: stepper top-right; narrow: under instruction */}
+        <div className="absolute right-3 top-3 hidden sm:flex sm:right-4 sm:top-4 items-center gap-2">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {[
+              { step: '2.0', label: 'Programs' },
+              { step: '2.1', label: 'Substitute' },
+              { step: '2.2', label: 'SPT' },
+            ].map(({ step, label }, i) => (
+              <Fragment key={step}>
+                {i > 0 ? <span aria-hidden="true">·</span> : null}
+                <span className={cn('px-2.5 py-1 rounded-md', step === '2.1' && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>
+                  {step} {label}
+                </span>
+              </Fragment>
+            ))}
+          </div>
+        </div>
+
+        <DialogHeader className="pr-4 sm:pr-32">
           <DialogTitle>Choose substitutes</DialogTitle>
           <DialogDescription>
             <span className="block text-xs text-muted-foreground">
@@ -413,17 +431,24 @@ export function NonFloatingSubstitutionDialog({
             <span className="mt-1 block">
               Assign floating PCAs to cover missing non-floating slots.
             </span>
+            <div className="mt-3 flex sm:hidden flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
+              {[
+                { step: '2.0', label: 'Programs' },
+                { step: '2.1', label: 'Substitute' },
+                { step: '2.2', label: 'SPT' },
+              ].map(({ step, label }, i) => (
+                <Fragment key={step}>
+                  {i > 0 ? <span aria-hidden="true">·</span> : null}
+                  <span className={cn('px-2.5 py-1 rounded-md', step === '2.1' && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>
+                    {step} {label}
+                  </span>
+                </Fragment>
+              ))}
+            </div>
           </DialogDescription>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-auto overscroll-contain pr-1">
-          <div className="mb-2 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
-            <span className="px-2.5 py-1 rounded-md">2.0 Programs</span>
-            <span aria-hidden="true">·</span>
-            <span className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-700 font-semibold text-primary">2.1 Substitute</span>
-            <span aria-hidden="true">·</span>
-            <span className="px-2.5 py-1 rounded-md">2.2 SPT</span>
-          </div>
 
           {/* Navigation - only show for wizard mode */}
           {isWizardMode && (
@@ -454,16 +479,23 @@ export function NonFloatingSubstitutionDialog({
                 </div>
 
                 {!isLastTeam ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleNext}
-                    disabled={!isCurrentTeamComplete}
-                    className="h-8 w-8 p-0"
-                    aria-label="Next team"
+                  <span
+                    className={cn(
+                      "inline-flex rounded-md",
+                      isCurrentTeamComplete && "animate-rbip-next-cta-pulse"
+                    )}
                   >
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleNext}
+                      disabled={!isCurrentTeamComplete}
+                      className="h-8 w-8 p-0"
+                      aria-label="Next team"
+                    >
+                      <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </span>
                 ) : (
                   <div className="w-8" aria-hidden="true" />
                 )}
@@ -494,15 +526,22 @@ export function NonFloatingSubstitutionDialog({
                   </span>
                 </div>
                 {!isLastTeam ? (
-                  <Button
-                    variant="outline"
-                    onClick={handleNext}
-                    disabled={!isCurrentTeamComplete}
-                    className="flex items-center gap-2"
+                  <span
+                    className={cn(
+                      "inline-flex rounded-md",
+                      isCurrentTeamComplete && "animate-rbip-next-cta-pulse"
+                    )}
                   >
-                    Next
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
+                    <Button
+                      variant="outline"
+                      onClick={handleNext}
+                      disabled={!isCurrentTeamComplete}
+                      className="flex items-center gap-2"
+                    >
+                      Next
+                      <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </span>
                 ) : (
                   <div className="w-[104px]" aria-hidden="true" />
                 )}

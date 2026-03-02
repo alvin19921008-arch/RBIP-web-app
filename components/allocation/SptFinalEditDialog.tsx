@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { HorizontalCardCarousel } from '@/components/ui/horizontal-card-carousel'
+import { Tooltip } from '@/components/ui/tooltip'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Separator } from '@/components/ui/separator'
@@ -588,7 +589,25 @@ export function SptFinalEditDialog(props: {
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={`${RBIP_WIDE_DIALOG_WIDTH_CLASS} max-h-[90vh] flex flex-col overflow-hidden`}>
-        <DialogHeader className="space-y-3">
+        {/* Wide: stepper top-right; narrow: under instruction */}
+        <div className="absolute right-3 top-3 hidden sm:flex sm:right-4 sm:top-4 items-center gap-2">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {[
+              { step: '2.0', label: 'Programs' },
+              { step: '2.1', label: 'Substitute' },
+              { step: '2.2', label: 'SPT' },
+            ].map(({ step, label }, i) => (
+              <React.Fragment key={step}>
+                {i > 0 ? <span aria-hidden="true">·</span> : null}
+                <span className={cn('px-2.5 py-1 rounded-md', step === '2.2' && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>
+                  {step} {label}
+                </span>
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+
+        <DialogHeader className="space-y-3 pr-4 sm:pr-32">
           <DialogTitle>SPT day overrides</DialogTitle>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className="text-[11px] font-semibold tracking-wide">Step 2.2</span>
@@ -603,17 +622,23 @@ export function SptFinalEditDialog(props: {
             <span>Per-day only</span>
           </div>
           <DialogDescription>
-            Adjust SPT duty for this day. Dashboard weekday settings stay unchanged.
+            <span className="block">Adjust SPT duty for this day. Dashboard weekday settings stay unchanged.</span>
+            <div className="mt-3 flex sm:hidden flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
+              {[
+                { step: '2.0', label: 'Programs' },
+                { step: '2.1', label: 'Substitute' },
+                { step: '2.2', label: 'SPT' },
+              ].map(({ step, label }, i) => (
+                <React.Fragment key={step}>
+                  {i > 0 ? <span aria-hidden="true">·</span> : null}
+                  <span className={cn('px-2.5 py-1 rounded-md', step === '2.2' && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>
+                    {step} {label}
+                  </span>
+                </React.Fragment>
+              ))}
+            </div>
           </DialogDescription>
         </DialogHeader>
-
-        <div className="mb-2 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
-          <span className="px-2.5 py-1 rounded-md">2.0 Programs</span>
-          <span aria-hidden="true">·</span>
-          <span className="px-2.5 py-1 rounded-md">2.1 Substitute</span>
-          <span aria-hidden="true">·</span>
-          <span className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-700 font-semibold text-primary">2.2 SPT</span>
-        </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain py-4 flex flex-col">
           {cards.length === 0 ? (
@@ -700,15 +725,20 @@ export function SptFinalEditDialog(props: {
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           )}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleResetToDashboard(card.staffId)}
-                            title="Reset config to dashboard baseline"
-                            className="h-7 w-7 p-0"
+                          <Tooltip
+                            side="bottom"
+                            content="Reset this SPT's slots, FTE, and mode back to the original config set in the dashboard."
                           >
-                            <RotateCcw className="h-4 w-4" />
-                          </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleResetToDashboard(card.staffId)}
+                              className="h-7 gap-1 px-2 text-xs text-muted-foreground"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                              Reset
+                            </Button>
+                          </Tooltip>
                         </div>
                       </div>
 

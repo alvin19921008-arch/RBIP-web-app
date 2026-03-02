@@ -2005,7 +2005,29 @@ export function FloatingPCAConfigDialog({
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onCancel()}>
       <DialogContent className="flex h-[calc(100dvh-16px)] w-[calc(100vw-16px)] max-w-4xl flex-col overflow-hidden sm:h-auto sm:w-full sm:max-h-[calc(100dvh-96px)]">
-        <DialogHeader>
+        {currentMiniStep !== '3.0' && (
+          <>
+            {/* Wide: stepper top-right */}
+            <div className="absolute right-3 top-3 hidden sm:flex sm:right-4 sm:top-4 items-center gap-2">
+              {(() => {
+                const steps: Array<{ id: MiniStep; label: string }> = [{ id: '3.1', label: '3.1 Adjust' }]
+                const showStep32 = step31Flow.showStep32 || currentMiniStep === '3.2' || currentMiniStep === '3.3'
+                const showStep33 = currentMiniStep === '3.3' ? true : currentMiniStep === '3.2' ? step32Flow.showStep33 : step31Flow.showStep33
+                if (showStep32) steps.push({ id: '3.2', label: '3.2 Preferred' })
+                if (showStep33) steps.push({ id: '3.3', label: '3.3 Adjacent' })
+                return steps.map((s, i) => (
+                  <Fragment key={s.id}>
+                    {i > 0 ? <span aria-hidden="true">·</span> : null}
+                    <span className={cn('px-2.5 py-1 rounded-md text-xs text-muted-foreground', currentMiniStep === s.id && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>
+                      {s.label}
+                    </span>
+                  </Fragment>
+                ))
+              })()}
+            </div>
+          </>
+        )}
+        <DialogHeader className={cn('pr-4', currentMiniStep !== '3.0' && 'sm:pr-32')}>
           <DialogTitle>Floating PCA allocation</DialogTitle>
           <DialogDescription>
             <span className="block text-xs text-muted-foreground">
@@ -2020,48 +2042,29 @@ export function FloatingPCAConfigDialog({
                       ? ' · Manual pre-assign'
                       : ''}
             </span>
+            {currentMiniStep !== '3.0' && (
+              <div className="mt-3 flex sm:hidden flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
+                {(() => {
+                  const steps: Array<{ id: MiniStep; label: string }> = [{ id: '3.1', label: '3.1 Adjust' }]
+                  const show32 = step31Flow.showStep32 || currentMiniStep === '3.2' || currentMiniStep === '3.3'
+                  const show33 = currentMiniStep === '3.3' ? true : currentMiniStep === '3.2' ? step32Flow.showStep33 : step31Flow.showStep33
+                  if (show32) steps.push({ id: '3.2', label: '3.2 Preferred' })
+                  if (show33) steps.push({ id: '3.3', label: '3.3 Adjacent' })
+                  return steps.map((s, i) => (
+                    <Fragment key={s.id}>
+                      {i > 0 ? <span aria-hidden="true">·</span> : null}
+                      <span className={cn('px-2.5 py-1 rounded-md', currentMiniStep === s.id && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>
+                        {s.label}
+                      </span>
+                    </Fragment>
+                  ))
+                })()}
+              </div>
+            )}
           </DialogDescription>
         </DialogHeader>
-        
-        <div className="min-h-0 flex-1 overflow-auto overscroll-contain pr-1">
-          {/* Step indicator */}
-          {currentMiniStep !== '3.0' && (
-            <div className="mb-2 flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground">
-              {(() => {
-                const steps: Array<{ id: MiniStep; label: string }> = [{ id: '3.1', label: '3.1 Adjust' }]
-                const showStep32InIndicator =
-                  step31Flow.showStep32 || currentMiniStep === '3.2' || currentMiniStep === '3.3'
-                const showStep33InIndicator =
-                  currentMiniStep === '3.3'
-                    ? true
-                    : currentMiniStep === '3.2'
-                      ? step32Flow.showStep33
-                      : step31Flow.showStep33
 
-                if (showStep32InIndicator) steps.push({ id: '3.2', label: '3.2 Preferred' })
-                if (showStep33InIndicator) steps.push({ id: '3.3', label: '3.3 Adjacent' })
-
-                return steps.map((s, idx) => (
-                  <Fragment key={s.id}>
-                    <span
-                      className={cn(
-                        'rounded-lg px-3 py-1.5 transition-colors',
-                        currentMiniStep === s.id ? 'bg-slate-100 font-bold text-primary dark:bg-slate-700' : ''
-                      )}
-                    >
-                      {s.label}
-                    </span>
-                    {idx < steps.length - 1 ? (
-                      <span className="text-muted-foreground/70" aria-hidden="true">
-                        ·
-                      </span>
-                    ) : null}
-                  </Fragment>
-                ))
-              })()}
-            </div>
-          )}
-
+        <div className="min-h-0 flex-1 overflow-auto overscroll-contain pr-1 pt-4">
           {currentMiniStep === '3.0' && renderStep30()}
           {currentMiniStep === '3.1' && renderStep31()}
           {currentMiniStep === '3.2' && renderStep32()}

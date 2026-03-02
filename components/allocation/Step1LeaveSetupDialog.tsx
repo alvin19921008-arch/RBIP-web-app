@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -109,7 +109,7 @@ const RANK_BADGE_NEUTRAL_CLASS =
   'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-200'
 
 const NARROW_VIEWPORT_FOOTER_CLASS =
-  'sticky bottom-0 z-10 mt-4 flex-row flex-wrap items-center justify-end gap-2 border-t border-border bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:px-0'
+  'sticky bottom-0 z-10 mt-4 flex-row flex-nowrap items-center justify-end gap-2 border-t border-border bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:px-0 [&>button]:shrink [&>button]:min-w-0'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
@@ -173,6 +173,20 @@ export function Step1LeaveSetupDialog({
   const quickFindButtonRef = useRef<HTMLButtonElement | null>(null)
   const [rows, setRows] = useState<DraftRow[]>([])
   const [initialRows, setInitialRows] = useState<DraftRow[]>([])
+  // Local string state for numeric FTE inputs — lets user type freely; committed on blur.
+  const [fteStringInputs, setFteStringInputs] = useState<Record<string, { fteRemaining: string; fteSubtraction: string; sptBaseFTE: string }>>({})
+  const getFteInput = (staffId: string, field: 'fteRemaining' | 'fteSubtraction' | 'sptBaseFTE', fallback: number) =>
+    fteStringInputs[staffId]?.[field] ?? fallback.toFixed(2)
+  const setFteInput = (staffId: string, field: 'fteRemaining' | 'fteSubtraction' | 'sptBaseFTE', value: string) =>
+    setFteStringInputs((prev) => ({ ...prev, [staffId]: { ...prev[staffId], [field]: value } }))
+  const syncFteInputs = (staffId: string, fields: Partial<{ fteRemaining: number; fteSubtraction: number; sptBaseFTE: number }>) =>
+    setFteStringInputs((prev) => ({
+      ...prev,
+      [staffId]: {
+        ...prev[staffId],
+        ...Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, (v as number).toFixed(2)])),
+      },
+    }))
   const [customEditingById, setCustomEditingById] = useState<Record<string, boolean>>({})
   const [partialPresenceOpenById, setPartialPresenceOpenById] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
@@ -828,18 +842,16 @@ export function Step1LeaveSetupDialog({
                 <Label className="text-[11px] text-muted-foreground">Base FTE</Label>
                 <Input
                   className="h-8 w-[90px]"
-                  value={row.sptBaseFTE.toFixed(2)}
-                  onChange={(event) => {
-                    const parsed = Number.parseFloat(event.target.value)
-                    const base = Number.isFinite(parsed) ? clamp(round2(parsed), 0, 1) : 0
+                  value={getFteInput(row.staffId, 'sptBaseFTE', row.sptBaseFTE)}
+                  onChange={(e) => setFteInput(row.staffId, 'sptBaseFTE', e.target.value)}
+                  onBlur={(e) => {
+                    const parsed = Number.parseFloat(e.target.value)
+                    const base = Number.isFinite(parsed) ? clamp(round2(parsed), 0, 1) : row.sptBaseFTE
                     setRow(row.staffId, (current) => {
                       const leaveCost = clamp(current.fteSubtraction, 0, base)
-                      return {
-                        ...current,
-                        sptBaseFTE: base,
-                        fteSubtraction: leaveCost,
-                        fteRemaining: clamp(round2(base - leaveCost), 0, base),
-                      }
+                      const remaining = clamp(round2(base - leaveCost), 0, base)
+                      syncFteInputs(row.staffId, { sptBaseFTE: base, fteSubtraction: leaveCost, fteRemaining: remaining })
+                      return { ...current, sptBaseFTE: base, fteSubtraction: leaveCost, fteRemaining: remaining }
                     })
                   }}
                 />
@@ -848,43 +860,80 @@ export function Step1LeaveSetupDialog({
                 <Label className="text-[11px] text-muted-foreground">Leave cost</Label>
                 <Input
                   className="h-8 w-[90px]"
-                  value={row.fteSubtraction.toFixed(2)}
-                  onChange={(event) => {
-                    const parsed = Number.parseFloat(event.target.value)
-                    const leaveCost = Number.isFinite(parsed) ? clamp(round2(parsed), 0, row.sptBaseFTE) : 0
-                    setRow(row.staffId, (current) => ({
-                      ...current,
-                      fteSubtraction: leaveCost,
-                      fteRemaining: clamp(round2(current.sptBaseFTE - leaveCost), 0, current.sptBaseFTE),
-                    }))
+                  value={getFteInput(row.staffId, 'fteSubtraction', row.fteSubtraction)}
+                  onChange={(e) => setFteInput(row.staffId, 'fteSubtraction', e.target.value)}
+                  onBlur={(e) => {
+                    const parsed = Number.parseFloat(e.target.value)
+                    const leaveCost = Number.isFinite(parsed) ? clamp(round2(parsed), 0, row.sptBaseFTE) : row.fteSubtraction
+                    setRow(row.staffId, (current) => {
+                      const remaining = clamp(round2(current.sptBaseFTE - leaveCost), 0, current.sptBaseFTE)
+                      syncFteInputs(row.staffId, { fteSubtraction: leaveCost, fteRemaining: remaining })
+                      return { ...current, fteSubtraction: leaveCost, fteRemaining: remaining }
+                    })
                   }}
                 />
               </div>
               <div className="space-y-1">
                 <Label className="text-[11px] text-muted-foreground">FTE remaining</Label>
-                <div className="h-8 rounded-md border border-input bg-muted/40 px-2 text-sm leading-8">
-                  {row.fteRemaining.toFixed(2)}
-                </div>
+                <Input
+                  className="h-8 w-[90px]"
+                  value={getFteInput(row.staffId, 'fteRemaining', row.fteRemaining)}
+                  onChange={(e) => setFteInput(row.staffId, 'fteRemaining', e.target.value)}
+                  onBlur={(e) => {
+                    const parsed = Number.parseFloat(e.target.value)
+                    const remaining = Number.isFinite(parsed) ? clamp(round2(parsed), 0, row.sptBaseFTE) : row.fteRemaining
+                    setRow(row.staffId, (current) => {
+                      const leaveCost = clamp(round2(current.sptBaseFTE - remaining), 0, current.sptBaseFTE)
+                      syncFteInputs(row.staffId, { fteRemaining: remaining, fteSubtraction: leaveCost })
+                      return { ...current, fteRemaining: remaining, fteSubtraction: leaveCost }
+                    })
+                  }}
+                />
               </div>
             </>
           ) : (
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">FTE remaining</Label>
-              <Input
-                className="h-8 w-[90px]"
-                value={row.fteRemaining.toFixed(2)}
-                onChange={(event) => {
-                  const parsed = Number.parseFloat(event.target.value)
-                  const value = Number.isFinite(parsed) ? clamp(round2(parsed), 0, 1) : 0
-                  setRow(row.staffId, (current) => ({
-                    ...current,
-                    fteRemaining: value,
-                    fteSubtraction: clamp(round2(1 - value), 0, 1),
-                    amPmSelection: value === 0.25 || value === 0.5 ? current.amPmSelection : '',
-                  }))
-                }}
-              />
-            </div>
+            <>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">FTE remaining</Label>
+                <Input
+                  className="h-8 w-[90px]"
+                  value={getFteInput(row.staffId, 'fteRemaining', row.fteRemaining)}
+                  onChange={(e) => setFteInput(row.staffId, 'fteRemaining', e.target.value)}
+                  onBlur={(e) => {
+                    const parsed = Number.parseFloat(e.target.value)
+                    const value = Number.isFinite(parsed) ? clamp(round2(parsed), 0, 1) : row.fteRemaining
+                    const subtraction = clamp(round2(1 - value), 0, 1)
+                    setRow(row.staffId, (current) => ({
+                      ...current,
+                      fteRemaining: value,
+                      fteSubtraction: subtraction,
+                      amPmSelection: value === 0.25 || value === 0.5 ? current.amPmSelection : '',
+                    }))
+                    syncFteInputs(row.staffId, { fteRemaining: value, fteSubtraction: subtraction })
+                  }}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">FTE subtraction</Label>
+                <Input
+                  className="h-8 w-[90px]"
+                  value={getFteInput(row.staffId, 'fteSubtraction', row.fteSubtraction)}
+                  onChange={(e) => setFteInput(row.staffId, 'fteSubtraction', e.target.value)}
+                  onBlur={(e) => {
+                    const parsed = Number.parseFloat(e.target.value)
+                    const subtraction = Number.isFinite(parsed) ? clamp(round2(parsed), 0, 1) : row.fteSubtraction
+                    const value = clamp(round2(1 - subtraction), 0, 1)
+                    setRow(row.staffId, (current) => ({
+                      ...current,
+                      fteSubtraction: subtraction,
+                      fteRemaining: value,
+                      amPmSelection: value === 0.25 || value === 0.5 ? current.amPmSelection : '',
+                    }))
+                    syncFteInputs(row.staffId, { fteSubtraction: subtraction, fteRemaining: value })
+                  }}
+                />
+              </div>
+            </>
           )}
 
           {showAmPm ? (
@@ -1304,8 +1353,29 @@ export function Step1LeaveSetupDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[90vh] w-[calc(100vw-24px)] max-w-5xl flex-col overflow-hidden">
-        {wizardStep === '1.3' ? (
-          <div className="absolute right-3 top-3 sm:right-4 sm:top-4">
+        {/* Step 1 stepper — wide: top-right; narrow: under instruction (see DialogDescription) */}
+        <div className="absolute right-3 top-3 hidden sm:flex sm:right-4 sm:top-4 items-center gap-2">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {[
+              { step: '1.1', label: 'Add' },
+              { step: '1.2', label: 'Therapist' },
+              { step: '1.3', label: 'PCA' },
+              { step: '1.4', label: 'Review' },
+            ].map(({ step, label }, i) => (
+              <Fragment key={step}>
+                {i > 0 ? <span aria-hidden="true">·</span> : null}
+                <span
+                  className={cn(
+                    'px-2.5 py-1 rounded-md',
+                    wizardStep === step && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary'
+                  )}
+                >
+                  {step} {label}
+                </span>
+              </Fragment>
+            ))}
+          </div>
+          {wizardStep === '1.3' ? (
             <Popover>
               <PopoverTrigger asChild>
                 <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label="Step 1.3 terms help">
@@ -1326,21 +1396,21 @@ export function Step1LeaveSetupDialog({
                 </div>
               </PopoverContent>
             </Popover>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
 
-        <DialogHeader className="pr-10">
+        <DialogHeader className="pr-4 sm:pr-32">
           <DialogTitle>Leave setup</DialogTitle>
           <DialogDescription>
             <span className="block text-xs text-muted-foreground">
-              {wizardStep === '1.1' ? 'Step 1.1 · 1 / 4' : null}
-              {wizardStep === '1.2' ? 'Step 1.2 · 2 / 4' : null}
-              {wizardStep === '1.3' ? 'Step 1.3 · 3 / 4' : null}
-              {wizardStep === '1.4' ? 'Step 1.4 · 4 / 4' : null}
+              {wizardStep === '1.1' ? 'Step 1.1 · Add'
+                : wizardStep === '1.2' ? 'Step 1.2 · Therapist'
+                : wizardStep === '1.3' ? 'Step 1.3 · PCA'
+                : 'Step 1.4 · Review'}
             </span>
             <span className="mt-1 block">
               {wizardStep === '1.1'
-                ? "Draft is auto-loaded from today’s leave/availability info. Add more staff to include in today’s edits."
+                ? 'Draft is auto-loaded from the source/copied schedule. Review the following list before proceeding to edit leave and FTE.'
                 : null}
               {wizardStep === '1.2'
                 ? 'Edit therapist leave and FTE on-duty. AM/PM is only for APPT/RPT with FTE remaining 0.25 or 0.50.'
@@ -1350,10 +1420,53 @@ export function Step1LeaveSetupDialog({
                 : null}
               {wizardStep === '1.4' ? 'Preview today’s leave setup before saving.' : null}
             </span>
+            {/* Narrow: stepper under instruction */}
+            <div className="mt-3 flex sm:hidden flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
+              {[
+                { step: '1.1', label: 'Add' },
+                { step: '1.2', label: 'Therapist' },
+                { step: '1.3', label: 'PCA' },
+                { step: '1.4', label: 'Review' },
+              ].map(({ step, label }, i) => (
+                <Fragment key={step}>
+                  {i > 0 ? <span aria-hidden="true">·</span> : null}
+                  <span
+                    className={cn(
+                      'px-2.5 py-1 rounded-md',
+                      wizardStep === step && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary'
+                    )}
+                  >
+                    {step} {label}
+                  </span>
+                </Fragment>
+              ))}
+              {wizardStep === '1.3' ? (
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0" aria-label="Step 1.3 terms help">
+                      <CircleHelp className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-[320px] rounded-md border border-border bg-white p-3 shadow-md">
+                    <div className="space-y-2 text-xs">
+                      <div className="font-medium text-foreground">Step 1.3 terms</div>
+                      <p className="text-muted-foreground">
+                        <span className="font-medium text-foreground">A/V slots</span>: fully present in the selected slot. Each selected slot counts as{' '}
+                        <span className="font-medium text-foreground">0.25 FTE</span>.
+                      </p>
+                      <p className="text-muted-foreground">
+                        <span className="font-medium text-foreground">Slots with partial presence</span>: partial attendance windows for unavailable slots. These
+                        notes do <span className="font-medium text-foreground">not</span> add FTE.
+                      </p>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              ) : null}
+            </div>
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 overflow-auto overscroll-contain pr-1 pb-3">
+        <div className="min-h-0 flex-1 overflow-auto overscroll-contain pr-1 pb-3 pt-4">
           {wizardStep === '1.1' ? (() => {
             const countsByRank: Record<string, number> = { SPT: 0, APPT: 0, RPT: 0, PCA: 0, workman: 0 }
             rows.forEach((r) => {
@@ -1453,7 +1566,8 @@ export function Step1LeaveSetupDialog({
                   </div>
                 </div>
 
-                <div className="rounded-md border border-border overflow-hidden">
+                {/* Mobile: keep box; lg+: flat with top/bottom rules only */}
+                <div className="rounded-md border border-border overflow-hidden lg:rounded-none lg:border-0 lg:border-t lg:border-b lg:overflow-visible">
                   <div className="grid gap-0 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,0.85fr)] lg:divide-x divide-border items-stretch">
                     {/* Left: pickers */}
                     <div
@@ -1463,15 +1577,18 @@ export function Step1LeaveSetupDialog({
                         'lg:flex'
                       )}
                     >
-                      <div className="px-3 py-2 text-xs font-semibold text-muted-foreground border-b border-border flex items-center justify-between gap-2">
+                      {/* Mobile: boxed header with border-b; lg+: plain label, no border-b */}
+                      <div className="px-3 py-2 text-xs font-semibold text-muted-foreground border-b border-border flex items-center justify-between gap-2 lg:border-b-0 lg:pb-1">
                         <span>Add staff</span>
                         {renderStep11PaneSwitch()}
                       </div>
                       <div className="min-h-0 flex-1">
-                        <div className="grid h-full grid-cols-2 grid-rows-2 gap-px bg-border xl:grid-cols-4 xl:grid-rows-1">
+                        {/* Mobile: gap-px bg-border cells; lg+: divide-x divide-y, no fill colour */}
+                        <div className="grid h-full grid-cols-2 grid-rows-2 gap-px bg-border xl:grid-cols-4 xl:grid-rows-1 lg:gap-0 lg:bg-transparent lg:divide-x lg:divide-y lg:divide-border xl:divide-y-0">
                           {(['SPT', 'APPT', 'RPT', 'PCA'] as const).map((rank) => (
-                            <div key={`picker-${rank}`} className="min-h-0 flex flex-col overflow-hidden bg-background">
-                              <div className="px-2 py-1.5 border-b border-border flex items-center gap-2">
+                            <div key={`picker-${rank}`} className="min-h-0 flex flex-col overflow-hidden bg-background lg:bg-transparent">
+                              {/* Mobile: border-b rank header; lg+: plain label */}
+                              <div className="px-2 py-1.5 border-b border-border flex items-center gap-2 lg:border-b-0 lg:pb-0.5">
                                 <Badge variant="outline" className={cn('select-none px-1.5 py-0.5 text-[11px] font-medium', RANK_BADGE_NEUTRAL_CLASS)}>
                                   {rank}
                                 </Badge>
@@ -1526,15 +1643,19 @@ export function Step1LeaveSetupDialog({
                         'lg:flex'
                       )}
                     >
-                      <div className="px-3 py-2 text-xs font-semibold text-muted-foreground border-b border-border flex items-center justify-between gap-2">
-                        <span>Draft list</span>
+                      {/* Mobile: boxed header with border-b; lg+: plain label, no border-b */}
+                      <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2 lg:border-b-0 lg:pb-1">
+                        <div>
+                          <span className="text-xs font-semibold text-muted-foreground">Draft list</span>
+                          <p className="text-[10px] text-muted-foreground/70 mt-0.5">Leave type and FTE are editable in the next steps.</p>
+                        </div>
                         {renderStep11PaneSwitch()}
                       </div>
-                      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                      <div className="min-h-0 flex-1 overflow-y-auto py-1">
                         {rows.length === 0 ? (
                           <p className="py-4 text-center text-xs text-muted-foreground">No staff in draft yet.</p>
                         ) : (
-                          <div className="divide-y divide-border rounded-md border border-border overflow-hidden">
+                          <div className="divide-y divide-border">
                             {rows
                               .slice()
                               .sort((a, b) => {
@@ -1548,34 +1669,28 @@ export function Step1LeaveSetupDialog({
                               .map((row) => {
                                 const member = staffById.get(row.staffId)
                                 if (!member) return null
-                                const leavePreview =
-                                  row.leaveChoice === '__none__'
-                                    ? 'On duty'
-                                    : row.leaveChoice === 'others'
-                                      ? (row.customLeaveText.trim() || 'others')
-                                      : row.leaveChoice
                               return (
                                 <div
                                   key={`draft-preview-${row.staffId}`}
-                                  className="flex items-center justify-between px-2 py-1 hover:bg-muted/30"
+                                  className="flex items-center justify-between px-3 py-1.5 hover:bg-muted/30"
                                 >
                                   <div className="min-w-0">
                                     <div className="truncate text-xs font-medium">{member.name}</div>
                                     <div className="truncate text-[11px] text-muted-foreground">
-                                      {member.rank} · {member.team ?? '--'} · {leavePreview}
+                                      {member.rank} · {member.team ?? '--'}
                                     </div>
                                   </div>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-6 w-6"
-                                      onClick={() => removeRow(row.staffId)}
-                                    >
-                                      <X className="h-3.5 w-3.5" />
-                                    </Button>
-                                  </div>
-                                )
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 shrink-0"
+                                    onClick={() => removeRow(row.staffId)}
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              )
                               })}
                           </div>
                         )}
@@ -1684,8 +1799,8 @@ export function Step1LeaveSetupDialog({
               Next
             </Button>
           ) : (
-            <Button type="button" onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving...' : 'Save & Apply to Step 1'}
+            <Button type="button" onClick={handleSave} disabled={saving} className="shrink min-w-0 truncate">
+              {saving ? 'Saving...' : <><span className="sm:hidden">Save</span><span className="hidden sm:inline">Save & Apply to Step 1</span></>}
             </Button>
           )}
         </DialogFooter>
