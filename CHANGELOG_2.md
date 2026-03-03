@@ -6,6 +6,7 @@
 ## [Unreleased] - 2026-03-02 (UX polish — leave sim, split pane, step dialogs)
 
 ### Fixed
+- **Step indicator lag and algo button transient state** — Step button now updates immediately on click (removed `startTransition` wrapper). Algo button shows "Running..." only when the algorithm is actually running, not during step or date transitions (new `isAlgorithmRunning` prop). Step-transition sync in `useAllocationSync` wrapped in `startTransition` so heavy allocation work runs in the background without blocking paint (~1s perceived improvement).
 - **Step 3 merged teams — over-assignment with scarcity** — when teams were merged (e.g. CPPC+NSM), Step 3 used only visible teams for pending FTE and raw allocations, so contributor teams' pending was omitted and cap math was wrong. Now `pendingPCAFTEForStep3Dialog` aggregates by main team and recomputes from displayed target minus assigned valid slots; `existingAllocationsForStep3Dialog` canonicalizes team/slot to main teams. Cap aligns with UI; exceeding cap in Standard mode when surplus exists remains allowed.
 - **Schedule load — prefetch snapshot leak** — adjacent-date prefetch could overwrite the current date's baseline snapshot (including team merge), causing random CPPC/NSM split display. Prefetch loads now never apply snapshot or overrides to state; diagnostic tooltip shows `stateGuard`, `prefetchReq`, `applyState` for traceability.
 
@@ -22,6 +23,7 @@
   - *Balanced, problems*: `· short teams: DRO, MC` (amber, with team names)
   - Shows `· computing…` while the dry-run preview is in-flight. Metadata only visible when collapsed; hidden when expanded since full details are shown inside.
 - **SPT Allocation Panel — layout alignment on wide viewports** — "FTE / Remove" row and "Contributes FTE / AM·PM summary" row both previously used `justify-between`, pushing info to the far right on wide screens. Both rows now use `flex gap-3` / `flex gap-4` (left-aligned) so the FTE value, Remove button, and AM·PM summary stay clustered with the controls.
+- **Design rules — wide viewport proximity and eye-tracking** — added guidance in `.cursor/rules/design-elements-commonality.mdc`: prefer left-aligned clusters over `justify-between` for control rows; use 2-col grids on widescreen when appropriate; document anti-patterns (metadata far from controls, `flex-1` spacers between related items).
 
 ### Fixed
 - **Split pane — reference hidden, top-down mode** — when split mode was active with top-down direction and the reference pane retracted, the main pane could not scroll and the "Show reference" button was unresponsive. Root cause: the outer wrapper div was missing flex layout classes in split mode. Fixed by adding `flex-1 min-h-0 flex flex-col` when `isSplitMode`, and `shrink-0` on the collapsed strip so it keeps its fixed height.
