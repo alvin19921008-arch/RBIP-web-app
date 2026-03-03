@@ -5421,6 +5421,111 @@ function SchedulePageContent() {
     return out
   }, [visibleTeams, effectiveTeamMergeConfig.mergedInto])
 
+  const existingAllocationsForStep3Dialog = useMemo(() => {
+    const canonical = (value: Team | null | undefined): Team | null => {
+      if (!value) return null
+      return getMainTeam(value, effectiveTeamMergeConfig.mergedInto)
+    }
+    return existingAllocationsForStep3.map((alloc) => ({
+      ...alloc,
+      team: canonical(alloc.team as Team | null) ?? alloc.team,
+      slot1: canonical(alloc.slot1 as Team | null),
+      slot2: canonical(alloc.slot2 as Team | null),
+      slot3: canonical(alloc.slot3 as Team | null),
+      slot4: canonical(alloc.slot4 as Team | null),
+    }))
+  }, [existingAllocationsForStep3, effectiveTeamMergeConfig.mergedInto])
+
+  const existingAssignedValidForStep3Dialog = useMemo(() => {
+    const out = createEmptyTeamRecord<number>(0)
+    for (const alloc of existingAllocationsForStep3Dialog) {
+      const invalidSlot = (alloc as any)?.invalid_slot as number | undefined
+      const add = (slot: 1 | 2 | 3 | 4, team: Team | null) => {
+        if (!team) return
+        if (invalidSlot === slot) return
+        out[team] = (out[team] || 0) + 0.25
+      }
+      add(1, alloc.slot1 ?? null)
+      add(2, alloc.slot2 ?? null)
+      add(3, alloc.slot3 ?? null)
+      add(4, alloc.slot4 ?? null)
+    }
+    return out
+  }, [existingAllocationsForStep3Dialog])
+
+  const specialProgramAssignedForStep3Dialog = useMemo(() => {
+    const out = createEmptyTeamRecord<number>(0)
+    const weekday = getWeekday(selectedDate)
+    const slotsByProgramId = new Map<string, Set<number>>()
+    ;(specialPrograms || []).forEach((program: any) => {
+      let programSlots = program?.slots?.[weekday] || []
+      if (!Array.isArray(programSlots)) programSlots = []
+      if (programSlots.length === 0) {
+        if (program?.name === 'Robotic') programSlots = [1, 2, 3, 4]
+        else if (program?.name === 'CRP') programSlots = [2]
+        else programSlots = [1, 2, 3, 4]
+      }
+      slotsByProgramId.set(String(program.id), new Set(programSlots))
+    })
+
+    for (const alloc of existingAllocationsForStep3Dialog) {
+      const ids = (alloc as any)?.special_program_ids
+      if (!Array.isArray(ids) || ids.length === 0) continue
+      const specialSlotSet = new Set<number>()
+      ids.forEach((id: any) => {
+        const s = slotsByProgramId.get(String(id))
+        if (!s) return
+        s.forEach((slot) => specialSlotSet.add(slot))
+      })
+      if (specialSlotSet.size === 0) continue
+
+      const add = (slot: 1 | 2 | 3 | 4, team: Team | null) => {
+        if (!team) return
+        if (!specialSlotSet.has(slot)) return
+        out[team] = (out[team] || 0) + 0.25
+      }
+      add(1, alloc.slot1 ?? null)
+      add(2, alloc.slot2 ?? null)
+      add(3, alloc.slot3 ?? null)
+      add(4, alloc.slot4 ?? null)
+
+      const inv = (alloc as any)?.invalid_slot as 1 | 2 | 3 | 4 | null | undefined
+      if (inv === 1 || inv === 2 || inv === 3 || inv === 4) {
+        if (specialSlotSet.has(inv)) {
+          const invTeam = (inv === 1 ? alloc.slot1 : inv === 2 ? alloc.slot2 : inv === 3 ? alloc.slot3 : alloc.slot4) as Team | null
+          if (invTeam) out[invTeam] = Math.max(0, (out[invTeam] || 0) - 0.25)
+        }
+      }
+    }
+
+    return out
+  }, [existingAllocationsForStep3Dialog, specialPrograms, selectedDate])
+
+  const pendingPCAFTEForStep3Dialog = useMemo(() => {
+    const out = createEmptyTeamRecord<number>(0)
+    visibleTeams.forEach((mainTeam) => {
+      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
+      const displayedTarget = contributors.reduce(
+        (sum, team) => sum + (calculations[team]?.average_pca_per_team || 0),
+        0
+      )
+      const assignedForCap = Math.max(0, existingAssignedValidForStep3Dialog[mainTeam] || 0)
+      const recomputedPending = Math.max(0, displayedTarget - assignedForCap)
+
+      // Fallback for early hydration / missing calculations: preserve legacy pending source.
+      const pendingFromState = contributors.reduce((sum, team) => sum + (pendingPCAFTEPerTeam?.[team] || 0), 0)
+      out[mainTeam] = displayedTarget > 0 ? recomputedPending : pendingFromState
+    })
+    return out
+  }, [
+    visibleTeams,
+    teamContributorsByMain,
+    calculations,
+    existingAssignedValidForStep3Dialog,
+    specialProgramAssignedForStep3Dialog,
+    pendingPCAFTEPerTeam,
+  ])
+
   const substitutionWizardDataForDisplay = useMemo(() => {
     if (!substitutionWizardData) return null
 
@@ -12202,10 +12307,10 @@ function SchedulePageContent() {
               <FloatingPCAConfigDialog
                 open={floatingPCAConfigOpen}
                 teams={visibleTeams}
-                initialPendingFTE={pendingPCAFTEPerTeam}
+                initialPendingFTE={pendingPCAFTEForStep3Dialog}
                 pcaPreferences={pcaPreferences}
                 floatingPCAs={floatingPCAsForStep3}
-                existingAllocations={existingAllocationsForStep3}
+                existingAllocations={existingAllocationsForStep3Dialog}
                 specialPrograms={specialPrograms}
                 bufferStaff={bufferStaff}
                 staffOverrides={staffOverrides}
