@@ -11,7 +11,7 @@
  * @see .cursor/rules/stepwise-workflow-data.mdc for architecture documentation
  */
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useTransition } from 'react'
 import { Team, Staff, LeaveType } from '@/types/staff'
 import { TherapistAllocation, PCAAllocation, ScheduleCalculations } from '@/types/schedule'
 import { SpecialProgram, SPTAllocation } from '@/types/allocation'
@@ -506,10 +506,15 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
     prevOverridesRef.current = { ...staffOverrides }
   }, [staffOverrides, staff.length, syncAllocations])
 
+  const [, startTransition] = useTransition()
+
   /**
    * TRIGGER 2: Sync on step transition (populate "before algo" state)
    * Ensures the new step starts with allocations reflecting latest staffOverrides
-   * 
+   *
+   * Deferred via startTransition so the step change paints immediately; heavy sync
+   * (therapist allocation + calculations) runs in the background without blocking.
+   *
    * IMPORTANT: Skip therapist regeneration when transitioning FROM Step 2 onwards
    * to preserve the allocations created by Step 2's "Initialize Algo"
    */
@@ -546,29 +551,25 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
       prevStepRef.current = currentStep
       return
     }
-    
-    // Check if we're transitioning FROM Step 2 or later TO a subsequent step
-    // In this case, we should NOT regenerate therapist allocations to preserve
-    // the team assignments from Step 2's "Initialize Algo"
-    const step2OrLater = ['therapist-pca', 'floating-pca', 'bed-relieving', 'review']
-    const isFromStep2OrLater = step2OrLater.includes(prevStep)
-    const isToStep3OrLater = ['floating-pca', 'bed-relieving', 'review'].includes(currentStep)
-    
-    // Check if therapist allocations already have data (from Step 2's algo)
-    const hasExistingTherapistData = TEAMS.some(team => therapistAllocations[team]?.length > 0)
-    
-    // Skip full sync if moving from Step 2+ to Step 3+ with existing data
-    // Only recalculate, don't regenerate therapist allocations
-    if (isFromStep2OrLater && isToStep3OrLater && hasExistingTherapistData) {
-      console.log(`[AllocationSync] Step transition ${prevStep} -> ${currentStep}: Skipping regeneration, only recalculating`)
-      recalculateScheduleCalculations()
-    } else {
-      console.log(`[AllocationSync] Step transition: ${prevStep} -> ${currentStep}`)
-      syncAllocations()
-    }
 
-    // Update ref
+    // Update ref immediately to prevent re-triggering
     prevStepRef.current = currentStep
+
+    // Defer heavy sync so step change can paint first (avoids ~1s blocking delay)
+    startTransition(() => {
+      const step2OrLater = ['therapist-pca', 'floating-pca', 'bed-relieving', 'review']
+      const isFromStep2OrLater = step2OrLater.includes(prevStep)
+      const isToStep3OrLater = ['floating-pca', 'bed-relieving', 'review'].includes(currentStep)
+      const hasExistingTherapistData = TEAMS.some(team => therapistAllocations[team]?.length > 0)
+
+      if (isFromStep2OrLater && isToStep3OrLater && hasExistingTherapistData) {
+        console.log(`[AllocationSync] Step transition ${prevStep} -> ${currentStep}: Skipping regeneration, only recalculating`)
+        recalculateScheduleCalculations()
+      } else {
+        console.log(`[AllocationSync] Step transition: ${prevStep} -> ${currentStep}`)
+        syncAllocations()
+      }
+    })
   }, [
     currentStep,
     staff.length,

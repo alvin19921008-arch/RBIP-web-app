@@ -35,6 +35,8 @@ interface StepIndicatorProps {
   showClear?: boolean
   isInitialized?: boolean
   isLoading?: boolean
+  /** Only true when algorithm is actually running; used for "Running..." label. Falls back to isLoading if not provided. */
+  isAlgorithmRunning?: boolean
   onOpenLeaveSetup?: () => void
   leaveSetupPulseKey?: number
 }
@@ -59,6 +61,7 @@ export function StepIndicator({
   showClear = true,
   isInitialized = false,
   isLoading = false,
+  isAlgorithmRunning,
   onOpenLeaveSetup,
   leaveSetupPulseKey,
 }: StepIndicatorProps) {
@@ -362,7 +365,7 @@ export function StepIndicator({
                     variant="default"
                     className="h-8 bg-blue-600 text-white transition-[transform,box-shadow,filter] duration-200 ease-out hover:bg-blue-700 hover:-translate-y-px hover:shadow-md active:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:hover:shadow-none"
                   >
-                    {isLoading ? 'Running...' : isInitialized ? 'Re-run Algorithm' : 'Initialize Algorithm'}
+                    {(isAlgorithmRunning ?? isLoading) ? 'Running...' : isInitialized ? 'Re-run Algorithm' : 'Initialize Algorithm'}
                   </Button>
                 ) : null}
               </div>

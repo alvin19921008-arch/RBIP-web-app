@@ -5395,11 +5395,9 @@ function SchedulePageContent() {
 
   const handleStepClick = useCallback(
     (stepId: string) => {
-      startUiTransition(() => {
-        goToStep(stepId as any)
-      })
+      goToStep(stepId as any)
     },
-    [goToStep, startUiTransition]
+    [goToStep]
   )
 
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -10382,6 +10380,7 @@ function SchedulePageContent() {
             showClear={showClearForCurrentStep}
             isInitialized={initializedSteps.has(currentStep)}
             isLoading={loading || isUiTransitionPending}
+            isAlgorithmRunning={loading}
             leaveSetupPulseKey={leaveSetupPulseKey}
           />
         </div>
