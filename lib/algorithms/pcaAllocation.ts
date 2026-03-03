@@ -3468,7 +3468,7 @@ export async function allocateFloatingPCA_v2(
     }
     return allocationByStaffId.get(staffId)
   }
-  
+
   // Initialize tracker
   const tracker = createEmptyTracker()
   // Stamp mode for UI display (even if a team gets 0 slots in Step 3).
@@ -3536,6 +3536,7 @@ export async function allocateFloatingPCA_v2(
     teamPrefs[team] = getTeamPreferenceInfo(team, effectivePreferences)
   }
 
+  let extraCoverageLogCount = 0
   const applyExtraCoverageRoundRobin = () => {
     if (extraCoverageMode !== 'round-robin-team-order') return
 
@@ -3620,6 +3621,7 @@ export async function allocateFloatingPCA_v2(
             assignmentTag: 'extra',
             wasFloorPCA: isFloorPCAForTeam(pca as any, pref.teamFloor),
           })
+          extraCoverageLogCount += 1
         }
       }
     }

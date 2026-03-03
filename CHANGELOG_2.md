@@ -5,6 +5,9 @@
 
 ## [Unreleased] - 2026-03-02 (UX polish — leave sim, split pane, step dialogs)
 
+### Fixed
+- **Step 3 merged teams — over-assignment with scarcity** — when teams were merged (e.g. CPPC+NSM), Step 3 used only visible teams for pending FTE and raw allocations, so contributor teams' pending was omitted and cap math was wrong. Now `pendingPCAFTEForStep3Dialog` aggregates by main team and recomputes from displayed target minus assigned valid slots; `existingAllocationsForStep3Dialog` canonicalizes team/slot to main teams. Cap aligns with UI; exceeding cap in Standard mode when surplus exists remains allowed.
+
 ### Changed
 - **Step 1–3 dialog headers** — added metadata line (`Step X.x · label`) in `text-xs text-muted-foreground` above the instruction text, with `mt-1` on the instruction span and `pt-4` on the scrollable content area, consistent across all steps.
 - **Step 1.1 "Add staff" panel (wide view)** — flattened nested box-in-box layout at `lg+`: outer wrapper becomes top/bottom rules only (`border-t border-b`, no left/right box), "Add staff" and "Draft list" headers lose their `border-b` separator, rank column headers lose their inner `border-b`; column separators remain via `divide-x divide-y`. Mobile layout (`< lg`) is unchanged.
