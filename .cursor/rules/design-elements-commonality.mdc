@@ -49,15 +49,21 @@ For inline informational banners and confirmation panels:
 - Icon: color-matched (e.g., `text-blue-600`) with `mt-0.5` for alignment
 - Text: standard body text, allows wrapping
 
-### Example
-```tsx
-<div className="mt-3 w-full max-w-2xl bg-blue-50/40 border border-blue-100/60 rounded-xl p-3 shadow-sm">
-  <div className="flex items-start gap-2 text-sm text-blue-900">
-    <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600" />
-    <span>Message content here...</span>
-  </div>
-</div>
-```
+## Wide Viewport — Proximity & Eye-Tracking
+
+Controls and their associated metadata (labels, status values, summaries) must stay in the same visual cluster. On wide viewports `justify-between` stretches related items to opposite ends of a row, forcing excessive horizontal eye-tracking. Default to left-aligned clusters; only push content to opposite ends when the two sides are genuinely independent.
+
+| Situation | Wrong | Right |
+|-----------|-------|-------|
+| Control row (button + status value) | `flex justify-between` | `flex gap-3` (left-aligned) |
+| Info row (label + summary text) | `flex justify-between` | `flex gap-4` (left-aligned) |
+| Review list (name + FTE) on wide screen | Single full-width column | `lg:grid lg:grid-cols-2 lg:gap-px lg:bg-border` |
+| Collapsible header summary | Mode label alone, pushed right | Mode label + inline preview, grouped left of chevron |
+
+- ❌ `justify-between` to separate a value from the control it belongs to
+- ❌ Full-width single-column lists on widescreen when a 2-col grid would halve eye-travel
+- ❌ Metadata (FTE, slot summary, derived result) floating far right while its controls are on the left
+- ❌ `flex-1` spacers to fill dead space between related items
 
 ## Anti-Patterns (Never Do)
 
