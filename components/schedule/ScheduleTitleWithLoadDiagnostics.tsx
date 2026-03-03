@@ -118,6 +118,11 @@ function LoadMetaBlock(props: {
         {meta.draftIdentityMatched === true ? ', idCheck:pass' : meta.draftIdentityMatched === false ? ', idCheck:fail' : ''}
       </div>
       <div>
+        stateGuard:{meta.stateGuardVersion || 'n/a'}
+        {typeof meta.prefetchOnly === 'boolean' ? `, prefetchReq:${meta.prefetchOnly ? 'yes' : 'no'}` : ''}
+        {typeof meta.stateApplyAllowed === 'boolean' ? `, applyState:${meta.stateApplyAllowed ? 'yes' : 'no'}` : ''}
+      </div>
+      <div>
         scheduleId:{meta.scheduleId || 'unknown'}
         {meta.scheduleUpdatedAt ? `, updatedAt:${meta.scheduleUpdatedAt}` : ''}
       </div>

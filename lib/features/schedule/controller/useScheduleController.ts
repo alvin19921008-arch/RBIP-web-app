@@ -1076,10 +1076,11 @@ export function useScheduleController(params: {
     const day = String(date.getDate()).padStart(2, '0')
     const dateStr = `${year}-${month}-${day}`
     const cacheKey = params.controllerRole === 'ref' ? `ref:${dateStr}` : dateStr
-    if (!opts?.prefetchOnly && !activeHydrationDateStrRef.current) {
+    const prefetchOnly = !!opts?.prefetchOnly
+    if (!prefetchOnly && !activeHydrationDateStrRef.current) {
       activeHydrationDateStrRef.current = dateStr
     }
-    const shouldApplyToState = !opts?.prefetchOnly && activeHydrationDateStrRef.current === dateStr
+    const shouldApplyToState = !prefetchOnly && activeHydrationDateStrRef.current === dateStr
 
     // Check cache first (for fast navigation)
     const cached = getCachedSchedule(cacheKey)
@@ -1174,6 +1175,9 @@ export function useScheduleController(params: {
         calculations: cached.calculations,
         meta: {
           loadFrom: 'cache',
+          prefetchOnly,
+          stateApplyAllowed: shouldApplyToState,
+          stateGuardVersion: 'prefetch-state-block-v1',
           rpcUsed: false,
           batchedQueriesUsed: false,
           baselineSnapshotUsed: !!cached.baselineSnapshot,
@@ -1404,8 +1408,10 @@ export function useScheduleController(params: {
           sourceForNewEnvelope: 'migration',
         })
         innerTimer.stage('validate:baseline_snapshot')
-        setSnapshotHealthReport(validated.report)
-        applyBaselineSnapshot(validated.data, overrides)
+        if (shouldApplyToState) {
+          setSnapshotHealthReport(validated.report)
+          applyBaselineSnapshot(validated.data, overrides)
+        }
 
         // Persist the repaired envelope back to DB so subsequent cold loads don't have to
         // re-repair and re-query live staff. Fire-and-forget: never block the load path.
@@ -1417,22 +1423,28 @@ export function useScheduleController(params: {
             .then(() => {}) // intentionally fire-and-forget
         }
       } catch {
-        setSnapshotHealthReport(null)
+        if (shouldApplyToState) {
+          setSnapshotHealthReport(null)
+        }
       }
     } else {
-      setSnapshotHealthReport(null)
+      if (shouldApplyToState) {
+        setSnapshotHealthReport(null)
+      }
     }
 
     // Bed overrides + notes + allocation notes (in staff_overrides JSON)
     const bedCountsByTeamForCache = (overrides as any)?.__bedCounts?.byTeam || {}
     const bedRelievingByToTeamForCache = (overrides as any)?.__bedRelieving?.byToTeam || {}
     const allocationNotesDocForCache = (overrides as any)?.__allocationNotes?.doc ?? null
-    setBedCountsOverridesByTeam(bedCountsByTeamForCache || {})
-    setSavedBedCountsOverridesByTeam(bedCountsByTeamForCache || {})
-    setBedRelievingNotesByToTeam(bedRelievingByToTeamForCache || {})
-    setSavedBedRelievingNotesByToTeam(bedRelievingByToTeamForCache || {})
-    setAllocationNotesDoc(allocationNotesDocForCache)
-    setSavedAllocationNotesDoc(allocationNotesDocForCache)
+    if (shouldApplyToState) {
+      setBedCountsOverridesByTeam(bedCountsByTeamForCache || {})
+      setSavedBedCountsOverridesByTeam(bedCountsByTeamForCache || {})
+      setBedRelievingNotesByToTeam(bedRelievingByToTeamForCache || {})
+      setSavedBedRelievingNotesByToTeam(bedRelievingByToTeamForCache || {})
+      setAllocationNotesDoc(allocationNotesDocForCache)
+      setSavedAllocationNotesDoc(allocationNotesDocForCache)
+    }
 
     // Stored calculations
     let storedCalculations: Record<Team, ScheduleCalculations | null> | null = null
@@ -1513,6 +1525,9 @@ export function useScheduleController(params: {
         calculations: storedCalculations,
         meta: {
           loadFrom: 'db',
+          prefetchOnly,
+          stateApplyAllowed: shouldApplyToState,
+          stateGuardVersion: 'prefetch-state-block-v1',
           rpcUsed,
           batchedQueriesUsed,
           baselineSnapshotUsed: !!baselineSnapshotData,
@@ -1550,6 +1565,9 @@ export function useScheduleController(params: {
       calculations: storedCalculations,
       meta: {
         loadFrom: 'db',
+        prefetchOnly,
+        stateApplyAllowed: shouldApplyToState,
+        stateGuardVersion: 'prefetch-state-block-v1',
         rpcUsed,
         batchedQueriesUsed,
         baselineSnapshotUsed: !!baselineSnapshotData,

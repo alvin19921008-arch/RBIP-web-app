@@ -7,6 +7,7 @@
 
 ### Fixed
 - **Step 3 merged teams — over-assignment with scarcity** — when teams were merged (e.g. CPPC+NSM), Step 3 used only visible teams for pending FTE and raw allocations, so contributor teams' pending was omitted and cap math was wrong. Now `pendingPCAFTEForStep3Dialog` aggregates by main team and recomputes from displayed target minus assigned valid slots; `existingAllocationsForStep3Dialog` canonicalizes team/slot to main teams. Cap aligns with UI; exceeding cap in Standard mode when surplus exists remains allowed.
+- **Schedule load — prefetch snapshot leak** — adjacent-date prefetch could overwrite the current date's baseline snapshot (including team merge), causing random CPPC/NSM split display. Prefetch loads now never apply snapshot or overrides to state; diagnostic tooltip shows `stateGuard`, `prefetchReq`, `applyState` for traceability.
 
 ### Changed
 - **Step 1–3 dialog headers** — added metadata line (`Step X.x · label`) in `text-xs text-muted-foreground` above the instruction text, with `mt-1` on the instruction span and `pt-4` on the scrollable content area, consistent across all steps.
