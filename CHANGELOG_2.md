@@ -3,6 +3,23 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-03-03 (dashboard UX — staff profile, edit dialog, team merge)
+
+### Added
+- **Staff Profile Panel — Team filter** — new filter dropdown to filter staff by team (FO, SMM, SFM, CPPC, MC, GMC, NSM, DRO).
+
+### Changed
+- **Staff Profile Panel — Radix Select for filters** — Rank, Team, Special Program, Floor PCA, and Status filters now use Radix UI Select instead of native `<select>`; batch "Set Status..." dropdown also converted.
+- **Staff Profile Panel — Delete inline confirmation** — single-staff delete button shows "Confirm?" and "Cancel" inline before deleting (per dashboard-ui-design-principles).
+- **Staff Profile Panel — Inactive staff actions column** — Edit/Delete buttons for inactive staff now use full colour; grey overlay (`opacity-60`) applied only to other cells (name, rank, team, etc.).
+- **Staff Edit Dialog — PCA flow** — Assignment type (Non-floating / Floating) shown first; Team only when non-floating; Floor PCA required when floating, optional when non-floating.
+- **Staff Edit Dialog — SPT flow** — Reordered to Specialty → RBIP Supervisor → Team → Special Program; removed "SPT basic configure" info line.
+- **Staff Edit Dialog — Flat layout and Radix** — section dividers (`hr`), uppercase headers; all selects use Radix UI; nested border boxes removed.
+- **Staff Edit Dialog — Status badge selection** — Active, Inactive, Buffer shown as clickable badge-style buttons (matching Staff Profile table) instead of dropdown.
+- **Team Merge Panel — Unmerge inline confirmation** — Unmerge button shows "Confirm?" and "Cancel" inline before unmerging.
+
+---
+
 ## [Unreleased] - 2026-03-02 (UX polish — leave sim, split pane, step dialogs)
 
 ### Fixed

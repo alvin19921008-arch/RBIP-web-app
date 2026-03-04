@@ -135,6 +135,7 @@ export function TeamMergePanel() {
   const [mergeLabelOverride, setMergeLabelOverride] = useState('')
   const [overrideMode, setOverrideMode] = useState<OverrideMode>('main')
   const [overrideState, setOverrideState] = useState<MergedPcaPreferencesOverride>({ ...EMPTY_OVERRIDE })
+  const [pendingUnmergeTeam, setPendingUnmergeTeam] = useState<Team | null>(null)
 
   const loadData = async () => {
     setLoading(true)
@@ -583,9 +584,41 @@ export function TeamMergePanel() {
                         <Button size="sm" variant="ghost" onClick={() => openEdit(row)} disabled={saving}>
                           Edit
                         </Button>
-                        <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => void unmerge(row)} disabled={saving}>
-                          Unmerge
-                        </Button>
+                        {pendingUnmergeTeam === row.team ? (
+                          <>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => {
+                                void unmerge(row)
+                                setPendingUnmergeTeam(null)
+                              }}
+                              disabled={saving}
+                            >
+                              Confirm?
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => setPendingUnmergeTeam(null)}
+                              disabled={saving}
+                            >
+                              Cancel
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => setPendingUnmergeTeam(row.team)}
+                            disabled={saving}
+                          >
+                            Unmerge
+                          </Button>
+                        )}
                       </div>
                     </div>
                   )

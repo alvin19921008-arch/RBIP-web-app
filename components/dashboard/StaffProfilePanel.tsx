@@ -12,6 +12,8 @@ import { BufferStaffConvertDialog } from '@/components/allocation/BufferStaffCon
 import { cn } from '@/lib/utils'
 import { useToast } from '@/components/ui/toast-provider'
 import { SearchWithSuggestions, type SearchSuggestionItem } from '@/components/ui/SearchWithSuggestions'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
 import { matchesStaffName, matchesStaffStatus } from '@/lib/utils/staffFilters'
 
@@ -35,6 +37,7 @@ export function StaffProfilePanel() {
   const [selectedStaffIds, setSelectedStaffIds] = useState<Set<string>>(new Set())
   const [filters, setFilters] = useState({
     rank: null as StaffRank[] | null,
+    team: null as Team | null,
     specialProgram: null as StaffSpecialProgram[] | null,
     floorPCA: null as 'upper' | 'lower' | 'both' | null,
     status: null as 'active' | 'inactive' | 'buffer' | null,
@@ -48,6 +51,8 @@ export function StaffProfilePanel() {
   const [openStatusMenu, setOpenStatusMenu] = useState<{ staffId: string; left: number; top: number } | null>(null)
   const [showBufferSlotDialog, setShowBufferSlotDialog] = useState(false)
   const [pcaStaffForBuffer, setPcaStaffForBuffer] = useState<Staff | null>(null)
+  const [batchStatusValue, setBatchStatusValue] = useState<string>('placeholder')
+  const [staffIdPendingDelete, setStaffIdPendingDelete] = useState<string | null>(null)
   const supabase = createClientComponentClient()
   const toast = useToast()
 
@@ -126,6 +131,7 @@ export function StaffProfilePanel() {
   const filteredStaff = staff.filter((s) => {
     if (!matchesStaffName(s, search)) return false
     if (filters.rank && !filters.rank.includes(s.rank)) return false
+    if (filters.team && s.team !== filters.team) return false
     if (!matchesStaffStatus(s, filters.status)) return false
     if (filters.specialProgram && filters.specialProgram.length > 0) {
       const hasProgram = s.special_program?.some((prog) => filters.specialProgram!.includes(prog))
@@ -412,10 +418,6 @@ export function StaffProfilePanel() {
   }
 
   const handleDeleteSingle = async (staffId: string, staffName: string) => {
-    if (!confirm(`Are you sure you want to delete ${staffName}? This action is irreversible.`)) {
-      return
-    }
-
     try {
       const { error } = await supabase
         .from('staff')
@@ -650,19 +652,20 @@ export function StaffProfilePanel() {
     const isEditingName = editingNameId === staffMember.id
     const isSavingName = savingNameId === staffMember.id
 
+    const isInactive = (staffMember.status ?? 'active') === 'inactive'
+    const inactiveCellClass = isInactive ? 'opacity-60' : ''
+
     return (
-      <tr key={staffMember.id} className={cn('border-b hover:bg-accent/50', (staffMember.status ?? 'active') === 'inactive' && 'opacity-60')}>
-        <td className="p-2">
-          <div className={cn((staffMember.status ?? 'active') === 'inactive' && 'opacity-100')}>
-            <input
-              type="checkbox"
-              checked={isSelected}
-              onChange={() => toggleStaffSelection(staffMember.id)}
-              className="h-4 w-4"
-            />
-          </div>
+      <tr key={staffMember.id} className="border-b hover:bg-accent/50">
+        <td className={cn('p-2', inactiveCellClass)}>
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={() => toggleStaffSelection(staffMember.id)}
+            className="h-4 w-4"
+          />
         </td>
-        <td className="p-2">
+        <td className={cn('p-2', inactiveCellClass)}>
           {isEditingName ? (
             <div className="flex items-center gap-1">
               <input
@@ -696,12 +699,12 @@ export function StaffProfilePanel() {
             </button>
           )}
         </td>
-        <td className="p-2 text-sm">{staffMember.rank}</td>
-        <td className="p-2 text-sm">{staffMember.team || '--'}</td>
-        <td className="p-2 text-sm">{staffMember.rank === 'PCA' ? (staffMember.floating ? 'Yes' : 'No') : '--'}</td>
-        <td className="p-2 text-sm">{getFloorPCADisplay(staffMember)}</td>
-        <td className="p-2 text-sm">{getSpecialProgramDisplay(staffMember)}</td>
-        <td className="p-2">
+        <td className={cn('p-2 text-sm', inactiveCellClass)}>{staffMember.rank}</td>
+        <td className={cn('p-2 text-sm', inactiveCellClass)}>{staffMember.team || '--'}</td>
+        <td className={cn('p-2 text-sm', inactiveCellClass)}>{staffMember.rank === 'PCA' ? (staffMember.floating ? 'Yes' : 'No') : '--'}</td>
+        <td className={cn('p-2 text-sm', inactiveCellClass)}>{getFloorPCADisplay(staffMember)}</td>
+        <td className={cn('p-2 text-sm', inactiveCellClass)}>{getSpecialProgramDisplay(staffMember)}</td>
+        <td className={cn('p-2', inactiveCellClass)}>
           {(() => {
             const currentStatus = staffMember.status ?? 'active'
             const getStatusColor = (status: 'active' | 'inactive' | 'buffer') => {
@@ -770,13 +773,39 @@ export function StaffProfilePanel() {
             >
               <Edit2 className="h-4 w-4" />
             </button>
-            <button
-              onClick={() => handleDeleteSingle(staffMember.id, staffMember.name)}
-              className="p-1 hover:bg-accent rounded text-destructive hover:text-destructive"
-              title="Delete staff"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+            {staffIdPendingDelete === staffMember.id ? (
+              <>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => {
+                    handleDeleteSingle(staffMember.id, staffMember.name)
+                    setStaffIdPendingDelete(null)
+                  }}
+                >
+                  Confirm?
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => setStaffIdPendingDelete(null)}
+                >
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                onClick={() => setStaffIdPendingDelete(staffMember.id)}
+                title="Delete staff"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
           </div>
         </td>
       </tr>
@@ -832,89 +861,126 @@ export function StaffProfilePanel() {
           ) : (
             <div className="space-y-4">
               {/* Filters */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-1">Rank</label>
-                  <select
+                  <Label className="mb-1">Rank</Label>
+                  <Select
                     value={filters.rank && filters.rank.length === 1 ? filters.rank[0] : 'all'}
-                    onChange={(e) => {
-                      const value = e.target.value
+                    onValueChange={(value) =>
                       setFilters((prev) => ({
                         ...prev,
                         rank: value === 'all' ? null : [value as StaffRank],
                       }))
-                    }}
-                    className="w-full px-3 py-2 border rounded-md text-sm"
+                    }
                   >
-                    <option value="all">All</option>
-                    {RANK_ORDER.map((rank) => (
-                      <option key={rank} value={rank}>
-                        {rank}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="All" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      {RANK_ORDER.map((rank) => (
+                        <SelectItem key={rank} value={rank}>
+                          {rank}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium mb-1">Special Program</label>
-                  <select
+                  <Label className="mb-1">Team</Label>
+                  <Select
+                    value={filters.team ?? 'all'}
+                    onValueChange={(value) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        team: value === 'all' ? null : (value as Team),
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="All" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      {TEAMS.map((team) => (
+                        <SelectItem key={team} value={team}>
+                          {team}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label className="mb-1">Special Program</Label>
+                  <Select
                     value={filters.specialProgram && filters.specialProgram.length === 1 ? filters.specialProgram[0] : 'all'}
-                    onChange={(e) => {
-                      const value = e.target.value
+                    onValueChange={(value) =>
                       setFilters((prev) => ({
                         ...prev,
                         specialProgram: value === 'all' ? null : [value as StaffSpecialProgram],
                       }))
-                    }}
-                    className="w-full px-3 py-2 border rounded-md text-sm"
+                    }
                   >
-                    <option value="all">All</option>
-                    {availableSpecialPrograms.map((prog) => (
-                      <option key={prog} value={prog}>
-                        {prog}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="All" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      {availableSpecialPrograms.map((prog) => (
+                        <SelectItem key={prog} value={prog}>
+                          {prog}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium mb-1">Floor PCA</label>
-                  <select
-                    value={filters.floorPCA || 'all'}
-                    onChange={(e) => {
-                      const value = e.target.value
+                  <Label className="mb-1">Floor PCA</Label>
+                  <Select
+                    value={filters.floorPCA ?? 'all'}
+                    onValueChange={(value) =>
                       setFilters((prev) => ({
                         ...prev,
                         floorPCA: value === 'all' ? null : (value as 'upper' | 'lower' | 'both'),
                       }))
-                    }}
-                    className="w-full px-3 py-2 border rounded-md text-sm"
+                    }
                   >
-                    <option value="all">All</option>
-                    <option value="upper">Upper</option>
-                    <option value="lower">Lower</option>
-                    <option value="both">Both</option>
-                  </select>
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="All" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="upper">Upper</SelectItem>
+                      <SelectItem value="lower">Lower</SelectItem>
+                      <SelectItem value="both">Both</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium mb-1">Status</label>
-                  <select
-                    value={filters.status === null ? 'all' : filters.status}
-                    onChange={(e) => {
-                      const value = e.target.value
+                  <Label className="mb-1">Status</Label>
+                  <Select
+                    value={filters.status ?? 'all'}
+                    onValueChange={(value) =>
                       setFilters((prev) => ({
                         ...prev,
                         status: value === 'all' ? null : (value as 'active' | 'inactive' | 'buffer'),
                       }))
-                    }}
-                    className="w-full px-3 py-2 border rounded-md text-sm"
+                    }
                   >
-                    <option value="all">All</option>
-                    <option value="active">Active</option>
-                    <option value="inactive">Inactive</option>
-                    <option value="buffer">Buffer</option>
-                  </select>
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="All" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="inactive">Inactive</SelectItem>
+                      <SelectItem value="buffer">Buffer</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
@@ -928,20 +994,27 @@ export function StaffProfilePanel() {
                   {selectedStaffIds.size > 0 && (
                     <>
                       <div className="flex gap-2">
-                        <select
-                          onChange={(e) => {
-                            if (e.target.value) {
-                              handleBatchStatusChange(e.target.value as 'active' | 'inactive' | 'buffer')
+                        <Select
+                          value={batchStatusValue}
+                          onValueChange={(value) => {
+                            if (value && value !== 'placeholder') {
+                              handleBatchStatusChange(value as 'active' | 'inactive' | 'buffer')
+                              setBatchStatusValue('placeholder')
                             }
                           }}
-                          className="h-9 px-3 py-2 border rounded-md text-sm"
-                          defaultValue=""
                         >
-                          <option value="" disabled>Set Status...</option>
-                          <option value="active">Set Active ({selectedStaffIds.size})</option>
-                          <option value="inactive">Set Inactive ({selectedStaffIds.size})</option>
-                          <option value="buffer">Set Buffer ({selectedStaffIds.size})</option>
-                        </select>
+                          <SelectTrigger className="h-9 w-[180px]">
+                            <SelectValue placeholder="Set Status..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="placeholder" disabled>
+                              Set Status...
+                            </SelectItem>
+                            <SelectItem value="active">Set Active ({selectedStaffIds.size})</SelectItem>
+                            <SelectItem value="inactive">Set Inactive ({selectedStaffIds.size})</SelectItem>
+                            <SelectItem value="buffer">Set Buffer ({selectedStaffIds.size})</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                       <Button variant="destructive" onClick={handleDelete}>
                         <Trash2 className="h-4 w-4 mr-2" />

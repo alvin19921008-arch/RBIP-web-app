@@ -6,10 +6,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Staff, StaffRank, Team, StaffStatus, SpecialProgram as StaffSpecialProgram } from '@/types/staff'
 import { SpecialProgram } from '@/types/allocation'
 import { TEAMS } from '@/lib/utils/types'
-import { X, Info } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { X } from 'lucide-react'
 import { useToast } from '@/components/ui/toast-provider'
 
 const RANKS: StaffRank[] = ['SPT', 'APPT', 'RPT', 'PCA', 'workman']
@@ -71,7 +73,7 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
     loadSPTData()
   }, [staff.id, rank, supabase])
 
-  // Reset floor PCA when rank changes
+  // Reset floor PCA and team when rank changes
   useEffect(() => {
     if (rank !== 'PCA') {
       setFloorPCA(null)
@@ -79,21 +81,27 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
     }
   }, [rank])
 
-  // Get available special program names from specialPrograms prop
+  // Clear team when switching to floating (PCA)
+  useEffect(() => {
+    if (rank === 'PCA' && floating) {
+      setTeam(null)
+    }
+  }, [rank, floating])
+
   const availableProgramNames = specialPrograms.map((p) => p.name as StaffSpecialProgram).sort()
 
-  // Validation
   const isTeamRequired = () => {
-    if (rank === 'SPT') return false // SPT doesn't require team
-    if (['APPT', 'RPT'].includes(rank)) return true // Therapists require team
-    if (rank === 'PCA' && !floating) return true // Non-floating PCA requires team
+    if (rank === 'SPT') return false
+    if (['APPT', 'RPT'].includes(rank)) return true
+    if (rank === 'PCA' && !floating) return true
     return false
   }
+
+  const isFloorPCARequired = () => rank === 'PCA' && floating
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
 
-    // Validate required fields
     if (!name.trim()) {
       toast.warning('Staff name is required')
       return
@@ -104,25 +112,20 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
       return
     }
 
-    if (rank === 'PCA' && floorPCA === null) {
-      toast.warning('Floor PCA is required for PCA staff')
+    if (isFloorPCARequired() && floorPCA === null) {
+      toast.warning('Floor PCA is required for floating PCA')
       return
     }
 
-    // Convert floor_pca to array format
     let floorPCAArray: ('upper' | 'lower')[] | null = null
     if (rank === 'PCA' && floorPCA) {
-      if (floorPCA === 'both') {
-        floorPCAArray = ['upper', 'lower']
-      } else {
-        floorPCAArray = [floorPCA]
-      }
+      floorPCAArray = floorPCA === 'both' ? ['upper', 'lower'] : [floorPCA]
     }
 
     const staffData: Partial<Staff> & { isRbipSupervisor?: boolean; specialty?: string | null } = {
       name: name.trim(),
       rank,
-      team: isTeamRequired() ? (team as Team) : (rank === 'PCA' && floating ? null : team),
+      team: isTeamRequired() ? (team as Team) : rank === 'PCA' && floating ? null : team,
       special_program: specialProgram.length > 0 ? specialProgram : null,
       floating: rank === 'PCA' ? floating : false,
       floor_pca: floorPCAArray,
@@ -137,192 +140,194 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
     onSave(staffData)
   }
 
+  const renderTeamField = (showHelperText = true) => (
+    <div>
+      <Label>
+        Team {isTeamRequired() && <span className="text-destructive">*</span>}
+      </Label>
+      <Select
+        value={team ?? '__none__'}
+        onValueChange={(v) => setTeam(v === '__none__' ? null : (v as Team))}
+      >
+        <SelectTrigger className="mt-1">
+          <SelectValue placeholder="-- Select Team --" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none__">-- Select Team --</SelectItem>
+          {TEAMS.map((t) => (
+            <SelectItem key={t} value={t}>
+              {t}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {showHelperText && rank === 'SPT' && (
+        <p className="text-xs text-muted-foreground mt-1">
+          Optional. Can be configured in SPT Allocations.
+        </p>
+      )}
+    </div>
+  )
+
+  const renderSpecialProgramField = () => (
+    <div>
+      <Label>Special Program</Label>
+      <div className="space-y-2 mt-1 p-2 rounded-md max-h-40 overflow-y-auto">
+        {availableProgramNames.length > 0 ? (
+          availableProgramNames.map((prog) => (
+            <label key={prog} className="flex items-center gap-2 cursor-pointer hover:bg-accent/50 p-1 rounded">
+              <input
+                type="checkbox"
+                checked={specialProgram.includes(prog)}
+                onChange={(e) => {
+                  if (e.target.checked) setSpecialProgram([...specialProgram, prog])
+                  else setSpecialProgram(specialProgram.filter((p) => p !== prog))
+                }}
+                className="h-4 w-4"
+              />
+              <span className="text-sm">{prog}</span>
+            </label>
+          ))
+        ) : (
+          <p className="text-xs text-muted-foreground py-2">No special programs available</p>
+        )}
+      </div>
+    </div>
+  )
+
   return (
     <Dialog open={true} onOpenChange={() => onCancel()}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between">
             <DialogTitle>{isNew ? 'Add New Staff' : 'Edit Staff'}</DialogTitle>
-            <button
-              onClick={onCancel}
-              className="p-1 hover:bg-accent rounded"
-              aria-label="Close"
-            >
+            <button onClick={onCancel} className="p-1 hover:bg-accent rounded" aria-label="Close">
               <X className="h-5 w-5" />
             </button>
           </div>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Staff Name */}
-          <div>
-            <Label htmlFor="name">
-              Staff Name <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              id="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              className="mt-1"
-            />
-          </div>
-
-          {/* Rank */}
-          <div>
-            <Label htmlFor="rank">
-              Rank <span className="text-destructive">*</span>
-            </Label>
-            <select
-              id="rank"
-              value={rank}
-              onChange={(e) => setRank(e.target.value as StaffRank)}
-              required
-              className="w-full h-10 px-3 py-2 rounded-md border border-input bg-background text-sm"
-            >
-              {RANKS.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Team */}
-          <div>
-            <Label htmlFor="team">
-              Team {isTeamRequired() && <span className="text-destructive">*</span>}
-            </Label>
-            <select
-              id="team"
-              value={team || ''}
-              onChange={(e) => setTeam(e.target.value ? (e.target.value as Team) : null)}
-              required={isTeamRequired()}
-              className="w-full h-10 px-3 py-2 rounded-md border border-input bg-background text-sm mt-1"
-            >
-              <option value="">-- Select Team --</option>
-              {TEAMS.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-            {rank === 'PCA' && (
-              <p className="text-xs text-muted-foreground mt-1">
-                {floating ? 'Floating PCA does not require a team assignment.' : 'Non-floating PCA requires a team assignment.'}
-              </p>
-            )}
-            {rank === 'SPT' && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Team assignment for SPT is optional and can be configured in SPT Allocations.
-              </p>
-            )}
-          </div>
-
-          {/* Special Program */}
-          <div>
-            <Label>Special Program</Label>
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-              <Info className="h-3.5 w-3.5" />
-              <span>Go to Special Programs dashboard for detailed configuration.</span>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Name & Rank */}
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="name">
+                Staff Name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                className="mt-1"
+              />
             </div>
-            <div className="space-y-2 mt-2 border rounded-md p-3 max-h-40 overflow-y-auto">
-              {availableProgramNames.length > 0 ? (
-                availableProgramNames.map((prog) => (
-                  <label key={prog} className="flex items-center space-x-2 cursor-pointer hover:bg-accent/50 p-1 rounded">
-                    <input
-                      type="checkbox"
-                      checked={specialProgram.includes(prog)}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSpecialProgram([...specialProgram, prog])
-                        } else {
-                          setSpecialProgram(specialProgram.filter((p) => p !== prog))
-                        }
-                      }}
-                      className="h-4 w-4"
-                    />
-                    <span className="text-sm">{prog}</span>
-                  </label>
-                ))
-              ) : (
-                <p className="text-xs text-muted-foreground">No special programs available</p>
-              )}
+
+            <div>
+              <Label>Rank <span className="text-destructive">*</span></Label>
+              <Select value={rank} onValueChange={(v) => setRank(v as StaffRank)}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {RANKS.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {r}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
-          {/* PCA Properties */}
+          {/* PCA Configuration */}
           {rank === 'PCA' && (
-            <div className="space-y-4 border p-4 rounded-md">
-              <div>
-                <Label htmlFor="floating">
-                  Floating <span className="text-destructive">*</span>
-                </Label>
-                <select
-                  id="floating"
-                  value={floating ? 'floating' : 'non-floating'}
-                  onChange={(e) => setFloating(e.target.value === 'floating')}
-                  required
-                  className="w-full h-10 px-3 py-2 rounded-md border border-input bg-background text-sm mt-1"
-                >
-                  <option value="floating">Floating</option>
-                  <option value="non-floating">Non-floating</option>
-                </select>
-              </div>
-
-              <div>
-                <Label htmlFor="floorPCA">
-                  Floor PCA <span className="text-destructive">*</span>
-                </Label>
-                <select
-                  id="floorPCA"
-                  value={floorPCA || ''}
-                  onChange={(e) => setFloorPCA(e.target.value ? (e.target.value as 'upper' | 'lower' | 'both') : null)}
-                  required
-                  className="w-full h-10 px-3 py-2 rounded-md border border-input bg-background text-sm mt-1"
-                >
-                  <option value="">-- Select --</option>
-                  <option value="upper">Upper</option>
-                  <option value="lower">Lower</option>
-                  <option value="both">Both</option>
-                </select>
-              </div>
-            </div>
-          )}
-
-          {/* SPT Properties */}
-          {rank === 'SPT' && (
             <>
-              <div>
-                <Label>SPT basic configure</Label>
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-                  <Info className="h-3.5 w-3.5" />
-                  <span>Go to SPT allocation dashboard for detailed configuration.</span>
+              <hr className="border-border" />
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                PCA configuration
+              </h4>
+              <div className="space-y-4">
+                <div>
+                  <Label>Assignment type <span className="text-destructive">*</span></Label>
+                  <Select
+                    value={floating ? 'floating' : 'non-floating'}
+                    onValueChange={(v) => setFloating(v === 'floating')}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="non-floating">Non-floating</SelectItem>
+                      <SelectItem value="floating">Floating</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {!floating && renderTeamField(false)}
+
+                <div>
+                  <Label>
+                    Floor PCA
+                    {isFloorPCARequired() && <span className="text-destructive"> *</span>}
+                  </Label>
+                  <Select
+                    value={floorPCA ?? '__none__'}
+                    onValueChange={(v) => setFloorPCA(v === '__none__' ? null : (v as 'upper' | 'lower' | 'both'))}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="-- Select --" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">-- Select --</SelectItem>
+                      <SelectItem value="upper">Upper</SelectItem>
+                      <SelectItem value="lower">Lower</SelectItem>
+                      <SelectItem value="both">Both</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {!floating && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Optional for non-floating PCA.
+                    </p>
+                  )}
                 </div>
               </div>
-              <div className="space-y-4 border p-4 rounded-md">
+            </>
+          )}
+
+          {/* SPT Configuration */}
+          {rank === 'SPT' && (
+            <>
+              <hr className="border-border" />
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                SPT configuration
+              </h4>
+              <div className="space-y-4">
                 {loadingSPTData ? (
                   <p className="text-sm text-muted-foreground">Loading SPT data...</p>
                 ) : (
                   <>
-                    <div className="flex items-center space-x-3">
-                      <Label htmlFor="specialty" className="whitespace-nowrap">Specialty</Label>
-                      <select
-                        id="specialty"
-                        value={specialty || 'nil'}
-                        onChange={(e) => setSpecialty(e.target.value === 'nil' ? null : e.target.value)}
-                        className="flex-1 h-10 px-3 py-2 rounded-md border border-input bg-background text-sm"
+                    <div>
+                      <Label>Specialty</Label>
+                      <Select
+                        value={specialty ?? 'nil'}
+                        onValueChange={(v) => setSpecialty(v === 'nil' ? null : v)}
                       >
-                        <option value="nil">-- None --</option>
-                        {SPECIALTY_OPTIONS.filter((opt) => opt !== 'nil').map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger className="mt-1">
+                          <SelectValue placeholder="-- None --" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="nil">-- None --</SelectItem>
+                          {SPECIALTY_OPTIONS.filter((o) => o !== 'nil').map((opt) => (
+                            <SelectItem key={opt} value={opt}>
+                              {opt}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
 
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center gap-2">
                       <input
                         type="checkbox"
                         id="isRbipSupervisor"
@@ -334,31 +339,65 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
                         RBIP Supervisor (can substitute team heads when needed)
                       </Label>
                     </div>
+
+                    {renderTeamField(true)}
+                    {renderSpecialProgramField()}
                   </>
                 )}
               </div>
             </>
           )}
 
+          {/* Therapist / workman: Team & Special Program */}
+          {['APPT', 'RPT', 'workman'].includes(rank) && (
+            <>
+              <hr className="border-border" />
+              <div className="space-y-4">
+                {renderTeamField(false)}
+                {renderSpecialProgramField()}
+              </div>
+            </>
+          )}
+
+          {/* Special Program for PCA (only section if PCA - SPT/therapist already have it above) */}
+          {rank === 'PCA' && (
+            <>
+              <hr className="border-border" />
+              {renderSpecialProgramField()}
+            </>
+          )}
+
           {/* Status */}
+          <hr className="border-border" />
           <div>
-            <Label htmlFor="status">Status</Label>
-            <select
-              id="status"
-              value={status}
-              onChange={(e) => setStatus(e.target.value as StaffStatus)}
-              className="w-full h-10 px-3 py-2 rounded-md border border-input bg-background text-sm mt-1"
-            >
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="buffer">Buffer</option>
-            </select>
-            <p className="text-xs text-muted-foreground mt-1">
-              Active: staff will appear in team allocations and schedule page
-              <br />
-              Inactive: staff will not appear in allocations
-              <br />
-              Buffer: temporary staff with custom FTE values
+            <Label className="mb-2 block">Status</Label>
+            <div className="flex flex-wrap gap-2">
+              {(['active', 'inactive', 'buffer'] as const).map((s) => {
+                const selected = status === s
+                const badgeClass = selected
+                  ? s === 'active'
+                    ? 'bg-green-500 hover:bg-green-600 text-white border-transparent'
+                    : s === 'inactive'
+                      ? 'bg-gray-400 hover:bg-gray-500 text-white border-transparent'
+                      : 'bg-[#a4b1ed] hover:bg-[#8b9ae8] text-white border-transparent'
+                  : 'border border-border bg-muted/30 text-muted-foreground hover:bg-muted/50'
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setStatus(s)}
+                    className={cn(
+                      'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors',
+                      badgeClass
+                    )}
+                  >
+                    {s === 'active' ? 'Active' : s === 'inactive' ? 'Inactive' : 'Buffer'}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              Active: staff appears in allocations and schedule. Inactive: hidden from allocations. Buffer: temporary staff with custom FTE.
             </p>
           </div>
 
