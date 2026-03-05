@@ -137,12 +137,12 @@ export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
     return (
       <div className="space-y-1">
         <ScrollHintTable>
-          <table className="w-full min-w-[720px] table-fixed text-[11px] border border-amber-200/60 rounded-md overflow-hidden">
+          <table className="w-full table-fixed text-[11px] border border-amber-200/60 rounded-md overflow-hidden">
             <colgroup>
+              <col style={{ width: '12%' }} />
               <col style={{ width: '14%' }} />
-              <col style={{ width: '15%' }} />
-              <col style={{ width: '35.5%' }} />
-              <col style={{ width: '35.5%' }} />
+              <col style={{ width: '37%' }} />
+              <col style={{ width: '37%' }} />
             </colgroup>
             <thead className="bg-amber-100/60">
               <tr className="text-amber-950/80">

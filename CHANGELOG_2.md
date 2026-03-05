@@ -17,6 +17,7 @@
 - **Staff Edit Dialog — Flat layout and Radix** — section dividers (`hr`), uppercase headers; all selects use Radix UI; nested border boxes removed.
 - **Staff Edit Dialog — Status badge selection** — Active, Inactive, Buffer shown as clickable badge-style buttons (matching Staff Profile table) instead of dropdown.
 - **Team Merge Panel — Unmerge inline confirmation** — Unmerge button shows "Confirm?" and "Cancel" inline before unmerging.
+- **Saved-setup diff popover — table column sizing** — Removed `min-w-[720px]` so table fits popover; adjusted columns to 12% / 14% / 37% / 37% so Saved snapshot and Dashboard share space without forcing horizontal scroll.
 
 ---
 
