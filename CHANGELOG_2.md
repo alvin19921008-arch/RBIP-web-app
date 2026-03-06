@@ -3,6 +3,22 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-03-06 (unified staff edit save)
+
+### Added
+- **Staff Edit — unified draft save** — Layer 2 (SPT and Special Program overlays) now stage edits to parent; persistence only on Layer 1 Save. New staff can configure overlays before first save.
+- **Staff Edit — dismiss protection** — Main dialog and overlay sheets no longer close on backdrop click or Escape; explicit Cancel/X still close.
+- **API `/api/staff/save`** — Single endpoint persisting staff, SPT, and special-program data via RPC `save_staff_edit_dialog_v1`.
+
+### Changed
+- **Staff Edit — reminder text** — Concise "Pending until Save." replaces verbose copy on SPT and Special Program cards/overlays.
+- **Staff Edit — Special Program** — Removed blocked state for new staff; all edits draft-only until Layer 1 Save.
+
+### Fixed
+- **RPC `save_staff_edit_dialog_v1`** — Replaced unsupported `jsonb_object_length()` with `EXISTS (SELECT 1 FROM jsonb_object_keys(...))` for Supabase Postgres compatibility.
+
+---
+
 ## [Unreleased] - 2026-03-03 (dashboard UX — staff profile, edit dialog, team merge)
 
 ### Added
