@@ -9,12 +9,12 @@ import { Staff, Team } from '@/types/staff'
 import { Weekday } from '@/types/staff'
 import { getSlotLabel } from '@/lib/utils/slotHelpers'
 import { createEmptyTeamRecordFactory } from '@/lib/utils/types'
-import { Trash2, Edit2, ChevronUp, ChevronDown, ChevronRight, MoveUp, MoveDown, X } from 'lucide-react'
+import { Trash2, Edit2, ChevronUp, ChevronDown, ChevronRight, MoveUp, MoveDown, X, Info } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
-import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
+import { buildSpecialProgramSummaryFromWeekdaySource } from '@/lib/utils/staffEditDrafts'
 
 interface StaffSpecialProgram {
   name: string
@@ -60,7 +60,6 @@ export function SpecialProgramPanel() {
   const [showPreferenceDialog, setShowPreferenceDialog] = useState(false)
   const [pendingSave, setPendingSave] = useState<(() => Promise<void>) | null>(null)
   const [expandedStaffIds, setExpandedStaffIds] = useState<Set<string>>(new Set())
-  const [collapsedRankGroups, setCollapsedRankGroups] = useState<Set<'therapists' | 'pca'>>(new Set(['pca']))
   const [staffIdsToAdd, setStaffIdsToAdd] = useState<Set<string>>(new Set())
   const [staffIdPendingDelete, setStaffIdPendingDelete] = useState<string | null>(null)
   const expand = useDashboardExpandableCard<string>({ animationMs: 220 })
@@ -86,6 +85,7 @@ export function SpecialProgramPanel() {
         // Extract special programs from staff data
         const programMap = new Map<string, Staff[]>()
         staffRes.data.forEach((s: Staff) => {
+          if ((s.status ?? 'active') !== 'active') return
           if (s.special_program && Array.isArray(s.special_program)) {
             s.special_program.forEach((prog: string) => {
               if (!programMap.has(prog)) {
@@ -565,7 +565,6 @@ export function SpecialProgramPanel() {
   return (
     <>
       <div className="pt-6 space-y-6">
-        <DashboardConfigMetaBanner />
         {loading ? (
           <p>Loading...</p>
         ) : (
@@ -607,15 +606,19 @@ export function SpecialProgramPanel() {
                                   Add Staff to Program
                                 </h4>
                                 {editingStaffProgram.name === 'DRM' && (
-                                  <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
-                                    <p className="font-medium mb-1">PCA Note:</p>
-                                    <p>PCA would not carry DRM as special program property, therefore N/A to choose from. User can still choose PCA to assign into DRO in PCA Preference Dashboard.</p>
+                                  <div className="mb-3 w-full bg-blue-50/40 border border-blue-100/60 rounded-xl p-3 shadow-sm">
+                                    <div className="flex items-start gap-2 text-sm text-blue-900">
+                                      <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600" />
+                                      <span>Special program DRM&apos;s PCA is given by adding PCA pending FTE values to the team. So here only therapists are needed to be configured.</span>
+                                    </div>
                                   </div>
                                 )}
                                 {editingStaffProgram.name === 'Robotic' && (
-                                  <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
-                                    <p className="font-medium mb-1">Robotic Note:</p>
-                                    <p>The allocation algorithm would only assign PCA to Robotic, so only PCA is needed to be included here.</p>
+                                  <div className="mb-3 w-full bg-blue-50/40 border border-blue-100/60 rounded-xl p-3 shadow-sm">
+                                    <div className="flex items-start gap-2 text-sm text-blue-900">
+                                      <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600" />
+                                      <span>The allocation algorithm would only assign PCA to Robotic, so only PCA is needed to be included here.</span>
+                                    </div>
                                   </div>
                                 )}
                                 <p className="text-xs text-muted-foreground mb-2">
@@ -624,13 +627,12 @@ export function SpecialProgramPanel() {
                                 <div className="max-h-40 overflow-y-auto bg-muted/30 rounded p-2 pr-1 scrollbar-visible">
                                   {(() => {
                                     const eligibleStaff = staff.filter(s => {
-                                      if (s.status === 'inactive') return false
+                                      if ((s.status ?? 'active') !== 'active') return false
                                       if (editingStaffProgram.name === 'DRM' && s.rank === 'PCA') return false
                                       if (editingStaffProgram.name === 'Robotic' && s.rank !== 'PCA') return false
                                       return !editingStaffProgram.configs.some(c => c.staff_id === s.id)
                                     })
-                                    
-                                    const regularStaff = eligibleStaff.filter(s => s.status !== 'buffer')
+                                    const regularStaff = eligibleStaff
                                     const bufferStaff = eligibleStaff.filter(s => s.status === 'buffer')
                                     
                                     const toggleStaffSelection = (staffId: string) => {
@@ -766,23 +768,18 @@ export function SpecialProgramPanel() {
                                     })
                                   }
 
-                                  const renderStaffConfig = (config: StaffProgramConfig, idx: number) => {
+                                  const renderStaffConfig = (config: StaffProgramConfig) => {
                                     const staffMember = staff.find(s => s.id === config.staff_id)
                                     if (!staffMember) return null
                                     const actualIdx = editingStaffProgram.configs.findIndex(c => c.staff_id === config.staff_id)
                                     const isExpanded = expandedStaffIds.has(config.staff_id)
-                                    const enabledDays = (['mon', 'tue', 'wed', 'thu', 'fri'] as Weekday[]).filter(day => {
-                                      const dayConfig = config.weekdayConfigs[day]
-                                      return dayConfig.enabled || dayConfig.slots.length > 0 || dayConfig.fte_subtraction > 0
-                                    })
-                                    const totalFte = enabledDays.reduce((sum, day) => sum + (config.weekdayConfigs[day].fte_subtraction || 0), 0)
-                                    const slotsSummary = enabledDays.map(day => {
-                                      const slots = config.weekdayConfigs[day].slots
-                                      return slots.map(s => getSlotLabel(s)).join(',')
-                                    }).join(' | ') || 'None'
+                                    const summary = buildSpecialProgramSummaryFromWeekdaySource(
+                                      config.weekdayConfigs,
+                                      editingStaffProgram.name as any
+                                    )
 
                                     return (
-                                      <div key={config.staff_id} className="pl-4">
+                                      <div key={config.staff_id} className="border-b border-border/60 py-1 last:border-b-0">
                                         <div
                                           className="group flex items-center gap-2 py-2 rounded-md px-2 hover:bg-muted/50 transition-colors cursor-pointer"
                                           onClick={(e) => {
@@ -855,19 +852,18 @@ export function SpecialProgramPanel() {
                                           )}
                                         </div>
 
-                                        {/* Collapsed summary - show each weekday with FTE */}
-                                        {!isExpanded && enabledDays.length > 0 && (
-                                          <div className="pl-6 pb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                                            {enabledDays.map(day => (
-                                              <span key={day}>
-                                                {day.charAt(0).toUpperCase() + day.slice(1)}: {config.weekdayConfigs[day].fte_subtraction?.toFixed(2) || '0.00'}
-                                              </span>
-                                            ))}
+                                        {!isExpanded && (
+                                          <div className="pl-8 pr-2 pb-2 text-xs text-muted-foreground">
+                                            {summary.exists ? (
+                                              <div className="whitespace-pre-line">{summary.displayText}</div>
+                                            ) : (
+                                              <span>No weekdays configured yet.</span>
+                                            )}
                                           </div>
                                         )}
 
                                         {isExpanded && (
-                                          <div className="pl-6 pb-3 space-y-3">
+                                          <div className="pl-8 pr-2 pb-3 space-y-3">
                                             {/* Weekdays Selection */}
                                             <div>
                                               <label className="block text-sm font-medium mb-2">Weekdays</label>
@@ -989,81 +985,43 @@ export function SpecialProgramPanel() {
                                             </div>
                                           </div>
                                         )}
-                                        <hr className="border-border" />
+                                      </div>
+                                    )
+                                  }
+
+                                  const renderRankGroup = (
+                                    title: string,
+                                    configs: StaffProgramConfig[]
+                                  ) => {
+                                    if (configs.length === 0) return null
+
+                                    return (
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2 pb-2">
+                                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                            {title}
+                                          </span>
+                                          <span className="text-xs text-muted-foreground">({configs.length})</span>
+                                        </div>
+                                        <div>
+                                          {configs.map((config) => renderStaffConfig(config))}
+                                        </div>
                                       </div>
                                     )
                                   }
 
                                   return (
-                                    <div className="space-y-2">
-                                      {/* Therapists Group */}
-                                      {therapistConfigs.length > 0 && (
-                                        <div>
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setCollapsedRankGroups(prev => {
-                                                const next = new Set(prev)
-                                                if (next.has('therapists')) {
-                                                  next.delete('therapists')
-                                                } else {
-                                                  next.add('therapists')
-                                                }
-                                                return next
-                                              })
-                                            }}
-                                            className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground w-full py-1"
-                                          >
-                                            {collapsedRankGroups.has('therapists') ? (
-                                              <ChevronRight className="h-4 w-4" />
-                                            ) : (
-                                              <ChevronDown className="h-4 w-4" />
-                                            )}
-                                            THERAPISTS ({therapistConfigs.length})
-                                          </button>
-                                          {!collapsedRankGroups.has('therapists') && (
-                                            <div className="mt-2">
-                                              {therapistConfigs.map((config, idx) => renderStaffConfig(config, idx))}
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-
-                                      {/* PCA Group */}
-                                      {pcaConfigs.length > 0 && (
-                                        <div>
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setCollapsedRankGroups(prev => {
-                                                const next = new Set(prev)
-                                                if (next.has('pca')) {
-                                                  next.delete('pca')
-                                                } else {
-                                                  next.add('pca')
-                                                }
-                                                return next
-                                              })
-                                            }}
-                                            className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground w-full py-1"
-                                          >
-                                            {collapsedRankGroups.has('pca') ? (
-                                              <ChevronRight className="h-4 w-4" />
-                                            ) : (
-                                              <ChevronDown className="h-4 w-4" />
-                                            )}
-                                            PCA ({pcaConfigs.length})
-                                          </button>
-                                          {!collapsedRankGroups.has('pca') && (
-                                            <div className="mt-2">
-                                              {pcaConfigs.map((config, idx) => renderStaffConfig(config, idx))}
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-
+                                    <div
+                                      className={`space-y-4 ${
+                                        therapistConfigs.length > 0 && pcaConfigs.length > 0
+                                          ? 'lg:grid lg:grid-cols-2 lg:items-start lg:gap-4 lg:space-y-0'
+                                          : ''
+                                      }`}
+                                    >
+                                      {renderRankGroup('Therapists', therapistConfigs)}
+                                      {renderRankGroup('PCA', pcaConfigs)}
                                       {editingStaffProgram.configs.length === 0 && (
-                                        <p className="text-sm text-muted-foreground py-2">No staff configured yet.</p>
+                                        <p className="text-sm text-muted-foreground py-2 lg:col-span-2">No staff configured yet.</p>
                                       )}
                                     </div>
                                   )
@@ -1079,7 +1037,7 @@ export function SpecialProgramPanel() {
                                 
                                 const pcaStaffInProgram = editingStaffProgram.configs
                                   .map(c => staff.find(s => s.id === c.staff_id))
-                                  .filter(s => s && s.rank === 'PCA' && s.status !== 'inactive') as Staff[]
+                                  .filter(s => s && s.rank === 'PCA' && (s.status ?? 'active') === 'active') as Staff[]
                                 
                                 if (pcaStaffInProgram.length === 0) return null
                                 

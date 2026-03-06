@@ -19,6 +19,7 @@ export type FeatureId =
   | 'schedule.diagnostics.save'
   | 'schedule.diagnostics.snapshot-health'
   | 'schedule.tools.reset-to-baseline'
+  | 'schedule.diagnostics.cache-status'
   // History actions
   | 'history.delete-schedules'
   // Account management actions

@@ -103,6 +103,12 @@ export const FEATURE_CATALOG: FeatureDefinition[] = [
     label: 'Reset to baseline button',
     description: 'Show “Reset to baseline” under the Clear action',
   },
+  {
+    id: 'schedule.diagnostics.cache-status',
+    group: 'schedule',
+    label: 'Cache status and clear cache',
+    description: 'Show cache status badge and clear cache action (admin and dev gated)',
+  },
 
   // History actions
   {

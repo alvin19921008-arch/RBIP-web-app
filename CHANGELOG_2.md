@@ -7,12 +7,14 @@
 
 ### Added
 - **Staff Edit — unified draft save** — Layer 2 (SPT and Special Program overlays) now stage edits to parent; persistence only on Layer 1 Save. New staff can configure overlays before first save.
+- **Access settings — Cache status and clear cache** — New feature `schedule.diagnostics.cache-status` in Account Management → Access settings. Cache status badge and clear cache action are admin+dev gated by default; configurable per role.
 - **Staff Edit — dismiss protection** — Main dialog and overlay sheets no longer close on backdrop click or Escape; explicit Cancel/X still close.
 - **API `/api/staff/save`** — Single endpoint persisting staff, SPT, and special-program data via RPC `save_staff_edit_dialog_v1`.
 
 ### Changed
 - **Staff Edit — reminder text** — Concise "Pending until Save." replaces verbose copy on SPT and Special Program cards/overlays.
 - **Staff Edit — Special Program** — Removed blocked state for new staff; all edits draft-only until Layer 1 Save.
+- **Configured staff — active-only** — Special Program and SPT Allocation panels show and allow adding only active staff (inactive excluded). PCA Preference shows active and buffer PCAs (inactive excluded).
 
 ### Fixed
 - **RPC `save_staff_edit_dialog_v1`** — Replaced unsupported `jsonb_object_length()` with `EXISTS (SELECT 1 FROM jsonb_object_keys(...))` for Supabase Postgres compatibility.

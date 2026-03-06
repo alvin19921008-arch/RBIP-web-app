@@ -13,7 +13,6 @@ import { X, ChevronUp, ChevronDown, ChevronRight } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
-import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
 import { Input } from '@/components/ui/input'
 import { Tooltip } from '@/components/ui/tooltip'
 
@@ -92,13 +91,16 @@ export function SPTAllocationPanel() {
     }
   }
 
+  const activeStaff = staff.filter((s) => (s.status ?? 'active') === 'active')
+  const displayedAllocations = allocations.filter((a) =>
+    activeStaff.some((s) => s.id === a.staff_id)
+  )
   const configuredStaffIds = new Set(allocations.map((a) => a.staff_id))
-  const availableStaffForNew = staff.filter((s) => !configuredStaffIds.has(s.id))
+  const availableStaffForNew = activeStaff.filter((s) => !configuredStaffIds.has(s.id))
   const addDisabled = availableStaffForNew.length === 0
 
   return (
     <div className="pt-6 space-y-4">
-      <DashboardConfigMetaBanner />
         {loading ? (
           <p>Loading...</p>
         ) : (
@@ -126,7 +128,7 @@ export function SPTAllocationPanel() {
             )}
             
             <div className="divide-y divide-border">
-              {allocations.map((alloc) => {
+              {displayedAllocations.map((alloc) => {
                 const isEditing = editingAllocation?.id === alloc.id
                 
                 if (isEditing) {
@@ -151,7 +153,7 @@ export function SPTAllocationPanel() {
                         </div>
                         <SPTAllocationForm
                           allocation={editingAllocation}
-                          staff={staff}
+                          staff={activeStaff}
                           onSave={handleSave}
                           onCancel={() => expand.close(() => setEditingAllocation(null))}
                         />
@@ -366,16 +368,20 @@ export function SPTAllocationPanel() {
   )
 }
 
-function SPTAllocationForm({
+export function SPTAllocationForm({
   allocation,
   staff,
   onSave,
   onCancel,
+  saveButtonLabel = 'Save',
+  cancelButtonLabel = 'Cancel',
 }: {
   allocation: Partial<SPTAllocation>
   staff: Staff[]
   onSave: (allocation: Partial<SPTAllocation>) => void
   onCancel: () => void
+  saveButtonLabel?: string
+  cancelButtonLabel?: string
 }) {
   type SlotModes = { am: 'AND' | 'OR'; pm: 'AND' | 'OR' }
   type WeekdayConfigState = {
@@ -450,6 +456,7 @@ function SPTAllocationForm({
   const [specialty, setSpecialty] = useState(allocation.specialty || '')
   const [isRbipSupervisor, setIsRbipSupervisor] = useState(allocation.is_rbip_supervisor || false)
   const [addWeekday, setAddWeekday] = useState<Weekday | ''>('')
+  const [pendingRemoveDay, setPendingRemoveDay] = useState<Weekday | null>(null)
 
   const allTeams: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
   const weekdayLabel: Record<Weekday, string> = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri' }
@@ -618,15 +625,41 @@ function SPTAllocationForm({
                         <span className="text-xs font-medium text-muted-foreground">
                           FTE: {derived.fte.toFixed(2)}
                         </span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                          onClick={() => removeDay(day)}
-                        >
-                          Remove
-                        </Button>
+                        {pendingRemoveDay === day ? (
+                          <div className="flex items-center gap-1">
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => {
+                                removeDay(day)
+                                setPendingRemoveDay(null)
+                              }}
+                            >
+                              Confirm?
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => setPendingRemoveDay(null)}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                            onClick={() => setPendingRemoveDay(day)}
+                          >
+                            Remove
+                          </Button>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-2 flex-wrap">
@@ -759,7 +792,7 @@ function SPTAllocationForm({
 
                       {!c.contributesFte && (
                         <div className="mt-3 space-y-1.5">
-                          <p className="text-xs text-muted-foreground">Display text when FTE=0:</p>
+                          <p className="text-xs text-muted-foreground">Display text on staff card on schedule page when FTE=0:</p>
                           <Input
                             value={c.displayText}
                             onChange={(e) =>
@@ -865,9 +898,9 @@ function SPTAllocationForm({
       </div>
 
       <div className="flex gap-2 pt-2">
-        <Button type="submit">Save</Button>
+        <Button type="submit">{saveButtonLabel}</Button>
         <Button type="button" variant="outline" onClick={onCancel}>
-          Cancel
+          {cancelButtonLabel}
         </Button>
       </div>
     </form>

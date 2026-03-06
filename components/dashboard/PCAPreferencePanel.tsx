@@ -12,7 +12,6 @@ import { getSlotLabel, getSlotTime } from '@/lib/utils/slotHelpers'
 import { FloorPCAMappingPanel } from '@/components/dashboard/FloorPCAMappingPanel'
 import { useToast } from '@/components/ui/toast-provider'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
-import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAccessControl } from '@/lib/access/useAccessControl'
@@ -213,7 +212,6 @@ export function PCAPreferencePanel() {
 
   return (
     <div className="pt-6 space-y-4">
-      <DashboardConfigMetaBanner />
         {loading ? (
           <p>Loading...</p>
         ) : (
@@ -291,10 +289,15 @@ export function PCAPreferencePanel() {
                         Floor PCA: <span className="text-foreground">{mainTeamPref?.floor_pca_selection ? (mainTeamPref.floor_pca_selection === 'upper' ? 'Upper' : 'Lower') : 'None'}</span>
                       </p>
                       <p>
-                        Preferred PCA: <span className="text-foreground">{mainTeamPref?.preferred_pca_ids && mainTeamPref.preferred_pca_ids.length > 0 ? mainTeamPref.preferred_pca_ids.map((id: string) => {
-                          const pca = staff.find(s => s.id === id)
-                          return pca ? pca.name : id
-                        }).join(', ') : 'None'}</span>
+                        Preferred PCA: <span className="text-foreground">{mainTeamPref?.preferred_pca_ids && mainTeamPref.preferred_pca_ids.length > 0 ? mainTeamPref.preferred_pca_ids
+                          .filter((id: string) => {
+                            const pca = staff.find(s => s.id === id)
+                            return pca && (pca.status ?? 'active') !== 'inactive'
+                          })
+                          .map((id: string) => {
+                            const pca = staff.find(s => s.id === id)
+                            return pca ? pca.name : id
+                          }).join(', ') || 'None' : 'None'}</span>
                       </p>
                       <p>
                         Preferred slot: <span className="text-foreground">{mainTeamPref?.preferred_slots && mainTeamPref.preferred_slots.length > 0 ? getSlotTime(mainTeamPref.preferred_slots[0]) : 'None'}</span>
@@ -366,14 +369,21 @@ export function PCAPreferencePanel() {
                           Floor PCA: {pref.floor_pca_selection === 'upper' ? 'Upper' : 'Lower'}
                         </p>
                       )}
-                      {pref.preferred_pca_ids && pref.preferred_pca_ids.length > 0 && (
-                      <p className="text-sm text-black">
-                          Preferred: {pref.preferred_pca_ids.map(id => {
+                      {pref.preferred_pca_ids && pref.preferred_pca_ids.length > 0 && (() => {
+                          const activeIds = pref.preferred_pca_ids.filter((id: string) => {
                             const pca = staff.find(s => s.id === id)
-                            return pca ? pca.name : id
-                          }).join(', ')}
-                      </p>
-                      )}
+                            return pca && (pca.status ?? 'active') !== 'inactive'
+                          })
+                          if (activeIds.length === 0) return null
+                          return (
+                            <p className="text-sm text-black">
+                              Preferred: {activeIds.map((id: string) => {
+                                const pca = staff.find(s => s.id === id)
+                                return pca ? pca.name : id
+                              }).join(', ')}
+                            </p>
+                          )
+                        })()}
                       {pref.preferred_slots && pref.preferred_slots.length > 0 && (
                         <p className="text-sm text-black">
                           Preferred slot: {getSlotTime(pref.preferred_slots[0])}
@@ -624,7 +634,7 @@ function PCAPreferenceForm({
   }
 
   const eligiblePCAs = staff.filter(s => {
-    if (s.status === 'inactive') return false
+    if ((s.status ?? 'active') === 'inactive') return false
     if (!s.floating) return false
     return !preferredPCA.includes(s.id)
   })

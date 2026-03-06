@@ -2,7 +2,8 @@
 
 import { type ReactNode } from 'react'
 import dynamic from 'next/dynamic'
-import { AlertCircle, Calendar, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
+import Link from 'next/link'
+import { AlertCircle, Calendar, ArrowLeftRight, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
 import type { Weekday } from '@/types/staff'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
@@ -38,6 +39,8 @@ export function ScheduleHeaderBar(props: {
   // Title + developer diagnostics
   userRole: 'developer' | 'admin' | 'user'
   showLoadDiagnostics?: boolean
+  /** When true, show cache status badge and clear cache action (access-settings gated, admin+dev by default) */
+  showCacheStatus?: boolean
   currentDateKey?: string
   lastLoadTiming: any
   navToScheduleTiming: any
@@ -85,7 +88,7 @@ export function ScheduleHeaderBar(props: {
   const nextLabel = `${formatDateDDMMYYYY(nextWorkingDay)} (${nextW})`
   const displayDate = props.selectedDateKey ? formatDateKeyDDMMYYYY(props.selectedDateKey) : formatDateDDMMYYYY(props.selectedDate)
 
-  const shouldShowDevCache = props.userRole === 'developer' || props.showLoadDiagnostics === true
+  const shouldShowDevCache = props.showCacheStatus === true || props.showLoadDiagnostics === true
   const devMeta: any = (props.lastLoadTiming as any)?.meta || {}
   const currentKey = props.selectedDateKey ?? props.currentDateKey ?? null
   const metaKey = typeof devMeta?.dateStr === 'string' ? devMeta.dateStr : null
@@ -209,6 +212,18 @@ export function ScheduleHeaderBar(props: {
                         ) : (
                           <div className="text-xs text-amber-950/70 py-2">No differences computed yet.</div>
                         )}
+                      </div>
+
+                      {/* Go to Sync / Publish — pull dashboard config to this date */}
+                      <div className="pt-3 mt-3 border-t border-amber-200/60">
+                        <p className="text-[11px] text-amber-900/80 mb-2">Pull dashboard config to this date.</p>
+                        <Link
+                          href="/dashboard?category=sync-publish"
+                          className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-100/90 px-2.5 py-1.5 text-xs font-medium text-amber-950 hover:bg-amber-200/90 hover:border-amber-400 transition-colors"
+                        >
+                          <ArrowLeftRight className="h-3.5 w-3.5" />
+                          Go to Sync / Publish
+                        </Link>
                       </div>
                     </div>
                   </div>
@@ -342,7 +357,7 @@ export function ScheduleHeaderBar(props: {
                   <span
                     role="button"
                     tabIndex={0}
-                    aria-label="Cache status (developer)"
+                    aria-label="Cache status"
                     suppressHydrationWarning
                     className={cn(
                       cacheBadgeClass,
@@ -357,12 +372,12 @@ export function ScheduleHeaderBar(props: {
                     cache:{cacheStateLabel}
                   </span>
                 </Tooltip>
-                {props.userRole === 'developer' && props.onClearCache ? (
+                {props.showCacheStatus && props.onClearCache ? (
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        aria-label="Developer cache actions"
+                        aria-label="Cache actions"
                         className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-transparent text-muted-foreground ring-offset-background transition-colors hover:border hover:border-border hover:bg-muted/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
                       >
                         <ChevronDown className="h-4 w-4" />
