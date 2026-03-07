@@ -1127,11 +1127,20 @@ export function FloatingPCAConfigDialog({
       preferenceProtectionMode,
       selectedPreferenceAssignments:
         mode === 'standard'
-          ? [...step32Assignments, ...step33Assignments].map((a) => ({
-              team: a.team,
-              slot: a.slot,
-              pcaId: a.pcaId,
-            }))
+          ? [
+              ...step32Assignments.map((a) => ({
+                team: a.team,
+                slot: a.slot,
+                pcaId: a.pcaId,
+                source: 'step32' as const,
+              })),
+              ...step33Assignments.map((a) => ({
+                team: a.team,
+                slot: a.slot,
+                pcaId: a.pcaId,
+                source: 'step33' as const,
+              })),
+            ]
           : [],
     })
 

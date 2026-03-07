@@ -195,6 +195,32 @@ function updateAllocationFTE(allocation: PCAAllocation, baseFTE: number): void {
   allocation.fte_remaining = Math.max(0, baseFTE - allocation.slot_assigned)
 }
 
+function getRemainingAssignableSlotCount(baseFTE: number, allocation?: PCAAllocation): number {
+  const remainingFTE = allocation ? allocation.fte_remaining : baseFTE
+  return Math.max(0, Math.floor((remainingFTE + 1e-9) / 0.25))
+}
+
+function assignSlotsToExistingAllocation(
+  allocation: PCAAllocation,
+  slots: number[],
+  team: Team,
+  maxAssignableSlots: number
+): number {
+  let assignedCount = 0
+
+  for (const slot of slots) {
+    if (assignedCount >= maxAssignableSlots) break
+
+    const slotField = slot === 1 ? 'slot1' : slot === 2 ? 'slot2' : slot === 3 ? 'slot3' : 'slot4'
+    if (allocation[slotField] === null) {
+      allocation[slotField] = team
+      assignedCount += 1
+    }
+  }
+
+  return assignedCount
+}
+
 /**
  * Updates pending PCA-FTE/team values based on current teamPCAAssigned
  * Stores RAW pending values (no rounding) for accurate tie-breaking
@@ -1543,14 +1569,8 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         let assignedCount = 0
 
         if (existingAllocation) {
-          // Update existing allocation
-          slots.forEach(slot => {
-            const slotField = slot === 1 ? 'slot1' : slot === 2 ? 'slot2' : slot === 3 ? 'slot3' : 'slot4'
-            if (existingAllocation[slotField] === null) {
-              existingAllocation[slotField] = subNeed.team
-              assignedCount += 1
-            }
-          })
+          const remainingSlotCapacity = getRemainingAssignableSlotCount(floatingPca.fte_pca, existingAllocation)
+          assignedCount = assignSlotsToExistingAllocation(existingAllocation, slots, subNeed.team, remainingSlotCapacity)
           const baseFTE = floatingPca.fte_pca
           updateAllocationFTE(existingAllocation, baseFTE)
         } else {
@@ -1601,6 +1621,10 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
       // Helper function to check if a PCA can cover specific slots
       const canPCACoverSlots = (pca: PCAData, slots: number[], existingAlloc: PCAAllocation | undefined): boolean => {
         if (!pca.is_available) return false
+
+        if (getRemainingAssignableSlotCount(pca.fte_pca, existingAlloc) < slots.length) {
+          return false
+        }
         
         // Check if all slots are in PCA's availableSlots
         if (pca.availableSlots && pca.availableSlots.length > 0) {
@@ -1632,12 +1656,12 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           
           // Found PCA that can cover all slots - assign all at once
           if (existingAllocation) {
-            missingSlots.forEach(slot => {
-              const slotField = slot === 1 ? 'slot1' : slot === 2 ? 'slot2' : slot === 3 ? 'slot3' : 'slot4'
-              if (existingAllocation[slotField] === null) {
-                existingAllocation[slotField] = subNeed.team
-              }
-            })
+            assignSlotsToExistingAllocation(
+              existingAllocation,
+              missingSlots,
+              subNeed.team,
+              getRemainingAssignableSlotCount(floatingPca.fte_pca, existingAllocation)
+            )
             const baseFTE = floatingPca.fte_pca
             updateAllocationFTE(existingAllocation, baseFTE)
           } else {
@@ -1695,13 +1719,13 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           
           if (!floatingPca) continue
           
-          // Check if this slot is already assigned to special program
+          // Any occupied slot is unavailable here, not just special-program work.
           const existingAllocation = getFirstAllocationByStaffId(floatingPca.id)
           if (existingAllocation) {
             const slotField = missingSlot === 1 ? 'slot1' : missingSlot === 2 ? 'slot2' : missingSlot === 3 ? 'slot3' : 'slot4'
-            // Check if slot is assigned to special program
-            if (existingAllocation[slotField] !== null && existingAllocation.special_program_ids && existingAllocation.special_program_ids.length > 0) {
-              continue // Slot already assigned to special program, skip
+            const canAssignAnotherSlot = getRemainingAssignableSlotCount(floatingPca.fte_pca, existingAllocation) > 0
+            if (existingAllocation[slotField] !== null || !canAssignAnotherSlot) {
+              continue
             }
           }
           
@@ -1763,10 +1787,11 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         if (nonPreferredFloating) {
           const existingAllocation = getFirstAllocationByStaffId(nonPreferredFloating.id)
           
-          // Check if slot is assigned to special program
+          // Any occupied slot is unavailable here, not just special-program work.
           if (existingAllocation) {
             const slotField = missingSlot === 1 ? 'slot1' : missingSlot === 2 ? 'slot2' : missingSlot === 3 ? 'slot3' : 'slot4'
-            if (existingAllocation[slotField] !== null && existingAllocation.special_program_ids && existingAllocation.special_program_ids.length > 0) {
+            const canAssignAnotherSlot = getRemainingAssignableSlotCount(nonPreferredFloating.fte_pca, existingAllocation) > 0
+            if (existingAllocation[slotField] !== null || !canAssignAnotherSlot) {
               // Skip this, try fallback
             } else {
               // Assign non-preferred floating PCA
@@ -1824,10 +1849,11 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           if (fallbackFloating) {
             const existingAllocation = getFirstAllocationByStaffId(fallbackFloating.id)
             
-            // Check if slot is assigned to special program
+            // Any occupied slot is unavailable here, not just special-program work.
             if (existingAllocation) {
               const slotField = missingSlot === 1 ? 'slot1' : missingSlot === 2 ? 'slot2' : missingSlot === 3 ? 'slot3' : 'slot4'
-              if (existingAllocation[slotField] !== null && existingAllocation.special_program_ids && existingAllocation.special_program_ids.length > 0) {
+              const canAssignAnotherSlot = getRemainingAssignableSlotCount(fallbackFloating.fte_pca, existingAllocation) > 0
+              if (existingAllocation[slotField] !== null || !canAssignAnotherSlot) {
                 // Skip - no substitute available
               } else {
                 // Assign fallback floating PCA
@@ -1884,10 +1910,11 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         if (fallbackFloating) {
           const existingAllocation = getFirstAllocationByStaffId(fallbackFloating.id)
           
-          // Check if slot is assigned to special program
+          // Any occupied slot is unavailable here, not just special-program work.
           if (existingAllocation) {
             const slotField = missingSlot === 1 ? 'slot1' : missingSlot === 2 ? 'slot2' : missingSlot === 3 ? 'slot3' : 'slot4'
-            if (existingAllocation[slotField] !== null && existingAllocation.special_program_ids && existingAllocation.special_program_ids.length > 0) {
+            const canAssignAnotherSlot = getRemainingAssignableSlotCount(fallbackFloating.fte_pca, existingAllocation) > 0
+            if (existingAllocation[slotField] !== null || !canAssignAnotherSlot) {
               // Skip - no substitute available
             } else {
               // Assign fallback floating PCA
@@ -3355,7 +3382,7 @@ export interface FloatingPCAAllocationContextV2 {
   /**
    * Preference handling policy for Step 3.4 Standard mode:
    * - 'legacy': use DB preferences directly (historical behavior)
-   * - 'selected_only': only selected Step 3.2/3.3 picks are treated as active preferences
+   * - 'selected_only': only selected Step 3.2 picks are treated as active preferences
    */
   preferenceSelectionMode?: 'legacy' | 'selected_only'
   /**
@@ -3366,11 +3393,13 @@ export interface FloatingPCAAllocationContextV2 {
   preferenceProtectionMode?: 'exclusive' | 'share'
   /**
    * User-selected Step 3.2/3.3 assignments. Used when preferenceSelectionMode='selected_only'.
+   * Only Step 3.2 selections participate in Step 3.4 "preferred" protection.
    */
   selectedPreferenceAssignments?: Array<{
     team: Team
     slot: number
     pcaId: string
+    source?: 'step32' | 'step33'
   }>
 }
 
@@ -3499,10 +3528,13 @@ export async function allocateFloatingPCA_v2(
   const errors: { preferredSlotUnassigned?: string[] } = {}
   
   const useSelectionDrivenPreferences = mode === 'standard' && preferenceSelectionMode === 'selected_only'
+  const selectedStep32Assignments = selectedPreferenceAssignments.filter(
+    (assignment) => assignment.source !== 'step33'
+  )
   const effectivePreferences = useSelectionDrivenPreferences
     ? buildSelectionDrivenPreferences(
         pcaPreferences,
-        selectedPreferenceAssignments.map((a) => ({ team: a.team, pcaId: a.pcaId }))
+        selectedStep32Assignments.map((a) => ({ team: a.team, pcaId: a.pcaId }))
       )
     : pcaPreferences
 
@@ -3516,7 +3548,7 @@ export async function allocateFloatingPCA_v2(
     }
 
     const map = new Map<string, Team[]>()
-    for (const assignment of selectedPreferenceAssignments) {
+    for (const assignment of selectedStep32Assignments) {
       if ((pendingFTE[assignment.team] ?? 0) <= 0) continue
       const teams = map.get(assignment.pcaId) ?? []
       if (!teams.includes(assignment.team)) {
@@ -3536,7 +3568,6 @@ export async function allocateFloatingPCA_v2(
     teamPrefs[team] = getTeamPreferenceInfo(team, effectivePreferences)
   }
 
-  let extraCoverageLogCount = 0
   const applyExtraCoverageRoundRobin = () => {
     if (extraCoverageMode !== 'round-robin-team-order') return
 
@@ -3621,7 +3652,6 @@ export async function allocateFloatingPCA_v2(
             assignmentTag: 'extra',
             wasFloorPCA: isFloorPCAForTeam(pca as any, pref.teamFloor),
           })
-          extraCoverageLogCount += 1
         }
       }
     }

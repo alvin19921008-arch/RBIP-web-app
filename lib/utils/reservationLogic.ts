@@ -12,6 +12,7 @@ import { PCAPreference, SpecialProgram } from '@/types/allocation'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { getAllSubstitutionSlots } from '@/lib/utils/substitutionFor'
+import { findAvailablePCAs } from '@/lib/utils/floatingPCAHelpers'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -34,6 +35,21 @@ export interface SlotAssignment {
   slot: number
   pcaId: string
   pcaName: string
+}
+
+export interface Step30AutoBufferParams {
+  currentPendingFTE: Record<Team, number>
+  currentAllocations: PCAAllocation[]
+  floatingPCAs: PCAData[]
+  bufferFloatingPCAIds: string[]
+  teamOrder: Team[]
+  ratio: number
+}
+
+export interface Step30AutoBufferResult {
+  step30Assignments: SlotAssignment[]
+  updatedPendingFTE: Record<Team, number>
+  updatedAllocations: PCAAllocation[]
 }
 
 // Result of computing reservations
@@ -219,6 +235,31 @@ export function executeSlotAssignments(
   
   for (const assignment of assignments) {
     const { team, slot, pcaId } = assignment
+
+    // Step 3.2 / 3.3 reservations must not consume more than the team's
+    // remaining pending quarter-slots, even if the UI queued extra selections.
+    const pendingBeforeAssignment = roundToNearestQuarterWithMidpoint(updatedPendingFTE[team] || 0)
+    if (pendingBeforeAssignment < 0.25) {
+      continue
+    }
+
+    const canStillExecute = findAvailablePCAs({
+      pcaPool: floatingPCAs,
+      team,
+      teamFloor: null,
+      floorMatch: 'any',
+      excludePreferredOfOtherTeams: false,
+      preferredPCAIdsOfOtherTeams: new Map(),
+      pendingFTEPerTeam: updatedPendingFTE,
+      requiredSlot: slot,
+      existingAllocations: updatedAllocations,
+      gymSlot: null,
+      avoidGym: false,
+    }).some((pca) => pca.id === pcaId)
+
+    if (!canStillExecute) {
+      continue
+    }
     
     // Decrement team's pending FTE by 0.25
     updatedPendingFTE[team] = Math.max(0, (updatedPendingFTE[team] || 0) - 0.25)
@@ -269,6 +310,106 @@ export function executeSlotAssignments(
     updatedPendingFTE,
     updatedAllocations,
     pcaFTEChanges,
+  }
+}
+
+export function simulateStep30BufferPreAssignments(
+  params: Step30AutoBufferParams
+): Step30AutoBufferResult {
+  const {
+    currentPendingFTE,
+    currentAllocations,
+    floatingPCAs,
+    bufferFloatingPCAIds,
+    teamOrder,
+    ratio,
+  } = params
+
+  let updatedPendingFTE = { ...currentPendingFTE }
+  let updatedAllocations = currentAllocations.map((allocation) => ({ ...allocation }))
+  const step30Assignments: SlotAssignment[] = []
+
+  const normalizedRatio = Math.max(0, Math.min(1, ratio || 0))
+  if (normalizedRatio <= 0) {
+    return { step30Assignments, updatedPendingFTE, updatedAllocations }
+  }
+
+  const countAssignedSlots = (alloc: PCAAllocation) => {
+    let n = 0
+    if (alloc.slot1) n++
+    if (alloc.slot2) n++
+    if (alloc.slot3) n++
+    if (alloc.slot4) n++
+    return n
+  }
+
+  const pickNextTeam = (pending: Record<Team, number>): Team | null => {
+    let best: Team | null = null
+    let bestVal = -Infinity
+    for (const team of teamOrder) {
+      const value = pending[team] || 0
+      if (value > bestVal) {
+        bestVal = value
+        best = team
+      }
+    }
+    if (!best) return null
+    return (pending[best] || 0) > 0 ? best : null
+  }
+
+  for (const pcaId of bufferFloatingPCAIds) {
+    const pca = floatingPCAs.find((candidate) => candidate.id === pcaId)
+    if (!pca) continue
+
+    const totalSlots = Math.max(0, Math.min(4, Math.round((pca.fte_pca || 0) / 0.25)))
+    if (totalSlots <= 0) continue
+
+    const existing = updatedAllocations.find((allocation) => allocation.staff_id === pcaId)
+    const already = existing ? countAssignedSlots(existing) : 0
+    const remainingSlots = Math.max(0, totalSlots - already)
+    const target = Math.max(0, Math.min(remainingSlots, Math.floor(remainingSlots * normalizedRatio)))
+    if (target <= 0) continue
+
+    const validFreeSlots = [1, 2, 3, 4].filter((slot) =>
+      findAvailablePCAs({
+        pcaPool: floatingPCAs,
+        team: 'FO',
+        teamFloor: null,
+        floorMatch: 'any',
+        excludePreferredOfOtherTeams: false,
+        preferredPCAIdsOfOtherTeams: new Map(),
+        pendingFTEPerTeam: updatedPendingFTE,
+        requiredSlot: slot,
+        existingAllocations: updatedAllocations,
+        gymSlot: null,
+        avoidGym: false,
+      }).some((candidate) => candidate.id === pcaId)
+    )
+
+    for (const slot of validFreeSlots.slice(0, target)) {
+      const team = pickNextTeam(updatedPendingFTE)
+      if (!team) break
+
+      const assignment: SlotAssignment = { team, slot, pcaId, pcaName: pca.name }
+      const result = executeSlotAssignments([assignment], updatedPendingFTE, updatedAllocations, floatingPCAs)
+
+      const changed =
+        JSON.stringify(result.updatedPendingFTE) !== JSON.stringify(updatedPendingFTE) ||
+        JSON.stringify(result.updatedAllocations) !== JSON.stringify(updatedAllocations)
+
+      updatedPendingFTE = result.updatedPendingFTE
+      updatedAllocations = result.updatedAllocations
+
+      if (changed) {
+        step30Assignments.push(assignment)
+      }
+    }
+  }
+
+  return {
+    step30Assignments,
+    updatedPendingFTE,
+    updatedAllocations,
   }
 }
 
@@ -369,20 +510,12 @@ export interface AdjacentSlotResult {
  * - CRP: slot 2 → CPPC
  * - Other programs: all slots in the allocation's primary team
  */
-function isSlotFromSpecialProgram(
+function isSlotFromProgram(
   allocation: PCAAllocation,
   slot: number,
   team: Team,
-  specialPrograms: SpecialProgram[]
+  program: SpecialProgram
 ): boolean {
-  if (!allocation.special_program_ids || allocation.special_program_ids.length === 0) {
-    return false
-  }
-
-  // Find the special program(s) for this allocation
-  const program = specialPrograms.find(p => allocation.special_program_ids?.includes(p.id))
-  if (!program) return false
-
   // For Robotic: slots 1-2 → SMM, slots 3-4 → SFM
   if (program.name === 'Robotic') {
     if (team === 'SMM') {
@@ -402,6 +535,38 @@ function isSlotFromSpecialProgram(
   // For other programs, if the current team matches the allocation's primary team,
   // assume all slots in that team are special program slots
   return allocation.team === team
+}
+
+function getProgramsForAllocation(
+  allocation: PCAAllocation,
+  specialPrograms: SpecialProgram[]
+): SpecialProgram[] {
+  const ids = allocation.special_program_ids
+  if (!Array.isArray(ids) || ids.length === 0) return []
+  return specialPrograms.filter((program) => ids.includes(program.id))
+}
+
+function isSlotFromSpecialProgram(
+  allocation: PCAAllocation,
+  slot: number,
+  team: Team,
+  specialPrograms: SpecialProgram[]
+): boolean {
+  return getProgramsForAllocation(allocation, specialPrograms).some((program) =>
+    isSlotFromProgram(allocation, slot, team, program)
+  )
+}
+
+function getSpecialProgramNameForSlot(
+  allocation: PCAAllocation,
+  slot: number,
+  team: Team,
+  specialPrograms: SpecialProgram[]
+): string {
+  const matchingProgram = getProgramsForAllocation(allocation, specialPrograms).find((program) =>
+    isSlotFromProgram(allocation, slot, team, program)
+  )
+  return matchingProgram?.name || 'Unknown Program'
 }
 
 /**
@@ -446,12 +611,6 @@ export function computeAdjacentSlotReservations(
   for (const allocation of specialProgramAllocations) {
     const pca = floatingPcaById.get(allocation.staff_id)
     const pcaName = pca?.name || 'Unknown PCA'
-    
-    // Find the special program name
-    const specialProgram = allocation.special_program_ids && allocation.special_program_ids.length > 0
-      ? specialPrograms.find(p => allocation.special_program_ids?.includes(p.id))
-      : null
-    const specialProgramName = specialProgram?.name || 'Unknown Program'
     
     // Check each slot in this allocation
     const slots = [
@@ -503,6 +662,7 @@ export function computeAdjacentSlotReservations(
       }
       
       // Add to reservations
+      const specialProgramName = getSpecialProgramNameForSlot(allocation, slot, team, specialPrograms)
       adjacentReservations[team].push({
         pcaId: allocation.staff_id,
         pcaName,

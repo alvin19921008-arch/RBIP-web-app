@@ -10227,7 +10227,12 @@ function SchedulePageContent() {
               const baseExistingAllocations = recalculateFromCurrentState().existingAllocations
 
               const { allocateFloatingPCA_v2 } = await import('@/lib/algorithms/pcaAllocation')
-              const { computeReservations, computeAdjacentSlotReservations, executeSlotAssignments } = await import('@/lib/utils/reservationLogic')
+              const {
+                computeReservations,
+                computeAdjacentSlotReservations,
+                executeSlotAssignments,
+                simulateStep30BufferPreAssignments,
+              } = await import('@/lib/utils/reservationLogic')
               const {
                 recordAssignment,
                 getTeamPreferenceInfo,
@@ -10265,46 +10270,17 @@ function SchedulePageContent() {
                 const bufferFloatingPCAs = (bufferStaff || []).filter(
                   (s) => s.rank === 'PCA' && s.status === 'buffer' && (s as any).floating
                 )
-                const byId = new Map<string, any>(floatingPCAs.map((p: any) => [p.id, p]))
-                const countAssignedSlots = (alloc: any) => {
-                  let n = 0
-                  if (alloc.slot1) n++
-                  if (alloc.slot2) n++
-                  if (alloc.slot3) n++
-                  if (alloc.slot4) n++
-                  return n
-                }
-
-                for (const staffRow of bufferFloatingPCAs) {
-                  const p = byId.get(staffRow.id)
-                  if (!p) continue
-                  const totalSlots = Math.max(0, Math.min(4, Math.round((p.fte_pca || 0) / 0.25)))
-                  if (totalSlots <= 0) continue
-
-                  const existing = currentAllocations.find((a: any) => a.staff_id === staffRow.id)
-                  const already = existing ? countAssignedSlots(existing) : 0
-                  const remainingSlots = Math.max(0, totalSlots - already)
-                  const target = Math.max(0, Math.min(remainingSlots, Math.floor(remainingSlots * ratio)))
-                  if (target <= 0) continue
-
-                  // Find which slots are free.
-                  const taken = new Set<number>()
-                  if (existing?.slot1) taken.add(1)
-                  if (existing?.slot2) taken.add(2)
-                  if (existing?.slot3) taken.add(3)
-                  if (existing?.slot4) taken.add(4)
-                  const freeSlots = [1, 2, 3, 4].filter((s) => !taken.has(s)).slice(0, target)
-
-                  for (const slot of freeSlots) {
-                    const team = pickNextTeam(currentPending)
-                    if (!team) break
-                    const assignment = { team, slot, pcaId: staffRow.id, pcaName: p.name }
-                    step30Assignments.push(assignment)
-                    const r = executeSlotAssignments([assignment], currentPending, currentAllocations, floatingPCAs as any)
-                    currentPending = r.updatedPendingFTE as any
-                    currentAllocations = r.updatedAllocations as any
-                  }
-                }
+                const result = simulateStep30BufferPreAssignments({
+                  currentPendingFTE: currentPending as any,
+                  currentAllocations: currentAllocations as any,
+                  floatingPCAs: floatingPCAs as any,
+                  bufferFloatingPCAIds: bufferFloatingPCAs.map((staff) => staff.id),
+                  teamOrder,
+                  ratio,
+                })
+                step30Assignments.push(...result.step30Assignments)
+                currentPending = result.updatedPendingFTE as any
+                currentAllocations = result.updatedAllocations as any
               }
 
               // Step 3.2 (auto): preferred PCA + preferred slot reservations.
@@ -10404,13 +10380,22 @@ function SchedulePageContent() {
                 preferenceProtectionMode: 'exclusive',
                 selectedPreferenceAssignments:
                   (((mode as any) ?? 'standard') === 'standard'
-                    ? [...step32Assignments, ...step33Assignments]
+                    ? [
+                        ...step32Assignments.map((a) => ({
+                          team: a.team,
+                          slot: a.slot,
+                          pcaId: a.pcaId,
+                          source: 'step32' as const,
+                        })),
+                        ...step33Assignments.map((a) => ({
+                          team: a.team,
+                          slot: a.slot,
+                          pcaId: a.pcaId,
+                          source: 'step33' as const,
+                        })),
+                      ]
                     : []
-                  ).map((a) => ({
-                    team: a.team,
-                    slot: a.slot,
-                    pcaId: a.pcaId,
-                  })),
+                  ),
               })
 
               // Add Step 3.0/3.2/3.3 assignments into tracker for visibility, matching wizard behavior.

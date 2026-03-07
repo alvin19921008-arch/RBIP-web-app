@@ -18,6 +18,7 @@
 
 ### Fixed
 - **RPC `save_staff_edit_dialog_v1`** — Replaced unsupported `jsonb_object_length()` with `EXISTS (SELECT 1 FROM jsonb_object_keys(...))` for Supabase Postgres compatibility.
+- **Step 2/3 PCA allocation (F1–F7)** — Step 2 partial-substitution slot overwrite, FTE-cap over-assignment; Step 3.3 overfill, slot eligibility revalidation; Step 3.4 preference protection; Step 3.0 auto-buffer valid-slot selection; Step 3.3 multi-program special-program interpretation. Details in `WIP_STEP2_STEP3_PCA_ALGO_REVIEW.md`.
 
 ---
 
