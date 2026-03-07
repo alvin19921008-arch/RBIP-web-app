@@ -10337,8 +10337,7 @@ function SchedulePageContent() {
                     currentPending,
                     currentAllocations as any,
                     floatingPCAs as any,
-                    specialPrograms as any,
-                    staffOverrides as any
+                    specialPrograms as any
                   )
                   if (!adj.hasAnyAdjacentReservations) break
 
