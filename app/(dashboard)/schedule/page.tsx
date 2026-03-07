@@ -10337,7 +10337,8 @@ function SchedulePageContent() {
                     currentPending,
                     currentAllocations as any,
                     floatingPCAs as any,
-                    specialPrograms as any
+                    specialPrograms as any,
+                    staffOverrides as any
                   )
                   if (!adj.hasAnyAdjacentReservations) break
 
@@ -11816,7 +11817,6 @@ function SchedulePageContent() {
                             <ScheduleHeaderBar
           userRole={userRole}
           showLoadDiagnostics={access.can('schedule.diagnostics.load')}
-          showCacheStatus={access.can('schedule.diagnostics.cache-status')}
           showCacheStatus={access.can('schedule.diagnostics.cache-status')}
           lastLoadTiming={lastLoadTiming}
           navToScheduleTiming={navToScheduleTiming}
