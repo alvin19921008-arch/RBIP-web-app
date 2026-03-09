@@ -1,7 +1,7 @@
 'use client'
 
 import { Fragment, useState, useEffect, useMemo, useRef } from 'react'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,6 +19,9 @@ import { SpecialProgramSubstitutionDialog } from '@/components/allocation/Specia
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { HorizontalCardCarousel } from '@/components/ui/horizontal-card-carousel'
 import { helpMedia } from '@/lib/help/helpMedia'
+import {
+  getPrimaryConfiguredTherapistForWeekday,
+} from '@/lib/utils/specialProgramConfigRows'
 
 interface SpecialProgramOverrideDialogProps {
   open: boolean
@@ -207,86 +210,16 @@ export function SpecialProgramOverrideDialog({
   // - Slots/FTE in DB are sometimes staffId-keyed, so we pick the staff member(s) with a
   //   non-zero weekday entry (when available) to derive the "configured" baseline.
   // - Exception: CRP therapist subtraction may be explicitly configured as 0 (meaningful).
-  const getConfiguredTherapistFteForStaffAndWeekday = (
-    program: SpecialProgram,
-    staffId: string,
-    day: Weekday
-  ): number | undefined => {
-    const rawByStaff: any = (program as any).fte_subtraction?.[staffId]
-    const hasDayKey =
-      rawByStaff && typeof rawByStaff === 'object' && Object.prototype.hasOwnProperty.call(rawByStaff, day)
-    const fte = hasDayKey ? rawByStaff[day] : undefined
-    return typeof fte === 'number' ? fte : undefined
-  }
-
   const getPrimaryConfiguredTherapistIdForWeekday = (
     program: SpecialProgram,
     day: Weekday
   ): { id: string; fte: number | undefined } | null => {
-    if (!Array.isArray(program.staff_ids) || program.staff_ids.length === 0) return null
-
-    const prefIds = program.therapist_preference_order ? Object.values(program.therapist_preference_order).flat() : []
-    const prefIndex = (id: string) => {
-      const idx = prefIds.indexOf(id)
-      return idx >= 0 ? idx : Number.POSITIVE_INFINITY
-    }
-
-    const candidates: Array<{
-      id: string
-      fte: number | undefined
-      slotCount: number
-      hasExplicitFteForDay: boolean
-    }> = []
-    for (const id of program.staff_ids) {
-      const staff = allStaff.find((s) => s.id === id)
-      if (!staff) continue
-      if (!['SPT', 'APPT', 'RPT'].includes(staff.rank)) continue
-
-      const fte = getConfiguredTherapistFteForStaffAndWeekday(program, id, day)
-      const hasExplicitFteForDay = typeof fte === 'number'
-      const rawSlots: any = (program as any).slots
-      const slotCount = Array.isArray(rawSlots?.[id]?.[day]) ? (rawSlots[id][day] as any[]).length : 0
-      if (program.name === 'CRP') {
-        // CRP runner inference:
-        // - Prefer staff who have weekday slots configured (dashboard intent)
-        // - If no slots exist for any staff, fall back to explicit fte_subtraction (0 is meaningful)
-        if (slotCount > 0 || (typeof fte === 'number' && fte >= 0)) {
-          candidates.push({
-            id,
-            fte: slotCount > 0 ? (typeof fte === 'number' ? fte : 0) : fte,
-            slotCount,
-            hasExplicitFteForDay,
-          })
-        }
-        continue
-      }
-
-      if (typeof fte === 'number' && fte > 0) {
-        candidates.push({ id, fte, slotCount, hasExplicitFteForDay })
-      }
-    }
-
-    if (candidates.length === 0) return null
-
-    // Primary configured runner:
-    // - CRP: prefer staff with configured slots, then higher FTE, then preference order, then stable id.
-    // - Others: higher configured FTE, then preference order, then stable id.
-    candidates.sort((a, b) => {
-      if (program.name === 'CRP') {
-        const as = a.slotCount > 0 ? 1 : 0
-        const bs = b.slotCount > 0 ? 1 : 0
-        if (bs !== as) return bs - as
-        if (b.slotCount !== a.slotCount) return b.slotCount - a.slotCount
-      }
-      const af = typeof a.fte === 'number' ? a.fte : -1
-      const bf = typeof b.fte === 'number' ? b.fte : -1
-      if (bf !== af) return bf - af
-      const pi = prefIndex(a.id) - prefIndex(b.id)
-      if (pi !== 0) return pi
-      return a.id.localeCompare(b.id)
+    const primary = getPrimaryConfiguredTherapistForWeekday({
+      program,
+      day,
+      allStaff,
     })
-
-    return { id: candidates[0].id, fte: candidates[0].fte }
+    return primary ? { id: primary.staffId, fte: primary.fte_subtraction } : null
   }
 
   const getConfiguredTherapistFTESubtractionForWeekday = (
@@ -405,22 +338,12 @@ export function SpecialProgramOverrideDialog({
     program: SpecialProgram,
     day: Weekday
   ): number[] => {
-    // Prefer staff with non-zero weekday FTE entry (when available), since that typically
-    // represents the "assigned runner" from dashboard config.
-    const configuredTherapistId = (program.staff_ids || []).find((id) => {
-      const s = allStaff.find(st => st.id === id)
-      if (!s) return false
-      if (!['SPT', 'APPT', 'RPT'].includes(s.rank)) return false
-      const rawByStaff: any = (program as any).fte_subtraction?.[id]
-      const hasDayKey =
-        rawByStaff && typeof rawByStaff === 'object' && Object.prototype.hasOwnProperty.call(rawByStaff, day)
-      const fte = hasDayKey ? rawByStaff[day] : undefined
-      if (program.name === 'CRP') {
-        // CRP can have explicit 0; treat that as the configured runner.
-        return typeof fte === 'number' && fte >= 0
-      }
-      return typeof fte === 'number' && fte > 0
+    const configuredTherapist = getPrimaryConfiguredTherapistForWeekday({
+      program,
+      day,
+      allStaff,
     })
+    const configuredTherapistId = configuredTherapist?.staffId
 
     const configuredPcaId = (program.staff_ids || []).find((id) => {
       const s = allStaff.find(st => st.id === id)
@@ -605,25 +528,21 @@ export function SpecialProgramOverrideDialog({
       let therapistId: string | undefined
       const therapistPrefOrder = program.therapist_preference_order
 
-      // CRP is special: "configured runner" often has 0 therapist subtraction, and SPTs with 0 FTE can
-      // incorrectly win due to generic rank sorting. Prefer explicit special-program availability +
-      // configured runner signals.
-      if (!therapistId && program.name === 'CRP') {
-        therapistId = pickBestTherapistForCRP(program)
-      }
-
       // Prefer the therapist configured in dashboard for THIS weekday.
       // In dashboard config, a therapist "assigned" to a program/day has a weekday entry in `fte_subtraction`
-      // (CRP may intentionally be 0). Prefer that "primary configured runner" rather than falling back to
-      // the first available therapist (which often picks SPT due to sort order).
+      // (CRP may intentionally be 0). This must take precedence over heuristic picks.
       const primaryConfiguredTherapist = getPrimaryConfiguredTherapistIdForWeekday(program, weekday)
-      if (!therapistId) {
-        if (!therapistId && primaryConfiguredTherapist) {
-          const staff = allStaff.find((s) => s.id === primaryConfiguredTherapist.id)
-          if (staff && isTherapistAvailable(staff, program.name)) {
-            therapistId = primaryConfiguredTherapist.id
-          }
+      if (primaryConfiguredTherapist) {
+        const staff = allStaff.find((s) => s.id === primaryConfiguredTherapist.id)
+        if (staff && isTherapistAvailable(staff, program.name)) {
+          therapistId = primaryConfiguredTherapist.id
         }
+      }
+
+      // CRP fallback: "configured runner" often has 0 therapist subtraction, and SPTs with 0 FTE can
+      // incorrectly win generic rank sorting. Use pickBestTherapistForCRP only when no primary configured.
+      if (!therapistId && program.name === 'CRP') {
+        therapistId = pickBestTherapistForCRP(program)
       }
       
       // For CRP: no automatic fallback - if configured therapist is not available, show substitution alert.
@@ -1469,54 +1388,54 @@ export function SpecialProgramOverrideDialog({
 
           <DialogHeader className="pr-4 sm:pr-32">
             <DialogTitle>Special program overrides</DialogTitle>
-            <DialogDescription>
-              <span className="block text-xs text-muted-foreground">Step 2.0 · Before allocation</span>
-              <span className="mt-1 block">Configure special program assignments before algorithm runs.</span>
-              <div className="mt-3 flex sm:hidden flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
-                {[
-                  { step: '2.0', label: 'Programs' },
-                  { step: '2.1', label: 'Substitute' },
-                  { step: '2.2', label: 'SPT' },
-                ].map(({ step, label }, i) => (
-                  <Fragment key={step}>
-                    {i > 0 ? <span aria-hidden="true">·</span> : null}
-                    <span className={cn('px-2.5 py-1 rounded-md', step === '2.0' && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>
-                      {step} {label}
-                    </span>
-                  </Fragment>
-                ))}
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0" aria-label="Step 2.0 help">
-                      <CircleHelp className="h-4 w-4 text-muted-foreground" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-[340px] rounded-md border border-border bg-white p-3 shadow-md">
-                    <div className="space-y-2 text-xs">
-                      <div className="font-medium text-foreground">Tip</div>
-                      {helpMedia.step2PcaCoverGif ? (
-                        <div className="overflow-hidden rounded-md border border-border">
-                          <img
-                            src={helpMedia.step2PcaCoverGif}
-                            alt="Demo showing how to remove a PCA assignment from a required slot"
-                            className="h-auto max-h-56 w-full object-cover object-top"
-                            loading="lazy"
-                          />
-                        </div>
-                      ) : (
-                        <div className="rounded-md border border-dashed border-border px-2 py-1.5 text-[11px] text-muted-foreground">
-                          Add `NEXT_PUBLIC_HELP_MEDIA_STEP2_PCA_COVER_GIF_URL` to show the demo clip.
-                        </div>
-                      )}
-                      <p className="text-muted-foreground">
-                        To de-select a PCA from a specific slot, hover over the PCA name shown under the slot button, then click the{' '}
-                        <span className="font-medium text-foreground">X</span>.
-                      </p>
-                    </div>
-                  </PopoverContent>
-                </Popover>
+            <div className="text-sm text-muted-foreground">
+                <span className="block text-xs text-muted-foreground">Step 2.0 · Before allocation</span>
+                <span className="mt-1 block">Configure special program assignments before algorithm runs.</span>
+                <div className="mt-3 flex sm:hidden flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
+                  {[
+                    { step: '2.0', label: 'Programs' },
+                    { step: '2.1', label: 'Substitute' },
+                    { step: '2.2', label: 'SPT' },
+                  ].map(({ step, label }, i) => (
+                    <Fragment key={step}>
+                      {i > 0 ? <span aria-hidden="true">·</span> : null}
+                      <span className={cn('px-2.5 py-1 rounded-md', step === '2.0' && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>
+                        {step} {label}
+                      </span>
+                    </Fragment>
+                  ))}
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0" aria-label="Step 2.0 help">
+                        <CircleHelp className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-[340px] rounded-md border border-border bg-white p-3 shadow-md">
+                      <div className="space-y-2 text-xs">
+                        <div className="font-medium text-foreground">Tip</div>
+                        {helpMedia.step2PcaCoverGif ? (
+                          <div className="overflow-hidden rounded-md border border-border">
+                            <img
+                              src={helpMedia.step2PcaCoverGif}
+                              alt="Demo showing how to remove a PCA assignment from a required slot"
+                              className="h-auto max-h-56 w-full object-cover object-top"
+                              loading="lazy"
+                            />
+                          </div>
+                        ) : (
+                          <div className="rounded-md border border-dashed border-border px-2 py-1.5 text-[11px] text-muted-foreground">
+                            Add `NEXT_PUBLIC_HELP_MEDIA_STEP2_PCA_COVER_GIF_URL` to show the demo clip.
+                          </div>
+                        )}
+                        <p className="text-muted-foreground">
+                          To de-select a PCA from a specific slot, hover over the PCA name shown under the slot button, then click the{' '}
+                          <span className="font-medium text-foreground">X</span>.
+                        </p>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
               </div>
-            </DialogDescription>
           </DialogHeader>
 
           <div className="py-4">

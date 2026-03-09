@@ -6,13 +6,18 @@
  * Reservations are not guaranteed assignments - users must approve via UI.
  */
 
-import { Team } from '@/types/staff'
+import { Team, Weekday } from '@/types/staff'
 import { PCAAllocation } from '@/types/schedule'
 import { PCAPreference, SpecialProgram } from '@/types/allocation'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
-import { getAllSubstitutionSlots } from '@/lib/utils/substitutionFor'
-import { findAvailablePCAs } from '@/lib/utils/floatingPCAHelpers'
+import { getEffectiveSpecialProgramWeekdaySlots } from '@/lib/utils/specialProgramConfigRows'
+import {
+  assignSlotIfValid,
+  findAvailablePCAs,
+  getSlotTeam,
+  type StaffOverrideWithSubstitution,
+} from '@/lib/utils/floatingPCAHelpers'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -60,19 +65,6 @@ export interface ReservationResult {
 }
 
 /**
- * Helper to get which team owns a specific slot in an allocation
- */
-function getSlotTeam(allocation: PCAAllocation, slot: number): Team | null {
-  switch (slot) {
-    case 1: return allocation.slot1
-    case 2: return allocation.slot2
-    case 3: return allocation.slot3
-    case 4: return allocation.slot4
-    default: return null
-  }
-}
-
-/**
  * Computes slot reservations for all teams based on:
  * - Team preferences (preferred_pca_ids + preferred_slots)
  * - Adjusted pending FTE from Step 3.1
@@ -91,11 +83,7 @@ export function computeReservations(
   adjustedPendingFTE: Record<Team, number>,
   floatingPCAs: PCAData[],
   existingAllocations: PCAAllocation[],
-  staffOverrides?: Record<string, {
-    substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
-    substitutionForBySlot?: Partial<Record<1 | 2 | 3 | 4, { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team }>>
-    [key: string]: any
-  }>
+  staffOverrides?: Record<string, StaffOverrideWithSubstitution>
 ): ReservationResult {
   // Initialize empty reservations
   const teamReservations: TeamReservations = {
@@ -110,13 +98,6 @@ export function computeReservations(
     }
   })
 
-  const allocationByStaffId = new Map<string, PCAAllocation>()
-  existingAllocations.forEach((allocation) => {
-    if (!allocationByStaffId.has(allocation.staff_id)) {
-      allocationByStaffId.set(allocation.staff_id, allocation)
-    }
-  })
-  
   // Process each team's preferences
   for (const pref of pcaPreferences) {
     const team = pref.team
@@ -132,35 +113,34 @@ export function computeReservations(
     const preferredSlot = pref.preferred_slots[0]  // Only 1 slot allowed per UI constraint
     const reservedPCAIds: string[] = []
     const pcaNames: Record<string, string> = {}
-    
-    // Check each preferred PCA
+
+    const eligiblePreferredIds = new Set(
+      findAvailablePCAs({
+        pcaPool: floatingPCAs,
+        team,
+        teamFloor: null,
+        floorMatch: 'any',
+        excludePreferredOfOtherTeams: false,
+        preferredPCAIdsOfOtherTeams: new Map(),
+        pendingFTEPerTeam: adjustedPendingFTE,
+        requiredSlot: preferredSlot,
+        existingAllocations,
+        gymSlot: null,
+        avoidGym: false,
+        staffOverrides,
+      }).map((pca) => pca.id)
+    )
+
+    // Preserve the original preferred-PCA order from the team preference record.
     for (const pcaId of pref.preferred_pca_ids) {
+      if (!eligiblePreferredIds.has(pcaId)) continue
+
       const pca = floatingPcaById.get(pcaId)
-      
-      // Skip if PCA not found or not on duty (FTE <= 0)
-      if (!pca || pca.fte_pca <= 0) continue
-      
-      // Skip if this slot is already assigned in previous steps
-      const existingAlloc = allocationByStaffId.get(pcaId)
-      if (existingAlloc) {
-        const slotOwner = getSlotTeam(existingAlloc, preferredSlot)
-        if (slotOwner !== null) continue  // Slot already taken
-      }
-      
-      // Skip if this slot is being used for substitution (from Step 2)
-      if (staffOverrides) {
-        const override = staffOverrides[pcaId]
-        const substitutionSlots = getAllSubstitutionSlots(override as any)
-        if (substitutionSlots.includes(preferredSlot)) {
-          continue  // Slot is being used for substitution, not available
-        }
-      }
-      
-      // This PCA's slot is available for reservation
+      if (!pca) continue
+
       reservedPCAIds.push(pcaId)
       pcaNames[pcaId] = pca.name
-      
-      // Track in PCA slot reservations (for conflict detection)
+
       if (!pcaSlotReservations[pcaId]) {
         pcaSlotReservations[pcaId] = {}
       }
@@ -290,18 +270,12 @@ export function executeSlotAssignments(
       allocationByStaffId.set(pcaId, allocation)
     } else {
       // Update existing allocation - assign the slot to this team
-      switch (slot) {
-        case 1: allocation.slot1 = team; break
-        case 2: allocation.slot2 = team; break
-        case 3: allocation.slot3 = team; break
-        case 4: allocation.slot4 = team; break
+      if (assignSlotIfValid({ allocation, slot, team, minFteRemaining: 0.25 })) {
+        allocation.fte_remaining = Math.max(0, allocation.fte_remaining - 0.25)
+        allocation.slot_assigned = (allocation.slot_assigned || 0) + 0.25
       }
-      
-      // Update FTE remaining
-      allocation.fte_remaining = Math.max(0, allocation.fte_remaining - 0.25)
-      allocation.slot_assigned = (allocation.slot_assigned || 0) + 0.25
     }
-    
+
     // Track PCA FTE change
     pcaFTEChanges[pcaId] = allocation.fte_remaining
   }
@@ -503,6 +477,45 @@ export interface AdjacentSlotResult {
   hasAnyAdjacentReservations: boolean
 }
 
+function normalizeSlots(slots: unknown): number[] {
+  if (!Array.isArray(slots)) return []
+  return Array.from(
+    new Set(slots.filter((slot): slot is number => typeof slot === 'number' && [1, 2, 3, 4].includes(slot)))
+  ).sort((a, b) => a - b)
+}
+
+function getResolvedProgramSlots(args: {
+  program: SpecialProgram
+  weekday?: Weekday
+  staffOverrides?: Record<string, StaffOverrideWithSubstitution>
+}): number[] {
+  const { program, weekday, staffOverrides } = args
+
+  const requiredSlots = new Set<number>()
+  Object.values(staffOverrides || {}).forEach((override) => {
+    const list = (override as any)?.specialProgramOverrides
+    if (!Array.isArray(list)) return
+    list.forEach((entry: any) => {
+      if (!entry || entry.programId !== program.id) return
+      normalizeSlots(entry.requiredSlots).forEach((slot) => requiredSlots.add(slot))
+    })
+  })
+  if (requiredSlots.size > 0) {
+    return Array.from(requiredSlots).sort((a, b) => a - b)
+  }
+
+  const resolvedWeekday =
+    weekday ??
+    (Array.isArray(program.weekdays) && program.weekdays.length === 1 ? program.weekdays[0] : undefined)
+  if (!resolvedWeekday) return []
+
+  return getEffectiveSpecialProgramWeekdaySlots({
+    program,
+    day: resolvedWeekday,
+    preferDirectWeekdaySlots: true,
+  })
+}
+
 /**
  * Helper function to check if a slot is actually assigned by the special program.
  * Different programs have different slot-team combinations:
@@ -514,26 +527,20 @@ function isSlotFromProgram(
   allocation: PCAAllocation,
   slot: number,
   team: Team,
-  program: SpecialProgram
+  program: SpecialProgram,
+  weekday?: Weekday,
+  staffOverrides?: Record<string, StaffOverrideWithSubstitution>
 ): boolean {
+  const programSlots = getResolvedProgramSlots({ program, weekday, staffOverrides })
+  if (!programSlots.includes(slot)) return false
+
   // For Robotic: slots 1-2 → SMM, slots 3-4 → SFM
   if (program.name === 'Robotic') {
-    if (team === 'SMM') {
-      return slot === 1 || slot === 2
-    }
-    if (team === 'SFM') {
-      return slot === 3 || slot === 4
-    }
+    if (slot === 1 || slot === 2) return team === 'SMM'
+    if (slot === 3 || slot === 4) return team === 'SFM'
     return false
   }
 
-  // For CRP: slot 2 → CPPC
-  if (program.name === 'CRP') {
-    return team === 'CPPC' && slot === 2
-  }
-
-  // For other programs, if the current team matches the allocation's primary team,
-  // assume all slots in that team are special program slots
   return allocation.team === team
 }
 
@@ -550,10 +557,12 @@ function isSlotFromSpecialProgram(
   allocation: PCAAllocation,
   slot: number,
   team: Team,
-  specialPrograms: SpecialProgram[]
+  specialPrograms: SpecialProgram[],
+  weekday?: Weekday,
+  staffOverrides?: Record<string, StaffOverrideWithSubstitution>
 ): boolean {
   return getProgramsForAllocation(allocation, specialPrograms).some((program) =>
-    isSlotFromProgram(allocation, slot, team, program)
+    isSlotFromProgram(allocation, slot, team, program, weekday, staffOverrides)
   )
 }
 
@@ -561,10 +570,12 @@ function getSpecialProgramNameForSlot(
   allocation: PCAAllocation,
   slot: number,
   team: Team,
-  specialPrograms: SpecialProgram[]
+  specialPrograms: SpecialProgram[],
+  weekday?: Weekday,
+  staffOverrides?: Record<string, StaffOverrideWithSubstitution>
 ): string {
   const matchingProgram = getProgramsForAllocation(allocation, specialPrograms).find((program) =>
-    isSlotFromProgram(allocation, slot, team, program)
+    isSlotFromProgram(allocation, slot, team, program, weekday, staffOverrides)
   )
   return matchingProgram?.name || 'Unknown Program'
 }
@@ -589,7 +600,9 @@ export function computeAdjacentSlotReservations(
   currentPendingFTE: Record<Team, number>,
   existingAllocations: PCAAllocation[],
   floatingPCAs: PCAData[],
-  specialPrograms: SpecialProgram[]
+  specialPrograms: SpecialProgram[],
+  staffOverrides?: Record<string, StaffOverrideWithSubstitution>,
+  weekday?: Weekday
 ): AdjacentSlotResult {
   // Initialize empty reservations for all teams
   const adjacentReservations: AdjacentSlotReservations = {
@@ -625,7 +638,7 @@ export function computeAdjacentSlotReservations(
       
       // CRITICAL: Only process slots that were actually assigned by the special program
       // Skip slots assigned later (e.g., from Step 3.2 preferred slot assignment)
-      if (!isSlotFromSpecialProgram(allocation, slot, team, specialPrograms)) {
+      if (!isSlotFromSpecialProgram(allocation, slot, team, specialPrograms, weekday, staffOverrides)) {
         continue
       }
       
@@ -641,14 +654,22 @@ export function computeAdjacentSlotReservations(
         continue
       }
       
-      // Check if adjacent slot is already assigned
-      const adjacentSlotTeam = getSlotTeam(allocation, adjacentSlot)
-      if (adjacentSlotTeam !== null) {
-        continue  // Already assigned
-      }
-      
-      // Check if PCA still has FTE remaining
-      if (allocation.fte_remaining <= 0) {
+      const canStillReserveAdjacentSlot = findAvailablePCAs({
+        pcaPool: floatingPCAs,
+        team,
+        teamFloor: null,
+        floorMatch: 'any',
+        excludePreferredOfOtherTeams: false,
+        preferredPCAIdsOfOtherTeams: new Map(),
+        pendingFTEPerTeam: currentPendingFTE,
+        requiredSlot: adjacentSlot,
+        existingAllocations,
+        gymSlot: null,
+        avoidGym: false,
+        staffOverrides,
+      }).some((pca) => pca.id === allocation.staff_id)
+
+      if (!canStillReserveAdjacentSlot) {
         continue
       }
       
@@ -662,7 +683,14 @@ export function computeAdjacentSlotReservations(
       }
       
       // Add to reservations
-      const specialProgramName = getSpecialProgramNameForSlot(allocation, slot, team, specialPrograms)
+      const specialProgramName = getSpecialProgramNameForSlot(
+        allocation,
+        slot,
+        team,
+        specialPrograms,
+        weekday,
+        staffOverrides
+      )
       adjacentReservations[team].push({
         pcaId: allocation.staff_id,
         pcaName,

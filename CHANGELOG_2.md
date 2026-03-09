@@ -3,6 +3,23 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-03-08 (special program canonical config + CRP slot/pending fixes)
+
+### Added
+- **Special program normalized staff config pipeline** — Added `special_program_staff_configs`-backed runtime helpers plus regression coverage for zero-subtraction CRP/SPT runner semantics, canonical CRP team routing, canonical slot eligibility, and special-program reserved-capacity precedence.
+
+### Changed
+- **Staff save transaction** — Moved normalized special-program config persistence into RPC `save_staff_edit_dialog_v2` so staff, SPT, and normalized special-program rows save atomically.
+- **Special program runtime resolution** — Introduced shared canonical weekday-slot resolution from normalized rows / legacy staff-keyed slots / direct weekday slots before fallback, and reused it across Step 2 and Step 3 consumers.
+
+### Fixed
+- **CRP therapist runner selection** — Zero `fte_subtraction` CRP therapists can still be recognized as the designated weekday runner, so cases like Aggie no longer get displaced by non-canonical therapist picks.
+- **CRP PCA team + slot routing** — CRP PCA allocation now follows the canonical therapist team and the canonical configured weekday slot instead of defaulting to CPPC / slot `2`.
+- **Step 2 override precedence into Step 3** — Explicit Step 2.0 `requiredSlots` overrides now remain authoritative in floating pending exclusion and Step 3.3 adjacent-slot detection, rather than snapping back to canonical/default CRP slots.
+- **Step 1 edit pending side branch** — Removed the schedule-page local pending-PCA recomputation shortcut after staff edits so special-program slots continue to consume PCA capacity without incorrectly satisfying general Step 3 pending.
+
+---
+
 ## [Unreleased] - 2026-03-06 (unified staff edit save)
 
 ### Added
@@ -19,6 +36,7 @@
 ### Fixed
 - **RPC `save_staff_edit_dialog_v1`** — Replaced unsupported `jsonb_object_length()` with `EXISTS (SELECT 1 FROM jsonb_object_keys(...))` for Supabase Postgres compatibility.
 - **Step 2/3 PCA allocation (F1–F7)** — Step 2 partial-substitution slot overwrite, FTE-cap over-assignment; Step 3.3 overfill, slot eligibility revalidation; Step 3.4 preference protection; Step 3.0 auto-buffer valid-slot selection; Step 3.3 multi-program special-program interpretation. Details in `WIP_STEP2_STEP3_PCA_ALGO_REVIEW.md`.
+- **Vercel build** — Added missing `lib/utils/staffEditDrafts.ts` (was untracked; caused module not found on deploy).
 
 ---
 

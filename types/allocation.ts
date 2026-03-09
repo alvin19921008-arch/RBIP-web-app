@@ -1,5 +1,21 @@
 import { Team, Weekday } from './staff'
 
+export type SpecialProgramStaffWeekdayConfig = {
+  enabled?: boolean
+  slots?: number[]
+  fte_subtraction?: number
+  is_primary?: boolean
+}
+
+export interface SpecialProgramStaffConfig {
+  id: string
+  program_id: string
+  staff_id: string
+  config_by_weekday: Partial<Record<Weekday, SpecialProgramStaffWeekdayConfig>>
+  created_at?: string
+  updated_at?: string
+}
+
 export interface SpecialProgram {
   id: string
   name: string
@@ -10,6 +26,7 @@ export interface SpecialProgram {
   pca_required: number | null
   therapist_preference_order?: Record<Team, string[]>
   pca_preference_order?: string[]
+  staff_configs?: SpecialProgramStaffConfig[]
 }
 
 export interface SPTAllocation {

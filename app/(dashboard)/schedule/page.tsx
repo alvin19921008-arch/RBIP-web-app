@@ -3406,16 +3406,15 @@ function SchedulePageContent() {
     effectiveTeamMergeConfig.mergedInto,
   ])
 
-  // Auto-recalculate when allocations change (e.g., after Step 2 algo)
+  // Auto-recalculate when allocations change (e.g., after Step 2 algo, therapist transfer)
   useEffect(() => {
     // During initial hydration, never recalculate (prevents progressive avg PCA/team changes).
     if (isHydratingSchedule) {
       return
     }
-    // OPTIMIZATION: Skip recalculation if we've loaded stored calculations
-    if (hasLoadedStoredCalculations) {
-      return
-    }
+    // Recalculate when therapistAllocations or pcaAllocations change. Do NOT skip when
+    // hasLoadedStoredCalculations: in-memory edits (e.g. therapist drag transfer) update
+    // allocations but stored calculations reflect load-time state, so we must recompute.
     const hasAllocations = Object.keys(pcaAllocations).some(team => pcaAllocations[team as Team]?.length > 0)
     if (hasAllocations) {
       recalculateScheduleCalculations()
@@ -3730,91 +3729,12 @@ function SchedulePageContent() {
         })
         
         setPcaAllocations(updatedAllocations)
-        
-        // Recalculate pending PCA FTE per team using updated allocations
-        const updatedPendingFTE: Record<Team, number> = {
-          FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
-        }
-        
-        // Calculate total PCA available (sum of base FTE)
-        const totalPCA = staff
-          .filter(s => s.rank === 'PCA')
-          .reduce((sum, s) => {
-            const override = newOverrides[s.id]
-            const baseFTE = override?.fteSubtraction !== undefined
-              ? 1.0 - override.fteSubtraction
-              : (override?.fteRemaining ?? 1)
-            const isOnLeave = override?.leaveType && override.fteRemaining === 0
-            return sum + (isOnLeave ? 0 : baseFTE)
-          }, 0)
-        
-        // Calculate total PT on duty from therapist allocations
-        const totalPTOnDuty = recalculationTeams.reduce((sum, team) => {
-          const contributors = getContributingTeams(team, effectiveTeamMergeConfig.mergedInto)
-          const teamPt = contributors.reduce((acc, fromTeam) => {
-            return acc + therapistAllocations[fromTeam].reduce((teamSum, alloc) => {
-              const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-              const override = newOverrides[alloc.staff_id]
-              const fte = override ? override.fteRemaining : (alloc.fte_therapist || 0)
-              const hasFTE = fte > 0
-              return teamSum + (isTherapist && hasFTE ? fte : 0)
-            }, 0)
-          }, 0)
-          return sum + teamPt
-        }, 0)
-        
-        // Calculate required PCA per team
-        const requiredPCA: Record<Team, number> = {
-          FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
-        }
-        
-        recalculationTeams.forEach(team => {
-          const contributors = getContributingTeams(team, effectiveTeamMergeConfig.mergedInto)
-          const ptPerTeam = contributors.reduce((acc, fromTeam) => {
-            return acc + therapistAllocations[fromTeam].reduce((sum, alloc) => {
-              const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
-              const override = newOverrides[alloc.staff_id]
-              const fte = override ? override.fteRemaining : (alloc.fte_therapist || 0)
-              const hasFTE = fte > 0
-              return sum + (isTherapist && hasFTE ? fte : 0)
-            }, 0)
-          }, 0)
-          
-          if (totalPTOnDuty > 0) {
-            requiredPCA[team] = (ptPerTeam * totalPCA) / totalPTOnDuty
-          } else {
-            requiredPCA[team] = totalPCA / Math.max(1, recalculationTeams.length)
-          }
-          
-          // Add DRM add-on for DRO if applicable
-          const weekday = getWeekday(selectedDate)
-          const drmProgram = specialPrograms.find(p => p.name === 'DRM')
-          if (team === 'DRO' && drmProgram && drmProgram.weekdays.includes(weekday)) {
-            requiredPCA[team] += 0.4
-          }
-        })
-        
-        // Calculate assigned PCA per team from updated allocations
-        const assignedPCA: Record<Team, number> = {
-          FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0
-        }
-        
-        recalculationTeams.forEach(team => {
-          const contributors = getContributingTeams(team, effectiveTeamMergeConfig.mergedInto)
-          assignedPCA[team] = contributors.reduce((acc, fromTeam) => {
-            return acc + updatedAllocations[fromTeam].reduce((sum, alloc) => {
-              return sum + (alloc.slot_assigned || 0)
-            }, 0)
-          }, 0)
-        })
-        
-        // Calculate pending FTE and apply rounding
-        recalculationTeams.forEach(team => {
-          const pending = Math.max(0, requiredPCA[team] - assignedPCA[team])
-          updatedPendingFTE[team] = roundToNearestQuarterWithMidpoint(pending)
-        })
-        
-        setPendingPCAFTEPerTeam(updatedPendingFTE)
+
+        // Step 1 edits invalidate downstream PCA pending math.
+        // Do not recompute pending locally here because this shortcut cannot
+        // faithfully exclude special-program slots the same way the canonical
+        // Step 2/3 pipeline does. Pending is recomputed when the downstream
+        // allocation flow reruns from Step 2.
       } else {
         // Fresh data in step 1 - don't run allocation algorithm yet.
         // Allocation will happen in Step 2 initialize.
@@ -10337,7 +10257,9 @@ function SchedulePageContent() {
                     currentPending,
                     currentAllocations as any,
                     floatingPCAs as any,
-                    specialPrograms as any
+                    specialPrograms as any,
+                    staffOverrides as any,
+                    getWeekday(selectedDate)
                   )
                   if (!adj.hasAnyAdjacentReservations) break
 
@@ -12422,6 +12344,7 @@ function SchedulePageContent() {
               <FloatingPCAConfigDialog
                 open={floatingPCAConfigOpen}
                 teams={visibleTeams}
+                weekday={getWeekday(selectedDate)}
                 initialPendingFTE={pendingPCAFTEForStep3Dialog}
                 pcaPreferences={pcaPreferences}
                 floatingPCAs={floatingPCAsForStep3}

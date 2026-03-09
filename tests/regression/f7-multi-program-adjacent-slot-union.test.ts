@@ -69,7 +69,7 @@ async function main() {
         thu: [],
         fri: [],
       },
-      fte_subtraction: { mon: {}, tue: {}, wed: {}, thu: {}, fri: {} },
+      fte_subtraction: {},
       pca_required: 0.25,
       pca_preference_order: [],
     },
@@ -85,7 +85,7 @@ async function main() {
         thu: [],
         fri: [],
       },
-      fte_subtraction: { mon: {}, tue: {}, wed: {}, thu: {}, fri: {} },
+      fte_subtraction: {},
       pca_required: 0.5,
       pca_preference_order: [],
     },
@@ -95,7 +95,9 @@ async function main() {
     currentPendingFTE,
     existingAllocations,
     floatingPCAs,
-    specialPrograms
+    specialPrograms,
+    undefined,
+    'mon'
   )
 
   assert.equal(

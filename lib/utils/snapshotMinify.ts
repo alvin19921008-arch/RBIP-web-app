@@ -123,6 +123,38 @@ export function minifySpecialProgramsForSnapshot(programs: unknown): SpecialProg
         ? (p.pca_preference_order.filter((id: any) => typeof id === 'string' && staffIdSet.has(id)) as string[])
         : undefined
 
+      const staff_configs = Array.isArray(p.staff_configs)
+        ? p.staff_configs
+            .filter((row: any) => row && typeof row === 'object' && typeof row.staff_id === 'string' && staffIdSet.has(row.staff_id))
+            .map((row: any) => {
+              const config_by_weekday: Partial<Record<Weekday, any>> = {}
+              WEEKDAYS.forEach((day) => {
+                const current = row?.config_by_weekday?.[day]
+                if (!current || typeof current !== 'object' || Array.isArray(current)) return
+                const slotsForDay = Array.isArray(current.slots)
+                  ? (current.slots as any[]).filter((slot) => typeof slot === 'number')
+                  : []
+                const fteForDay = typeof current.fte_subtraction === 'number' ? current.fte_subtraction : undefined
+                const enabled = current.enabled === true
+                const isPrimary = current.is_primary === true
+                if (!enabled && slotsForDay.length === 0 && fteForDay === undefined && !isPrimary) return
+                config_by_weekday[day] = {
+                  ...(enabled ? { enabled: true } : {}),
+                  ...(slotsForDay.length > 0 ? { slots: slotsForDay } : {}),
+                  ...(fteForDay !== undefined ? { fte_subtraction: fteForDay } : {}),
+                  ...(isPrimary ? { is_primary: true } : {}),
+                }
+              })
+              return {
+                id: String(row.id ?? ''),
+                program_id: String(row.program_id ?? p.id ?? ''),
+                staff_id: String(row.staff_id),
+                config_by_weekday,
+              }
+            })
+            .filter((row: any) => Object.keys(row.config_by_weekday ?? {}).length > 0)
+        : undefined
+
       const result: SpecialProgram = {
         id: String(p.id ?? ''),
         name: String(p.name ?? ''),
@@ -134,6 +166,7 @@ export function minifySpecialProgramsForSnapshot(programs: unknown): SpecialProg
         pca_required: (typeof p.pca_required === 'number' ? p.pca_required : null) as any,
         therapist_preference_order: therapist_preference_order as any,
         pca_preference_order: (pca_preference_order && pca_preference_order.length > 0 ? pca_preference_order : undefined) as any,
+        staff_configs: (staff_configs && staff_configs.length > 0 ? staff_configs : undefined) as any,
       }
 
       return result

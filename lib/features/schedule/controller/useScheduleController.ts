@@ -31,6 +31,7 @@ import { computeStep3ResetForReentry } from '@/lib/features/schedule/stepReset'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
 import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
+import { buildSpecialProgramsFromRows, resolveSpecialProgramTeamFromTherapist } from '@/lib/utils/specialProgramConfigRows'
 import { fetchGlobalHeadAtCreation } from '@/lib/features/config/globalHead'
 import { cacheSchedule, clearCachedSchedule, getCachedSchedule, getCacheSize } from '@/lib/utils/scheduleCache'
 import { getScheduleCacheEpoch } from '@/lib/utils/scheduleCacheEpoch'
@@ -110,6 +111,152 @@ function jsonDeepEqual(a: unknown, b: unknown): boolean {
   } catch {
     return false
   }
+}
+
+function buildSpecialProgramTargetTeamById(args: {
+  programs: SpecialProgram[]
+  therapistAllocations: TherapistAllocation[]
+  day: Weekday
+  staff: Staff[]
+  overrides: StaffStatusOverridesById
+}): Partial<Record<string, Team>> {
+  const { programs, therapistAllocations, day, staff, overrides } = args
+  const staffLookup = staff
+    .map((member) => ({
+      id: member.id,
+      rank: member.rank,
+      team: (overrides[member.id]?.team ?? member.team) as Team | null | undefined,
+    }))
+    .filter((member): member is { id: string; rank: Staff['rank']; team: Team } => !!member.team)
+
+  const targetTeamById: Partial<Record<string, Team>> = {}
+  programs.forEach((program) => {
+    const taggedAllocation = therapistAllocations.find(
+      (allocation) => allocation.team && allocation.special_program_ids?.includes(program.id)
+    )
+    if (taggedAllocation?.team) {
+      targetTeamById[program.id] = taggedAllocation.team as Team
+      return
+    }
+
+    const fallbackTeam = resolveSpecialProgramTeamFromTherapist({
+      program,
+      day,
+      allStaff: staffLookup,
+    })
+    if (fallbackTeam) {
+      targetTeamById[program.id] = fallbackTeam
+    }
+  })
+
+  return targetTeamById
+}
+
+function applySpecialProgramOverrides(args: {
+  specialPrograms: SpecialProgram[]
+  overrides: StaffStatusOverridesById
+  weekday: Weekday
+}): SpecialProgram[] {
+  const { specialPrograms, overrides, weekday } = args
+
+  return (specialPrograms || []).map((program: any) => {
+    const programOverrides: Array<{ therapistId?: string; therapistFTESubtraction?: number }> = []
+    const pcaOverrides: Array<{ pcaId: string; slots: number[] }> = []
+    let requiredSlotsOverride: number[] | undefined
+
+    Object.values(overrides).forEach((override) => {
+      const list = (override as any)?.specialProgramOverrides as any[] | undefined
+      if (!Array.isArray(list)) return
+      const programEntries = list.filter((spo) => spo?.programId === program.id)
+      if (programEntries.length === 0) return
+
+      programEntries.forEach((spOverride) => {
+        if (!spOverride || typeof spOverride !== 'object') return
+
+        if (spOverride.therapistId) {
+          programOverrides.push({
+            therapistId: spOverride.therapistId,
+            therapistFTESubtraction: spOverride.therapistFTESubtraction,
+          })
+        }
+
+        const requiredSlots = Array.isArray(spOverride.requiredSlots)
+          ? spOverride.requiredSlots.filter((slot: any) => [1, 2, 3, 4].includes(slot)).sort((a: number, b: number) => a - b)
+          : []
+        if (requiredSlots.length > 0) {
+          requiredSlotsOverride = Array.from(new Set([...(requiredSlotsOverride ?? []), ...requiredSlots])).sort((a, b) => a - b)
+        }
+
+        if (spOverride.pcaId && program.name !== 'DRM') {
+          const pcaSlots = Array.isArray(spOverride.slots)
+            ? spOverride.slots.filter((slot: any) => [1, 2, 3, 4].includes(slot)).sort((a: number, b: number) => a - b)
+            : []
+          const existing = pcaOverrides.find((x) => x.pcaId === spOverride.pcaId)
+          if (existing) {
+            existing.slots = Array.from(new Set([...existing.slots, ...pcaSlots])).sort((a, b) => a - b)
+          } else {
+            pcaOverrides.push({ pcaId: spOverride.pcaId, slots: pcaSlots })
+          }
+        }
+      })
+    })
+
+    if (programOverrides.length === 0 && pcaOverrides.length === 0 && !requiredSlotsOverride) return program
+
+    const modifiedProgram: any = { ...program }
+    modifiedProgram.fte_subtraction = { ...(modifiedProgram.fte_subtraction ?? {}) }
+
+    programOverrides.forEach((o) => {
+      if (!o.therapistId) return
+      if (!modifiedProgram.staff_ids.includes(o.therapistId)) {
+        modifiedProgram.staff_ids = [...modifiedProgram.staff_ids, o.therapistId]
+      }
+      if (!modifiedProgram.fte_subtraction[o.therapistId]) {
+        modifiedProgram.fte_subtraction[o.therapistId] = { mon: 0, tue: 0, wed: 0, thu: 0, fri: 0 }
+      }
+      if (o.therapistFTESubtraction !== undefined) {
+        modifiedProgram.fte_subtraction[o.therapistId][weekday] = o.therapistFTESubtraction
+      }
+    })
+
+    if (!requiredSlotsOverride) {
+      const slotsFromPcaCovers = Array.from(new Set(pcaOverrides.flatMap((o) => o.slots))).sort((a, b) => a - b)
+      if (slotsFromPcaCovers.length > 0) {
+        requiredSlotsOverride = slotsFromPcaCovers
+      }
+    }
+
+    if (program.name !== 'DRM' && requiredSlotsOverride && requiredSlotsOverride.length > 0) {
+      modifiedProgram.slots = {
+        ...(modifiedProgram.slots ?? {}),
+        [weekday]: requiredSlotsOverride,
+      }
+    }
+
+    if (pcaOverrides.length > 0) {
+      const prioritizedPcaIds = pcaOverrides.map((o) => o.pcaId)
+      const existing = modifiedProgram.pca_preference_order as string[] | undefined
+      modifiedProgram.pca_preference_order = [
+        ...prioritizedPcaIds,
+        ...((Array.isArray(existing) ? existing : []).filter((id) => !prioritizedPcaIds.includes(id))),
+      ]
+
+      const effectiveRequiredSlots = requiredSlotsOverride ?? []
+      const manualPcaCovers = pcaOverrides
+        .map((entry) => ({
+          pcaId: entry.pcaId,
+          slots: (entry.slots.length > 0 ? entry.slots : effectiveRequiredSlots)
+            .filter((slot) => [1, 2, 3, 4].includes(slot))
+            .sort((a, b) => a - b),
+        }))
+        .filter((entry) => entry.slots.length > 0)
+      if (manualPcaCovers.length > 0) {
+        modifiedProgram.__manualPcaCovers = manualPcaCovers
+      }
+    }
+
+    return modifiedProgram
+  })
 }
 
 export type ScheduleWardRow = {
@@ -1258,19 +1405,23 @@ export function useScheduleController(params: {
       // NOT from in-memory React state. React state at this point still holds the previous
       // date's applied snapshot (applyBaselineSnapshot for the new date hasn't run yet), so
       // using buildBaselineSnapshotFromCurrentState() would embed the wrong date's data.
-      const [globalHeadAtCreation, seededStaffOverrides, liveTeamConfig, liveStaffRes, liveSpecialProgramsRes, liveSptRes, liveWardsRes, livePcaPrefRes] = await Promise.all([
+      const [globalHeadAtCreation, seededStaffOverrides, liveTeamConfig, liveStaffRes, liveSpecialProgramsRes, liveSpecialProgramConfigsRes, liveSptRes, liveWardsRes, livePcaPrefRes] = await Promise.all([
         fetchGlobalHeadAtCreation(supabase),
         seedAllocationNotesForNewSchedule({ supabase, date, dateStr }),
         fetchLiveTeamSettingsSnapshot(supabase).catch(() => null),
         supabase.from('staff').select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program'),
         supabase.from('special_programs').select('id,name,staff_ids,weekdays,slots,fte_subtraction,pca_required,therapist_preference_order,pca_preference_order'),
+        supabase.from('special_program_staff_configs').select('id,program_id,staff_id,config_by_weekday,created_at,updated_at'),
         supabase.from('spt_allocations').select('id,staff_id,specialty,teams,weekdays,slots,slot_modes,fte_addon,config_by_weekday,substitute_team_head,is_rbip_supervisor,active,created_at,updated_at'),
         supabase.from('wards').select('id,name,total_beds,team_assignments,team_assignment_portions'),
         supabase.from('pca_preferences').select('id,team,preferred_pca_ids,preferred_slots,avoid_gym_schedule,gym_schedule,floor_pca_selection'),
       ])
 
       const liveStaff = (liveStaffRes?.data || []) as any[]
-      const liveSpecialPrograms = (liveSpecialProgramsRes?.data || []) as any[]
+      const liveSpecialPrograms = buildSpecialProgramsFromRows({
+        programRows: (liveSpecialProgramsRes?.data || []) as any[],
+        staffConfigRows: (liveSpecialProgramConfigsRes?.data || []) as any[],
+      }) as any[]
       const liveSptAllocations = (liveSptRes?.data || []) as any[]
       const liveWards = (liveWardsRes?.data || []) as any[]
       const livePcaPreferences = (livePcaPrefRes?.data || []) as any[]
@@ -3320,103 +3471,10 @@ export function useScheduleController(params: {
       // Apply special program overrides:
       // - Therapists: add substituted therapists to program.staff_ids + fte_subtraction for this weekday
       // - PCAs: allow manual slot coverage split across multiple PCA staff (Step 2.0 enhanced flow)
-      const modifiedSpecialPrograms: SpecialProgram[] = (specialPrograms || []).map((program: any) => {
-        const programOverrides: Array<{ therapistId?: string; therapistFTESubtraction?: number }> = []
-        const pcaOverrides: Array<{ pcaId: string; slots: number[] }> = []
-        let requiredSlotsOverride: number[] | undefined
-
-        Object.values(overrides).forEach((override) => {
-          const list = (override as any)?.specialProgramOverrides as any[] | undefined
-          if (!Array.isArray(list)) return
-          const programEntries = list.filter((spo) => spo?.programId === program.id)
-          if (programEntries.length === 0) return
-
-          programEntries.forEach((spOverride) => {
-            if (!spOverride || typeof spOverride !== 'object') return
-
-            if (spOverride.therapistId) {
-              programOverrides.push({
-                therapistId: spOverride.therapistId,
-                therapistFTESubtraction: spOverride.therapistFTESubtraction,
-              })
-            }
-
-            const requiredSlots = Array.isArray(spOverride.requiredSlots)
-              ? spOverride.requiredSlots.filter((slot: any) => [1, 2, 3, 4].includes(slot)).sort((a: number, b: number) => a - b)
-              : []
-            if (requiredSlots.length > 0) {
-              requiredSlotsOverride = Array.from(new Set([...(requiredSlotsOverride ?? []), ...requiredSlots])).sort((a, b) => a - b)
-            }
-
-            if (spOverride.pcaId && program.name !== 'DRM') {
-              const pcaSlots = Array.isArray(spOverride.slots)
-                ? spOverride.slots.filter((slot: any) => [1, 2, 3, 4].includes(slot)).sort((a: number, b: number) => a - b)
-                : []
-              const existing = pcaOverrides.find((x) => x.pcaId === spOverride.pcaId)
-              if (existing) {
-                existing.slots = Array.from(new Set([...existing.slots, ...pcaSlots])).sort((a, b) => a - b)
-              } else {
-                pcaOverrides.push({ pcaId: spOverride.pcaId, slots: pcaSlots })
-              }
-            }
-          })
-        })
-
-        if (programOverrides.length === 0 && pcaOverrides.length === 0) return program
-
-        const modifiedProgram: any = { ...program }
-
-        programOverrides.forEach((o) => {
-          if (!o.therapistId) return
-          if (!modifiedProgram.staff_ids.includes(o.therapistId)) {
-            modifiedProgram.staff_ids = [...modifiedProgram.staff_ids, o.therapistId]
-          }
-          if (!modifiedProgram.fte_subtraction[o.therapistId]) {
-            modifiedProgram.fte_subtraction[o.therapistId] = { mon: 0, tue: 0, wed: 0, thu: 0, fri: 0 }
-          }
-          if (o.therapistFTESubtraction !== undefined) {
-            modifiedProgram.fte_subtraction[o.therapistId][weekday] = o.therapistFTESubtraction
-          }
-        })
-
-        if (!requiredSlotsOverride) {
-          const slotsFromPcaCovers = Array.from(new Set(pcaOverrides.flatMap((o) => o.slots))).sort((a, b) => a - b)
-          if (slotsFromPcaCovers.length > 0) {
-            requiredSlotsOverride = slotsFromPcaCovers
-          }
-        }
-
-        if (program.name !== 'DRM' && requiredSlotsOverride && requiredSlotsOverride.length > 0) {
-          modifiedProgram.slots = {
-            ...(modifiedProgram.slots ?? {}),
-            [weekday]: requiredSlotsOverride,
-          }
-        }
-
-        if (pcaOverrides.length > 0) {
-          const prioritizedPcaIds = pcaOverrides.map((o) => o.pcaId)
-          const existing = modifiedProgram.pca_preference_order as string[] | undefined
-          modifiedProgram.pca_preference_order = [
-            ...prioritizedPcaIds,
-            ...((Array.isArray(existing) ? existing : []).filter((id) => !prioritizedPcaIds.includes(id))),
-          ]
-
-          // Carry manual slot-to-PCA coverage into algorithm for Step 2.0 split coverage.
-          const effectiveRequiredSlots = requiredSlotsOverride ?? []
-          const manualPcaCovers = pcaOverrides
-            .map((entry) => ({
-              pcaId: entry.pcaId,
-              slots: (entry.slots.length > 0 ? entry.slots : effectiveRequiredSlots)
-                .filter((slot) => [1, 2, 3, 4].includes(slot))
-                .sort((a, b) => a - b),
-            }))
-            .filter((entry) => entry.slots.length > 0)
-          if (manualPcaCovers.length > 0) {
-            modifiedProgram.__manualPcaCovers = manualPcaCovers
-          }
-        }
-
-        return modifiedProgram
+      const modifiedSpecialPrograms = applySpecialProgramOverrides({
+        specialPrograms: specialPrograms as SpecialProgram[],
+        overrides,
+        weekday,
       })
 
       // Generate therapist allocations (include SPT allocation in step 2)
@@ -3772,12 +3830,21 @@ export function useScheduleController(params: {
         return !!(alloc.special_program_ids && alloc.special_program_ids.length > 0)
       })
 
+      const specialProgramTargetTeamById = buildSpecialProgramTargetTeamById({
+        programs: modifiedSpecialPrograms as SpecialProgram[],
+        therapistAllocations: (therapistResult.allocations || []) as TherapistAllocation[],
+        day: weekday,
+        staff,
+        overrides,
+      })
+
       const pcaContext: PCAAllocationContext = {
         date: selectedDate,
         totalPCAAvailable: totalPCA,
         pcaPool: pcaData,
         averagePCAPerTeam: rawAveragePCAPerTeam,
         specialPrograms: modifiedSpecialPrograms,
+        specialProgramTargetTeamById,
         pcaPreferences,
         phase: 'non-floating-with-special',
         onNonFloatingSubstitution,
@@ -4151,12 +4218,27 @@ export function useScheduleController(params: {
         console.error('Missing Step 2 average PCA per team (step2Result.rawAveragePCAPerTeam)')
       }
 
+      const modifiedSpecialPrograms = applySpecialProgramOverrides({
+        specialPrograms: specialPrograms as SpecialProgram[],
+        overrides: staffOverrides,
+        weekday,
+      })
+
+      const specialProgramTargetTeamById = buildSpecialProgramTargetTeamById({
+        programs: modifiedSpecialPrograms,
+        therapistAllocations: TEAMS.flatMap((team) => therapistAllocations[team] || []),
+        day: weekday,
+        staff,
+        overrides: staffOverrides,
+      })
+
       const pcaContext: PCAAllocationContext = {
         date: selectedDate,
         totalPCAAvailable,
         pcaPool: pcaData,
         averagePCAPerTeam: avg ?? createEmptyTeamRecord<number>(0),
-        specialPrograms,
+        specialPrograms: modifiedSpecialPrograms,
+        specialProgramTargetTeamById,
         pcaPreferences,
         onTieBreak: handleTieBreak,
         phase: 'floating',

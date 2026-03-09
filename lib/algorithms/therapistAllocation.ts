@@ -4,6 +4,7 @@ import { SPTAllocation, SpecialProgram } from '@/types/allocation'
 import { roundToNearestQuarter } from '@/lib/utils/rounding'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { getSptWeekdayConfig } from '@/lib/features/schedule/sptConfig'
+import { getPrimaryConfiguredTherapistForWeekday } from '@/lib/utils/specialProgramConfigRows'
 
 export interface StaffData {
   id: string
@@ -184,47 +185,17 @@ export function allocateTherapists(context: AllocationContext): AllocationResult
       
       context.specialPrograms.forEach(program => {
         if (!program.weekdays.includes(weekday)) return
-        
-        // Check if any staff in this team has this special program
-        // Staff must be in program.staff_ids AND have FTE subtraction for this weekday
-        const teamStaffWithProgram = teamAllocations.filter(alloc => {
-          // Check if staff is in the program's staff_ids
-          if (!program.staff_ids.includes(alloc.staff_id)) return false
-          
-          // Check if staff has FTE subtraction for this weekday
-          const staffFTE = program.fte_subtraction[alloc.staff_id]
-          const subtraction = staffFTE?.[weekday] || 0
-          return subtraction > 0
+        const primaryConfigured = getPrimaryConfiguredTherapistForWeekday({
+          program,
+          day: weekday,
+          allStaff: context.staff as any,
         })
-        
-        if (teamStaffWithProgram.length > 0) {
-          // Use preference order to determine which staff will run the program
-          const preferenceOrder = program.therapist_preference_order?.[team]
-          
-          if (preferenceOrder && preferenceOrder.length > 0 && teamStaffWithProgram.length > 1) {
-            // Multiple staff: use preference order, find first available
-            const orderedStaff = preferenceOrder
-              .map(staffId => teamStaffWithProgram.find(a => a.staff_id === staffId))
-              .filter(a => a !== undefined)
-            
-            if (orderedStaff.length > 0) {
-              const selectedStaff = orderedStaff[0]
-              const staffFTE = program.fte_subtraction[selectedStaff.staff_id]
-              estimatedSpecialProgramSubtraction += staffFTE?.[weekday] || 0
-            }
-          } else if (teamStaffWithProgram.length === 1) {
-            // Single staff: subtract their FTE
-            const staffFTE = program.fte_subtraction[teamStaffWithProgram[0].staff_id]
-            estimatedSpecialProgramSubtraction += staffFTE?.[weekday] || 0
-          } else {
-            // No preference order, use maximum (fallback to old logic)
-            const maxSubtraction = Math.max(...teamStaffWithProgram.map(alloc => {
-              const staffFTE = program.fte_subtraction[alloc.staff_id]
-              return staffFTE?.[weekday] || 0
-            }))
-            estimatedSpecialProgramSubtraction += maxSubtraction
-          }
-        }
+        if (!primaryConfigured) return
+
+        const selectedAllocation = teamAllocations.find((alloc) => alloc.staff_id === primaryConfigured.staffId)
+        if (!selectedAllocation) return
+
+        estimatedSpecialProgramSubtraction += primaryConfigured.fte_subtraction ?? 0
       })
       
       // Calculate estimated ptPerTeam after special program subtractions
@@ -506,6 +477,40 @@ export function allocateTherapists(context: AllocationContext): AllocationResult
   // use preference order to assign to only one therapist per team
   context.specialPrograms.forEach((program) => {
     if (!program.weekdays.includes(weekday)) return
+
+    const primaryConfigured = getPrimaryConfiguredTherapistForWeekday({
+      program,
+      day: weekday,
+      allStaff: context.staff as any,
+    })
+
+    if (primaryConfigured) {
+      const selectedAllocation = allocations.find((alloc) => alloc.staff_id === primaryConfigured.staffId)
+      const selectedStaff = context.staff.find((staff) => staff.id === primaryConfigured.staffId)
+
+      if (selectedAllocation && selectedStaff) {
+        const currentFTE = selectedAllocation.fte_therapist ?? selectedStaff.fte_therapist ?? 0
+        const isOnDuty = isOnDutyLeaveType(selectedAllocation.leave_type as any)
+        const isOnDutyZeroFteSPT =
+          selectedStaff.rank === 'SPT' &&
+          currentFTE === 0 &&
+          isOnDuty &&
+          (primaryConfigured.fte_subtraction ?? 0) === 0
+
+        if (currentFTE > 0 || isOnDutyZeroFteSPT) {
+          selectedAllocation.fte_therapist -= primaryConfigured.fte_subtraction ?? 0
+          ptPerTeam[selectedAllocation.team] -= primaryConfigured.fte_subtraction ?? 0
+
+          if (!selectedAllocation.special_program_ids) {
+            selectedAllocation.special_program_ids = []
+          }
+          if (!selectedAllocation.special_program_ids.includes(program.id)) {
+            selectedAllocation.special_program_ids.push(program.id)
+          }
+          return
+        }
+      }
+    }
     
     // Group staff by team for this special program
     const staffByTeam: Record<Team, { staffId: string; fteSubtraction: number; allocation: TherapistAllocation }[]> = {

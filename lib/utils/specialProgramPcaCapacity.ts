@@ -1,5 +1,6 @@
 import type { SpecialProgram } from '@/types/allocation'
 import type { Weekday } from '@/types/staff'
+import { getEffectiveSpecialProgramWeekdaySlots } from '@/lib/utils/specialProgramConfigRows'
 
 const VALID_SLOTS = new Set([1, 2, 3, 4])
 
@@ -12,17 +13,6 @@ function normalizeSlots(input: unknown): number[] {
     out.push(v)
   }
   return Array.from(new Set(out)).sort((a, b) => a - b)
-}
-
-function getProgramRequiredSlotsWithFallback(program: SpecialProgram, weekday: Weekday): number[] {
-  const raw = (program as any)?.slots?.[weekday]
-  const slots = normalizeSlots(raw)
-  if (slots.length > 0) return slots
-
-  // Keep behavior consistent with allocation fallbacks in `lib/algorithms/pcaAllocation.ts`.
-  if ((program as any)?.name === 'Robotic') return [1, 2, 3, 4]
-  if ((program as any)?.name === 'CRP') return [2]
-  return [1, 2, 3, 4]
 }
 
 function getAllSpecialProgramOverrideEntries(
@@ -83,7 +73,7 @@ export function computeReservedSpecialProgramPcaFte(args: {
         ? Array.from(requiredUnion).sort((a, b) => a - b)
         : slotsUnion.size > 0
           ? Array.from(slotsUnion).sort((a, b) => a - b)
-          : getProgramRequiredSlotsWithFallback(program, weekday)
+          : getEffectiveSpecialProgramWeekdaySlots({ program, day: weekday })
 
     total += effectiveSlots.length * 0.25
   }

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useRef, Fragment, useCallback } from 'react'
-import { Team } from '@/types/staff'
+import { Team, Weekday } from '@/types/staff'
 import { PCAAllocation } from '@/types/schedule'
 import { PCAPreference, SpecialProgram } from '@/types/allocation'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
@@ -68,6 +68,7 @@ type MiniStep = '3.0' | '3.1' | '3.2' | '3.3' | '3.4'
 interface FloatingPCAConfigDialogProps {
   open: boolean
   teams?: Team[]
+  weekday: Weekday
   initialPendingFTE: Record<Team, number>  // Raw pending FTE from Step 2
   pcaPreferences: PCAPreference[]  // Team preferences from database
   floatingPCAs: PCAData[]  // Floating PCAs with their current FTE
@@ -160,6 +161,7 @@ function sortTeamsByPendingFTE(
 export function FloatingPCAConfigDialog({
   open,
   teams = TEAMS,
+  weekday,
   initialPendingFTE,
   pcaPreferences,
   floatingPCAs,
@@ -901,10 +903,12 @@ export function FloatingPCAConfigDialog({
         pendingFTE,
         allocations,
         floatingPCAs,
-        specialPrograms
+        specialPrograms,
+        staffOverrides,
+        weekday
       )
     },
-    [floatingPCAs, specialPrograms]
+    [floatingPCAs, specialPrograms, staffOverrides, weekday]
   )
 
   const evaluateStep31Path = useCallback(() => {
