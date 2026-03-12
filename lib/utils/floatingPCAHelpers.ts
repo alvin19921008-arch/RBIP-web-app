@@ -9,6 +9,11 @@ import { Team } from '@/types/staff'
 import { PCAAllocation, SlotAssignmentLog, TeamAllocationLog, AllocationTracker } from '@/types/schedule'
 import { PCAPreference } from '@/types/allocation'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
+import {
+  getAllSubstitutionSlots,
+  type SubstitutionForBySlot,
+  type SubstitutionForEntry,
+} from '@/lib/utils/substitutionFor'
 
 // ============================================================================
 // Constants
@@ -18,6 +23,12 @@ export const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'D
 export const AM_SLOTS = [1, 2]
 export const PM_SLOTS = [3, 4]
 export const ALL_SLOTS = [1, 2, 3, 4]
+
+export type StaffOverrideWithSubstitution = {
+  substitutionFor?: SubstitutionForEntry
+  substitutionForBySlot?: SubstitutionForBySlot
+  [key: string]: any
+}
 
 function getNormalizedPcaAvailableSlots(pca: { availableSlots?: number[] } | null | undefined): number[] | null {
   const slots = pca?.availableSlots
@@ -75,6 +86,7 @@ export function getSlotTeam(allocation: PCAAllocation, slot: number): Team | nul
 
 /**
  * Set a slot assignment in an allocation (mutates the allocation).
+ * No validation — use assignSlotIfValid when you need invariant checks.
  */
 export function setSlotTeam(allocation: PCAAllocation, slot: number, team: Team): void {
   switch (slot) {
@@ -83,6 +95,65 @@ export function setSlotTeam(allocation: PCAAllocation, slot: number, team: Team)
     case 3: allocation.slot3 = team; break
     case 4: allocation.slot4 = team; break
   }
+}
+
+/**
+ * Options for the canonical slot assignment helper.
+ */
+export interface AssignSlotIfValidOptions {
+  allocation: PCAAllocation
+  slot: number  // 1–4
+  team: Team
+  /** If provided, slot must be in this list. */
+  availableSlots?: number[]
+  /** PCA must have at least this much FTE remaining (default 0.25). Omit or set to 0 to skip. */
+  minFteRemaining?: number
+  /** If true, skip fte_remaining check (e.g. invalid-slot copy for display). */
+  skipFteCheck?: boolean
+  /** If true, allow assigning to an already-occupied slot (use sparingly, e.g. invalid-slot override). */
+  allowOverwrite?: boolean
+}
+
+/**
+ * Canonical "assign slot if valid" helper. Centralizes all slot assignment writes
+ * and enforces invariants before mutating the allocation.
+ *
+ * Enforces:
+ * - Slot must be 1–4
+ * - Slot must be currently free (unless allowOverwrite)
+ * - Slot must be in availableSlots if declared
+ * - PCA must have enough fte_remaining (unless skipFteCheck)
+ *
+ * Does NOT update slot_assigned, fte_remaining, or pending — the caller must.
+ *
+ * @returns true if assignment was performed, false if validation failed
+ */
+export function assignSlotIfValid(options: AssignSlotIfValidOptions): boolean {
+  const {
+    allocation,
+    slot,
+    team,
+    availableSlots,
+    minFteRemaining = 0.25,
+    skipFteCheck = false,
+    allowOverwrite = false,
+  } = options
+
+  if (slot < 1 || slot > 4) return false
+
+  const current = getSlotTeam(allocation, slot)
+  if (!allowOverwrite && current !== null) return false
+
+  if (availableSlots !== undefined && availableSlots.length > 0 && !availableSlots.includes(slot)) {
+    return false
+  }
+
+  if (!skipFteCheck && (allocation.fte_remaining ?? 0) < minFteRemaining) {
+    return false
+  }
+
+  setSlotTeam(allocation, slot, team)
+  return true
 }
 
 /**
@@ -155,6 +226,32 @@ export interface FindAvailablePCAsOptions {
   existingAllocations: PCAAllocation[]
   gymSlot?: number | null
   avoidGym?: boolean
+  staffOverrides?: Record<string, StaffOverrideWithSubstitution>
+}
+
+function getUsableAvailableSlotsForPca(options: {
+  pca: PCAData & { floor_pca?: ('upper' | 'lower')[] | null }
+  allocation?: PCAAllocation
+  gymSlot: number | null
+  avoidGym: boolean
+  staffOverride?: StaffOverrideWithSubstitution
+}): number[] {
+  const { pca, allocation, gymSlot, avoidGym, staffOverride } = options
+  const pcaAvail = getNormalizedPcaAvailableSlots(pca)
+  if (pcaAvail && pcaAvail.length === 0) return []
+
+  const freeSlots = allocation
+    ? getAvailableSlotsForTeam(allocation, gymSlot, avoidGym)
+    : ALL_SLOTS.filter((slot) => !(avoidGym && gymSlot === slot))
+
+  const slotsRespectingAvailability = pcaAvail
+    ? freeSlots.filter((slot) => pcaAvail.includes(slot))
+    : freeSlots
+
+  const substitutionSlots = new Set(getAllSubstitutionSlots(staffOverride))
+  if (substitutionSlots.size === 0) return slotsRespectingAvailability
+
+  return slotsRespectingAvailability.filter((slot) => !substitutionSlots.has(slot))
 }
 
 /**
@@ -174,6 +271,7 @@ export function findAvailablePCAs(options: FindAvailablePCAsOptions): (PCAData &
     existingAllocations,
     gymSlot,
     avoidGym,
+    staffOverrides,
   } = options
 
   // Build a first-allocation index once per call to avoid repeated O(n) scans in filter/sort.
@@ -183,7 +281,6 @@ export function findAvailablePCAs(options: FindAvailablePCAsOptions): (PCAData &
       allocationByStaffId.set(allocation.staff_id, allocation)
     }
   }
-
   return pcaPool
     .filter(pca => {
       // 1. Must be floating and on duty
@@ -212,37 +309,25 @@ export function findAvailablePCAs(options: FindAvailablePCAsOptions): (PCAData &
       }
       
       const pcaAvail = getNormalizedPcaAvailableSlots(pca)
+      const usableSlots = getUsableAvailableSlotsForPca({
+        pca,
+        allocation: allocationByStaffId.get(pca.id),
+        gymSlot: gymSlot ?? null,
+        avoidGym: avoidGym ?? false,
+        staffOverride: staffOverrides?.[pca.id],
+      })
 
       // 4. Get or create allocation for this PCA
       const allocation = allocationByStaffId.get(pca.id)
       
       // 5. Check if required slot is available (if specified)
       if (requiredSlot !== undefined) {
-        // Respect PCA slot availability (if present)
-        if (pcaAvail && !pcaAvail.includes(requiredSlot)) return false
-        if (!allocation) {
-          // No allocation yet, slot is available (unless it's gym slot)
-          if (avoidGym && gymSlot === requiredSlot) return false
-        } else {
-          if (!isSlotAvailableForTeam(allocation, requiredSlot, gymSlot ?? null, avoidGym ?? false)) {
-            return false
-          }
-        }
+        if (!usableSlots.includes(requiredSlot)) return false
       } else {
         // Check if PCA has any available slots
         // If PCA has explicit availableSlots and none are valid, treat as unavailable.
         if (pcaAvail && pcaAvail.length === 0) return false
-        if (allocation) {
-          const freeSlots = getAvailableSlotsForTeam(allocation, gymSlot ?? null, avoidGym ?? false)
-          const usableSlots = pcaAvail ? freeSlots.filter((s) => pcaAvail.includes(s)) : freeSlots
-          if (usableSlots.length === 0) return false
-        } else if (pcaAvail) {
-          // No allocation yet: the PCA can only work its declared availableSlots.
-          const usableSlots = (avoidGym && typeof gymSlot === 'number')
-            ? pcaAvail.filter((s) => s !== gymSlot)
-            : pcaAvail
-          if (usableSlots.length === 0) return false
-        }
+        if (usableSlots.length === 0) return false
       }
       
       // 6. Check if PCA has FTE remaining
@@ -510,13 +595,14 @@ export function assignSlotsToTeam(options: AssignSlotsOptions): AssignSlotsResul
     }
   }
   
-  // Actually assign the selected slots
+  // Actually assign the selected slots via canonical helper
   for (const slot of selectedSlots) {
-    setSlotTeam(allocation, slot, team)
-    slotsAssigned.push(slot)
-    remainingPendingFTE = Math.max(0, remainingPendingFTE - 0.25)
-    allocation.fte_remaining = Math.max(0, allocation.fte_remaining - 0.25)
-    allocation.slot_assigned = (allocation.slot_assigned || 0) + 0.25
+    if (assignSlotIfValid({ allocation, slot, team, availableSlots, minFteRemaining: 0.25 })) {
+      slotsAssigned.push(slot)
+      remainingPendingFTE = Math.max(0, remainingPendingFTE - 0.25)
+      allocation.fte_remaining = Math.max(0, allocation.fte_remaining - 0.25)
+      allocation.slot_assigned = (allocation.slot_assigned || 0) + 0.25
+    }
   }
   
   // Check if AM/PM balance was achieved

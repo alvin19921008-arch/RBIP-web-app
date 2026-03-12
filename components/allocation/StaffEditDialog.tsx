@@ -11,6 +11,11 @@ import { SpecialProgram } from '@/types/allocation'
 import { TimeIntervalSlider } from './TimeIntervalSlider'
 import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
 import { roundToNearestQuarter } from '@/lib/utils/rounding'
+import {
+  getTherapistSpecialProgramUiState,
+  normalizeStep1SpecialProgramAvailabilityForSave,
+} from '@/lib/utils/step1SpecialProgramAvailability'
+import { Staff } from '@/types/staff'
 
 interface StaffEditDialogProps {
   open: boolean
@@ -34,6 +39,7 @@ interface StaffEditDialogProps {
   currentInvalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
   currentAmPmSelection?: 'AM' | 'PM' | ''
   currentSpecialProgramAvailable?: boolean
+  allStaff?: Staff[]
   specialPrograms?: SpecialProgram[]  // To get slot times
   weekday?: 'mon' | 'tue' | 'wed' | 'thu' | 'fri'  // Current weekday
 
@@ -79,6 +85,7 @@ export function StaffEditDialog({
   currentInvalidSlots,
   currentAmPmSelection,
   currentSpecialProgramAvailable,
+  allStaff = [],
   specialPrograms = [],
   weekday,
   onSave,
@@ -115,7 +122,7 @@ export function StaffEditDialog({
   // NEW: Therapist AM/PM selection
   const [amPmSelection, setAmPmSelection] = useState<'AM' | 'PM' | ''>(currentAmPmSelection ?? '')
   // NEW: Therapist special program availability
-  const [specialProgramAvailable, setSpecialProgramAvailable] = useState<boolean>(currentSpecialProgramAvailable ?? false)
+  const [specialProgramAvailable, setSpecialProgramAvailable] = useState<boolean | undefined>(currentSpecialProgramAvailable)
   // NEW: Unavailable slots (auto-populated from available slots)
   const [unavailableSlots, setUnavailableSlots] = useState<number[]>([])
   // Bug 2 Fix: Track if user has started editing FTE to show unavailable slots
@@ -153,7 +160,7 @@ export function StaffEditDialog({
       // NEW: Reset AM/PM selection
       setAmPmSelection(currentAmPmSelection ?? '')
       // NEW: Reset special program availability
-      setSpecialProgramAvailable(currentSpecialProgramAvailable ?? false)
+      setSpecialProgramAvailable(currentSpecialProgramAvailable)
       setShowCustomInput(currentLeaveType === 'others')
       setCustomLeaveType('')
       // Bug 2 Fix: Reset unavailable slots and editing flag when dialog opens
@@ -169,6 +176,7 @@ export function StaffEditDialog({
     currentInvalidSlots,
     currentAmPmSelection,
     currentSpecialProgramAvailable,
+    allStaff,
     isSPT,
     currentSPTBaseFTE,
     sptConfiguredFTE,
@@ -198,37 +206,23 @@ export function StaffEditDialog({
   const isTherapistRank = staffRank && ['RPT', 'APPT', 'SPT'].includes(staffRank)
   const showSlotFields = !isTherapistRank
 
-  // Determine if staff has special programs (for therapist special program availability)
-  const staffHasSpecialProgram = isTherapistRank && specialPrograms.some(p =>
-    p.staff_ids.includes(staffId) && p.weekdays.includes(weekday || 'mon') && p.name !== 'DRO'
-  )
-
-  // Get special program name and slot time for display
-  const specialProgram = staffHasSpecialProgram ?
-    specialPrograms.find(p =>
-      p.staff_ids.includes(staffId) && p.weekdays.includes(weekday || 'mon') && p.name !== 'DRO'
-    ) : null
-
-  const programName = specialProgram?.name || ''
   const currentWeekday = weekday || 'mon'
-  // CRITICAL: Slots structure is Record<staffId, Record<Weekday, number[]>>, not Record<Weekday, number[]>
-  // So we need to access slots by staffId first, then by weekday
-  const staffSlots = (specialProgram as any)?.slots?.[staffId] as Record<
-    'mon' | 'tue' | 'wed' | 'thu' | 'fri',
-    number[]
-  > | undefined
-  const programSlots = staffSlots?.[currentWeekday]
-  const slotTime = specialProgram && programSlots && Array.isArray(programSlots) && programSlots.length > 0 ?
-    (() => {
-      const firstSlot = programSlots[0]
-      if (firstSlot && [1, 2, 3, 4].includes(firstSlot)) {
-        // Use helper function to get slot time and format it
-        const timeRange = getSlotTime(firstSlot)
-        return formatTimeRange(timeRange)  // Converts "09:00-10:30" to "0900-1030"
-      }
-      return '0900-1030'  // Fallback
-    })()
-    : ''
+  const effectiveLeaveTypeForSpecialProgram =
+    leaveType === 'others'
+      ? (customLeaveType.trim() || 'others')
+      : leaveType
+  const therapistSpecialProgramUiState =
+    isTherapistRank
+      ? getTherapistSpecialProgramUiState({
+          member: { id: staffId, rank: staffRank as Staff['rank'] },
+          allStaff,
+          specialPrograms,
+          weekday: currentWeekday,
+          leaveType: effectiveLeaveTypeForSpecialProgram,
+          fteRemaining,
+          fteSubtraction,
+        })
+      : { info: null, showToggle: false }
 
   const handleFTESubtractionInputChange = (value: string) => {
     // Allow free typing - only update the input string
@@ -449,6 +443,12 @@ export function StaffEditDialog({
       }
     }
 
+    finalSpecialProgramAvailable = normalizeStep1SpecialProgramAvailabilityForSave({
+      hasSpecialProgramToday: therapistSpecialProgramUiState.info !== null,
+      shouldShowToggle: therapistSpecialProgramUiState.showToggle,
+      selected: specialProgramAvailable,
+    })
+
     // For therapist ranks, don't include slot-related fields
     if (!showSlotFields) {
       finalSlots = undefined
@@ -639,8 +639,8 @@ export function StaffEditDialog({
             )}
           </div>
 
-          {/* AM/PM Selection for therapists (RPT/APPT only, not SPT) when FTE = 0.5 or 0.25 */}
-          {isTherapistRank && staffRank !== 'SPT' && (fteRemaining === 0.5 || fteRemaining === 0.25) && (
+          {/* AM/PM Selection for therapists (RPT/APPT only) when FTE remaining ≤ 0.5 */}
+          {isTherapistRank && staffRank !== 'SPT' && fteRemaining > 0 && fteRemaining <= 0.5 && (
             <div className="space-y-2 mt-4">
               <Label htmlFor="am-pm-selection">AM/PM Selection</Label>
               <select
@@ -657,18 +657,18 @@ export function StaffEditDialog({
           )}
 
           {/* Special Program Availability for therapists */}
-          {isTherapistRank && staffHasSpecialProgram && slotTime && (
+          {isTherapistRank && therapistSpecialProgramUiState.showToggle && therapistSpecialProgramUiState.info && (
             <div className="space-y-2">
               <label className="flex items-center space-x-2">
                 <input
                   type="checkbox"
-                  checked={specialProgramAvailable}
+                  checked={specialProgramAvailable === true}
                   onChange={(e) => setSpecialProgramAvailable(e.target.checked)}
                   className="h-4 w-4"
                 />
                 <span className="text-sm">
-                  Available during special program <strong>({programName})</strong> slot{' '}
-                  <strong className="whitespace-nowrap">"{slotTime}"</strong>?
+                  Still available for <strong>({therapistSpecialProgramUiState.info.programName})</strong> slot{' '}
+                  <strong className="whitespace-nowrap">{therapistSpecialProgramUiState.info.slotLabel}</strong> despite leave?
                 </span>
               </label>
             </div>

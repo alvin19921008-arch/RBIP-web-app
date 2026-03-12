@@ -3,32 +3,10 @@
 import * as React from 'react'
 
 import { ActionToast, type ActionToastProgress, type ActionToastVariant } from '@/components/ui/action-toast'
+import { ToastContext, type ToastApi, type ToastInput } from '@/components/ui/toast-context'
 
-type ToastInput = {
-  title: string
-  description?: string
-  variant?: ActionToastVariant
-  durationMs?: number
-  actions?: React.ReactNode
-  progress?: ActionToastProgress
-  persistUntilDismissed?: boolean
-}
-
-type ToastApi = {
-  show: (input: ToastInput) => void
-  success: (title: string, description?: string, durationMs?: number) => void
-  warning: (title: string, description?: string, durationMs?: number) => void
-  error: (title: string, description?: string, durationMs?: number) => void
-  dismiss: () => void
-}
-
-const ToastContext = React.createContext<ToastApi | null>(null)
-
-export function useToast(): ToastApi {
-  const ctx = React.useContext(ToastContext)
-  if (!ctx) throw new Error('useToast must be used within <ToastProvider>')
-  return ctx
-}
+const DEFAULT_DURATION_MS = 3000
+const PROGRESS_TICK_MS = 100
 
 type ToastState = {
   id: number
@@ -38,37 +16,135 @@ type ToastState = {
   actions?: React.ReactNode
   progress?: ActionToastProgress
   persistUntilDismissed?: boolean
+  pauseOnHover?: boolean
   open: boolean
 }
 
-const DEFAULT_DURATION_MS = 3000
-
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const timerRef = React.useRef<number | null>(null)
+  const progressIntervalRef = React.useRef<number | null>(null)
   const idRef = React.useRef(0)
+  const activeToastIdRef = React.useRef<number | null>(null)
+  const totalDurationMsRef = React.useRef(0)
+  const remainingMsRef = React.useRef(0)
+  const countdownStartedAtMsRef = React.useRef(0)
+  const isPausedRef = React.useRef(false)
+  const shouldPauseOnHoverRef = React.useRef(false)
+  const shouldTrackDurationProgressRef = React.useRef(false)
   const [toast, setToast] = React.useState<ToastState | null>(null)
 
-  const dismiss = React.useCallback(() => {
+  const clearCountdownTimers = React.useCallback(() => {
     if (timerRef.current) window.clearTimeout(timerRef.current)
     timerRef.current = null
-    setToast(prev => (prev ? { ...prev, open: false } : null))
+    if (progressIntervalRef.current) window.clearInterval(progressIntervalRef.current)
+    progressIntervalRef.current = null
   }, [])
 
-  const show = React.useCallback(
-    ({ title, description, variant = 'success', durationMs, actions, persistUntilDismissed, progress }: ToastInput) => {
-      const id = (idRef.current += 1)
-      setToast({ id, title, description, variant, actions, persistUntilDismissed, progress, open: true })
+  const startProgressInterval = React.useCallback((id: number) => {
+    if (!shouldTrackDurationProgressRef.current) return
+    if (progressIntervalRef.current) window.clearInterval(progressIntervalRef.current)
+    progressIntervalRef.current = window.setInterval(() => {
+      const elapsed = Date.now() - countdownStartedAtMsRef.current
+      const remaining = Math.max(0, remainingMsRef.current - elapsed)
+      const total = Math.max(1, totalDurationMsRef.current)
+      const value = remaining / total
+      setToast((prev) =>
+        prev && prev.id === id ? { ...prev, progress: { kind: 'determinate', value } } : prev
+      )
+      if (remaining <= 0 && progressIntervalRef.current) {
+        window.clearInterval(progressIntervalRef.current)
+        progressIntervalRef.current = null
+      }
+    }, PROGRESS_TICK_MS)
+  }, [])
 
-      if (timerRef.current) window.clearTimeout(timerRef.current)
-      timerRef.current = null
+  const dismiss = React.useCallback(() => {
+    clearCountdownTimers()
+    activeToastIdRef.current = null
+    shouldTrackDurationProgressRef.current = false
+    shouldPauseOnHoverRef.current = false
+    isPausedRef.current = false
+    setToast(prev => (prev ? { ...prev, open: false } : null))
+  }, [clearCountdownTimers])
+
+  const setCountdownPaused = React.useCallback(
+    (paused: boolean) => {
+      const activeId = activeToastIdRef.current
+      if (!activeId) return
+      if (!shouldPauseOnHoverRef.current) return
+      if (paused === isPausedRef.current) return
+
+      if (paused) {
+        const elapsed = Date.now() - countdownStartedAtMsRef.current
+        remainingMsRef.current = Math.max(0, remainingMsRef.current - elapsed)
+        clearCountdownTimers()
+        isPausedRef.current = true
+        return
+      }
+
+      if (remainingMsRef.current <= 0) {
+        setToast(prev => (prev && prev.id === activeId ? { ...prev, open: false } : prev))
+        return
+      }
+
+      isPausedRef.current = false
+      countdownStartedAtMsRef.current = Date.now()
+      timerRef.current = window.setTimeout(() => {
+        setToast(prev => (prev && prev.id === activeId ? { ...prev, open: false } : prev))
+      }, remainingMsRef.current)
+      startProgressInterval(activeId)
+    },
+    [clearCountdownTimers, startProgressInterval]
+  )
+
+  const show = React.useCallback(
+    ({
+      title,
+      description,
+      variant = 'success',
+      durationMs,
+      actions,
+      persistUntilDismissed,
+      progress,
+      showDurationProgress,
+      pauseOnHover,
+    }: ToastInput) => {
+      const id = (idRef.current += 1)
+      const resolvedDurationMs = Math.max(1, durationMs ?? DEFAULT_DURATION_MS)
+      const trackDurationProgress = !persistUntilDismissed && !!showDurationProgress
+      const initialProgress = trackDurationProgress
+        ? { kind: 'determinate' as const, value: 1 }
+        : progress
+
+      setToast({
+        id,
+        title,
+        description,
+        variant,
+        actions,
+        persistUntilDismissed,
+        progress: initialProgress,
+        pauseOnHover,
+        open: true,
+      })
+
+      clearCountdownTimers()
+      activeToastIdRef.current = id
+      shouldTrackDurationProgressRef.current = trackDurationProgress
+      shouldPauseOnHoverRef.current = !persistUntilDismissed && !!pauseOnHover
+      isPausedRef.current = false
+      totalDurationMsRef.current = resolvedDurationMs
+      remainingMsRef.current = resolvedDurationMs
+      countdownStartedAtMsRef.current = Date.now()
 
       if (!persistUntilDismissed) {
         timerRef.current = window.setTimeout(() => {
           setToast(prev => (prev && prev.id === id ? { ...prev, open: false } : prev))
-        }, durationMs ?? DEFAULT_DURATION_MS)
+        }, resolvedDurationMs)
+        startProgressInterval(id)
       }
     },
-    []
+    [clearCountdownTimers, startProgressInterval]
   )
 
   const api = React.useMemo<ToastApi>(
@@ -84,9 +160,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     return () => {
-      if (timerRef.current) window.clearTimeout(timerRef.current)
+      clearCountdownTimers()
     }
-  }, [])
+  }, [clearCountdownTimers])
 
   return (
     <ToastContext.Provider value={api}>
@@ -102,8 +178,19 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             variant={toast.variant}
             open={toast.open}
             onClose={api.dismiss}
+            onHoverPauseChange={(paused) => {
+              if (!toast.pauseOnHover || toast.persistUntilDismissed) return
+              setCountdownPaused(paused)
+            }}
             onExited={() => {
               setToast(prev => (prev && prev.id === toast.id ? null : prev))
+              if (activeToastIdRef.current === toast.id) {
+                clearCountdownTimers()
+                activeToastIdRef.current = null
+                shouldTrackDurationProgressRef.current = false
+                shouldPauseOnHoverRef.current = false
+                isPausedRef.current = false
+              }
             }}
           />
         </div>
@@ -111,4 +198,3 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     </ToastContext.Provider>
   )
 }
-

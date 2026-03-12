@@ -1,8 +1,10 @@
 'use client'
 
-import { useState, useEffect, useRef, type ComponentType } from 'react'
+import { useState, useEffect, useRef, useMemo, type ComponentType } from 'react'
 import dynamic from 'next/dynamic'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { CircleHelp } from 'lucide-react'
+import { DashboardConfigMetaInline } from '@/components/dashboard/DashboardConfigMetaInline'
 import { DashboardSidebar, DASHBOARD_CATEGORIES, type CategoryId } from '@/components/dashboard/DashboardSidebar'
 import { useAccessControl } from '@/lib/access/useAccessControl'
 import type { FeatureId } from '@/lib/access/types'
@@ -49,6 +51,13 @@ const ConfigSyncPanel = dynamic(
 const CATEGORY_LABELS = Object.fromEntries(
   DASHBOARD_CATEGORIES.map(category => [category.id, category.label])
 ) as Record<PanelKey, string>
+
+const CATEGORY_SET = new Set<Exclude<CategoryId, null>>(DASHBOARD_CATEGORIES.map((c) => c.id))
+
+function normalizeCategoryFromQuery(value: string | null): CategoryId {
+  if (!value) return null
+  return CATEGORY_SET.has(value as Exclude<CategoryId, null>) ? (value as Exclude<CategoryId, null>) : null
+}
 
 const PANEL_CONFIG: Record<
   PanelKey,
@@ -98,6 +107,9 @@ const PANEL_CONFIG: Record<
 
 export default function DashboardPage() {
   const access = useAccessControl()
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [activePanel, setActivePanel] = useState<CategoryId>(null)
   const [helpDialogOpen, setHelpDialogOpen] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
@@ -105,6 +117,10 @@ export default function DashboardPage() {
   const [topLoadingProgress, setTopLoadingProgress] = useState(0)
   const loadingBarIntervalRef = useRef<number | null>(null)
   const loadingBarHideTimeoutRef = useRef<number | null>(null)
+  const requestedPanelFromQuery = useMemo(
+    () => normalizeCategoryFromQuery(searchParams.get('category')),
+    [searchParams]
+  )
 
   const startTopLoading = (initialProgress: number = 0.05) => {
     if (loadingBarHideTimeoutRef.current) {
@@ -175,6 +191,11 @@ export default function DashboardPage() {
     startTopLoading(0.1)
     startSoftAdvance(0.7)
     setActivePanel(category)
+    const nextParams = new URLSearchParams(searchParams.toString())
+    if (category) nextParams.set('category', category)
+    else nextParams.delete('category')
+    const nextQuery = nextParams.toString()
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname)
     // Finish loading after a brief delay (panels handle their own loading states)
     setTimeout(() => {
       stopSoftAdvance()
@@ -194,6 +215,13 @@ export default function DashboardPage() {
     if (!allowed) setActivePanel(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePanel, access.role, access.settings])
+
+  useEffect(() => {
+    if (!requestedPanelFromQuery) return
+    const allowed = visibleCategories.some((c) => c.id === requestedPanelFromQuery)
+    if (!allowed) return
+    setActivePanel((prev) => (prev === requestedPanelFromQuery ? prev : requestedPanelFromQuery))
+  }, [requestedPanelFromQuery, visibleCategories])
 
   useEffect(() => {
     try {
@@ -237,10 +265,13 @@ export default function DashboardPage() {
               {activePanel ? activePanelConfig?.description : 'Configure system settings and preferences'}
             </p>
           </div>
-          <Button variant="outline" type="button" onClick={() => setHelpDialogOpen(true)} data-tour="dashboard-help">
+          <div className="flex items-center gap-3 shrink-0">
+            {activePanel !== 'sync-publish' && <DashboardConfigMetaInline />}
+            <Button variant="outline" type="button" onClick={() => setHelpDialogOpen(true)} data-tour="dashboard-help">
             <CircleHelp className="h-4 w-4 mr-1.5" />
             Help
           </Button>
+          </div>
         </div>
 
         {/* Content area with smooth scroll - panels handle their own loading states */}

@@ -96,6 +96,8 @@ export function NonFloatingSubstitutionDialog({
   const remainingSlotsRefs = useRef<Record<string, HTMLElement | null>>({})
   const pendingScrollRef = useRef<{ type: 'remaining' | 'next'; key: string; team?: Team } | null>(null)
 
+  const getSelectionKey = (team: Team, nonFloatingPCAId: string) => `${team}-${nonFloatingPCAId}`
+
   // When dialog opens, seed selections from initialSelections (if provided)
   useEffect(() => {
     if (!open) return
@@ -166,8 +168,6 @@ export function NonFloatingSubstitutionDialog({
     })
     return result
   }, [currentSubstitutions])
-
-  const getSelectionKey = (team: Team, nonFloatingPCAId: string) => `${team}-${nonFloatingPCAId}`
 
   const findSubstitution = useCallback((nonFloatingPCAId: string) => {
     for (const team of teams) {

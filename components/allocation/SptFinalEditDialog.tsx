@@ -324,6 +324,7 @@ export function SptFinalEditDialog(props: {
           : forceDisableByLeave
             ? dashBaseFte
             : 0
+      const initFteRemaining = Math.max(0, dashBaseFte - leaveCost)
 
       const alloc = currentAllocationByStaffId[s.id]
       const seedTeam =
@@ -333,11 +334,16 @@ export function SptFinalEditDialog(props: {
       const allowedTeams = Array.isArray(allowedTeamsRaw) && allowedTeamsRaw.length > 0 ? allowedTeamsRaw : TEAMS
 
       // Determine initial state based on existing data
-      // If SPT has any leave type set (and it's not an on-duty leave type like attending course), show as leave
+      // Full leave types (VL/SDO/TIL/sick leave) always show as leave.
+      // Partial leave (e.g. medical follow-up with fteRemaining > 0) shows as working.
       let initialState: SPTState
       const hasNonOnDutyLeave = leaveType && !isOnDutyLeaveType(leaveType)
-      if (forceDisableByLeave || hasNonOnDutyLeave) {
+      if (forceDisableByLeave) {
         initialState = 'leave'
+      } else if (hasNonOnDutyLeave && initFteRemaining <= 0) {
+        initialState = 'leave'
+      } else if (hasNonOnDutyLeave && initFteRemaining > 0) {
+        initialState = 'working'
       } else if (!enabled) {
         initialState = 'off'
       } else {
@@ -359,7 +365,7 @@ export function SptFinalEditDialog(props: {
         },
         state: initialState,
         enabled: forceDisableByLeave ? false : enabled,
-        contributesFte: forceDisableByLeave ? false : contributesFte,
+        contributesFte: forceDisableByLeave ? false : (initialState === 'working' && hasNonOnDutyLeave && initFteRemaining > 0 ? true : contributesFte),
         slots,
         slotModes,
         displayText,
@@ -513,6 +519,8 @@ export function SptFinalEditDialog(props: {
     for (const card of cards) {
       const forceDisableByLeave =
         typeof card.leaveType === 'string' && SPT_FULL_LEAVE_TYPES_FORCE_DISABLE.has(card.leaveType)
+      const hasNonOnDutyLeave =
+        card.leaveType && !isOnDutyLeaveType(card.leaveType) && !forceDisableByLeave
 
       const slotModes = normalizeSlotModes(card.slotModes)
       const slots = uniqueSortedSlots(card.slots)
@@ -528,8 +536,14 @@ export function SptFinalEditDialog(props: {
 
       // Leave cost should be clamped against the correct "base":
       // - Normal: on-day computed baseFte (from enabled + contributes + slots)
-      // - Full-leave types (VL/SDO/TIL/sick leave): dashboard-configured baseFte, even though we force-disable on-day.
-      const leaveBaseFte = forceDisableByLeave ? (card.dashboard.baseFte ?? 0) : onDayBaseFte
+      // - Full-leave types (VL/SDO/TIL/sick leave): dashboard-configured baseFte
+      // - Partial leave (working with leave, e.g. medical follow-up): dashboard-configured baseFte
+      const isPartialLeaveInConfirm =
+        card.state === 'working' && hasNonOnDutyLeave && !forceDisableByLeave
+      const leaveBaseFte =
+        forceDisableByLeave || isPartialLeaveInConfirm
+          ? (card.dashboard.baseFte ?? 0)
+          : onDayBaseFte
       const leaveCostRaw = parseFloat(card.leaveCostInput)
       const mappedFullLeaveCost = clampLeaveCost(leaveCostRaw, leaveBaseFte)
       const fteRemaining = Math.max(0, leaveBaseFte - mappedFullLeaveCost)
@@ -551,8 +565,9 @@ export function SptFinalEditDialog(props: {
         ...(resolvedTeam ? { team: resolvedTeam } : {}),
         sptOnDayOverride: {
           // For full-leave types, always force-disable SPT allocation on this day.
+          // For partial leave, always contribute (switch is hidden).
           enabled: shouldAllocate,
-          contributesFte: shouldAllocate ? card.contributesFte : false,
+          contributesFte: shouldAllocate ? (isPartialLeaveInConfirm ? true : card.contributesFte) : false,
           slots,
           slotModes,
           displayText: resolvedDisplayText,
@@ -656,6 +671,8 @@ export function SptFinalEditDialog(props: {
               {cards.map((card) => {
                 const forceDisableByLeave =
                   typeof card.leaveType === 'string' && SPT_FULL_LEAVE_TYPES_FORCE_DISABLE.has(card.leaveType)
+                const hasNonOnDutyLeaveInCard =
+                  card.leaveType && !isOnDutyLeaveType(card.leaveType) && !forceDisableByLeave
                 const effectiveEnabled = card.enabled && !forceDisableByLeave
                 const computed = computeConfiguredBaseFte({
                   enabled: card.enabled,
@@ -663,10 +680,16 @@ export function SptFinalEditDialog(props: {
                   slots: card.slots,
                   slotModes: card.slotModes,
                 })
-                const leaveBaseFte = forceDisableByLeave ? (card.dashboard.baseFte ?? 0) : computed.baseFte
+                // For partial leave (working with leave), leave base is dashboard; otherwise use computed
+                const leaveBaseFteForCost =
+                  forceDisableByLeave || (card.state === 'working' && hasNonOnDutyLeaveInCard)
+                    ? (card.dashboard.baseFte ?? 0)
+                    : computed.baseFte
+                const leaveBaseFte = forceDisableByLeave ? (card.dashboard.baseFte ?? 0) : leaveBaseFteForCost
                 const leaveCostRaw = parseFloat(card.leaveCostInput)
                 const leaveCost = clampLeaveCost(leaveCostRaw, leaveBaseFte)
                 const fteRemaining = Math.max(0, leaveBaseFte - leaveCost)
+                const isPartialLeave = card.state === 'working' && hasNonOnDutyLeaveInCard && fteRemaining > 0
                 const suggestedTeam = computeSuggestedTeam(card, fteRemaining)
                 const amSlotsCount = card.slots.filter((s) => s === 1 || s === 2).length
                 const pmSlotsCount = card.slots.filter((s) => s === 3 || s === 4).length
@@ -681,7 +704,9 @@ export function SptFinalEditDialog(props: {
                   ? (showDetailedDisplay ? slotDisplayText : simpleSlotDisplayText)
                   : slotDisplayText
 
-                const teamValue = card.teamChoice === 'AUTO' ? 'AUTO' : card.teamChoice
+                // Normalize: when choice matches suggested team, use AUTO so Select matches the option (value="AUTO")
+                const teamValue =
+                  card.teamChoice === 'AUTO' || card.teamChoice === suggestedTeam ? 'AUTO' : card.teamChoice
                 const allowedTeams = (card.allowedTeams?.length ? card.allowedTeams : TEAMS).filter((t) => TEAMS.includes(t))
                 const needsSlotsWarning = effectiveEnabled && card.contributesFte && card.slots.length === 0
                 const slotsChipText = card.slots.length > 0 ? card.slots.join(', ') : '—'
@@ -742,16 +767,58 @@ export function SptFinalEditDialog(props: {
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap gap-1.5 text-xs">
-                        <Badge
-                          variant="secondary"
-                          className={cn('border text-[10px] px-1.5 py-0.5', statusColors[card.state])}
-                        >
-                          {statusLabel}
-                        </Badge>
+                      <div className={cn('flex text-xs gap-1.5', isPartialLeave ? 'flex-col' : 'flex-wrap')}>
+                        <div className="flex flex-wrap gap-1.5">
+                          <Badge
+                            variant="secondary"
+                            className={cn('border text-[10px] px-1.5 py-0.5', statusColors[card.state])}
+                          >
+                            {statusLabel}
+                          </Badge>
 
-                        {card.state === 'working' && effectiveEnabled && (
-                          <>
+                          {card.state === 'working' && effectiveEnabled && (
+                            <>
+                              {isPartialLeave && (
+                                <Badge variant="secondary" className="border border-amber-200 text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                                  {card.customLeaveType?.trim() || String(card.leaveType)} · {formatFteShort(leaveCost)} cost
+                                </Badge>
+                              )}
+                              {!isPartialLeave && (
+                                <>
+                                  <Badge variant="secondary" className="border border-border/60 text-[10px] px-1.5 py-0.5">
+                                    Slots: {card.slots.length > 0 ? card.slots.join(', ') : '—'}
+                                  </Badge>
+                                  <Badge variant="secondary" className="border border-border/60 text-[10px] px-1.5 py-0.5">
+                                    {showDetailedDisplay ? slotDisplayText : `${formatFteShort(fteRemaining)} FTE`}
+                                    {showToggle && (
+                                      <button
+                                        onClick={() => updateCard(card.staffId, { displayText: showDetailedDisplay ? null : slotDisplayText })}
+                                        className="ml-1 underline opacity-60 hover:opacity-100"
+                                      >
+                                        {showDetailedDisplay ? 'Simple' : 'Detail'}
+                                      </button>
+                                    )}
+                                  </Badge>
+                                </>
+                              )}
+                            </>
+                          )}
+
+                          {card.state === 'leave' && card.leaveType && (
+                            <Badge variant="secondary" className="border border-rose-200 text-[10px] px-1.5 py-0.5 bg-rose-50 text-rose-700">
+                              {card.customLeaveType?.trim() || String(card.leaveType)}
+                            </Badge>
+                          )}
+
+                          {card.state === 'working' && !isPartialLeave && (
+                            <Badge variant="secondary" className="border border-border/60 text-[10px] px-1.5 py-0.5">
+                              {card.teamChoice === 'AUTO' || card.teamChoice === suggestedTeam ? `${suggestedTeam} (Auto)` : card.teamChoice}
+                            </Badge>
+                          )}
+                        </div>
+
+                        {isPartialLeave && card.state === 'working' && (
+                          <div className="flex flex-wrap gap-1.5">
                             <Badge variant="secondary" className="border border-border/60 text-[10px] px-1.5 py-0.5">
                               Slots: {card.slots.length > 0 ? card.slots.join(', ') : '—'}
                             </Badge>
@@ -766,20 +833,10 @@ export function SptFinalEditDialog(props: {
                                 </button>
                               )}
                             </Badge>
-                          </>
-                        )}
-
-                        {card.state === 'leave' && card.leaveType && (
-                          <Badge variant="secondary" className="border border-rose-200 text-[10px] px-1.5 py-0.5 bg-rose-50 text-rose-700">
-                            {/* Show custom text if available, otherwise show the leave type */}
-                            {card.customLeaveType?.trim() || String(card.leaveType)}
-                          </Badge>
-                        )}
-
-                        {card.state === 'working' && (
-                          <Badge variant="secondary" className="border border-border/60 text-[10px] px-1.5 py-0.5">
-                            {card.teamChoice === 'AUTO' ? `Auto: ${suggestedTeam}` : card.teamChoice}
-                          </Badge>
+                            <Badge variant="secondary" className="border border-border/60 text-[10px] px-1.5 py-0.5">
+                              {card.teamChoice === 'AUTO' || card.teamChoice === suggestedTeam ? `${suggestedTeam} (Auto)` : card.teamChoice}
+                            </Badge>
+                          </div>
                         )}
                       </div>
                     </CardHeader>
@@ -797,11 +854,20 @@ export function SptFinalEditDialog(props: {
                             if (!v) return
                             const newState = v as SPTState
                             if (newState === 'working') {
-                              updateCard(card.staffId, { 
-                                state: 'working', 
+                              const isPartialLeave =
+                                card.leaveType &&
+                                !isOnDutyLeaveType(card.leaveType) &&
+                                !SPT_FULL_LEAVE_TYPES_FORCE_DISABLE.has(card.leaveType)
+                              const partialLeaveRemaining = Math.max(
+                                0,
+                                (card.dashboard.baseFte ?? 0) - clampLeaveCost(parseFloat(card.leaveCostInput), card.dashboard.baseFte ?? 0)
+                              )
+                              const keepPartialLeave = isPartialLeave && partialLeaveRemaining > 0
+                              updateCard(card.staffId, {
+                                state: 'working',
                                 enabled: true,
-                                leaveType: null,
-                                leaveCostInput: '0'
+                                contributesFte: keepPartialLeave ? true : card.contributesFte,
+                                ...(keepPartialLeave ? {} : { leaveType: null, leaveCostInput: '0' }),
                               })
                             } else if (newState === 'leave') {
                               updateCard(card.staffId, { 
@@ -839,17 +905,42 @@ export function SptFinalEditDialog(props: {
                       {/* Working State Content */}
                       {card.state === 'working' && (
                         <>
-                          <div className="flex items-center justify-between py-1">
-                            <div className="space-y-0.5">
-                              <Label className="text-xs">Contribute FTE</Label>
-                              <div className="text-[10px] text-muted-foreground">If off, base FTE becomes 0</div>
+                          {isPartialLeave && (
+                            <div className="space-y-1.5 py-1">
+                              <Label className="text-xs">Leave FTE Cost</Label>
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  type="number"
+                                  step="0.25"
+                                  min={0}
+                                  max={card.dashboard.baseFte ?? 0}
+                                  value={card.leaveCostInput}
+                                  onChange={(e) => updateCard(card.staffId, { leaveCostInput: e.target.value })}
+                                  onBlur={() => {
+                                    const v = clampLeaveCost(parseFloat(card.leaveCostInput), card.dashboard.baseFte ?? 0)
+                                    updateCard(card.staffId, { leaveCostInput: String(v) })
+                                  }}
+                                  className="h-8 w-20 text-xs"
+                                />
+                                <span className="text-[10px] text-muted-foreground">
+                                  Remaining: {formatFteShort(fteRemaining)} FTE
+                                </span>
+                              </div>
                             </div>
-                            <Switch
-                              checked={card.contributesFte}
-                              onCheckedChange={(v) => updateCard(card.staffId, { contributesFte: v })}
-                              className="scale-90"
-                            />
-                          </div>
+                          )}
+                          {!isPartialLeave && (
+                            <div className="flex items-center justify-between py-1">
+                              <div className="space-y-0.5">
+                                <Label className="text-xs">Contribute FTE</Label>
+                                <div className="text-[10px] text-muted-foreground">If off, base FTE becomes 0</div>
+                              </div>
+                              <Switch
+                                checked={card.contributesFte}
+                                onCheckedChange={(v) => updateCard(card.staffId, { contributesFte: v })}
+                                className="scale-90"
+                              />
+                            </div>
+                          )}
 
                           <div className="space-y-1.5">
                             <Label className="text-xs">Slots</Label>
@@ -948,43 +1039,40 @@ export function SptFinalEditDialog(props: {
                                 </div>
                               </div>
                             </div>
+                            {isPartialLeave && computed.baseFte > fteRemaining && (
+                              <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                                Selected slots ({formatFteShort(computed.baseFte)} FTE) exceed remaining ({formatFteShort(fteRemaining)} FTE). Allocation will use remaining.
+                              </p>
+                            )}
                           </div>
 
                           <div className="space-y-1.5 pt-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <Label className="text-xs shrink-0">Team Assignment Override</Label>
-                              <Switch
-                                checked={card.teamChoice !== 'AUTO'}
-                                onCheckedChange={(v) => {
-                                  if (!v) {
-                                    updateCard(card.staffId, { teamChoice: 'AUTO' })
-                                    return
-                                  }
-                                  const seed = allowedTeams.includes(suggestedTeam) ? suggestedTeam : allowedTeams[0] ?? 'FO'
-                                  updateCard(card.staffId, { teamChoice: seed })
-                                }}
-                                className="scale-90"
-                              />
-                            </div>
-                            {card.teamChoice === 'AUTO' ? (
-                              <div className="text-[10px] text-muted-foreground">
-                                Auto: <span className="font-medium text-foreground">{suggestedTeam}</span>
-                              </div>
-                            ) : (
-                              <Select
-                                value={teamValue}
-                                onValueChange={(v) => updateCard(card.staffId, { teamChoice: v as Team })}
-                              >
-                                <SelectTrigger className="h-8 text-xs">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {TEAMS.map((t) => (
-                                    <SelectItem key={t} value={t} className="text-xs">{t}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            )}
+                            <Label className="text-xs">Assigned to</Label>
+                            <Select
+                              value={teamValue}
+                              onValueChange={(v) =>
+                                updateCard(card.staffId, {
+                                  teamChoice: v === 'AUTO' ? 'AUTO' : (v as Team),
+                                })
+                              }
+                            >
+                              <SelectTrigger className="h-8 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {TEAMS.map((t) =>
+                                  t === suggestedTeam ? (
+                                    <SelectItem key={t} value="AUTO" className="text-xs">
+                                      {t} (Auto)
+                                    </SelectItem>
+                                  ) : (
+                                    <SelectItem key={t} value={t} className="text-xs">
+                                      {t}
+                                    </SelectItem>
+                                  )
+                                )}
+                              </SelectContent>
+                            </Select>
                           </div>
                         </>
                       )}

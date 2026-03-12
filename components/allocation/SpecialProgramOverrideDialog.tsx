@@ -22,6 +22,7 @@ import { helpMedia } from '@/lib/help/helpMedia'
 import {
   getPrimaryConfiguredTherapistForWeekday,
 } from '@/lib/utils/specialProgramConfigRows'
+import { buildExistingProgramOverrideSeed } from '@/lib/utils/specialProgramOverrideSeed'
 
 interface SpecialProgramOverrideDialogProps {
   open: boolean
@@ -432,6 +433,11 @@ export function SpecialProgramOverrideDialog({
           )
           
           if (programOverrideList.length > 0) {
+            if (program.name === 'CRP') {
+              const ownerEntry = Object.entries(staffOverrides).find(([, candidate]) => candidate === override)
+              const ownerStaffId = ownerEntry?.[0] ?? null
+              const ownerStaff = ownerStaffId ? allStaff.find((s) => s.id === ownerStaffId) ?? null : null
+            }
             // Collect all override data (may be split across therapist and PCA)
             programOverrideList.forEach((programOverride) => {
               if (programOverride.therapistId !== undefined) {
@@ -476,17 +482,39 @@ export function SpecialProgramOverrideDialog({
 
       // If we found any existing override data, use it
       if (foundTherapistId || foundPrimaryPCAId || foundSlots || foundRequiredSlots || foundDRMAddOn !== undefined) {
-        const effectiveRequiredSlots = foundRequiredSlots ?? foundSlots
-        const existingOverride: ProgramOverride = {
+        const primaryConfiguredTherapist = getPrimaryConfiguredTherapistIdForWeekday(program, weekday)
+        const primaryConfiguredStaff = primaryConfiguredTherapist
+          ? allStaff.find((s) => s.id === primaryConfiguredTherapist.id)
+          : null
+        const existingOverrideSeed = buildExistingProgramOverrideSeed({
           programId: program.id,
-          therapistId: foundTherapistId,
-          pcaId: foundPrimaryPCAId,
-          primaryPcaId: foundPrimaryPCAId,
-          slots: effectiveRequiredSlots ?? foundSlots,
+          programName: program.name,
+          foundTherapistId,
+          foundPrimaryPcaId: foundPrimaryPCAId,
+          foundSlots,
+          foundRequiredSlots,
+          foundTherapistFTE,
+          foundPCAFTE,
+          foundDRMAddOn,
+          primaryConfiguredTherapist,
+          isPrimaryConfiguredTherapistAvailable:
+            !!primaryConfiguredStaff && isTherapistAvailable(primaryConfiguredStaff, program.name),
+        })
+        if (!existingOverrideSeed) {
+          return
+        }
+        if (program.name === 'CRP') {
+        }
+        const existingOverride: ProgramOverride = {
+          programId: existingOverrideSeed.programId ?? program.id,
+          therapistId: existingOverrideSeed.therapistId,
+          pcaId: existingOverrideSeed.pcaId,
+          primaryPcaId: existingOverrideSeed.primaryPcaId,
+          slots: existingOverrideSeed.slots,
           pcaCoverageBySlot: foundPcaCoverageBySlot,
-          therapistFTESubtraction: foundTherapistFTE,
-          pcaFTESubtraction: foundPCAFTE,
-          drmAddOn: foundDRMAddOn,
+          therapistFTESubtraction: existingOverrideSeed.therapistFTESubtraction,
+          pcaFTESubtraction: existingOverrideSeed.pcaFTESubtraction,
+          drmAddOn: existingOverrideSeed.drmAddOn,
         }
         
         // Fill in missing values from program config if needed
@@ -532,6 +560,11 @@ export function SpecialProgramOverrideDialog({
       // In dashboard config, a therapist "assigned" to a program/day has a weekday entry in `fte_subtraction`
       // (CRP may intentionally be 0). This must take precedence over heuristic picks.
       const primaryConfiguredTherapist = getPrimaryConfiguredTherapistIdForWeekday(program, weekday)
+      if (program.name === 'CRP') {
+        const configuredStaff = primaryConfiguredTherapist
+          ? allStaff.find((s) => s.id === primaryConfiguredTherapist.id) ?? null
+          : null
+      }
       if (primaryConfiguredTherapist) {
         const staff = allStaff.find((s) => s.id === primaryConfiguredTherapist.id)
         if (staff && isTherapistAvailable(staff, program.name)) {
@@ -543,6 +576,8 @@ export function SpecialProgramOverrideDialog({
       // incorrectly win generic rank sorting. Use pickBestTherapistForCRP only when no primary configured.
       if (!therapistId && program.name === 'CRP') {
         therapistId = pickBestTherapistForCRP(program)
+      }
+      if (program.name === 'CRP') {
       }
       
       // For CRP: no automatic fallback - if configured therapist is not available, show substitution alert.
@@ -640,27 +675,49 @@ export function SpecialProgramOverrideDialog({
     setProgramOverrides(initialOverrides)
   }, [open, activePrograms, allStaff, staffOverrides, weekday])
 
+  useEffect(() => {
+    const crpEntry = Object.values(programOverrides).find((override) => {
+      const program = activePrograms.find((item) => item.id === override.programId)
+      return program?.name === 'CRP'
+    })
+    if (!open) return
+  }, [open, activePrograms, programOverrides, weekday])
+
   // Helper: Check if therapist is available
   const isTherapistAvailable = (staff: Staff, programName: string): boolean => {
     // Must have special program property
-    if (!staff.special_program?.includes(programName as StaffSpecialProgram)) {
-      return false
-    }
-    
     const override = staffOverrides[staff.id]
-      const leaveType = override?.leaveType
-      const isOnDuty = isOnDutyLeaveType(leaveType as any)
+    const leaveType = override?.leaveType
+    const isOnDuty = isOnDutyLeaveType(leaveType as any)
+    const hasSpecialProgramProperty = !!staff.special_program?.includes(programName as StaffSpecialProgram)
 
     // FTE remaining:
     // - Prefer explicit override.fteRemaining when present
     // - Otherwise default:
     //   - SPT: use dashboard-configured base FTE for this weekday (can be 0)
     //   - Others: 1.0 if on duty, 0 if on leave
+    const sptBaseFte = staff.rank === 'SPT' ? (sptBaseFteByStaffId?.[staff.id] ?? 0) : undefined
     const fteRemaining =
       override?.fteRemaining ??
       (staff.rank === 'SPT'
-        ? (sptBaseFteByStaffId?.[staff.id] ?? 0)
+        ? (sptBaseFte ?? 0)
         : (isOnDuty ? 1.0 : 0))
+
+    let availabilityReason = 'available'
+    if (!hasSpecialProgramProperty) {
+      availabilityReason = 'missing_special_program_property'
+    } else if (fteRemaining <= 0 && !(staff.rank === 'SPT' && isOnDuty)) {
+      availabilityReason = 'fte_gate_rejected'
+    } else if (override?.specialProgramAvailable !== undefined && override.specialProgramAvailable !== true) {
+      availabilityReason = 'explicit_special_program_unavailable'
+    }
+
+    if (programName === 'CRP') {
+    }
+
+    if (!hasSpecialProgramProperty) {
+      return false
+    }
 
     // Availability rule:
     // - Non-SPT: must have FTE > 0
@@ -673,7 +730,11 @@ export function SpecialProgramOverrideDialog({
     
     // Must be available during special program slot (if override exists)
     if (override?.specialProgramAvailable !== undefined) {
-      return override.specialProgramAvailable === true
+      const shouldIgnoreLegacyFalse = override.specialProgramAvailable === false && isOnDuty
+      const finalDecision = shouldIgnoreLegacyFalse ? true : override.specialProgramAvailable === true
+      if (programName === 'CRP') {
+      }
+      return finalDecision
     }
     
     // If no override, default to available (backward compatibility)
@@ -693,6 +754,9 @@ export function SpecialProgramOverrideDialog({
       const rankDiff = (rankOrder[a.rank] || 99) - (rankOrder[b.rank] || 99)
       return rankDiff !== 0 ? rankDiff : a.name.localeCompare(b.name)
     })
+
+    if (programName === 'CRP') {
+    }
 
     return therapists
   }

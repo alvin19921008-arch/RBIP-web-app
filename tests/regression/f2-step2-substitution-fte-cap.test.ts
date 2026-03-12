@@ -17,16 +17,6 @@ function emptyTeamRecord<T>(value: T): Record<Team, T> {
   }
 }
 
-function emptyWeekdayRecord<T>(value: T) {
-  return {
-    mon: value,
-    tue: value,
-    wed: value,
-    thu: value,
-    fri: value,
-  }
-}
-
 async function main() {
   const pcaPool: PCAData[] = [
     {
@@ -82,7 +72,7 @@ async function main() {
         thu: [],
         fri: [],
       },
-      fte_subtraction: emptyWeekdayRecord({}),
+      fte_subtraction: {},
       pca_required: 0.25,
       pca_preference_order: ['floating-half'],
     },

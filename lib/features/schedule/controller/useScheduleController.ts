@@ -32,6 +32,7 @@ import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/l
 import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
 import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
 import { buildSpecialProgramsFromRows, resolveSpecialProgramTeamFromTherapist } from '@/lib/utils/specialProgramConfigRows'
+import { resolveSpecialProgramTargetTeam } from '@/lib/utils/specialProgramTargetTeam'
 import { fetchGlobalHeadAtCreation } from '@/lib/features/config/globalHead'
 import { cacheSchedule, clearCachedSchedule, getCachedSchedule, getCacheSize } from '@/lib/utils/scheduleCache'
 import { getScheduleCacheEpoch } from '@/lib/utils/scheduleCacheEpoch'
@@ -118,7 +119,8 @@ function buildSpecialProgramTargetTeamById(args: {
   therapistAllocations: TherapistAllocation[]
   day: Weekday
   staff: Staff[]
-  overrides: StaffStatusOverridesById
+  /** Schedule staff overrides (StaffOverrideState) — may include team override. Not StaffStatusOverridesById. */
+  overrides: Record<string, { team?: Team | null }>
 }): Partial<Record<string, Team>> {
   const { programs, therapistAllocations, day, staff, overrides } = args
   const staffLookup = staff
@@ -131,11 +133,13 @@ function buildSpecialProgramTargetTeamById(args: {
 
   const targetTeamById: Partial<Record<string, Team>> = {}
   programs.forEach((program) => {
-    const taggedAllocation = therapistAllocations.find(
-      (allocation) => allocation.team && allocation.special_program_ids?.includes(program.id)
-    )
-    if (taggedAllocation?.team) {
-      targetTeamById[program.id] = taggedAllocation.team as Team
+    const explicitOrTaggedTeam = resolveSpecialProgramTargetTeam({
+      programId: program.id,
+      therapistAllocations: therapistAllocations as any,
+      overrides: overrides as any,
+    })
+    if (explicitOrTaggedTeam) {
+      targetTeamById[program.id] = explicitOrTaggedTeam
       return
     }
 
@@ -154,7 +158,8 @@ function buildSpecialProgramTargetTeamById(args: {
 
 function applySpecialProgramOverrides(args: {
   specialPrograms: SpecialProgram[]
-  overrides: StaffStatusOverridesById
+  /** Schedule staff overrides (StaffOverrideState) — used for specialProgramOverrides. */
+  overrides: Record<string, { specialProgramOverrides?: SpecialProgramOverrideEntry[] }>
   weekday: Weekday
 }): SpecialProgram[] {
   const { specialPrograms, overrides, weekday } = args
@@ -3494,6 +3499,7 @@ export function useScheduleController(params: {
         includeSPTAllocation: true,
       }
 
+      const crpProgramForTherapistContext = (modifiedSpecialPrograms as any[]).find((program: any) => program?.name === 'CRP')
       const { allocateTherapists } = await loadTherapistAlgo()
       const therapistResult = allocateTherapists(therapistContext)
 
@@ -3870,6 +3876,7 @@ export function useScheduleController(params: {
         }
       })
 
+      const crpProgramId = (modifiedSpecialPrograms as any[]).find((program: any) => program?.name === 'CRP')?.id ?? null
       const staffById = staffByIdMemo
       const pcaByTeam = groupPcaAllocationsByTeamWithSlotTeams({
         teams: TEAMS,

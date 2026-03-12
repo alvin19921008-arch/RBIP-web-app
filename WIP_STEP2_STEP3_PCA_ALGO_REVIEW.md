@@ -480,10 +480,109 @@ That file now contains several logically separate systems:
 
 It would be easier to preserve invariants if these were separated into focused modules.
 
-### 4. Remove leftover debug remnants during cleanup
+### 4. Remove leftover debug remnants during cleanup ✓
 
-There are empty `if (team === 'FO') {}` blocks in the Step 3 condition logic.  
-They are harmless but increase noise during review.
+There were empty `if (team === 'FO') {}` blocks in the Step 3 condition logic. Removed 2026-03-07.
+
+---
+
+## Implementation Update — Code Quality #1 (Unified Slot Assignment Helper)
+
+### 2026-03-07 — Unified slot assignment writes behind `assignSlotIfValid`
+
+**Scope**:
+
+- Added `assignSlotIfValid()` in `lib/utils/floatingPCAHelpers.ts` as the canonical “assign slot if valid” helper.
+- Replaced all PCA slot assignment writes in `lib/algorithms/pcaAllocation.ts`, `lib/utils/reservationLogic.ts`, and `assignSlotsToTeam` with calls to this helper.
+
+**Helper behavior**:
+
+- Slot must be 1–4 and currently free (unless `allowOverwrite`).
+- Slot must be in `availableSlots` if declared.
+- PCA must have at least `minFteRemaining` (default 0.25) unless `skipFteCheck`.
+- Does not update `slot_assigned`, `fte_remaining`, or pending — caller is responsible.
+
+**Call sites updated**:
+
+- Special-program allocation loops (applySpecialProgramToExistingAllocation, programSlots.forEach) in pcaAllocation.ts.
+- Invalid-slot pairing (main run + `applyInvalidSlotPairingForDisplay`) — uses `skipFteCheck: true`, `allowOverwrite: true`.
+- `executeSlotAssignments` in reservationLogic.ts.
+- `assignSlotsToTeam` in floatingPCAHelpers.ts.
+
+**Verification**: All 7 regression tests (f1–f7) pass.
+
+---
+
+## Implementation Update — Code Quality #2 (Split pcaAllocation by concern) ✓
+
+### 2026-03-07 — Step 3.4 floating extraction
+
+**Scope**:
+
+- Extracted Step 3.4 floating allocation into `lib/algorithms/pcaAllocationFloating.ts` as a submodule of the PCA pipeline.
+- Added `lib/algorithms/pcaAllocationTypes.ts` for shared `PCAData` type (breaks circular imports).
+- `pcaAllocation.ts` re-exports `allocateFloatingPCA_v2`, `FloatingPCAAllocationContextV2`, `FloatingPCAAllocationResultV2`, `PCAData` for backward compatibility.
+
+**Modules**:
+
+- `pcaAllocationTypes.ts` — shared types
+- `pcaAllocationFloating.ts` — Step 3.4 algorithm and helpers
+- `pcaAllocation.ts` — Step 2 + special-program + orchestration; re-exports
+
+**Verification**: tsc passes; smoke tests pass (5 passed, 3 skipped, 1 flaky unrelated).
+
+---
+
+### 2026-03-07 — Step 3.2 / 3.3 reservation logic harmonized with canonical eligibility
+
+**Scope**:
+
+- Updated `lib/utils/floatingPCAHelpers.ts` and `lib/utils/reservationLogic.ts`
+- Updated Step 3 callers in:
+  - `components/allocation/FloatingPCAConfigDialog.tsx`
+  - `app/(dashboard)/schedule/page.tsx`
+- Added a focused regression test:
+  - `tests/regression/f8-step32-33-reservations-use-canonical-slot-eligibility.test.ts`
+
+**What was changed**:
+
+- Extended `findAvailablePCAs()` to accept optional `staffOverrides` so substitution-reserved slots can be excluded by the same shared helper used for slot-feasibility checks.
+- Extracted the slot-usability filter inside `floatingPCAHelpers.ts` so required-slot and any-slot candidate scans now share one canonical availability predicate.
+- Refactored `computeReservations()` (Step 3.2) to derive reservation candidates from `findAvailablePCAs()` instead of hand-rolling slot eligibility checks.
+- Refactored `computeAdjacentSlotReservations()` (Step 3.3) to re-check the adjacent slot through `findAvailablePCAs()` before exposing it as a reservation option.
+- Passed `staffOverrides` through the Step 3.3 call sites so reservation-time eligibility sees substitution-reserved slots as unavailable.
+
+**Why this completes Code Quality #2**:
+
+- Before this patch, Step 3.2 / 3.3 reservation creation used a lighter eligibility model than the stricter Step 3.4 helper path, so reservations could be offered for slots that were not actually legal under canonical availability rules.
+- After this patch, the reservation layer and the executor/allocator path evaluate slot legality through the same shared helper family, which reduces rule drift and makes later refactors safer.
+- The Step 3.2 / 3.3 business logic is preserved, but illegal reservation candidates are now filtered out at the same layer that defines canonical feasibility.
+
+**Verification**:
+
+- New regression added and run red first:
+  - `npx tsx tests/regression/f8-step32-33-reservations-use-canonical-slot-eligibility.test.ts`
+- Post-refactor focused regressions:
+  - `npx tsx tests/regression/f8-step32-33-reservations-use-canonical-slot-eligibility.test.ts`
+  - `npx tsx tests/regression/f7-multi-program-adjacent-slot-union.test.ts`
+  - `npx tsx tests/regression/f6-step30-auto-buffer-valid-slot-selection.test.ts`
+  - `npx tsx tests/regression/f4-step32-execution-revalidates-slot-eligibility.test.ts`
+  - `npx tsx tests/regression/f3-step33-overfill-pending-cap.test.ts`
+- Broader verification:
+  - `npm run build` ✓
+  - `npm run test:smoke` ✓ (7 passed, 2 skipped)
+  - `npm run lint` still fails due pre-existing repository-wide issues unrelated to this patch (`playwright-report/index.html` / other generated output already in the worktree)
+
+---
+
+## Implementation Update — Code Quality #4 (Remove debug remnants)
+
+### 2026-03-07 — Remove `if (team === 'FO') {}` blocks
+
+**Scope**:
+
+- Removed all empty debug blocks from `lib/algorithms/pcaAllocationFloating.ts`.
+- 7 occurrences removed (condition A preferred-PCA loop and processFloorPCAFallback).
 
 ---
 
@@ -505,6 +604,8 @@ Current coverage status for this review set:
    - `tests/regression/f6-step30-auto-buffer-valid-slot-selection.test.ts`
 7. **Added**: Multi-`special_program_ids` allocations produce identical interpretation in pending math and adjacent-slot logic
    - `tests/regression/f7-multi-program-adjacent-slot-union.test.ts`
+8. **Added**: Step 3.2 / 3.3 reservation creation reuses canonical slot-eligibility rules
+   - `tests/regression/f8-step32-33-reservations-use-canonical-slot-eligibility.test.ts`
 
 ---
 

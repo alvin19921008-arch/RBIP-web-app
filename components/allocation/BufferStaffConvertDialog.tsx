@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Staff } from '@/types/staff'
 import { X } from 'lucide-react'
-import { useToast } from '@/components/ui/toast-provider'
+import { useToast } from '@/components/ui/toast-context'
 
 interface BufferStaffConvertDialogProps {
   open: boolean

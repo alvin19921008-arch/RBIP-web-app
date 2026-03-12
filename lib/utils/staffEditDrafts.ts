@@ -2,6 +2,7 @@ import { getSlotLabel } from '@/lib/utils/slotHelpers'
 import { SpecialProgram } from '@/types/allocation'
 import { Staff, SpecialProgram as StaffSpecialProgram, Weekday } from '@/types/staff'
 import { SPTAllocation } from '@/types/allocation'
+import { getSpecialProgramStaffWeekdayConfig } from '@/lib/utils/specialProgramConfigRows'
 
 export type SpecialProgramWeekdayConfig = {
   enabled: boolean
@@ -175,15 +176,14 @@ export function getSpecialProgramConfigForStaff(
   staffId: string
 ): SpecialProgramDraftConfig {
   const next = createEmptySpecialProgramConfig()
-  const staffSlots = ((program?.slots as any) ?? {})?.[staffId] ?? {}
-  const staffFte = ((program?.fte_subtraction as any) ?? {})?.[staffId] ?? {}
 
   WEEKDAYS.forEach((day) => {
-    const slots = Array.isArray(staffSlots?.[day]) ? (staffSlots[day] as number[]) : []
-    const fte = typeof staffFte?.[day] === 'number' ? Number(staffFte[day]) : 0
-    if (slots.length === 0 && staffFte?.[day] === undefined) return
+    const current = getSpecialProgramStaffWeekdayConfig({ program, staffId, day })
+    if (!current) return
+    const slots = Array.isArray(current.slots) ? current.slots : []
+    const fte = typeof current.fte_subtraction === 'number' ? Number(current.fte_subtraction) : 0
     next[day] = {
-      enabled: true,
+      enabled: current.enabled !== false,
       slots: slots.filter((slot) => [1, 2, 3, 4].includes(slot)),
       fteSubtraction: Number.isFinite(fte) ? fte : 0,
     }

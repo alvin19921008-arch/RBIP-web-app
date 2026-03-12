@@ -7,9 +7,11 @@ interface DialogProps {
   open?: boolean
   onOpenChange?: (open: boolean) => void
   children: React.ReactNode
+  closeOnBackdrop?: boolean
+  closeOnEscape?: boolean
 }
 
-const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
+const Dialog = ({ open, onOpenChange, children, closeOnBackdrop = true, closeOnEscape = true }: DialogProps) => {
   const dialogId = React.useId()
 
   // Prevent background (underlay) page scroll while dialog is open.
@@ -70,6 +72,7 @@ const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
     const g = globalThis as any
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return
+      if (!closeOnEscape) return
       const stack: string[] = Array.isArray(g[STACK_KEY]) ? g[STACK_KEY] : []
       if (stack[stack.length - 1] !== dialogId) return
       e.preventDefault()
@@ -77,7 +80,7 @@ const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
-  }, [open, dialogId, onOpenChange])
+  }, [open, dialogId, onOpenChange, closeOnEscape])
 
   if (!open) return null
 
@@ -87,10 +90,10 @@ const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
       <div
         className="relative z-50 flex min-h-full items-start justify-center p-2 sm:items-center sm:p-4"
         onMouseDown={(e) => {
-          if (e.target === e.currentTarget) onOpenChange?.(false)
+          if (closeOnBackdrop && e.target === e.currentTarget) onOpenChange?.(false)
         }}
         onTouchStart={(e) => {
-          if (e.target === e.currentTarget) onOpenChange?.(false)
+          if (closeOnBackdrop && e.target === e.currentTarget) onOpenChange?.(false)
         }}
       >
         {children}

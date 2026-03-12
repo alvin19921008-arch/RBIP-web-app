@@ -20,6 +20,7 @@ type ActionToastProps = {
   open: boolean
   onClose: () => void
   onExited: () => void
+  onHoverPauseChange?: (paused: boolean) => void
 }
 
 function getVariantStyles(variant: ActionToastVariant) {
@@ -69,6 +70,7 @@ export function ActionToast({
   open,
   onClose,
   onExited,
+  onHoverPauseChange,
 }: ActionToastProps) {
   const styles = getVariantStyles(variant)
   const hasDescription = typeof description === 'string' && description.trim().length > 0
@@ -102,6 +104,8 @@ export function ActionToast({
     <div
       role="status"
       aria-live="polite"
+      onMouseEnter={() => onHoverPauseChange?.(true)}
+      onMouseLeave={() => onHoverPauseChange?.(false)}
       onAnimationEnd={(e) => {
         if (e.currentTarget !== e.target) return
         if (!open) onExited()

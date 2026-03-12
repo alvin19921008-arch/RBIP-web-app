@@ -13,6 +13,7 @@ import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { getSubstitutionSlotsForTeam, normalizeSubstitutionForBySlot } from '@/lib/utils/substitutionFor'
 import { computeDrmAddOnFte } from '@/lib/utils/specialProgramPcaCapacity'
+import { buildSpecialProgramSlotsByProgramId } from '@/lib/utils/specialProgramSlotMap'
 
 interface PCABlockProps {
   team: Team
@@ -118,6 +119,14 @@ function usePcaBlockViewModel({
     return map
   }, [resolvedSpecialPrograms])
 
+  const specialProgramSlotsByProgramId = useMemo(() => {
+    if (!weekday) return new Map<string, Set<number>>()
+    return buildSpecialProgramSlotsByProgramId({
+      specialPrograms: resolvedSpecialPrograms,
+      weekday,
+    })
+  }, [resolvedSpecialPrograms, weekday])
+
   // Helper function to determine if slots in a team are part of special program assignment
   const areSlotsPartOfSpecialProgram = useCallback((
     allocation: PCAAllocation & { staff: Staff },
@@ -130,41 +139,24 @@ function usePcaBlockViewModel({
 
     if (slotsForTeam.length === 0) return false
 
-    // Find the special program(s) for this allocation (preserve specialPrograms array order)
-    let program: SpecialProgram | undefined
-    for (const p of resolvedSpecialPrograms) {
-      if (allocation.special_program_ids?.includes(p.id)) {
-        program = p
-        break
+    const specialProgramSlots: number[] = []
+    for (const programId of allocation.special_program_ids) {
+      const slots = specialProgramSlotsByProgramId.get(programId)
+      if (!slots) continue
+      for (const slot of slots) {
+        if (
+          (slot === 1 && allocation.slot1 === currentTeam) ||
+          (slot === 2 && allocation.slot2 === currentTeam) ||
+          (slot === 3 && allocation.slot3 === currentTeam) ||
+          (slot === 4 && allocation.slot4 === currentTeam)
+        ) {
+          specialProgramSlots.push(slot)
+        }
       }
     }
-    if (!program) return false
 
-    // For Robotic: slots 1-2 → SMM, slots 3-4 → SFM
-    // Only these specific slot-team combinations are special program slots
-    if (program.name === 'Robotic') {
-      if (currentTeam === 'SMM') {
-        // In SMM, only slots 1-2 are special program slots
-        return slotsForTeam.some(slot => slot === 1 || slot === 2)
-      }
-      if (currentTeam === 'SFM') {
-        // In SFM, only slots 3-4 are special program slots
-        return slotsForTeam.some(slot => slot === 3 || slot === 4)
-      }
-      // In any other team, these are not special program slots
-      return false
-    }
-
-    // For CRP: slot 2 → CPPC
-    // Only slot 2 in CPPC is a special program slot
-    if (program.name === 'CRP') {
-      return currentTeam === 'CPPC' && slotsForTeam.includes(2)
-    }
-
-    // For other programs, if the current team matches the allocation's primary team,
-    // assume all slots in that team are special program slots
-    return allocation.team === currentTeam
-  }, [resolvedSpecialPrograms])
+    return slotsForTeam.some((slot) => specialProgramSlots.includes(slot))
+  }, [specialProgramSlotsByProgramId])
 
   // Helper function to get slot display with optional slot filter
   const getSlotDisplayForTeamFiltered = (
@@ -518,46 +510,22 @@ function usePcaBlockViewModel({
     if (!allocation.special_program_ids || allocation.special_program_ids.length === 0) {
       return []
     }
-    
     const specialProgramSlots: number[] = []
-    
-    // Find which special programs this PCA is assigned to
     for (const programId of allocation.special_program_ids) {
-      const program = specialProgramsById.get(programId)
-      if (!program) continue
-      
-      // Check which slots are assigned to this special program for this team
-      // Robotic: slots 1-2 → SMM, slots 3-4 → SFM
-      if (program.name === 'Robotic') {
-        if (team === 'SMM') {
-          if (allocation.slot1 === 'SMM') specialProgramSlots.push(1)
-          if (allocation.slot2 === 'SMM') specialProgramSlots.push(2)
-        }
-        if (team === 'SFM') {
-          if (allocation.slot3 === 'SFM') specialProgramSlots.push(3)
-          if (allocation.slot4 === 'SFM') specialProgramSlots.push(4)
-        }
-      }
-      // CRP: slot 2 → CPPC
-      else if (program.name === 'CRP') {
-        if (team === 'CPPC' && allocation.slot2 === 'CPPC') {
-          specialProgramSlots.push(2)
-        }
-      }
-      // For other programs, check program.slots for this weekday if available
-      else {
-        if (weekday && program.slots && program.slots[weekday]) {
-          const programSlots = program.slots[weekday] as number[]
-          // Check which of these program slots are assigned to this team
-          if (allocation.slot1 === team && programSlots.includes(1)) specialProgramSlots.push(1)
-          if (allocation.slot2 === team && programSlots.includes(2)) specialProgramSlots.push(2)
-          if (allocation.slot3 === team && programSlots.includes(3)) specialProgramSlots.push(3)
-          if (allocation.slot4 === team && programSlots.includes(4)) specialProgramSlots.push(4)
+      const slots = specialProgramSlotsByProgramId.get(programId)
+      if (!slots) continue
+      for (const slot of slots) {
+        if (
+          (slot === 1 && allocation.slot1 === team) ||
+          (slot === 2 && allocation.slot2 === team) ||
+          (slot === 3 && allocation.slot3 === team) ||
+          (slot === 4 && allocation.slot4 === team)
+        ) {
+          specialProgramSlots.push(slot)
         }
       }
     }
-    
-    return [...new Set(specialProgramSlots)] // Remove duplicates
+    return Array.from(new Set(specialProgramSlots)).sort((a, b) => a - b)
   }
 
   const {

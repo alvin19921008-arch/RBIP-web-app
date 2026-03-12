@@ -1,6 +1,7 @@
 'use client'
 
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -13,10 +14,16 @@ import { formatTimeRange, getSlotTime } from '@/lib/utils/slotHelpers'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { SpecialProgram, SPTAllocation } from '@/types/allocation'
 import { LEAVE_TYPE_FTE_MAP, LeaveType, Staff, Weekday } from '@/types/staff'
-import { ChevronDown, ChevronRight, CircleHelp, Plus, RotateCcw, Search, X } from 'lucide-react'
+import { CircleHelp, Plus, RotateCcw, Search, X } from 'lucide-react'
 import { getTeamBadgeClass } from '@/components/allocation/teamThemePalette'
 import { TimeIntervalSlider } from '@/components/allocation/TimeIntervalSlider'
 import { matchesStaffName } from '@/lib/utils/staffFilters'
+import {
+  getStep1TherapistSpecialProgramInfo,
+  getTherapistSpecialProgramUiState,
+  normalizeStep1SpecialProgramAvailabilityForSave,
+  shouldShowStep1SpecialProgramAvailabilityToggle,
+} from '@/lib/utils/step1SpecialProgramAvailability'
 
 type StaffOverrideLite = {
   leaveType?: LeaveType | null
@@ -77,7 +84,7 @@ type DraftRow = {
   availableSlots: number[]
   invalidSlots: InvalidSlotDraft[]
   amPmSelection: 'AM' | 'PM' | ''
-  specialProgramAvailable: boolean
+  specialProgramAvailable?: boolean
   selected: boolean
 }
 
@@ -230,29 +237,28 @@ export function Step1LeaveSetupDialog({
     return map
   }, [sptAllocations, weekday])
 
+  const therapistSpecialProgramInfoByStaffId = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof getStep1TherapistSpecialProgramInfo>>()
+    activeStaff.forEach((member) => {
+      map.set(
+        member.id,
+        getStep1TherapistSpecialProgramInfo({
+          member,
+          allStaff: activeStaff,
+          specialPrograms,
+          weekday,
+        })
+      )
+    })
+    return map
+  }, [activeStaff, specialPrograms, weekday])
+
   const getCapacity = (member: Staff, sptBase: number): number => {
     if (member.rank === 'SPT') return clamp(sptBase, 0, 1)
     if (typeof member.buffer_fte === 'number' && member.status === 'buffer') {
       return clamp(member.buffer_fte, 0, 1)
     }
     return 1
-  }
-
-  const hasSpecialProgramForToday = (staffId: string): boolean => {
-    return specialPrograms.some((program) => {
-      if (program.name === 'DRO') return false
-      if (!program.weekdays.includes(weekday)) return false
-      return program.staff_ids.includes(staffId)
-    })
-  }
-
-  const getSpecialProgramNameForToday = (staffId: string): string | null => {
-    const program = specialPrograms.find((p) => {
-      if (p.name === 'DRO') return false
-      if (!p.weekdays.includes(weekday)) return false
-      return p.staff_ids.includes(staffId)
-    })
-    return program?.name ?? null
   }
 
   const buildDraftRow = (member: Staff, sourceOverride: StaffOverrideLite | undefined): DraftRow => {
@@ -315,7 +321,7 @@ export function Step1LeaveSetupDialog({
       availableSlots,
       invalidSlots,
       amPmSelection: sourceOverride?.amPmSelection ?? '',
-      specialProgramAvailable: sourceOverride?.specialProgramAvailable === true,
+      specialProgramAvailable: sourceOverride?.specialProgramAvailable,
       selected: false,
     }
   }
@@ -329,7 +335,7 @@ export function Step1LeaveSetupDialog({
     if (typeof override.fteSubtraction === 'number' && override.fteSubtraction > 0.0001) return true
     if (Array.isArray(override.invalidSlots) && override.invalidSlots.length > 0) return true
     if (override.amPmSelection === 'AM' || override.amPmSelection === 'PM') return true
-    if (override.specialProgramAvailable === true) return true
+    if (override.specialProgramAvailable !== undefined) return true
     if (member.rank === 'PCA' || member.rank === 'workman') {
       const defaultSlots = defaultSlotsFromCapacity(capacity)
       const currentSlots = normalizeSlots(override.availableSlots)
@@ -511,7 +517,9 @@ export function Step1LeaveSetupDialog({
           }))
           .filter((entry) => isValidRange(entry.timeRange)))
       : undefined
-    const showAmPm = (member.rank === 'APPT' || member.rank === 'RPT') && (fteRemaining === 0.25 || fteRemaining === 0.5)
+    const showAmPm = (member.rank === 'APPT' || member.rank === 'RPT') && fteRemaining > 0 && fteRemaining <= 0.5
+
+    const hasSpecialProgramToday = (therapistSpecialProgramInfoByStaffId.get(member.id) ?? null) !== null
 
     return {
       staffId: member.id,
@@ -521,9 +529,17 @@ export function Step1LeaveSetupDialog({
       availableSlots,
       invalidSlots,
       amPmSelection: showAmPm && row.amPmSelection ? row.amPmSelection : undefined,
-      specialProgramAvailable: THERAPIST_RANKS.has(member.rank) && hasSpecialProgramForToday(member.id)
-        ? row.specialProgramAvailable
-        : undefined,
+      specialProgramAvailable: normalizeStep1SpecialProgramAvailabilityForSave({
+        hasSpecialProgramToday,
+        shouldShowToggle: shouldShowStep1SpecialProgramAvailabilityToggle({
+          rank: member.rank,
+          hasSpecialProgramToday,
+          leaveType: finalLeaveType,
+          fteRemaining,
+          fteSubtraction,
+        }),
+        selected: row.specialProgramAvailable,
+      }),
     }
   }
 
@@ -580,7 +596,7 @@ export function Step1LeaveSetupDialog({
           availableSlots: defaultEdit.availableSlots ?? [],
           invalidSlots: [],
           amPmSelection: '',
-          specialProgramAvailable: false,
+          specialProgramAvailable: undefined,
         }
       })
     )
@@ -608,7 +624,7 @@ export function Step1LeaveSetupDialog({
             next.invalidSlots = []
           }
           next.amPmSelection = ''
-          next.specialProgramAvailable = false
+          next.specialProgramAvailable = undefined
           return next
         }
 
@@ -738,7 +754,7 @@ export function Step1LeaveSetupDialog({
                   next.invalidSlots = []
                 }
                 next.amPmSelection = ''
-                next.specialProgramAvailable = false
+                next.specialProgramAvailable = undefined
                 return next
               }
               if (nextChoice !== 'others') {
@@ -806,14 +822,26 @@ export function Step1LeaveSetupDialog({
   }
 
   const renderTherapistRow = (row: DraftRow, member: Staff) => {
-    const showAmPm = (member.rank === 'APPT' || member.rank === 'RPT') && (row.fteRemaining === 0.25 || row.fteRemaining === 0.5)
-    // If FTE remaining is 0, the therapist is fully absent — they cannot attend any special program slot.
-    const specialProgramName = getSpecialProgramNameForToday(member.id)
-    const showSpecialProgram = specialProgramName !== null && row.fteRemaining > 0
+    const showAmPm = (member.rank === 'APPT' || member.rank === 'RPT') && row.fteRemaining > 0 && row.fteRemaining <= 0.5
+    const therapistSpecialProgramUiState = getTherapistSpecialProgramUiState({
+      member,
+      allStaff: activeStaff,
+      specialPrograms,
+      weekday,
+      leaveType: row.leaveChoice === '__none__'
+        ? null
+        : row.leaveChoice === 'others'
+          ? (row.customLeaveText.trim() || 'others')
+          : row.leaveChoice,
+      fteRemaining: row.fteRemaining,
+      fteSubtraction: row.fteSubtraction,
+    })
+    const specialProgramInfo = therapistSpecialProgramUiState.info
+    const showSpecialProgram = therapistSpecialProgramUiState.showToggle
     return (
       <div key={row.staffId} className="py-3">
             <div className="flex items-center gap-2">
-          <label className="inline-flex min-w-0 items-center gap-2 text-sm">
+          <label className="inline-flex min-w-0 flex-wrap items-center gap-2 text-sm">
             <input
               type="checkbox"
               checked={row.selected}
@@ -831,12 +859,11 @@ export function Step1LeaveSetupDialog({
                 {member.team ?? '--'}
               </Badge>
             ) : null}
-            <Badge
-              variant="outline"
-              className="select-none px-1.5 py-0.5 text-[11px] font-medium border-slate-200 bg-slate-50 text-slate-700"
-            >
-              {member.rank}
-            </Badge>
+            {specialProgramInfo ? (
+              <Badge variant="outline" className="select-none px-1 py-0.5 text-[9px] font-medium text-amber-900 border-amber-200 bg-amber-50 whitespace-nowrap">
+                {specialProgramInfo.programName} · {specialProgramInfo.slotLabel}
+              </Badge>
+            ) : null}
           </label>
           <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeRow(row.staffId)} title="Remove from draft">
             <X className="h-3.5 w-3.5" />
@@ -848,11 +875,11 @@ export function Step1LeaveSetupDialog({
           {renderCustomLeaveInput(row)}
 
           {member.rank === 'SPT' ? (
-            <>
+            <div className="ml-4 flex flex-wrap items-end gap-1.5">
               <div className="space-y-1">
                 <Label className="text-[11px] text-muted-foreground">Base FTE</Label>
                 <Input
-                  className="h-8 w-[90px]"
+                  className="h-8 w-[70px]"
                   value={getFteInput(row.staffId, 'sptBaseFTE', row.sptBaseFTE)}
                   onChange={(e) => setFteInput(row.staffId, 'sptBaseFTE', e.target.value)}
                   onBlur={(e) => {
@@ -867,10 +894,11 @@ export function Step1LeaveSetupDialog({
                   }}
                 />
               </div>
+              <span className="text-muted-foreground pb-2 text-sm">−</span>
               <div className="space-y-1">
                 <Label className="text-[11px] text-muted-foreground">Leave cost</Label>
                 <Input
-                  className="h-8 w-[90px]"
+                  className="h-8 w-[70px]"
                   value={getFteInput(row.staffId, 'fteSubtraction', row.fteSubtraction)}
                   onChange={(e) => setFteInput(row.staffId, 'fteSubtraction', e.target.value)}
                   onBlur={(e) => {
@@ -884,10 +912,11 @@ export function Step1LeaveSetupDialog({
                   }}
                 />
               </div>
+              <span className="text-muted-foreground pb-2 text-sm">=</span>
               <div className="space-y-1">
                 <Label className="text-[11px] text-muted-foreground">FTE remaining</Label>
                 <Input
-                  className="h-8 w-[90px]"
+                  className="h-8 w-[70px]"
                   value={getFteInput(row.staffId, 'fteRemaining', row.fteRemaining)}
                   onChange={(e) => setFteInput(row.staffId, 'fteRemaining', e.target.value)}
                   onBlur={(e) => {
@@ -901,33 +930,15 @@ export function Step1LeaveSetupDialog({
                   }}
                 />
               </div>
-            </>
+            </div>
           ) : (
-            <>
+            <div className="ml-4 flex flex-wrap items-end gap-1.5">
+              <span className="text-muted-foreground pb-2 text-sm font-medium">1</span>
+              <span className="text-muted-foreground pb-2 text-sm">−</span>
               <div className="space-y-1">
-                <Label className="text-[11px] text-muted-foreground">FTE remaining</Label>
+                <Label className="text-[11px] text-muted-foreground">Leave cost</Label>
                 <Input
-                  className="h-8 w-[90px]"
-                  value={getFteInput(row.staffId, 'fteRemaining', row.fteRemaining)}
-                  onChange={(e) => setFteInput(row.staffId, 'fteRemaining', e.target.value)}
-                  onBlur={(e) => {
-                    const parsed = Number.parseFloat(e.target.value)
-                    const value = Number.isFinite(parsed) ? clamp(round2(parsed), 0, 1) : row.fteRemaining
-                    const subtraction = clamp(round2(1 - value), 0, 1)
-                    setRow(row.staffId, (current) => ({
-                      ...current,
-                      fteRemaining: value,
-                      fteSubtraction: subtraction,
-                      amPmSelection: value === 0.25 || value === 0.5 ? current.amPmSelection : '',
-                    }))
-                    syncFteInputs(row.staffId, { fteRemaining: value, fteSubtraction: subtraction })
-                  }}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-[11px] text-muted-foreground">FTE subtraction</Label>
-                <Input
-                  className="h-8 w-[90px]"
+                  className="h-8 w-[70px]"
                   value={getFteInput(row.staffId, 'fteSubtraction', row.fteSubtraction)}
                   onChange={(e) => setFteInput(row.staffId, 'fteSubtraction', e.target.value)}
                   onBlur={(e) => {
@@ -938,18 +949,39 @@ export function Step1LeaveSetupDialog({
                       ...current,
                       fteSubtraction: subtraction,
                       fteRemaining: value,
-                      amPmSelection: value === 0.25 || value === 0.5 ? current.amPmSelection : '',
+                      amPmSelection: value > 0 && value <= 0.5 ? current.amPmSelection : '',
                     }))
                     syncFteInputs(row.staffId, { fteSubtraction: subtraction, fteRemaining: value })
                   }}
                 />
               </div>
-            </>
+              <span className="text-muted-foreground pb-2 text-sm">=</span>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">FTE remaining</Label>
+                <Input
+                  className="h-8 w-[70px]"
+                  value={getFteInput(row.staffId, 'fteRemaining', row.fteRemaining)}
+                  onChange={(e) => setFteInput(row.staffId, 'fteRemaining', e.target.value)}
+                  onBlur={(e) => {
+                    const parsed = Number.parseFloat(e.target.value)
+                    const value = Number.isFinite(parsed) ? clamp(round2(parsed), 0, 1) : row.fteRemaining
+                    const subtraction = clamp(round2(1 - value), 0, 1)
+                    setRow(row.staffId, (current) => ({
+                      ...current,
+                      fteRemaining: value,
+                      fteSubtraction: subtraction,
+                      amPmSelection: value > 0 && value <= 0.5 ? current.amPmSelection : '',
+                    }))
+                    syncFteInputs(row.staffId, { fteRemaining: value, fteSubtraction: subtraction })
+                  }}
+                />
+              </div>
+            </div>
           )}
 
           {showAmPm ? (
             <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">AM/PM</Label>
+              <Label className="text-[11px] text-muted-foreground">AM/PM (when ≤0.5)</Label>
               <Select
                 value={row.amPmSelection || ''}
                 onValueChange={(value) => {
@@ -969,13 +1001,14 @@ export function Step1LeaveSetupDialog({
           ) : null}
 
           {showSpecialProgram ? (
-            <label className="inline-flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs">
+            <label className="inline-flex items-center gap-2 text-xs">
               <input
                 type="checkbox"
-                checked={row.specialProgramAvailable}
+                checked={row.specialProgramAvailable === true}
                 onChange={(event) => setRow(row.staffId, (current) => ({ ...current, specialProgramAvailable: event.target.checked }))}
               />
-              Available during <strong className="font-semibold">{specialProgramName}</strong> slot
+              Still available for <strong className="font-semibold">{specialProgramInfo?.programName}</strong> slot{' '}
+              <strong className="font-semibold whitespace-nowrap">{specialProgramInfo?.slotLabel}</strong> despite leave?
             </label>
           ) : null}
         </div>
@@ -1023,7 +1056,7 @@ export function Step1LeaveSetupDialog({
           </Button>
         </div>
 
-        <div className={cn('mt-2 grid gap-3', canShowPartialPresencePanel ? 'xl:grid-cols-[auto_minmax(0,340px)] xl:justify-start' : null)}>
+        <div className={cn('mt-2 grid gap-3', canShowPartialPresencePanel ? 'xl:grid-cols-[auto_minmax(0,340px)] xl:items-end xl:justify-start' : null)}>
           <div className="min-w-0 flex flex-wrap items-end gap-2">
             {renderLeaveTypeSelect(row, member)}
             {renderCustomLeaveInput(row)}
@@ -1079,23 +1112,29 @@ export function Step1LeaveSetupDialog({
 
           {canShowPartialPresencePanel ? (
             <div className="min-w-0">
-              <div className="flex w-fit items-center gap-1">
-                <div className="text-[11px] font-medium text-muted-foreground">Slots with partial presence</div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 px-1 text-[11px]"
-                  onClick={() => setPartialPresenceOpenById((prev) => ({ ...prev, [row.staffId]: !isPartialPresenceOpen }))}
-                >
-                  {isPartialPresenceOpen ? <ChevronDown className="mr-0.5 h-3.5 w-3.5" /> : <ChevronRight className="mr-0.5 h-3.5 w-3.5" />}
-                  {isPartialPresenceOpen ? 'Hide' : 'Show'}
-                  {hasPartialPresence ? ` (${row.invalidSlots.length})` : ''}
-                </Button>
-              </div>
-              {isPartialPresenceOpen ? (
-                <div className="mt-2 space-y-2">
-                  {unavailableSlots.map((slot) => {
+              <label className="inline-flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={isPartialPresenceOpen}
+                  onChange={() => setPartialPresenceOpenById((prev) => ({ ...prev, [row.staffId]: !isPartialPresenceOpen }))}
+                  className="h-4 w-4"
+                />
+                <span className="text-[11px] font-medium text-muted-foreground">
+                  Slots with partial presence?{hasPartialPresence ? ` (${row.invalidSlots.length})` : ''}
+                </span>
+              </label>
+              <AnimatePresence initial={false}>
+                {isPartialPresenceOpen ? (
+                  <motion.div
+                    key="partial-presence-panel"
+                    initial={{ opacity: 0, scaleY: 0 }}
+                    animate={{ opacity: 1, scaleY: 1 }}
+                    exit={{ opacity: 0, scaleY: 0 }}
+                    transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                    style={{ transformOrigin: 'top' }}
+                    className="mt-2 space-y-2"
+                  >
+                    {unavailableSlots.map((slot) => {
                     const existing = row.invalidSlots.find((entry) => entry.slot === slot)
                     return (
                       <div key={`${row.staffId}-partial-${slot}`} className="flex flex-wrap items-center gap-2 text-xs">
@@ -1164,8 +1203,9 @@ export function Step1LeaveSetupDialog({
                       </div>
                     )
                   })}
-                </div>
-              ) : null}
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
             </div>
           ) : null}
         </div>
@@ -1174,10 +1214,7 @@ export function Step1LeaveSetupDialog({
   }
 
   const renderSectionDivider = () => (
-    <div className="my-3 space-y-[2px]">
-      <div className="h-px bg-border" />
-      <div className="h-px bg-border/40" />
-    </div>
+    <div className="my-4 border-t-2 border-border" aria-hidden />
   )
 
   const renderRankSections = ({
@@ -1200,7 +1237,9 @@ export function Step1LeaveSetupDialog({
             {index > 0 ? renderSectionDivider() : null}
             <section className="space-y-2">
               <div className="flex items-center justify-between">
-                <h4 className="text-xs font-semibold tracking-wide text-muted-foreground">{section.label}</h4>
+                <Badge variant="outline" className={cn('select-none px-1.5 py-0.5 text-[11px] font-medium', RANK_BADGE_NEUTRAL_CLASS)}>
+                  {section.label}
+                </Badge>
                 <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                   <input
                     type="checkbox"
@@ -1424,7 +1463,7 @@ export function Step1LeaveSetupDialog({
                 ? 'Draft is auto-loaded from the source/copied schedule. Review the following list before proceeding to edit leave and FTE.'
                 : null}
               {wizardStep === '1.2'
-                ? 'Edit therapist leave and FTE on-duty. AM/PM is only for APPT/RPT with FTE remaining 0.25 or 0.50.'
+                ? 'Edit therapist leave and FTE on-duty.'
                 : null}
               {wizardStep === '1.3'
                 ? 'Edit PCA available slots and partial presence. FTE remaining is derived from available slots.'
@@ -1607,6 +1646,7 @@ export function Step1LeaveSetupDialog({
                               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 space-y-1">
                                 {filteredPickers[rank].map((member) => {
                                   const exists = rowIds.has(member.id)
+                                  const specialProgramInfo = therapistSpecialProgramInfoByStaffId.get(member.id) ?? null
                                   return (
                                     <div
                                       key={member.id}
@@ -1615,11 +1655,18 @@ export function Step1LeaveSetupDialog({
                                         exists ? 'bg-muted/60 ring-1 ring-muted/80' : 'hover:bg-muted/20'
                                       )}
                                     >
-                                      <div className="min-w-0 flex items-center gap-2">
-                                        <span className="truncate text-xs" title={member.name}>
-                                          {member.name}
-                                        </span>
-                                        <span className="text-[10px] text-muted-foreground">{member.team ?? '--'}</span>
+                                      <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                                        <div className="min-w-0 flex items-center gap-2">
+                                          <span className="truncate text-xs" title={member.name}>
+                                            {member.name}
+                                          </span>
+                                          <span className="text-[10px] text-muted-foreground">{member.team ?? '--'}</span>
+                                        </div>
+                                        {specialProgramInfo ? (
+                                          <Badge variant="outline" className="select-none px-1 py-0.5 text-[9px] font-medium text-amber-900 border-amber-200 bg-amber-50 whitespace-nowrap">
+                                            {specialProgramInfo.programName} · {specialProgramInfo.slotLabel}
+                                          </Badge>
+                                        ) : null}
                                       </div>
                                       <Button
                                         type="button"

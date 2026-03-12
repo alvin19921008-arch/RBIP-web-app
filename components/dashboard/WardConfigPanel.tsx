@@ -9,8 +9,8 @@ import { Team } from '@/types/staff'
 import { WardEditDialog } from './WardEditDialog'
 import { Edit2, Trash2, Plus } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { useToast } from '@/components/ui/toast-provider'
-import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
+import { useToast } from '@/components/ui/toast-context'
+import { showDashboardSnapshotReminderToast } from '@/lib/utils/dashboardSnapshotReminderToast'
 
 const INITIAL_WARDS = [
   'R7B', 'R7C', 'R8A', 'R8B', 'R8C',
@@ -65,6 +65,7 @@ export function WardConfigPanel() {
   }
 
   const handleSave = async (wardData: Partial<Ward>): Promise<void> => {
+    const isEditing = !!editingWard?.id
     if (editingWard?.id) {
       // Update existing ward
       const { error } = await supabase
@@ -103,6 +104,7 @@ export function WardConfigPanel() {
 
     await loadWards()
     setEditingWard(null)
+    showDashboardSnapshotReminderToast(toast, isEditing ? 'Ward updated.' : 'Ward created.')
   }
 
   const handleDelete = async () => {
@@ -118,7 +120,7 @@ export function WardConfigPanel() {
 
       await loadWards()
       setDeletingWardId(null)
-      toast.success('Ward deleted.')
+      showDashboardSnapshotReminderToast(toast, 'Ward deleted.')
     } catch (err) {
       console.error('Error deleting ward:', err)
       const errorMsg = err instanceof Error ? err.message : String(err)
@@ -219,7 +221,6 @@ export function WardConfigPanel() {
   return (
     <>
       <div className="pt-6 space-y-6">
-        <DashboardConfigMetaBanner />
           {loading ? (
             <p>Loading...</p>
           ) : (

@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip } from '@/components/ui/tooltip'
-import { useToast } from '@/components/ui/toast-provider'
+import { useToast } from '@/components/ui/toast-context'
 import { 
   ChevronDown, 
   LayoutGrid, 
@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import type { MergedPcaPreferencesOverride } from '@/lib/utils/teamMerge'
 import { getMainTeamDisplayName } from '@/lib/utils/teamMerge'
+import { showDashboardSnapshotReminderToast } from '@/lib/utils/dashboardSnapshotReminderToast'
 
 type TeamSettingsRow = {
   team: Team
@@ -378,7 +379,7 @@ export function TeamMergePanel() {
       const firstError = results.find((r: any) => r?.error)?.error
       if (firstError) throw firstError
 
-      toast.success('Team merge saved.')
+      showDashboardSnapshotReminderToast(toast, 'Team merge saved.')
       await loadData()
       resetEditor()
     } catch (error) {
@@ -414,7 +415,7 @@ export function TeamMergePanel() {
       ])
       if ((awayRes as any)?.error) throw (awayRes as any).error
       if ((mainRes as any)?.error) throw (mainRes as any).error
-      toast.success('Teams unmerged.')
+      showDashboardSnapshotReminderToast(toast, 'Teams unmerged.')
       await loadData()
       if (editingMergedAwayTeam === row.team) resetEditor()
     } catch (error) {

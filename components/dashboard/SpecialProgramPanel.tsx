@@ -12,9 +12,10 @@ import { createEmptyTeamRecordFactory } from '@/lib/utils/types'
 import { Trash2, Edit2, ChevronUp, ChevronDown, ChevronRight, MoveUp, MoveDown, X, Info } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
-import { useToast } from '@/components/ui/toast-provider'
+import { useToast } from '@/components/ui/toast-context'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
 import { buildSpecialProgramSummaryFromWeekdaySource } from '@/lib/utils/staffEditDrafts'
+import { buildSpecialProgramsFromRows } from '@/lib/utils/specialProgramConfigRows'
 
 interface StaffSpecialProgram {
   name: string
@@ -73,12 +74,20 @@ export function SpecialProgramPanel() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [programsRes, staffRes] = await Promise.all([
+      const [programsRes, programConfigsRes, staffRes] = await Promise.all([
         supabase.from('special_programs').select('*').order('name'),
+        supabase.from('special_program_staff_configs').select('id,program_id,staff_id,config_by_weekday,created_at,updated_at'),
         supabase.from('staff').select('*').order('name'),
       ])
 
-      if (programsRes.data) setPrograms(programsRes.data as any)
+      if (programsRes.data) {
+        setPrograms(
+          buildSpecialProgramsFromRows({
+            programRows: programsRes.data as any[],
+            staffConfigRows: (programConfigsRes.data || []) as any[],
+          }) as any
+        )
+      }
       if (staffRes.data) {
         setStaff(staffRes.data)
         
@@ -259,6 +268,18 @@ export function SpecialProgramPanel() {
         if (programError) {
           console.error('Error removing staff from program:', programError)
           toast.error('Failed to remove staff from program data. Please try again.')
+          return
+        }
+
+        const { error: configError } = await supabase
+          .from('special_program_staff_configs')
+          .delete()
+          .eq('program_id', existingProgram.id)
+          .eq('staff_id', staffId)
+
+        if (configError) {
+          console.error('Error removing normalized staff config:', configError)
+          toast.error('Failed to remove staff from normalized program data. Please try again.')
           return
         }
       }
@@ -447,10 +468,42 @@ export function SpecialProgramPanel() {
         programData.pca_preference_order = pcaPreferenceOrder
       }
       // Note: if empty, we don't include it at all - database will use its default
+
+      const normalizedConfigRows = editingStaffProgram.configs
+        .map((config) => {
+          const config_by_weekday: Partial<Record<Weekday, { enabled?: boolean; slots?: number[]; fte_subtraction?: number }>> = {}
+          ;(['mon', 'tue', 'wed', 'thu', 'fri'] as Weekday[]).forEach((day) => {
+            const current = config.weekdayConfigs[day]
+            const enabled = current.enabled === true
+            const currentSlots = current.slots.slice().sort((a, b) => a - b)
+            const rawFte = typeof current.fte_subtraction === 'number' ? current.fte_subtraction : undefined
+            const hasMeaningfulData =
+              enabled ||
+              currentSlots.length > 0 ||
+              (programName === 'CRP'
+                ? typeof rawFte === 'number'
+                : typeof rawFte === 'number' && rawFte > 0)
+
+            if (!hasMeaningfulData) return
+
+            config_by_weekday[day] = {
+              ...(enabled ? { enabled: true } : {}),
+              ...(currentSlots.length > 0 ? { slots: currentSlots } : {}),
+              ...(rawFte !== undefined ? { fte_subtraction: rawFte } : {}),
+            }
+          })
+
+          return {
+            staff_id: config.staff_id,
+            config_by_weekday,
+          }
+        })
+        .filter((row) => Object.keys(row.config_by_weekday).length > 0)
       
       // Check if program already exists
       const existingProgram = programs.find(p => p.name === programName)
-      
+      let programId = existingProgram?.id
+
       if (existingProgram) {
         const { error } = await supabase
           .from('special_programs')
@@ -459,9 +512,35 @@ export function SpecialProgramPanel() {
         
         if (error) throw error
       } else {
-        const { error } = await supabase.from('special_programs').insert(programData)
+        const { data, error } = await supabase
+          .from('special_programs')
+          .insert(programData)
+          .select('id')
+          .single()
         
         if (error) throw error
+        programId = data?.id
+      }
+
+      if (programId) {
+        const { error: deleteConfigsError } = await supabase
+          .from('special_program_staff_configs')
+          .delete()
+          .eq('program_id', programId)
+        if (deleteConfigsError) throw deleteConfigsError
+
+        if (normalizedConfigRows.length > 0) {
+          const { error: insertConfigsError } = await supabase
+            .from('special_program_staff_configs')
+            .insert(
+              normalizedConfigRows.map((row) => ({
+                program_id: programId,
+                staff_id: row.staff_id,
+                config_by_weekday: row.config_by_weekday,
+              }))
+            )
+          if (insertConfigsError) throw insertConfigsError
+        }
       }
       
       await loadData()

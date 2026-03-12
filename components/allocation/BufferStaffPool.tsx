@@ -11,7 +11,7 @@ import { SpecialProgram } from '@/types/allocation'
 import { ChevronUp, ChevronDown, ChevronRight } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { DragValidationTooltip } from './DragValidationTooltip'
-import { useToast } from '@/components/ui/toast-provider'
+import { useToast } from '@/components/ui/toast-context'
 import { SearchWithSuggestions, type SearchSuggestionItem } from '@/components/ui/SearchWithSuggestions'
 import { normalizeStaffSearchQuery } from '@/lib/utils/staffFilters'
 

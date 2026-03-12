@@ -73,6 +73,8 @@ import { useAccessControl } from '@/lib/access/useAccessControl'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
 import { getWeekday, formatDateDDMMYYYY, formatDateForInput, parseDateFromInput } from '@/lib/features/schedule/date'
 import { computeDrmAddOnFte, computeReservedSpecialProgramPcaFte } from '@/lib/utils/specialProgramPcaCapacity'
+import { getSpecialProgramSlotsForAllocationTeam } from '@/lib/utils/specialProgramDisplay'
+import { buildSpecialProgramSlotsByProgramId } from '@/lib/utils/specialProgramSlotMap'
 import { flushSync } from 'react-dom'
 import {
   buildStaffByIdMap,
@@ -5385,16 +5387,9 @@ function SchedulePageContent() {
   const specialProgramAssignedForStep3Dialog = useMemo(() => {
     const out = createEmptyTeamRecord<number>(0)
     const weekday = getWeekday(selectedDate)
-    const slotsByProgramId = new Map<string, Set<number>>()
-    ;(specialPrograms || []).forEach((program: any) => {
-      let programSlots = program?.slots?.[weekday] || []
-      if (!Array.isArray(programSlots)) programSlots = []
-      if (programSlots.length === 0) {
-        if (program?.name === 'Robotic') programSlots = [1, 2, 3, 4]
-        else if (program?.name === 'CRP') programSlots = [2]
-        else programSlots = [1, 2, 3, 4]
-      }
-      slotsByProgramId.set(String(program.id), new Set(programSlots))
+    const slotsByProgramId = buildSpecialProgramSlotsByProgramId({
+      specialPrograms: specialPrograms as any,
+      weekday,
     })
 
     for (const alloc of existingAllocationsForStep3Dialog) {
@@ -6304,48 +6299,13 @@ function SchedulePageContent() {
     if (!allocation.special_program_ids || allocation.special_program_ids.length === 0) {
       return []
     }
-    
-    const specialProgramSlots: number[] = []
-    
-    // Find which special programs this PCA is assigned to
-    for (const programId of allocation.special_program_ids) {
-      const program = specialPrograms.find(p => p.id === programId)
-      if (!program) continue
-      
-      // Check which slots are assigned to this special program for this team
-      // Robotic: slots 1-2 → SMM, slots 3-4 → SFM
-      if (program.name === 'Robotic') {
-        if (team === 'SMM') {
-          if (allocation.slot1 === 'SMM') specialProgramSlots.push(1)
-          if (allocation.slot2 === 'SMM') specialProgramSlots.push(2)
-        }
-        if (team === 'SFM') {
-          if (allocation.slot3 === 'SFM') specialProgramSlots.push(3)
-          if (allocation.slot4 === 'SFM') specialProgramSlots.push(4)
-        }
-      }
-      // CRP: slot 2 → CPPC
-      else if (program.name === 'CRP') {
-        if (team === 'CPPC' && allocation.slot2 === 'CPPC') {
-          specialProgramSlots.push(2)
-        }
-      }
-      // For other programs, assume all slots in the program's designated team are special
-      else {
-        // Check program.slots for this weekday if available
-        const currentWeekday = getWeekday(selectedDate)
-        if (program.slots && program.slots[currentWeekday]) {
-          const programSlots = program.slots[currentWeekday] as number[]
-          for (const slot of programSlots) {
-            if (getSlotsForTeam(allocation, team).includes(slot)) {
-              specialProgramSlots.push(slot)
-            }
-          }
-        }
-      }
-    }
-    
-    return [...new Set(specialProgramSlots)] // Remove duplicates
+
+    return getSpecialProgramSlotsForAllocationTeam({
+      allocation,
+      team,
+      selectedDate,
+      specialPrograms,
+    })
   }
 
   const pcaBalanceSanity = useMemo(() => {
@@ -6823,16 +6783,9 @@ function SchedulePageContent() {
       }
 
       const weekday = getWeekday(selectedDate)
-      const slotsByProgramId = new Map<string, Set<number>>()
-      ;(specialPrograms || []).forEach((program: any) => {
-        let programSlots = program?.slots?.[weekday] || []
-        if (!Array.isArray(programSlots)) programSlots = []
-        if (programSlots.length === 0) {
-          if (program?.name === 'Robotic') programSlots = [1, 2, 3, 4]
-          else if (program?.name === 'CRP') programSlots = [2]
-          else programSlots = [1, 2, 3, 4]
-        }
-        slotsByProgramId.set(String(program.id), new Set(programSlots))
+      const slotsByProgramId = buildSpecialProgramSlotsByProgramId({
+        specialPrograms: specialPrograms as any,
+        weekday,
       })
 
       const staffById = new Map(staff.map((s) => [s.id, s]))
@@ -12294,6 +12247,7 @@ function SchedulePageContent() {
               currentInvalidSlots={currentInvalidSlots}
               currentAmPmSelection={currentAmPmSelection}
               currentSpecialProgramAvailable={currentSpecialProgramAvailable}
+              allStaff={staff}
               specialPrograms={specialPrograms}
               weekday={currentWeekday}
               onSave={handleSaveStaffEdit}

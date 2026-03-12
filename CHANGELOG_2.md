@@ -13,6 +13,7 @@
 - **Special program runtime resolution** — Introduced shared canonical weekday-slot resolution from normalized rows / legacy staff-keyed slots / direct weekday slots before fallback, and reused it across Step 2 and Step 3 consumers.
 
 ### Fixed
+- **Vercel build — TypeScript strict** — `buildSpecialProgramTargetTeamById` and `applySpecialProgramOverrides` had `overrides` typed as `StaffStatusOverridesById` but callers pass schedule staff overrides (`StaffOverrideState`) with `team` / `specialProgramOverrides`. Widened parameter types to accept the correct shape.
 - **CRP therapist runner selection** — Zero `fte_subtraction` CRP therapists can still be recognized as the designated weekday runner, so cases like Aggie no longer get displaced by non-canonical therapist picks.
 - **CRP PCA team + slot routing** — CRP PCA allocation now follows the canonical therapist team and the canonical configured weekday slot instead of defaulting to CPPC / slot `2`.
 - **Step 2 override precedence into Step 3** — Explicit Step 2.0 `requiredSlots` overrides now remain authoritative in floating pending exclusion and Step 3.3 adjacent-slot detection, rather than snapping back to canonical/default CRP slots.

@@ -1,6 +1,6 @@
 'use client'
 
-import { useToast } from '@/components/ui/toast-provider'
+import { useToast } from '@/components/ui/toast-context'
 
 export default function TestSimplePage() {
   const isDev = process.env.NODE_ENV !== 'production'

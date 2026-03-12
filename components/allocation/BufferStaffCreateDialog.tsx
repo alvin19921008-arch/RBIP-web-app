@@ -11,7 +11,7 @@ import { SpecialProgram } from '@/types/allocation'
 import { TEAMS } from '@/lib/utils/types'
 import { X, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useToast } from '@/components/ui/toast-provider'
+import { useToast } from '@/components/ui/toast-context'
 
 const RANKS: StaffRank[] = ['SPT', 'APPT', 'RPT', 'PCA']
 const SPECIALTY_OPTIONS = ['MSK/Ortho', 'Cardiac', 'Neuro', 'Cancer', 'nil']

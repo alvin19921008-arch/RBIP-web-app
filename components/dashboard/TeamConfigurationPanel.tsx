@@ -24,10 +24,10 @@ import {
 } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { useToast } from '@/components/ui/toast-provider'
+import { useToast } from '@/components/ui/toast-context'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
-import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
 import { TeamMergePanel } from '@/components/dashboard/TeamMergePanel'
+import { showDashboardSnapshotReminderToast } from '@/lib/utils/dashboardSnapshotReminderToast'
 import { 
   computeMergedIntoMap, 
   getTeamMergeStatus, 
@@ -478,7 +478,7 @@ export function TeamConfigurationPanel() {
         setEditingTeam(null)
         setPortionPopover(null)
       })
-      toast.success('Team configuration saved.')
+      showDashboardSnapshotReminderToast(toast, 'Team configuration saved.')
     } catch (err) {
       console.error('Error saving team configuration:', err)
       toast.error('Error saving team configuration.', err instanceof Error ? err.message : String(err))
@@ -599,7 +599,6 @@ export function TeamConfigurationPanel() {
   if (loading) {
     return (
       <div className="pt-6">
-        <DashboardConfigMetaBanner />
         <p>Loading...</p>
       </div>
     )
@@ -608,7 +607,6 @@ export function TeamConfigurationPanel() {
   return (
     <>
       <div className="pt-6 space-y-4">
-        <DashboardConfigMetaBanner />
         <div className="mb-4 inline-flex items-center gap-1 rounded-md border bg-background p-1 w-fit">
             <button
               type="button"

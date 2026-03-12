@@ -10,12 +10,14 @@ import { Edit2, Trash2, Plus, X, Loader2, ArrowUpDown, ChevronDown } from 'lucid
 import { StaffEditDialog } from './StaffEditDialog'
 import { BufferStaffConvertDialog } from '@/components/allocation/BufferStaffConvertDialog'
 import { cn } from '@/lib/utils'
-import { useToast } from '@/components/ui/toast-provider'
+import { useToast } from '@/components/ui/toast-context'
 import { SearchWithSuggestions, type SearchSuggestionItem } from '@/components/ui/SearchWithSuggestions'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { DashboardConfigMetaBanner } from '@/components/dashboard/DashboardConfigMetaBanner'
 import { matchesStaffName, matchesStaffStatus } from '@/lib/utils/staffFilters'
+import { showDashboardSnapshotReminderToast } from '@/lib/utils/dashboardSnapshotReminderToast'
+import { type StaffEditDialogSavePayload } from '@/lib/utils/staffEditDrafts'
+import { buildSpecialProgramsFromRows } from '@/lib/utils/specialProgramConfigRows'
 
 const RANK_ORDER: StaffRank[] = ['SPT', 'APPT', 'RPT', 'PCA', 'workman']
 
@@ -100,9 +102,10 @@ export function StaffProfilePanel() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [staffRes, programsRes, sptAllocationsRes] = await Promise.all([
+      const [staffRes, programsRes, programConfigsRes, sptAllocationsRes] = await Promise.all([
         supabase.from('staff').select('*').order('rank').order('name'),
         supabase.from('special_programs').select('*').order('name'),
+        supabase.from('special_program_staff_configs').select('id,program_id,staff_id,config_by_weekday,created_at,updated_at'),
         supabase.from('spt_allocations').select('staff_id, is_rbip_supervisor').eq('is_rbip_supervisor', true),
       ])
 
@@ -110,7 +113,12 @@ export function StaffProfilePanel() {
         setStaff(staffRes.data as Staff[])
       }
       if (programsRes.data) {
-        setSpecialPrograms(programsRes.data as SpecialProgram[])
+        setSpecialPrograms(
+          buildSpecialProgramsFromRows({
+            programRows: programsRes.data as any[],
+            staffConfigRows: (programConfigsRes.data || []) as any[],
+          }) as SpecialProgram[]
+        )
       }
       if (sptAllocationsRes.data) {
         const supervisorIds = new Set(
@@ -274,7 +282,7 @@ export function StaffProfilePanel() {
         // Success - update local state
         setStaff((prev) => prev.map((s) => (s.id === staffId ? { ...s, name: newName } : s)))
         setEditingNameId(null)
-        toast.success('Name updated.')
+        showDashboardSnapshotReminderToast(toast, 'Name updated.')
       }
     } catch (err) {
       console.error('Error updating name:', err)
@@ -335,7 +343,7 @@ export function StaffProfilePanel() {
             ? { ...s, status: newStatus, team: (newStatus === 'inactive' || newStatus === 'buffer') ? null : s.team, buffer_fte: newStatus === 'buffer' && bufferFTE !== undefined ? bufferFTE : s.buffer_fte } 
             : s
         ))
-        toast.success('Status updated.')
+        showDashboardSnapshotReminderToast(toast, 'Status updated.')
       }
     } catch (err) {
       console.error('Error updating status:', err)
@@ -380,7 +388,7 @@ export function StaffProfilePanel() {
               : s
           )
         )
-        toast.success(`Updated status for ${selectedStaffIds.size} staff.`)
+        showDashboardSnapshotReminderToast(toast, `Updated status for ${selectedStaffIds.size} staff.`)
         setSelectedStaffIds(new Set())
       }
     } catch (err) {
@@ -408,7 +416,7 @@ export function StaffProfilePanel() {
         toast.error('Failed to delete staff. Please try again.')
       } else {
         await loadData()
-        toast.success(`Deleted ${count} staff member${count > 1 ? 's' : ''}.`)
+        showDashboardSnapshotReminderToast(toast, `Deleted ${count} staff member${count > 1 ? 's' : ''}.`)
         setSelectedStaffIds(new Set())
       }
     } catch (err) {
@@ -429,7 +437,7 @@ export function StaffProfilePanel() {
         toast.error('Failed to delete staff. Please try again.')
       } else {
         await loadData()
-        toast.success(`Deleted ${staffName}.`)
+        showDashboardSnapshotReminderToast(toast, `Deleted ${staffName}.`)
         // Remove from selection if selected
         setSelectedStaffIds(prev => {
           const newSet = new Set(prev)
@@ -443,92 +451,25 @@ export function StaffProfilePanel() {
     }
   }
 
-  const handleSaveStaff = async (staffData: Partial<Staff> & { isRbipSupervisor?: boolean; specialty?: string | null }) => {
+  const handleSaveStaff = async (payload: StaffEditDialogSavePayload) => {
     try {
-      const { isRbipSupervisor, specialty, ...staffFields } = staffData
-      const staffId = editingStaff?.id
+      const response = await fetch('/api/staff/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
 
-      // If setting to inactive or buffer, also set team to null
-      if (staffFields.status === 'inactive' || staffFields.status === 'buffer') {
-        staffFields.team = null
-      }
-
-      if (staffId) {
-        // Update existing staff
-        const { error: staffError } = await supabase
-          .from('staff')
-          .update(staffFields)
-          .eq('id', staffId)
-
-        if (staffError) throw staffError
-
-        // Handle SPT allocation updates
-        if (staffFields.rank === 'SPT') {
-          const { data: existingAllocation } = await supabase
-            .from('spt_allocations')
-            .select('id')
-            .eq('staff_id', staffId)
-            .maybeSingle()
-
-          if (existingAllocation) {
-            // Update existing SPT allocation
-            await supabase
-              .from('spt_allocations')
-              .update({
-                specialty: specialty ?? null,
-                is_rbip_supervisor: isRbipSupervisor ?? false,
-              })
-              .eq('id', existingAllocation.id)
-          } else if (specialty || isRbipSupervisor) {
-            // Create SPT allocation if it doesn't exist but has SPT-specific data
-            await supabase.from('spt_allocations').insert({
-              staff_id: staffId,
-              specialty: specialty ?? null,
-              is_rbip_supervisor: isRbipSupervisor ?? false,
-              teams: [],
-              weekdays: [],
-              slots: {},
-              fte_addon: 0,
-              substitute_team_head: false,
-              status: 'active' as StaffStatus,
-            })
-          }
-        }
-      } else {
-        // Insert new staff
-        const { data: newStaff, error: staffError } = await supabase
-          .from('staff')
-          .insert({
-            ...staffFields,
-            status: staffFields.status ?? 'active',
-          })
-          .select()
-          .single()
-
-        if (staffError) throw staffError
-
-        // Create SPT allocation if needed
-        if (staffFields.rank === 'SPT' && (specialty || isRbipSupervisor)) {
-          await supabase.from('spt_allocations').insert({
-            staff_id: newStaff.id,
-            specialty: specialty ?? null,
-            is_rbip_supervisor: isRbipSupervisor ?? false,
-            teams: [],
-            weekdays: [],
-            slots: {},
-            fte_addon: 0,
-            substitute_team_head: false,
-            status: 'active' as StaffStatus,
-          })
-        }
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(typeof result?.error === 'string' ? result.error : 'Failed to save staff.')
       }
 
       await loadData()
       setEditingStaff(null)
-      toast.success(staffId ? 'Staff updated.' : 'Staff created.')
+      showDashboardSnapshotReminderToast(toast, payload.staffId ? 'Staff updated.' : 'Staff created.')
     } catch (err) {
       console.error('Error saving staff:', err)
-      toast.error('Failed to save staff. Please try again.')
+      toast.error(err instanceof Error ? err.message : 'Failed to save staff. Please try again.')
     }
   }
 
@@ -831,7 +772,6 @@ export function StaffProfilePanel() {
   return (
     <>
       <div className="pt-6 space-y-4">
-        <DashboardConfigMetaBanner />
           <div className="mb-4 pb-4 border-b">
             <div className="flex flex-wrap gap-4 text-sm" style={{ color: 'black' }}>
               <span>

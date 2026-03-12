@@ -21,6 +21,12 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
+/**
+ * Allowed FTE cost values for free-range leave types (others, medical follow-up).
+ * Multiples of 0.25 plus common values (0.30, 0.40, 0.60) — no arbitrary decimals like 0.71, 0.69.
+ */
+const FREE_RANGE_FTE_COST_POOL: readonly number[] = [0.25, 0.3, 0.4, 0.5, 0.6, 0.75, 1.0]
+
 function pcaSlotFteFromAvailableSlots(availableSlots: unknown): number {
   if (!Array.isArray(availableSlots)) return 0
   const uniq = Array.from(new Set(availableSlots)).filter((s) => isValidSlot(s))
@@ -455,15 +461,17 @@ export function generateDevLeaveSimDraft(args: {
 
     const leaveType = pickLeaveTypeWeighted(rng, args.config.urgentLeaveTypeWeights) as any
     if (pick.rank !== 'PCA') {
-      // Therapist urgent leave: allow arbitrary decimal FTE remaining.
-      const remaining = round2(clampNumber(1.0 - (0.05 + rng() * 0.65), 0, 1))
+      // Therapist urgent leave (others, medical follow-up): use constrained FTE costs
+      // (multiples of 0.25 + common values like 0.30, 0.40) — no arbitrary decimals like 0.71, 0.69.
+      const fteCost = randChoice(rng, FREE_RANGE_FTE_COST_POOL) ?? 0.5
+      const remaining = round2(1.0 - fteCost)
       addPatch(patches, selectedStaffIds, {
         staffId: pick.id,
         rank: pick.rank as DevLeaveSimRank,
         bucket: 'urgent',
         leaveType,
         fteRemaining: remaining,
-        fteSubtraction: round2(1.0 - remaining),
+        fteSubtraction: round2(fteCost),
       })
       continue
     }
