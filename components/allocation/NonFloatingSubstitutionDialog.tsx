@@ -270,6 +270,7 @@ export function NonFloatingSubstitutionDialog({
 
   const isFirstTeam = currentTeamIndex === 0
   const isLastTeam = currentTeamIndex === teams.length - 1
+  const teamsRequiringSubstitutionCount = teams.filter((team) => (substitutionsByTeam[team] ?? []).length > 0).length
 
   const isSubstitutionComplete = (team: Team, nonFloatingPCAId: string, missingSlots: number[]): boolean => {
     const key = getSelectionKey(team, nonFloatingPCAId)
@@ -281,6 +282,7 @@ export function NonFloatingSubstitutionDialog({
   const isCurrentTeamComplete = currentSubstitutions.every((sub) =>
     isSubstitutionComplete(sub.team, sub.nonFloatingPCAId, sub.missingSlots)
   )
+  const shouldPulseNext = !isLastTeam && teamsRequiringSubstitutionCount > 1 && isCurrentTeamComplete
 
   const isAllTeamsComplete = teams.filter((t) => (substitutionsByTeam[t] ?? []).length > 0).every((team) =>
     (substitutionsByTeam[team] ?? []).every((sub) =>
@@ -403,7 +405,7 @@ export function NonFloatingSubstitutionDialog({
 
   return (
     <Dialog open={open} onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent className="flex h-[calc(100dvh-16px)] w-[calc(100vw-16px)] max-w-4xl flex-col overflow-hidden sm:h-auto sm:w-full sm:max-h-[90dvh]">
+      <DialogContent className="flex h-[calc(100dvh-16px)] w-[calc(100vw-16px)] max-w-4xl flex-col overflow-visible sm:h-auto sm:w-full sm:max-h-[90dvh]">
         {/* Wide: stepper top-right; narrow: under instruction */}
         <div className="absolute right-3 top-3 hidden sm:flex sm:right-4 sm:top-4 items-center gap-2">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -448,13 +450,11 @@ export function NonFloatingSubstitutionDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 overflow-auto overscroll-contain pr-1">
-
-          {/* Navigation - only show for wizard mode */}
-          {isWizardMode && (
-            <>
-              {/* Mobile: Compact layout */}
-              <div className="flex items-center justify-between gap-2 border-b py-3 sm:hidden">
+        {/* Navigation - only show for wizard mode; kept outside overflow-auto so pulse box-shadow is not clipped */}
+        {isWizardMode && (
+          <>
+            {/* Mobile: Compact layout */}
+            <div className="flex items-center justify-between gap-2 border-b py-3 sm:hidden shrink-0">
                 <Button
                   variant="outline"
                   size="sm"
@@ -481,8 +481,7 @@ export function NonFloatingSubstitutionDialog({
                 {!isLastTeam ? (
                   <span
                     className={cn(
-                      "inline-flex rounded-md",
-                      isCurrentTeamComplete && "animate-rbip-next-cta-pulse"
+                      "inline-flex rounded-md"
                     )}
                   >
                     <Button
@@ -490,7 +489,10 @@ export function NonFloatingSubstitutionDialog({
                       size="sm"
                       onClick={handleNext}
                       disabled={!isCurrentTeamComplete}
-                      className="h-8 w-8 p-0"
+                      className={cn(
+                        "h-8 w-8 p-0",
+                        shouldPulseNext && "animate-rbip-next-cta-pulse will-change-transform"
+                      )}
                       aria-label="Next team"
                     >
                       <ArrowRight className="h-4 w-4" />
@@ -528,15 +530,17 @@ export function NonFloatingSubstitutionDialog({
                 {!isLastTeam ? (
                   <span
                     className={cn(
-                      "inline-flex rounded-md",
-                      isCurrentTeamComplete && "animate-rbip-next-cta-pulse"
+                      "inline-flex rounded-md"
                     )}
                   >
                     <Button
                       variant="outline"
                       onClick={handleNext}
                       disabled={!isCurrentTeamComplete}
-                      className="flex items-center gap-2"
+                      className={cn(
+                        "flex items-center gap-2",
+                        shouldPulseNext && "animate-rbip-next-cta-pulse will-change-transform"
+                      )}
                     >
                       Next
                       <ArrowRight className="h-4 w-4" />
@@ -549,6 +553,7 @@ export function NonFloatingSubstitutionDialog({
             </>
           )}
 
+        <div className="min-h-0 flex-1 overflow-auto overscroll-contain pr-1">
           {/* Content */}
           <div className="space-y-6 py-4">
           {currentSubstitutions.length === 0 ? (

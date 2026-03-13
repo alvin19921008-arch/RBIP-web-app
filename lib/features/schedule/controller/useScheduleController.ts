@@ -29,6 +29,8 @@ import { computeBedsDesignatedByTeam, computeBedsForRelieving } from '@/lib/feat
 import { getSptWeekdayConfigMap } from '@/lib/features/schedule/sptConfig'
 import { computeStep3BootstrapState } from '@/lib/features/schedule/step3Bootstrap'
 import { computeStep3ResetForReentry } from '@/lib/features/schedule/stepReset'
+import { normalizeScheduleStateForSave } from '@/lib/features/schedule/saveNormalization'
+import { computeStalePcaStaffIdsForReplace } from '@/lib/features/schedule/saveReconciliation'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
 import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
@@ -40,12 +42,13 @@ import { getScheduleCacheEpoch } from '@/lib/utils/scheduleCacheEpoch'
 import { cacheDraftSchedule, clearDraftSchedule, getDraftSchedule, type DraftScheduleData } from '@/lib/utils/scheduleDraftCache'
 import { createTimingCollector, type TimingReport } from '@/lib/utils/timing'
 import {
-  applySubstitutionSlotsToOverride,
   getAllSubstitutionSlots,
-  hasAnySubstitution,
   normalizeSubstitutionForBySlot,
-  removeSubstitutionForTeamsFromOverride,
 } from '@/lib/utils/substitutionFor'
+import {
+  applyResolvedSubstitutionSelectionsToOverrides,
+  buildStep2SubstitutionDisplayOverrides,
+} from '@/lib/features/schedule/substitutionDisplayPersistence'
 import { buildTeamMergeSnapshotFromTeamSettings } from '@/lib/utils/teamMerge'
 import {
   normalizeFTE,
@@ -2528,6 +2531,15 @@ export function useScheduleController(params: {
 
     onProgress(0.2)
 
+    const normalizedForSave = normalizeScheduleStateForSave({
+      stepStatus: stepStatus as Record<string, 'pending' | 'completed' | 'modified' | undefined>,
+      staffOverrides: overridesToSave,
+      therapistAllocations: therapistAllocations as any,
+      pcaAllocations: pcaAllocations as any,
+      bedAllocations: bedAllocations as any,
+    })
+    overridesToSave = { ...normalizedForSave.staffOverrides }
+
     // Build persisted staff_overrides payload (includes schedule-level bed count overrides).
     const staffOverridesPayloadForDb: Record<string, any> = {
       ...overridesToSave,
@@ -2559,7 +2571,7 @@ export function useScheduleController(params: {
       })
 
       for (const team of TEAMS) {
-        ;(therapistAllocations[team] || []).forEach((alloc: any) => {
+        ;(normalizedForSave.therapistAllocations[team] || []).forEach((alloc: any) => {
           const staffMember = staff.find((s) => s.id === alloc.staff_id)
           if (!staffMember) return
           const isActualTherapist = ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)
@@ -2595,7 +2607,7 @@ export function useScheduleController(params: {
       }
 
       for (const team of TEAMS) {
-        ;(pcaAllocations[team] || []).forEach((alloc: any) => {
+        ;(normalizedForSave.pcaAllocations[team] || []).forEach((alloc: any) => {
           if (processedPcaStaffIds.has(alloc.staff_id)) return
           processedPcaStaffIds.add(alloc.staff_id)
           const staffMember = staff.find((s) => s.id === alloc.staff_id)
@@ -2614,7 +2626,8 @@ export function useScheduleController(params: {
         })
       }
 
-      Object.entries(overridesToSave).forEach(([staffId, override]) => {
+      if (normalizedForSave.persistPcaData) {
+        Object.entries(overridesToSave).forEach(([staffId, override]) => {
         if (processedPcaStaffIds.has(staffId) || therapistStaffIdsInAllocations.has(staffId)) return
         const staffMember = staff.find((s) => s.id === staffId)
         if (!staffMember) return
@@ -2636,13 +2649,14 @@ export function useScheduleController(params: {
           }
         } else if (isPCA) {
           for (const t of TEAMS) {
-            const alloc = (pcaAllocations[t] || []).find((a: any) => a.staff_id === staffId)
+            const alloc = (normalizedForSave.pcaAllocations[t] || []).find((a: any) => a.staff_id === staffId)
             if (alloc) {
               currentAlloc = alloc
               team = alloc.team
               break
             }
           }
+          if (staffMember.floating && !currentAlloc) return
         }
 
         allocationsToSave.push({
@@ -2655,7 +2669,8 @@ export function useScheduleController(params: {
           invalidSlot: saveRuntimeById[staffId]?.effectiveInvalidSlot,
           fteSubtraction: (override as any).fteSubtraction,
         })
-      })
+        })
+      }
 
       timer.stage('collectAllocations')
       onProgress(0.32)
@@ -2801,7 +2816,7 @@ export function useScheduleController(params: {
           average_pca_per_team: normalizeFTE(c.average_pca_per_team),
         }))
 
-      const bedRows = (bedAllocations || []).map((b) => ({
+      const bedRows = (normalizedForSave.bedAllocations || []).map((b) => ({
         schedule_id: scheduleId,
         from_team: (b as any).from_team,
         to_team: (b as any).to_team,
@@ -2834,6 +2849,39 @@ export function useScheduleController(params: {
         })
 
         if (!rpcRes.error) {
+          const submittedPcaStaffIds = Array.from(new Set(pcaRows.map((row: any) => row?.staff_id).filter(Boolean)))
+          const existingPcaRes = await params.supabase
+            .from('schedule_pca_allocations')
+            .select('staff_id')
+            .eq('schedule_id', scheduleId)
+
+          if (existingPcaRes.error) {
+            toast(`Error reconciling PCA allocations: ${existingPcaRes.error.message || 'Unknown error'}`, 'error')
+            saveError = existingPcaRes.error
+            timer.stage('writeAllocations.error')
+            return timer.finalize({ ok: false })
+          }
+
+          const stalePcaStaffIds = computeStalePcaStaffIdsForReplace({
+            existingStaffIds: ((existingPcaRes.data as any[]) || []).map((row: any) => row?.staff_id).filter(Boolean),
+            submittedStaffIds: submittedPcaStaffIds,
+          })
+
+          if (stalePcaStaffIds.length > 0) {
+            const staleDeleteRes = await params.supabase
+              .from('schedule_pca_allocations')
+              .delete()
+              .eq('schedule_id', scheduleId)
+              .in('staff_id', stalePcaStaffIds)
+
+            if (staleDeleteRes.error) {
+              toast(`Error clearing stale PCA allocations: ${staleDeleteRes.error.message || 'Unknown error'}`, 'error')
+              saveError = staleDeleteRes.error
+              timer.stage('writeAllocations.error')
+              return timer.finalize({ ok: false })
+            }
+          }
+
           cachedSaveScheduleRpcAvailable = true
           usedRpc = true
         } else {
@@ -2852,28 +2900,26 @@ export function useScheduleController(params: {
         onProgress(0.55)
         startSoftAdvance(0.82)
         const upsertPromises: PromiseLike<any>[] = []
-        if (pcaRows.length > 0) {
-          upsertPromises.push(
-            params.supabase.from('schedule_pca_allocations').upsert(pcaRows, { onConflict: 'schedule_id,staff_id' })
-          )
-        }
         if (calcRows.length > 0) {
           upsertPromises.push(params.supabase.from('schedule_calculations').upsert(calcRows, { onConflict: 'schedule_id,team' }))
         }
 
+        const pcaDeletePromise: PromiseLike<any> = params.supabase.from('schedule_pca_allocations').delete().eq('schedule_id', scheduleId)
         const therapistDeletePromise: PromiseLike<any> = params.supabase
           .from('schedule_therapist_allocations')
           .delete()
           .eq('schedule_id', scheduleId)
         const bedDeletePromise: PromiseLike<any> = params.supabase.from('schedule_bed_allocations').delete().eq('schedule_id', scheduleId)
 
-        const [therapistDeleteRes, bedDeleteRes, ...upsertResults] = await Promise.all([
+        const [pcaDeleteRes, therapistDeleteRes, bedDeleteRes, ...upsertResults] = await Promise.all([
+          pcaDeletePromise,
           therapistDeletePromise,
           bedDeletePromise,
           ...upsertPromises,
         ])
 
         const firstWriteError =
+          (pcaDeleteRes as any)?.error ||
           (therapistDeleteRes as any)?.error ||
           (bedDeleteRes as any)?.error ||
           upsertResults.find((r) => (r as any)?.error)?.error
@@ -2882,6 +2928,16 @@ export function useScheduleController(params: {
           saveError = firstWriteError
           timer.stage('writeAllocations.error')
           return timer.finalize({ ok: false })
+        }
+
+        if (pcaRows.length > 0) {
+          const pcaInsertRes = await params.supabase.from('schedule_pca_allocations').insert(pcaRows)
+          if (pcaInsertRes.error) {
+            toast(`Error saving PCA allocations: ${pcaInsertRes.error.message || 'Unknown error'}`, 'error')
+            saveError = pcaInsertRes.error
+            timer.stage('writeAllocations.error')
+            return timer.finalize({ ok: false })
+          }
         }
 
         if (therapistRows.length > 0) {
@@ -3495,6 +3551,11 @@ export function useScheduleController(params: {
         })
       } catch {}
 
+      let resolvedSubstitutionSelectionsSnapshot: Record<
+        string,
+        Array<{ floatingPCAId?: string; slots?: number[] }>
+      > | null = null
+
       const onNonFloatingSubstitution = async (subs: any[]) => {
         // Pre-detect persisted substitution selections from staffOverrides.
         const preSelections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>> = {}
@@ -3573,6 +3634,7 @@ export function useScheduleController(params: {
 
         const keys = Object.keys(selections || {})
         const resolvedSelections = keys.length === 0 && Object.keys(preSelections).length > 0 ? preSelections : (selections || {})
+        resolvedSubstitutionSelectionsSnapshot = resolvedSelections
 
         // Persist substitution selections into staffOverrides so:
         // - UI substitution highlighting is accurate (no heuristic mismatch)
@@ -3580,51 +3642,13 @@ export function useScheduleController(params: {
         //
         // Note: Page-level manual confirm also persists; this is mainly for auto/wizard flows.
         try {
-          const teamsTouched = new Set<Team>(
-            Object.keys(resolvedSelections || {}).map((key) => {
-              const dashIdx = key.indexOf('-')
-              return (dashIdx >= 0 ? key.slice(0, dashIdx) : key) as Team
+          setStaffOverrides((prev: any) =>
+            applyResolvedSubstitutionSelectionsToOverrides({
+              baseOverrides: prev ?? {},
+              resolvedSelections,
+              staff,
             })
           )
-
-          setStaffOverrides((prev: any) => {
-            const next = { ...prev }
-
-            // Clear existing substitutionFor entries for the affected teams.
-            // This prevents stale "green substitution" styling from earlier runs / other non-floating keys.
-            Object.entries(next).forEach(([staffId, o]) => {
-              const cleaned = removeSubstitutionForTeamsFromOverride({
-                override: o,
-                teams: teamsTouched,
-              })
-              next[staffId] = cleaned
-            })
-
-            // Apply new selections.
-            Object.entries(resolvedSelections || {}).forEach(([key, selectionArr]) => {
-              const dashIdx = key.indexOf('-')
-              const team = (dashIdx >= 0 ? key.slice(0, dashIdx) : key) as Team
-              const nonFloatingPCAId = dashIdx >= 0 ? key.slice(dashIdx + 1) : ''
-              const nonFloating = staff.find((s) => s.id === nonFloatingPCAId)
-
-              ;(selectionArr || []).forEach((sel: any) => {
-                const floatingPCAId = String(sel?.floatingPCAId ?? '')
-                const slots = Array.isArray(sel?.slots) ? sel.slots : []
-                if (!floatingPCAId || slots.length === 0) return
-
-                next[floatingPCAId] = applySubstitutionSlotsToOverride({
-                  existingOverride: next[floatingPCAId] ?? { leaveType: null, fteRemaining: 1.0 },
-                  team,
-                  nonFloatingPCAId,
-                  nonFloatingPCAName: nonFloating?.name ?? '',
-                  slots,
-                })
-              })
-            })
-
-            return next
-          })
-
         } catch {}
 
         return resolvedSelections
@@ -3709,128 +3733,18 @@ export function useScheduleController(params: {
         })
       }
 
-      // Detect auto-assigned substitutions from Step 2.1 and set substitutionFor in staffOverrides
-      // This ensures Step 3 knows which slots are reserved for substitution
-      const autoSubstitutionUpdates: Record<
-        string,
-        Array<{ nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }>
-      > = {}
-
-      try {
-        // Group allocations by team
-        const allocationsByTeam = new Map<Team, Array<{ alloc: any; staff: Staff }>>()
-        ;(pcaResult as any).allocations.forEach((alloc: any) => {
-          const staffMember = staff.find((s) => s.id === alloc.staff_id)
-          if (!staffMember) return
-          const team = alloc.team as Team
-          if (!allocationsByTeam.has(team)) {
-            allocationsByTeam.set(team, [])
-          }
-          allocationsByTeam.get(team)!.push({ alloc, staff: staffMember })
+      // Persist substitution display intent from the exact Step 2 result.
+      // Explicit wizard selections remain the source of truth; otherwise we fall back
+      // to auto-detecting substitution intent from the resulting allocations.
+      setStaffOverrides((prev: any) => {
+        const nextOverrides = buildStep2SubstitutionDisplayOverrides({
+          baseOverrides: prev ?? {},
+          resolvedSelections: resolvedSubstitutionSelectionsSnapshot ?? undefined,
+          staff,
+          allocations: ((pcaResult as any).allocations || []) as PCAAllocation[],
         })
-
-        // For each team, detect substitutions
-        allocationsByTeam.forEach((allocs, team) => {
-          // Find non-floating PCAs in this team with missing slots
-          const nonFloatingPCAs = allocs.filter(
-            (item) => item.staff.rank === 'PCA' && !item.staff.floating && item.staff.status !== 'buffer'
-          )
-
-          // Find floating PCA allocations in this team (potential substitutes)
-          const floatingPCAAllocs = allocs.filter(
-            (item) =>
-              item.staff.rank === 'PCA' &&
-              item.staff.floating &&
-              !item.alloc.special_program_ids?.length &&
-              // Only consider allocations that don't already have substitutionFor set
-              !hasAnySubstitution(overrides[item.alloc.staff_id] as any)
-          )
-
-          for (const nfItem of nonFloatingPCAs) {
-            const nfAlloc = nfItem.alloc
-            const nfStaff = nfItem.staff
-            const nfOverride = overrides[nfStaff.id]
-
-            // Determine missing slots for this non-floating PCA
-            // Missing slots = slots not in availableSlots, or if FTE < 1.0
-            const nfAvailableSlots = nfOverride?.availableSlots
-            const nfFTE = nfOverride?.fteRemaining ?? 1.0
-          let expectedSlots: number | null = null
-
-            let missingSlots: number[] = []
-            if (nfAvailableSlots && Array.isArray(nfAvailableSlots) && nfAvailableSlots.length > 0) {
-              // Missing slots are those not in availableSlots
-              missingSlots = [1, 2, 3, 4].filter((slot) => !nfAvailableSlots.includes(slot))
-            } else if (nfFTE < 1.0) {
-              // If FTE < 1.0, calculate missing slots based on FTE
-            expectedSlots = Math.round(nfFTE / 0.25)
-              const assignedSlots: number[] = []
-              if (nfAlloc.slot1 === team) assignedSlots.push(1)
-              if (nfAlloc.slot2 === team) assignedSlots.push(2)
-              if (nfAlloc.slot3 === team) assignedSlots.push(3)
-              if (nfAlloc.slot4 === team) assignedSlots.push(4)
-              // Missing slots are those not assigned
-              missingSlots = [1, 2, 3, 4].filter((slot) => !assignedSlots.includes(slot))
-            }
-
-            if (missingSlots.length === 0) continue
-
-            // Find floating PCA allocations that cover these missing slots
-            for (const floatItem of floatingPCAAllocs) {
-              const floatAlloc = floatItem.alloc
-              const floatStaff = floatItem.staff
-
-              // Get slots assigned to this team by this floating PCA
-              const assignedSlots: number[] = []
-              if (floatAlloc.slot1 === team) assignedSlots.push(1)
-              if (floatAlloc.slot2 === team) assignedSlots.push(2)
-              if (floatAlloc.slot3 === team) assignedSlots.push(3)
-              if (floatAlloc.slot4 === team) assignedSlots.push(4)
-
-              // Check if assigned slots match missing slots (or are a subset)
-              const matchingSlots = assignedSlots.filter((slot) => missingSlots.includes(slot))
-              if (matchingSlots.length > 0) {
-                autoSubstitutionUpdates[floatStaff.id] = autoSubstitutionUpdates[floatStaff.id] ?? []
-                autoSubstitutionUpdates[floatStaff.id].push({
-                  nonFloatingPCAId: nfStaff.id,
-                  nonFloatingPCAName: nfStaff.name,
-                  team,
-                  slots: matchingSlots,
-                })
-                break // Found a match, move to next non-floating PCA
-              }
-            }
-          }
-        })
-
-      } catch (error) {
-        console.error('Error detecting auto-assigned substitutions:', error)
-      }
-
-      // Apply auto-substitution updates to staffOverrides
-      if (Object.keys(autoSubstitutionUpdates).length > 0) {
-        setStaffOverrides((prev: any) => {
-          const next = { ...prev }
-          for (const [floatingPCAId, updates] of Object.entries(autoSubstitutionUpdates)) {
-            const staffMember = staff.find((s) => s.id === floatingPCAId)
-            const baseFTE = staffMember?.status === 'buffer' && (staffMember as any).buffer_fte !== undefined
-              ? (staffMember as any).buffer_fte
-              : 1.0
-            let existingOverride = next[floatingPCAId] ?? { leaveType: null, fteRemaining: baseFTE }
-            ;(updates || []).forEach((u) => {
-              existingOverride = applySubstitutionSlotsToOverride({
-                existingOverride,
-                team: u.team,
-                nonFloatingPCAId: u.nonFloatingPCAId,
-                nonFloatingPCAName: u.nonFloatingPCAName,
-                slots: u.slots,
-              })
-            })
-            next[floatingPCAId] = existingOverride
-          }
-          return next
-        })
-      }
+        return nextOverrides
+      })
 
       setStep2Result({
         pcaData,
@@ -3887,6 +3801,7 @@ export function useScheduleController(params: {
         staff,
         staffOverrides: staffOverrides as Record<string, any>,
         excludeSubstitutionSlotsForFloating: true,
+        excludeSpecialProgramSlotsForFloating: true,
         clampBufferFteRemaining: true,
       })
       const weekday = runtimeProjection.weekday

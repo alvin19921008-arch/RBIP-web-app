@@ -29,9 +29,10 @@ export function getSpecialProgramSlotsForAllocationTeam(args: {
     staffOverrides,
   })
   const specialProgramsById = displayView.getProgramsByAllocationTeam(allocation.team ?? team)
-  return getAllocationSpecialProgramSlotsForTeam({
+  const resolvedSlots = getAllocationSpecialProgramSlotsForTeam({
     allocation: allocation as any,
     team,
     specialProgramsById,
   })
+  return resolvedSlots
 }

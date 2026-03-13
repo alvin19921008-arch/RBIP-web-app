@@ -15,6 +15,7 @@ import { useAutoHideFlag } from '@/lib/hooks/useAutoHideFlag'
 import { useIsolatedWheelScroll } from '@/lib/hooks/useIsolatedWheelScroll'
 import { normalizeSubstitutionForBySlot } from '@/lib/utils/substitutionFor'
 import { getSpecialProgramNameBySlotForAllocation } from '@/lib/utils/specialProgramExport'
+import { shouldShowExtraCoverage } from '@/lib/features/schedule/extraCoverageVisibility'
 
 type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
 
@@ -129,6 +130,10 @@ export function PCADedicatedScheduleTable({
   })
 
   const stage = useMemo(() => getFurthestPCAStage(stepStatus, initializedSteps), [stepStatus, initializedSteps])
+  const showExtraCoverageStyling = useMemo(
+    () => shouldShowExtraCoverage({ currentStep: stage === 'step3' ? 'floating-pca' : 'therapist-pca', initializedSteps }),
+    [initializedSteps, stage]
+  )
 
   const columns = useMemo(() => {
     // De-dupe by id, keep latest name fields from incoming list
@@ -404,7 +409,7 @@ export function PCADedicatedScheduleTable({
         const assignedTeam = slotTeams[slot]
         const inv = invalids[slot]
         const prog = programBySlot[slot]
-        const isExtraCoverage = !!(o as any)?.extraCoverageBySlot?.[slot]
+        const isExtraCoverage = showExtraCoverageStyling && !!(o as any)?.extraCoverageBySlot?.[slot]
 
         const substitutionEntry = substitutionBySlotEntry[slot]
         const isSubstitution = !!assignedTeam && !!substitutionEntry && substitutionEntry.team === assignedTeam

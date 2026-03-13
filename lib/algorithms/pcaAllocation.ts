@@ -97,10 +97,23 @@ function getSlotTeamForSpecialProgram(
   slot: number,
   targetTeam: Team
 ): Team | null {
-  const runtimeModel = resolveSpecialProgramRuntimeModel({
+  let runtimeModel = resolveSpecialProgramRuntimeModel({
     program,
     targetTeam,
   })
+  if (runtimeModel.effectiveRequiredSlots.length === 0 && Array.isArray(program.weekdays) && program.weekdays.length > 0) {
+    for (const weekday of program.weekdays) {
+      const weekdayRuntimeModel = resolveSpecialProgramRuntimeModel({
+        program,
+        targetTeam,
+        weekday,
+      })
+      if (weekdayRuntimeModel.effectiveRequiredSlots.includes(slot as 1 | 2 | 3 | 4)) {
+        runtimeModel = weekdayRuntimeModel
+        break
+      }
+    }
+  }
   return runtimeModel.slotTeamBySlot[slot as 1 | 2 | 3 | 4] ?? runtimeModel.allocatorDefaultTargetTeam ?? targetTeam
 }
 

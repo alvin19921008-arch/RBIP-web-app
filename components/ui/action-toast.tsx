@@ -138,7 +138,14 @@ export function ActionToast({
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold leading-5 text-foreground">{title}</div>
           {description ? (
-            <div className="mt-0.5 text-sm leading-5 text-muted-foreground">{description}</div>
+            <div
+              className={cn(
+                'mt-0.5 text-sm leading-5 text-muted-foreground',
+                typeof description === 'string' && description.includes('\n') && 'whitespace-pre-line'
+              )}
+            >
+              {description}
+            </div>
           ) : null}
           {showProgress ? (
             <div className="mt-2">

@@ -20,6 +20,7 @@ export function buildScheduleRuntimeProjection(args: {
   staffOverrides: Record<string, StaffRuntimeOverrideLike | undefined>
   replacedNonFloatingIds?: Set<string>
   excludeSubstitutionSlotsForFloating?: boolean
+  excludeSpecialProgramSlotsForFloating?: boolean
   clampBufferFteRemaining?: boolean
 }): ScheduleRuntimeProjection {
   return {
@@ -32,6 +33,7 @@ export function buildScheduleRuntimeProjection(args: {
       staffOverrides: args.staffOverrides,
       replacedNonFloatingIds: args.replacedNonFloatingIds,
       excludeSubstitutionSlotsForFloating: args.excludeSubstitutionSlotsForFloating,
+      excludeSpecialProgramSlotsForFloating: args.excludeSpecialProgramSlotsForFloating,
       clampBufferFteRemaining: args.clampBufferFteRemaining,
     }),
   }

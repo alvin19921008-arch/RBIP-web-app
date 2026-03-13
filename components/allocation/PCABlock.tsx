@@ -11,10 +11,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDroppable, useDndContext } from '@dnd-kit/core'
 import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
-import { getSubstitutionSlotsForTeam, normalizeSubstitutionForBySlot } from '@/lib/utils/substitutionFor'
 import { computeDrmAddOnFte } from '@/lib/utils/specialProgramPcaCapacity'
 import { getAllocationSpecialProgramSlotsForTeam } from '@/lib/utils/scheduleReservationRuntime'
 import { buildDisplayViewForWeekday } from '@/lib/utils/scheduleRuntimeProjection'
+import { shouldShowExtraCoverage } from '@/lib/features/schedule/extraCoverageVisibility'
+import { derivePcaSubstitutionInfo } from '@/lib/features/schedule/pcaSubstitutionDisplay'
 
 interface PCABlockProps {
   team: Team
@@ -68,7 +69,6 @@ type PCABlockViewModelParams = Pick<
   | 'allocations'
   | 'specialPrograms'
   | 'staffOverrides'
-  | 'allPCAAllocations'
   | 'allPCAStaff'
   | 'currentStep'
   | 'step2Initialized'
@@ -99,7 +99,6 @@ function usePcaBlockViewModel({
   allocations,
   specialPrograms,
   staffOverrides,
-  allPCAAllocations,
   allPCAStaff,
   currentStep,
   step2Initialized,
@@ -107,7 +106,6 @@ function usePcaBlockViewModel({
 }: PCABlockViewModelParams): PCABlockViewModel {
   const resolvedStaffOverrides = staffOverrides ?? {}
   const resolvedSpecialPrograms = specialPrograms ?? []
-  const resolvedAllPCAAllocations = allPCAAllocations ?? []
   const resolvedAllPCAStaff = allPCAStaff ?? []
   const resolvedCurrentStep = currentStep ?? 'leave-fte'
   const resolvedStep2Initialized = step2Initialized ?? false
@@ -342,172 +340,25 @@ function usePcaBlockViewModel({
 
   // Helper function to detect if a floating PCA is substituting for a non-floating PCA
   const getSubstitutionInfo = (floatingAlloc: PCAAllocation & { staff: Staff }): SubstitutionInfo => {
-    const override = resolvedStaffOverrides[floatingAlloc.staff_id]
-    
-    // Get slots assigned to this team for the floating PCA
-    const floatingSlotsForTeam: number[] = []
-    if (floatingAlloc.slot1 === team) floatingSlotsForTeam.push(1)
-    if (floatingAlloc.slot2 === team) floatingSlotsForTeam.push(2)
-    if (floatingAlloc.slot3 === team) floatingSlotsForTeam.push(3)
-    if (floatingAlloc.slot4 === team) floatingSlotsForTeam.push(4)
-    
-    if (floatingSlotsForTeam.length === 0) {
+    if (!floatingAlloc.staff?.floating) {
       return { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
     }
-    
-    // FIRST: Check if this PCA has substitutionFor in staffOverrides (user-selected substitution)
-    // NOTE: This can apply to BOTH:
-    // - floating PCAs (classic Step 2.1 substitution)
-    // - buffer non-floating PCAs that are explicitly marked as whole-day substitutes
-    const explicitSubstitutedSlots = getSubstitutionSlotsForTeam(override as any, team)
-    if (explicitSubstitutedSlots.length > 0) {
-      const substitutedSlots = explicitSubstitutedSlots
-      // Treat 3+ slots as "whole-day-ish" for UI polish (underline + green border),
-      // to support edge cases where a special program occupies 1 slot and the PCA substitutes the other 3.
-      const isWholeDay =
-        substitutedSlots.length >= 3 ||
-        (substitutedSlots.length === 4 &&
-          substitutedSlots.includes(1) &&
-          substitutedSlots.includes(2) &&
-          substitutedSlots.includes(3) &&
-          substitutedSlots.includes(4))
-
-      return {
-        isSubstituting: true,
-        isWholeDaySubstitution: isWholeDay,
-        substitutedSlots,
-      }
-    }
-
-    // If this floating PCA is assigned to a special program (Step 2),
-    // don't auto-derive "non-floating substitution" styling from missing slots.
-    // (But if user explicitly picked substitutionFor above, we DO allow green styling.)
-    const hasSpecialProgramAssignment =
-      Array.isArray((floatingAlloc as any).special_program_ids) && (floatingAlloc as any).special_program_ids.length > 0
-    if (hasSpecialProgramAssignment) {
-      return { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
-    }
-
-    // (special-program guard moved above)
-
-    // SECOND: Derive substitution slots from the *non-floating* PCA's overrides (survives refresh/load).
-    // - If a non-floating PCA has fteRemaining=0, they need whole-day substitution (slots 1-4).
-    // - If a non-floating PCA has availableSlots, missing slots are ([1..4] \ availableSlots).
-    // - If a non-floating PCA has invalidSlot set, they need substitution for that specific slot.
-    //
-    // This supports the "mixed case" where the same floating PCA is both:
-    // - subbing for specific slot(s) AND
-    // - assigned regular slots in Step 3 to the same team.
-    try {
-      const hasAnyExplicitSubstitutionForTeam =
-        Object.values(resolvedStaffOverrides).some((o: any) => getSubstitutionSlotsForTeam(o, team).length > 0)
-
-      // If explicit substitutionFor exists for this team (from Step 2.1),
-      // do NOT use heuristic inference. Otherwise we can incorrectly paint
-      // other floating PCAs green just because they share a missing slot.
-      if (hasAnyExplicitSubstitutionForTeam) {
-        return { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
-      }
-
-      // If a whole-day buffer/non-floating substitute exists for a missing non-floating PCA in this team,
-      // we should NOT mark unrelated floating allocations as "substituting" for that missing PCA.
-      const bufferWholeDayTargets = new Set(
-        Object.values(resolvedStaffOverrides)
-          .flatMap((o: any) => {
-            const bySlot = normalizeSubstitutionForBySlot(o)
-            const slotsForTeam = ([1, 2, 3, 4] as const).filter((slot) => bySlot[slot]?.team === team)
-            if (slotsForTeam.length !== 4) return []
-            const ids = new Set(slotsForTeam.map((slot) => bySlot[slot]?.nonFloatingPCAId).filter(Boolean))
-            return ids.size === 1 ? [Array.from(ids)[0] as string] : []
-          })
-      )
-
-      const nonFloatingStaffInTeam = resolvedAllPCAStaff.filter(s => !s.floating && s.team === team)
-      const missingSlotsNeeded: number[] = []
-      const sources: Array<{ nonFloatingId: string; kind: 'fte0' | 'availableSlots' | 'invalidSlot'; slots: number[]; availableSlots?: number[] }> = []
-
-      for (const nf of nonFloatingStaffInTeam) {
-        // If this non-floating PCA is already covered by a whole-day substitute (e.g. buffer non-floating),
-        // do not derive substitution needs from it. Otherwise, floating PCAs assigned in Step 3 can be
-        // incorrectly marked green as "substituting" even though substitution was already satisfied.
-        if (bufferWholeDayTargets.has(nf.id)) {
-          continue
-        }
-
-        const o = resolvedStaffOverrides[nf.id]
-        if (!o) continue
-
-        if (o.fteRemaining === 0) {
-          const slots = [1, 2, 3, 4]
-          missingSlotsNeeded.push(...slots)
-          sources.push({ nonFloatingId: nf.id, kind: 'fte0', slots })
-          continue
-        }
-
-        if (Array.isArray(o.availableSlots) && o.availableSlots.length > 0) {
-          const allSlots = [1, 2, 3, 4]
-          const missingSlots = allSlots.filter(s => !o.availableSlots!.includes(s))
-          if (missingSlots.length > 0) {
-            missingSlotsNeeded.push(...missingSlots)
-            sources.push({ nonFloatingId: nf.id, kind: 'availableSlots', slots: missingSlots, availableSlots: o.availableSlots })
-          }
-        } else if (typeof o.invalidSlot === 'number') {
-          missingSlotsNeeded.push(o.invalidSlot)
-          sources.push({ nonFloatingId: nf.id, kind: 'invalidSlot', slots: [o.invalidSlot] })
-        } else if (Array.isArray(o.invalidSlots) && o.invalidSlots.length > 0) {
-          const slots = o.invalidSlots.map(s => s.slot)
-          missingSlotsNeeded.push(...slots)
-          sources.push({ nonFloatingId: nf.id, kind: 'invalidSlot', slots })
-        }
-      }
-
-      if (missingSlotsNeeded.length === 0) {
-        return { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
-      }
-
-      // Look for any floating PCA in this team that has these missing slots assigned.
-      // If so, it is "substituting" for those slots.
-      const floatingAllocationsForTeam = resolvedAllPCAAllocations.filter(a => a.staff?.floating)
-      for (const alloc of floatingAllocationsForTeam) {
-        const slotsForTeam: number[] = []
-        if (alloc.slot1 === team) slotsForTeam.push(1)
-        if (alloc.slot2 === team) slotsForTeam.push(2)
-        if (alloc.slot3 === team) slotsForTeam.push(3)
-        if (alloc.slot4 === team) slotsForTeam.push(4)
-        if (slotsForTeam.length === 0) continue
-
-        const substitutedSlots = slotsForTeam.filter(s => missingSlotsNeeded.includes(s))
-        if (substitutedSlots.length === 0) continue
-
-        // Whole-day substitution if any non-floating PCA had fteRemaining=0 OR all 4 slots are substituted
-        const isWholeDay =
-          sources.some(s => s.kind === 'fte0') ||
-          (substitutedSlots.length === 4 &&
-            substitutedSlots.includes(1) &&
-            substitutedSlots.includes(2) &&
-            substitutedSlots.includes(3) &&
-            substitutedSlots.includes(4))
-
-        return {
-          isSubstituting: true,
-          isWholeDaySubstitution: isWholeDay,
-          substitutedSlots,
-        }
-      }
-    } catch {
-      return { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
-    }
-
-    return { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
+    return derivePcaSubstitutionInfo({
+      team,
+      floatingAlloc,
+      staffOverrides: resolvedStaffOverrides as Record<string, any>,
+      allPCAStaff: resolvedAllPCAStaff,
+    })
   }
 
   // Helper to get special program slots for a team
   const getSpecialProgramSlotsForTeam = (allocation: PCAAllocation & { staff: Staff }, team: Team): number[] => {
     if (!displayView) return []
+    const specialProgramsByIdForAllocationTeam = displayView.getProgramsByAllocationTeam((allocation as any)?.team as Team | null | undefined)
     return getAllocationSpecialProgramSlotsForTeam({
       allocation: allocation as any,
       team,
-      specialProgramsById: displayView.getProgramsByAllocationTeam((allocation as any)?.team as Team | null | undefined),
+      specialProgramsById: specialProgramsByIdForAllocationTeam,
     })
   }
 
@@ -645,7 +496,6 @@ function usePcaBlockViewModel({
   }, [
     resolvedStaffOverrides,
     allocations,
-    resolvedAllPCAAllocations,
     resolvedAllPCAStaff,
     specialProgramsById,
     weekday,
@@ -676,7 +526,6 @@ export const PCABlock = memo(function PCABlock({
   averagePCAPerTeam,
   baseAveragePCAPerTeam,
   specialPrograms = [],
-  allPCAAllocations = [],
   staffOverrides = {},
   allPCAStaff = [],
   currentStep = 'leave-fte',
@@ -708,6 +557,7 @@ export const PCABlock = memo(function PCABlock({
   // - dnd-kit hover should only apply when a PCA is being dragged via dnd-kit
   // - externalHover is used for "drag from slot picker" mode (not dnd-kit), so allow it directly
   const showHoverEffect = !readOnly && ((isOver && isPCADragging) || externalHover)
+  const showExtraCoverageStyling = shouldShowExtraCoverage({ currentStep, initializedSteps })
 
   const {
     showSubstitutionStyling,
@@ -727,7 +577,6 @@ export const PCABlock = memo(function PCABlock({
     allocations,
     specialPrograms,
     staffOverrides,
-    allPCAAllocations,
     allPCAStaff,
     currentStep,
     step2Initialized,
@@ -1030,6 +879,7 @@ export const PCABlock = memo(function PCABlock({
               : getSlotDisplayForTeam(allocation)
             const slotDisplayNode = renderSlotDisplay(slotDisplay, allocation, slotsToDisplay)
             const extraSlotsForTeam = (() => {
+              if (!showExtraCoverageStyling) return [] as number[]
               const o: any = (staffOverrides as any)?.[allocation.staff_id]
               const flags: any = o?.extraCoverageBySlot
               if (!flags || typeof flags !== 'object') return [] as number[]

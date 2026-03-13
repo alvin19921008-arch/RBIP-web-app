@@ -75,6 +75,13 @@ import { getWeekday, formatDateDDMMYYYY, formatDateForInput, parseDateFromInput 
 import { computeDrmAddOnFte, computeReservedSpecialProgramPcaFte } from '@/lib/utils/specialProgramPcaCapacity'
 import { getAllocationSpecialProgramSlotsForTeam, isAllocationSlotFromSpecialProgram } from '@/lib/utils/scheduleReservationRuntime'
 import { buildDisplayViewForWeekday } from '@/lib/utils/scheduleRuntimeProjection'
+import {
+  computeStep3BootstrapSummary,
+  describeStep3BootstrapDelta,
+  type Step3BootstrapSummary,
+} from '@/lib/features/schedule/step3Bootstrap'
+import { mergeStep2Point2StaffOverrides } from '@/lib/features/schedule/step2Point2StateMerge'
+import { sanitizeExtraCoverageOverrides } from '@/lib/features/schedule/extraCoverageVisibility'
 import { flushSync } from 'react-dom'
 import {
   buildStaffByIdMap,
@@ -798,6 +805,22 @@ function SchedulePageContent() {
     setPcaAllocationErrors,
     setTieBreakDecisions,
   } = _unsafe
+  const latestStaffOverridesRef = useRef(staffOverrides)
+  const latestTherapistAllocationsRef = useRef(therapistAllocations)
+  const latestPcaAllocationsRef = useRef(pcaAllocations)
+
+  useEffect(() => {
+    latestStaffOverridesRef.current = staffOverrides
+  }, [staffOverrides])
+
+  useEffect(() => {
+    latestTherapistAllocationsRef.current = therapistAllocations
+  }, [therapistAllocations])
+
+  useEffect(() => {
+    latestPcaAllocationsRef.current = pcaAllocations
+  }, [pcaAllocations])
+
   const [teamSettingsRows, setTeamSettingsRows] = useState<TeamSettingsMergeRow[]>([])
   const [activeDragStaffForOverlay, setActiveDragStaffForOverlay] = useState<Staff | null>(null)
   const [activeBedRelievingTransfer, setActiveBedRelievingTransfer] = useState<{
@@ -1113,8 +1136,15 @@ function SchedulePageContent() {
   const [userRole, setUserRole] = useState<'developer' | 'admin' | 'user'>('user')
   const [helpDialogOpen, setHelpDialogOpen] = useState(false)
   const [devLeaveSimOpen, setDevLeaveSimOpen] = useState(false)
-  const { actionToast, actionToastContainerRef, showActionToast, updateActionToast, dismissActionToast, handleToastExited } =
-    useActionToast()
+  const {
+    actionToast,
+    actionToastContainerRef,
+    showActionToast,
+    updateActionToast,
+    dismissActionToast,
+    handleToastExited,
+    handleHoverPauseChange,
+  } = useActionToast()
   const [exportPngLayerOpen, setExportPngLayerOpen] = useState(false)
   const [exportingPng, setExportingPng] = useState(false)
   const [isLikelyMobileDevice, setIsLikelyMobileDevice] = useState(false)
@@ -1299,17 +1329,22 @@ function SchedulePageContent() {
 
   const bufferStep2SuccessToastRef = useRef(false)
   const bufferedStep2SuccessToastPayloadRef = useRef<{ title: string; variant: any; description?: string } | null>(null)
+  const step3BootstrapBaselineRef = useRef<Step3BootstrapSummary | null>(null)
+  const bufferedStep2ToastPendingRef = useRef(false)
+  const bufferedStep2ToastAwaitCalculationsRef = useRef<typeof calculations | null>(null)
+  const [bufferedStep2ToastFlushVersion, setBufferedStep2ToastFlushVersion] = useState(0)
 
   const clearBufferedStep2Toast = useCallback(() => {
     bufferedStep2SuccessToastPayloadRef.current = null
+    bufferedStep2ToastAwaitCalculationsRef.current = null
+    bufferedStep2ToastPendingRef.current = false
   }, [])
 
-  const flushBufferedStep2Toast = useCallback(() => {
-    const payload = bufferedStep2SuccessToastPayloadRef.current
-    bufferedStep2SuccessToastPayloadRef.current = null
-    if (!payload) return
-    showActionToast(payload.title, payload.variant, payload.description)
-  }, [showActionToast])
+  const flushBufferedStep2Toast = useCallback((options?: { awaitCalculations?: boolean }) => {
+    bufferedStep2ToastAwaitCalculationsRef.current = options?.awaitCalculations ? calculations : null
+    bufferedStep2ToastPendingRef.current = true
+    setBufferedStep2ToastFlushVersion((version) => version + 1)
+  }, [calculations])
 
   const step2ToastProxy = useCallback(
     (title: string, variant?: any, description?: string) => {
@@ -1504,8 +1539,7 @@ function SchedulePageContent() {
 
     ;(async () => {
       try {
-        bufferStep2SuccessToastRef.current = true
-        clearBufferedStep2Toast()
+        startBufferedStep2ToastSession()
         // Merge special program overrides into staffOverrides (same logic as in resolver)
         const mergedOverrides = { ...staffOverrides }
         const touchedProgramIds = new Set(
@@ -1592,10 +1626,11 @@ function SchedulePageContent() {
           if (step22 && (step22 as any).__nav === 'back') {
             continue
           }
-          if (step22 && Object.keys(step22).length > 0) {
+          const hasStep22Updates = !!(step22 && Object.keys(step22).length > 0)
+          if (hasStep22Updates) {
             applyStep2Point2_SptFinalEdits(step22)
           }
-          flushBufferedStep2Toast()
+          flushBufferedStep2Toast({ awaitCalculations: hasStep22Updates })
           break
         }
       } catch (e) {
@@ -3197,20 +3232,32 @@ function SchedulePageContent() {
   }
 
   // Helper function to recalculate schedule calculations using current staffOverrides
-  const recalculateScheduleCalculations = useCallback((opts?: { allowDuringHydration?: boolean }) => {
+  const recalculateScheduleCalculations = useCallback((opts?: {
+    allowDuringHydration?: boolean
+    forceWithoutAllocations?: boolean
+    source?: {
+      pcaAllocations?: Record<Team, (PCAAllocation & { staff: Staff })[]>
+      therapistAllocations?: Record<Team, (TherapistAllocation & { staff: Staff })[]>
+      staffOverrides?: typeof staffOverrides
+    }
+  }) => {
+    const sourcePcaAllocations = opts?.source?.pcaAllocations ?? pcaAllocations
+    const sourceTherapistAllocations = opts?.source?.therapistAllocations ?? therapistAllocations
+    const sourceStaffOverrides = opts?.source?.staffOverrides ?? staffOverrides
+
     // Prevent recalculation churn during initial hydration if we already loaded stored calculations.
     if (hasLoadedStoredCalculations && isHydratingSchedule && !opts?.allowDuringHydration) {
       return
     }
     // In step 1, we need to recalculate even without allocations to show updated PT/team, avg PCA/team, bed/team
     // In other steps, we still need allocations to exist
-    const hasAllocations = Object.keys(pcaAllocations).some(team => pcaAllocations[team as Team]?.length > 0)
-    if (!hasAllocations && currentStep !== 'leave-fte') {
+    const hasAllocations = Object.keys(sourcePcaAllocations).some(team => sourcePcaAllocations[team as Team]?.length > 0)
+    if (!hasAllocations && currentStep !== 'leave-fte' && !opts?.forceWithoutAllocations) {
       return
     }
     
     // Build PCA allocations by team (reuse existing pcaAllocations state)
-    const pcaByTeam = pcaAllocations
+    const pcaByTeam = sourcePcaAllocations
     
     // Build therapist allocations by team
     // In step 1 with no allocations, build from staff data
@@ -3222,7 +3269,7 @@ function SchedulePageContent() {
       }
       staff.forEach(s => {
         if (['SPT', 'APPT', 'RPT'].includes(s.rank)) {
-          const override = staffOverrides[s.id]
+          const override = sourceStaffOverrides[s.id]
           const fte = override?.fteRemaining ?? 1.0
           if (fte > 0 && s.team) {
             const effectiveTeam = getMainTeam(s.team, effectiveTeamMergeConfig.mergedInto)
@@ -3253,7 +3300,7 @@ function SchedulePageContent() {
       })
     } else {
       // Reuse existing therapistAllocations state
-      therapistByTeam = therapistAllocations
+      therapistByTeam = sourceTherapistAllocations
     }
 
     const pcaByTeamForCalc = createEmptyTeamRecordFactory<(PCAAllocation & { staff: Staff })[]>(() => [])
@@ -3270,7 +3317,7 @@ function SchedulePageContent() {
       return sum + therapistByTeamForCalc[team].reduce((teamSum, alloc) => {
         const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
         // Use staffOverrides for current FTE, fallback to alloc.fte_therapist
-        const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
+        const overrideFTE = sourceStaffOverrides[alloc.staff_id]?.fteRemaining
         const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_therapist || 0)
         const hasFTE = currentFTE > 0
         return teamSum + (isTherapist && hasFTE ? currentFTE : 0)
@@ -3285,7 +3332,7 @@ function SchedulePageContent() {
       const ptPerTeam = therapistByTeamForCalc[team].reduce((sum, alloc) => {
         const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
         // Use staffOverrides for current FTE, fallback to alloc.fte_therapist
-        const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
+        const overrideFTE = sourceStaffOverrides[alloc.staff_id]?.fteRemaining
         const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_therapist || 0)
         const hasFTE = currentFTE > 0
         return sum + (isTherapist && hasFTE ? currentFTE : 0)
@@ -3310,12 +3357,12 @@ function SchedulePageContent() {
     const totalPCAOnDuty = staff
       .filter(s => s.rank === 'PCA')
       .reduce((sum, s) => {
-        const overrideFTE = staffOverrides[s.id]?.fteRemaining
+        const overrideFTE = sourceStaffOverrides[s.id]?.fteRemaining
         // For buffer staff, use buffer_fte as base
         const isBufferStaff = s.status === 'buffer'
         const baseFTE = isBufferStaff && s.buffer_fte !== undefined ? s.buffer_fte : 1.0
         // Use override FTE if set, otherwise default to baseFTE (or 0 if on leave)
-        const isOnLeave = staffOverrides[s.id]?.leaveType && staffOverrides[s.id]?.fteRemaining === 0
+        const isOnLeave = sourceStaffOverrides[s.id]?.leaveType && sourceStaffOverrides[s.id]?.fteRemaining === 0
         const currentFTE = overrideFTE !== undefined ? overrideFTE : (isOnLeave ? 0 : baseFTE)
         return sum + currentFTE
       }, 0)
@@ -3325,7 +3372,7 @@ function SchedulePageContent() {
       return sum + pcaByTeamForCalc[team].reduce((teamSum, alloc) => {
         if (seenPCAIds.has(alloc.staff_id)) return teamSum
         seenPCAIds.add(alloc.staff_id)
-        const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
+        const overrideFTE = sourceStaffOverrides[alloc.staff_id]?.fteRemaining
         const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_pca || 0)
         return teamSum + currentFTE
       }, 0)
@@ -3339,12 +3386,12 @@ function SchedulePageContent() {
     const reservedSpecialProgramPcaFte = computeReservedSpecialProgramPcaFte({
       specialPrograms,
       weekday: weekdayKey,
-      staffOverrides,
+      staffOverrides: sourceStaffOverrides,
     })
     const drmAddOnFte = computeDrmAddOnFte({
       specialPrograms,
       weekday: weekdayKey,
-      staffOverrides,
+      staffOverrides: sourceStaffOverrides,
       defaultAddOn: 0.4,
     })
 
@@ -3369,7 +3416,7 @@ function SchedulePageContent() {
       const ptPerTeam = teamTherapists.reduce((sum, alloc) => {
         const isTherapist = ['SPT', 'APPT', 'RPT'].includes(alloc.staff.rank)
         // Use staffOverrides for current FTE, fallback to alloc.fte_therapist
-        const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
+        const overrideFTE = sourceStaffOverrides[alloc.staff_id]?.fteRemaining
         const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_therapist || 0)
         const hasFTE = currentFTE > 0
         return sum + (isTherapist && hasFTE ? currentFTE : 0)
@@ -3379,7 +3426,7 @@ function SchedulePageContent() {
       
       const teamPCAs = pcaByTeamForCalc[team]
       const pcaOnDuty = teamPCAs.reduce((sum, alloc) => {
-        const overrideFTE = staffOverrides[alloc.staff_id]?.fteRemaining
+        const overrideFTE = sourceStaffOverrides[alloc.staff_id]?.fteRemaining
         const currentFTE = overrideFTE !== undefined ? overrideFTE : (alloc.fte_pca || 0)
         return sum + currentFTE
       }, 0)
@@ -3886,9 +3933,9 @@ function SchedulePageContent() {
           ? Math.min(baseFTE, baseFTERemaining)
           : baseFTERemaining
         
-        // For floating PCAs, exclude only substitution slots that are currently occupied.
-        // If a substitution-tagged slot is not actually assigned in current allocations,
-        // Step 3 should still be able to use it.
+        // For floating PCAs, exclude substitution slots that are currently occupied,
+        // and exclude special-program reserved slots from Step 2.0 so Step 3 does not
+        // reclaim capacity that was already earmarked for designated program coverage.
         let availableSlots = override?.availableSlots
         if (s.floating && hasAnySubstitution(override as any)) {
           const substitutionSlots = getAllSubstitutionSlots(override as any)
@@ -3906,6 +3953,21 @@ function SchedulePageContent() {
             : [1, 2, 3, 4]
           // Remove only occupied substitution slots from available slots
           availableSlots = baseAvailableSlots.filter((slot) => !occupiedSubstitutionSlots.includes(slot))
+        }
+        if (s.floating && Array.isArray((override as any)?.specialProgramOverrides)) {
+          const reservedProgramSlots = Array.from(
+            new Set(
+              ((override as any).specialProgramOverrides as Array<{ slots?: number[] }>)
+                .flatMap((entry) => (Array.isArray(entry?.slots) ? entry.slots : []))
+                .filter((slot): slot is number => [1, 2, 3, 4].includes(slot))
+            )
+          )
+          if (reservedProgramSlots.length > 0) {
+            const baseAvailableSlots = availableSlots && availableSlots.length > 0
+              ? availableSlots
+              : [1, 2, 3, 4]
+            availableSlots = baseAvailableSlots.filter((slot) => !reservedProgramSlots.includes(slot))
+          }
         }
 
         // Derive legacy invalidSlot from newer invalidSlots array when present (fallback to legacy invalidSlot).
@@ -4167,6 +4229,9 @@ function SchedulePageContent() {
     (updates: Record<string, SptFinalEditUpdate>) => {
       const allStaffForMap = [...staff, ...bufferStaff]
       const staffById = buildStaffByIdMap(allStaffForMap)
+      const currentStaffOverrides = latestStaffOverridesRef.current
+      const currentTherapistAllocations = latestTherapistAllocationsRef.current
+      const currentPcaAllocations = latestPcaAllocationsRef.current
 
       const sanitized: Record<string, { leaveType: LeaveType | null; fteRemaining: number; team?: Team; sptOnDayOverride: any }> = {}
       Object.entries(updates || {}).forEach(([staffId, u]) => {
@@ -4185,57 +4250,31 @@ function SchedulePageContent() {
           },
         }
       })
-
-      // IMPORTANT: Use functional updates to avoid overwriting newer overrides (e.g. Step 2.1 substitutionFor)
-      // with a stale `staffOverrides` snapshot captured by this callback.
-      setStaffOverrides((prev: any) => {
-        const next: any = { ...(prev ?? {}) }
-        Object.entries(updates || {}).forEach(([staffId, u]) => {
-          const existing = next[staffId]
-          const base: any =
-            existing ??
-            ({
-              leaveType: u.leaveType ?? null,
-              fteRemaining: typeof u.fteRemaining === 'number' ? u.fteRemaining : 0,
-            } as any)
-
-          const cfg: any = u?.sptOnDayOverride ?? {}
-          const enabled = !!cfg.enabled
-          const slots = Array.isArray(cfg.slots) ? cfg.slots : []
-          const shouldAllocate = enabled && slots.length > 0
-          const team = shouldAllocate ? ((u.team ?? cfg.assignedTeam) as Team | undefined) : undefined
-
-          const merged: any = {
-            ...base,
-            ...existing,
-            leaveType: u.leaveType ?? base.leaveType ?? null,
-            fteSubtraction: typeof u.fteSubtraction === 'number' ? u.fteSubtraction : existing?.fteSubtraction,
-            fteRemaining: typeof u.fteRemaining === 'number' ? u.fteRemaining : base.fteRemaining,
-            sptOnDayOverride: {
-              ...cfg,
-              assignedTeam: shouldAllocate ? (team ?? null) : null,
-            },
-          }
-          if (team) merged.team = team
-          else {
-            delete (merged as any).team
-          }
-          next[staffId] = merged
-        })
-        return next
+      const nextStaffOverrides = mergeStep2Point2StaffOverrides({
+        baseOverrides: currentStaffOverrides as any,
+        updates: updates as any,
       })
 
-      // IMPORTANT: Also use functional update for allocations to avoid stale overwrites.
-      setTherapistAllocations((prev: any) =>
-        applySptFinalEditToTherapistAllocations({
-          therapistAllocations: prev as any,
-          updatesByStaffId: sanitized as any,
-          staffById,
-          date: selectedDate,
-        }) as any
-      )
-      // Recompute calculations after state updates land.
-      setTimeout(() => recalculateScheduleCalculations(), 0)
+      const nextTherapistAllocations = applySptFinalEditToTherapistAllocations({
+        therapistAllocations: currentTherapistAllocations as any,
+        updatesByStaffId: sanitized as any,
+        staffById,
+        date: selectedDate,
+      }) as any
+
+      setStaffOverrides(nextStaffOverrides)
+      setTherapistAllocations(nextTherapistAllocations)
+
+      // Recompute calculations from the exact post-edit snapshot so the Step 2 -> Step 3 handoff
+      // and its toast do not depend on async state timing.
+      recalculateScheduleCalculations({
+        forceWithoutAllocations: true,
+        source: {
+          pcaAllocations: currentPcaAllocations,
+          therapistAllocations: nextTherapistAllocations,
+          staffOverrides: nextStaffOverrides,
+        },
+      })
     },
     [staff, bufferStaff, selectedDate, recalculateScheduleCalculations]
   )
@@ -4411,8 +4450,7 @@ function SchedulePageContent() {
               // Run Step 2 algorithm with cleaned overrides - it will pause for substitution dialog if needed
               ;(async () => {
                 try {
-                  bufferStep2SuccessToastRef.current = true
-                  clearBufferedStep2Toast()
+                  startBufferedStep2ToastSession()
                   // Allow Step 2.1 "Back" to return to Step 2.0 only when special programs are active.
                   step2WizardAllowBackToSpecialProgramsRef.current = true
 
@@ -4429,10 +4467,11 @@ function SchedulePageContent() {
                       // Back from Step 2.2 → rerun Step 2 (will re-open Step 2.1 if needed)
                       continue
                     }
-                    if (step22 && Object.keys(step22).length > 0) {
+                    const hasStep22Updates = !!(step22 && Object.keys(step22).length > 0)
+                    if (hasStep22Updates) {
                       applyStep2Point2_SptFinalEdits(step22)
                     }
-                    flushBufferedStep2Toast()
+                    flushBufferedStep2Toast({ awaitCalculations: hasStep22Updates })
                     break
                   }
                 } catch (e: any) {
@@ -4494,8 +4533,7 @@ function SchedulePageContent() {
         setStaffOverrides(cleanedOverrides)
         
         // Run Step 2 algorithm with cleaned overrides - it will pause for substitution dialog if needed
-        bufferStep2SuccessToastRef.current = true
-        clearBufferedStep2Toast()
+        startBufferedStep2ToastSession()
         // No Step 2.0 in this path.
         step2WizardAllowBackToSpecialProgramsRef.current = false
         let cancelled = false
@@ -4514,12 +4552,13 @@ function SchedulePageContent() {
             if (step22 && (step22 as any).__nav === 'back') {
               continue
             }
-            if (step22 && Object.keys(step22).length > 0) {
+            const hasStep22Updates = !!(step22 && Object.keys(step22).length > 0)
+            if (hasStep22Updates) {
               applyStep2Point2_SptFinalEdits(step22)
             }
+            if (!cancelled) flushBufferedStep2Toast({ awaitCalculations: hasStep22Updates })
             break
           }
-          if (!cancelled) flushBufferedStep2Toast()
         } catch (e: any) {
           if (e?.code === 'user_cancelled' || String(e?.message ?? '').includes('user_cancelled')) {
             clearBufferedStep2Toast()
@@ -5404,6 +5443,15 @@ function SchedulePageContent() {
 
   const currentWeekday = getWeekday(selectedDate)
   const weekdayName = WEEKDAY_NAMES[WEEKDAYS.indexOf(currentWeekday)]
+  const reservedSpecialProgramPcaFteForStep3 = useMemo(
+    () =>
+      computeReservedSpecialProgramPcaFte({
+        specialPrograms,
+        weekday: currentWeekday,
+        staffOverrides,
+      }),
+    [currentWeekday, specialPrograms, staffOverrides]
+  )
 
   const teamContributorsByMain = useMemo(() => {
     const out: Partial<Record<Team, Team[]>> = {}
@@ -5493,21 +5541,55 @@ function SchedulePageContent() {
     return out
   }, [existingAllocationsForStep3Dialog, displayViewForCurrentWeekday])
 
-  const pendingPCAFTEForStep3Dialog = useMemo(() => {
+  const targetAverageForStep3Dialog = useMemo(() => {
     const out = createEmptyTeamRecord<number>(0)
     visibleTeams.forEach((mainTeam) => {
       const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
-      const displayedTarget = contributors.reduce(
-        (sum, team) => sum + (calculations[team]?.average_pca_per_team || 0),
-        0
-      )
-      // Special-program slots consume PCA capacity, but do not fulfill Step 3 team pending.
+      out[mainTeam] = contributors.reduce((sum, team) => sum + (calculations[team]?.average_pca_per_team || 0), 0)
+    })
+    return out
+  }, [visibleTeams, teamContributorsByMain, calculations])
+
+  const existingAssignedForCapForStep3Dialog = useMemo(() => {
+    const out = createEmptyTeamRecord<number>(0)
+    visibleTeams.forEach((mainTeam) => {
       const rawAssignedForCap = existingAssignedValidForStep3Dialog[mainTeam] || 0
       const specialAssignedForCap = specialProgramAssignedForStep3Dialog[mainTeam] || 0
-      const assignedForCap = Math.max(0, rawAssignedForCap - specialAssignedForCap)
-      const recomputedPending = Math.max(0, displayedTarget - assignedForCap)
+      out[mainTeam] = Math.max(0, rawAssignedForCap - specialAssignedForCap)
+    })
+    return out
+  }, [visibleTeams, existingAssignedValidForStep3Dialog, specialProgramAssignedForStep3Dialog])
+
+  const step3BootstrapSummary = useMemo(
+    () =>
+      computeStep3BootstrapSummary({
+        teams: visibleTeams,
+        teamTargets: targetAverageForStep3Dialog,
+        existingTeamPCAAssigned: existingAssignedForCapForStep3Dialog,
+        floatingPCAs: floatingPCAsForStep3,
+        existingAllocations: existingAllocationsForStep3Dialog,
+        staffOverrides,
+        reservedSpecialProgramPcaFte: reservedSpecialProgramPcaFteForStep3,
+      }),
+    [
+      visibleTeams,
+      targetAverageForStep3Dialog,
+      existingAssignedForCapForStep3Dialog,
+      floatingPCAsForStep3,
+      existingAllocationsForStep3Dialog,
+      staffOverrides,
+      reservedSpecialProgramPcaFteForStep3,
+    ]
+  )
+
+  const pendingPCAFTEForStep3Dialog = useMemo(() => {
+    const out = createEmptyTeamRecord<number>(0)
+    visibleTeams.forEach((mainTeam) => {
+      const displayedTarget = step3BootstrapSummary.teamTargets[mainTeam] || 0
+      const recomputedPending = step3BootstrapSummary.pendingByTeam[mainTeam] || 0
 
       // Fallback for early hydration / missing calculations: preserve legacy pending source.
+      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
       const pendingFromState = contributors.reduce((sum, team) => sum + (pendingPCAFTEPerTeam?.[team] || 0), 0)
       out[mainTeam] = displayedTarget > 0 ? recomputedPending : pendingFromState
     })
@@ -5515,11 +5597,50 @@ function SchedulePageContent() {
   }, [
     visibleTeams,
     teamContributorsByMain,
-    calculations,
-    existingAssignedValidForStep3Dialog,
-    specialProgramAssignedForStep3Dialog,
+    step3BootstrapSummary,
     pendingPCAFTEPerTeam,
   ])
+
+  const captureStep3BootstrapBaseline = useCallback(() => {
+    step3BootstrapBaselineRef.current = step3BootstrapSummary
+  }, [step3BootstrapSummary])
+
+  const startBufferedStep2ToastSession = useCallback(() => {
+    if (actionToast?.title === 'Step 2 allocation completed.') {
+      dismissActionToast()
+    }
+    captureStep3BootstrapBaseline()
+    bufferStep2SuccessToastRef.current = true
+    clearBufferedStep2Toast()
+  }, [actionToast?.title, captureStep3BootstrapBaseline, clearBufferedStep2Toast, dismissActionToast])
+
+  useEffect(() => {
+    if (bufferedStep2ToastFlushVersion === 0) return
+    if (!bufferedStep2ToastPendingRef.current) return
+    const awaitCalculations = bufferedStep2ToastAwaitCalculationsRef.current
+    if (awaitCalculations && awaitCalculations === calculations) return
+
+    const payload = bufferedStep2SuccessToastPayloadRef.current
+    bufferedStep2SuccessToastPayloadRef.current = null
+    bufferedStep2ToastAwaitCalculationsRef.current = null
+    bufferedStep2ToastPendingRef.current = false
+    if (!payload) return
+
+    const handoffDelta = describeStep3BootstrapDelta(step3BootstrapBaselineRef.current, step3BootstrapSummary)
+    const description =
+      payload.description && handoffDelta
+        ? `${payload.description}\n${handoffDelta.details}`
+        : handoffDelta
+          ? handoffDelta.details
+          : payload.description
+
+    showActionToast(payload.title, payload.variant, description, {
+      durationMs: 15000,
+      showDurationProgress: true,
+      pauseOnHover: true,
+    })
+    step3BootstrapBaselineRef.current = step3BootstrapSummary
+  }, [bufferedStep2ToastFlushVersion, calculations, showActionToast, step3BootstrapSummary])
 
   const substitutionWizardDataForDisplay = useMemo(() => {
     if (!substitutionWizardData) return null
@@ -5783,6 +5904,16 @@ function SchedulePageContent() {
     return next
   }, [visibleTeams, therapistAllocationsForDisplay, therapistAllocations, staffOverrides])
 
+  const staffOverridesForPcaDisplay = useMemo(
+    () =>
+      sanitizeExtraCoverageOverrides({
+        staffOverrides: staffOverrides as any,
+        currentStep,
+        initializedSteps,
+      }),
+    [staffOverrides, currentStep, initializedSteps]
+  )
+
   const pcaOverridesByTeam = useMemo(() => {
     const prev = overridesSliceCacheRef.current.pca
     const next: Record<Team, Record<string, any>> = createEmptyTeamRecord<Record<string, any>>({})
@@ -5801,7 +5932,7 @@ function SchedulePageContent() {
       let canReuse = !!cached && cached.idsKey === idsKey
       if (canReuse && cached) {
         for (const id of ids) {
-          if (cached.slice[id] !== staffOverrides[id]) {
+          if (cached.slice[id] !== staffOverridesForPcaDisplay[id]) {
             canReuse = false
             break
           }
@@ -5813,7 +5944,7 @@ function SchedulePageContent() {
       } else {
         const slice: Record<string, any> = {}
         for (const id of ids) {
-          const rawOverride = staffOverrides[id]
+          const rawOverride = staffOverridesForPcaDisplay[id]
           if (rawOverride === undefined) continue
 
           if (!visibleTeams.includes(team)) {
@@ -5855,7 +5986,7 @@ function SchedulePageContent() {
     visibleTeams,
     pcaAllocationsForDisplay,
     pcaAllocationsForUi,
-    staffOverrides,
+    staffOverridesForPcaDisplay,
     teamContributorsByMain,
   ])
 
@@ -9624,6 +9755,7 @@ function SchedulePageContent() {
               onExited={() => {
                 handleToastExited(actionToast.id)
               }}
+              onHoverPauseChange={actionToast.pauseOnHover ? handleHoverPauseChange : undefined}
             />
           </div>
         )}
@@ -9653,7 +9785,7 @@ function SchedulePageContent() {
               wards={(wards as any[]).map((w: any) => ({ name: w.name, team_assignments: w.team_assignments }))}
               calculationsByTeam={calculationsForDisplay as any}
               staff={staff as any}
-              staffOverrides={staffOverrides as any}
+              staffOverrides={staffOverridesForPcaDisplay as any}
               bedCountsOverridesByTeam={bedCountsOverridesByTeamForDisplay as any}
               bedRelievingNotesByToTeam={bedRelievingNotesByToTeamForDisplay as any}
               stepStatus={stepStatus as any}
@@ -11130,7 +11262,7 @@ function SchedulePageContent() {
                     ...bufferStaff.filter(s => s.rank === 'PCA'),
                   ]}
                   pcaAllocationsByTeam={pcaAllocations}
-                  staffOverrides={staffOverrides as any}
+                  staffOverrides={staffOverridesForPcaDisplay as any}
                   specialPrograms={specialPrograms}
                   weekday={currentWeekday}
                   stepStatus={stepStatus}

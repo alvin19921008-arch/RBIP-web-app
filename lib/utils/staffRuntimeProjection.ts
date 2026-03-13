@@ -23,6 +23,10 @@ export type StaffRuntimeOverrideLike = {
   slotOverrides?: StaffRuntimeSlotOverrides
   substitutionFor?: unknown
   substitutionForBySlot?: unknown
+  specialProgramOverrides?: Array<{
+    pcaId?: string
+    slots?: number[]
+  }>
 }
 
 export type StaffRuntimeEntry = {
@@ -80,6 +84,9 @@ export function normalizeAvailableSlotsWithInvalidAndSubstitution(args: {
   substitutionSlots?: number[]
   excludeSubstitutionSlots?: boolean
   fallbackToAllSlotsWhenExcludingSubstitution?: boolean
+  specialProgramSlots?: number[]
+  excludeSpecialProgramSlots?: boolean
+  fallbackToAllSlotsWhenExcludingSpecialProgram?: boolean
 }): number[] | undefined {
   let next = Array.isArray(args.availableSlots) ? [...args.availableSlots] : undefined
 
@@ -91,6 +98,16 @@ export function normalizeAvailableSlotsWithInvalidAndSubstitution(args: {
           ? [...ALL_SLOTS]
           : []
     next = baseSlots.filter((slot) => !args.substitutionSlots!.includes(slot))
+  }
+
+  if (args.excludeSpecialProgramSlots && Array.isArray(args.specialProgramSlots) && args.specialProgramSlots.length > 0) {
+    const baseSlots =
+      next && next.length > 0
+        ? next
+        : args.fallbackToAllSlotsWhenExcludingSpecialProgram
+          ? [...ALL_SLOTS]
+          : []
+    next = baseSlots.filter((slot) => !args.specialProgramSlots!.includes(slot))
   }
 
   if (typeof args.effectiveInvalidSlot === 'number' && Array.isArray(next)) {
@@ -105,6 +122,7 @@ export function buildStaffRuntimeById(args: {
   staffOverrides: Record<string, StaffRuntimeOverrideLike | undefined>
   replacedNonFloatingIds?: Set<string>
   excludeSubstitutionSlotsForFloating?: boolean
+  excludeSpecialProgramSlotsForFloating?: boolean
   clampBufferFteRemaining?: boolean
 }): Record<string, StaffRuntimeEntry> {
   const result: Record<string, StaffRuntimeEntry> = {}
@@ -123,8 +141,21 @@ export function buildStaffRuntimeById(args: {
       args.clampBufferFteRemaining && isBufferStaff ? Math.min(baseFTE, rawFteRemaining) : rawFteRemaining
 
     const substitutionSlots = getAllSubstitutionSlots(override as any)
+    const specialProgramSlots = Array.isArray(override?.specialProgramOverrides)
+      ? Array.from(
+          new Set(
+            override.specialProgramOverrides.flatMap((entry) =>
+              Array.isArray(entry?.slots)
+                ? entry.slots.filter((slot): slot is number => ALL_SLOTS.includes(slot as 1 | 2 | 3 | 4))
+                : []
+            )
+          )
+        ).sort((a, b) => a - b)
+      : []
     const shouldExcludeSubstitutionSlots =
       !!args.excludeSubstitutionSlotsForFloating && !!member.floating && hasAnySubstitution(override as any)
+    const shouldExcludeSpecialProgramSlots =
+      !!args.excludeSpecialProgramSlotsForFloating && !!member.floating && specialProgramSlots.length > 0
     const invalidSlotMeta = deriveEffectiveInvalidSlot(override)
     const availableSlots = normalizeAvailableSlotsWithInvalidAndSubstitution({
       availableSlots: override?.availableSlots,
@@ -132,6 +163,9 @@ export function buildStaffRuntimeById(args: {
       substitutionSlots,
       excludeSubstitutionSlots: shouldExcludeSubstitutionSlots,
       fallbackToAllSlotsWhenExcludingSubstitution: true,
+      specialProgramSlots,
+      excludeSpecialProgramSlots: shouldExcludeSpecialProgramSlots,
+      fallbackToAllSlotsWhenExcludingSpecialProgram: true,
     })
     const effectiveTeam = args.replacedNonFloatingIds?.has(member.id) ? null : ((override?.team ?? member.team) as Team | null)
     const leaveType = (override?.leaveType ?? null) as LeaveType | null
