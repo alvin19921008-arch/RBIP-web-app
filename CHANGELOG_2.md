@@ -3,10 +3,31 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-03-12 (P3 unified runtime model + Slice 4 allocator migration)
+
+### Added
+- **Special program runtime model** — `lib/utils/specialProgramRuntimeModel.ts` projects weekday activity, effective slots, slot-team routing, allocator flags (`usesSharedAllocationIdentity`, `allocatorDefaultTargetTeam`, `bypassesPrimaryTargetPendingGate`), and override semantics (`acceptsPcaCoverOverrides`, therapist/pca overrides). Regressions F22, F25–F31.
+- **Controller runtime layer** — `lib/utils/specialProgramControllerRuntime.ts` with `applySpecialProgramOverrides`, `buildSpecialProgramTargetTeamById`, `buildSpecialProgramControllerRuntimeState`. Regressions F23, F24.
+- **Step 3 bootstrap** — `lib/features/schedule/step3Bootstrap.ts` excludes effective special-program slots from pending. Regression F18.
+- **Slice 4 allocator migration** — PCA allocator consumes runtime-model flags instead of raw `CRP`/`Robotic` branches for shared-allocation identity, slot-team routing, target-team fallback, and primary-target pending gate. Regressions F29, F30, F31.
+
+### Changed
+- **Read-side consumers** — `reservationLogic`, `specialProgramExport`, `specialProgramDisplay` now use `resolveSpecialProgramRuntimeModel`; removed duplicate slot/team logic.
+- **Controller** — Step 2 and Step 3 use `buildSpecialProgramControllerRuntimeState`; controller no longer branches on raw program names.
+- **Allocator** — `getSlotTeamForSpecialProgram` and `resolveTargetTeamsForSpecialProgram` derive routing from runtime model; raw `program.name === 'Robotic' || program.name === 'CRP'` removed from active path.
+
+### Removed
+- **specialProgramTargetTeam.ts** — Deleted; callers migrated to controller runtime and allocator runtime consumption.
+
+### Documentation
+- **P4 design** — Added `P4 — Unified Allocation Runtime Projection` to `WIP_SPECIAL_PROGRAM_HARDENING_REVIEW.md` (schedule-level projection design; implementation deferred).
+
+---
+
 ## [Unreleased] - 2026-03-08 (special program canonical config + CRP slot/pending fixes)
 
 ### Added
-- **Special program normalized staff config pipeline** — Added `special_program_staff_configs`-backed runtime helpers plus regression coverage for zero-subtraction CRP/SPT runner semantics, canonical CRP team routing, canonical slot eligibility, and special-program reserved-capacity precedence.
+- **Special program normalized staff config pipeline** — Added `special_program_staff_configs`-backed runtime helpers plus regression coverage (F9–F16) for zero-subtraction CRP/SPT runner semantics, canonical CRP team routing, canonical slot eligibility, and special-program reserved-capacity precedence. New utils: `specialProgramTargetTeam`, `specialProgramDisplay`, `specialProgramSlotMap`, `specialProgramOverrideSeed`, `step1SpecialProgramAvailability`.
 
 ### Changed
 - **Staff save transaction** — Moved normalized special-program config persistence into RPC `save_staff_edit_dialog_v2` so staff, SPT, and normalized special-program rows save atomically.
@@ -15,8 +36,11 @@
 ### Fixed
 - **Vercel build — TypeScript strict** — `buildSpecialProgramTargetTeamById` and `applySpecialProgramOverrides` had `overrides` typed as `StaffStatusOverridesById` but callers pass schedule staff overrides (`StaffOverrideState`) with `team` / `specialProgramOverrides`. Widened parameter types to accept the correct shape.
 - **CRP therapist runner selection** — Zero `fte_subtraction` CRP therapists can still be recognized as the designated weekday runner, so cases like Aggie no longer get displaced by non-canonical therapist picks.
-- **CRP PCA team + slot routing** — CRP PCA allocation now follows the canonical therapist team and the canonical configured weekday slot instead of defaulting to CPPC / slot `2`.
+- **Step 1 special-program availability** — Zero-FTE and checkbox semantics corrected so canonical runners surface correctly; Step 2.0 no longer excludes them (F12).
+- **Step 2.0 override seeding** — Stale `specialProgramOverrides` in staffOverrides no longer override canonical weekday therapist; seeding prefers canonical config (F13).
+- **CRP PCA team + slot routing** — CRP PCA allocation now follows the canonical therapist team and explicit Step 2.0 therapist override; uses configured weekday slot instead of defaulting to CPPC / slot `2` (F10, F14).
 - **Step 2 override precedence into Step 3** — Explicit Step 2.0 `requiredSlots` overrides now remain authoritative in floating pending exclusion and Step 3.3 adjacent-slot detection, rather than snapping back to canonical/default CRP slots.
+- **Schedule-page display + assigned FTE** — Display and count helpers use canonical slot resolution (`specialProgramDisplay`, `specialProgramSlotMap`); special-program slots no longer miscounted as floating; removed CRP hardcoding (F15, F16).
 - **Step 1 edit pending side branch** — Removed the schedule-page local pending-PCA recomputation shortcut after staff edits so special-program slots continue to consume PCA capacity without incorrectly satisfying general Step 3 pending.
 
 ---

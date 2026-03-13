@@ -7,6 +7,9 @@ import {
   getSubstitutionSlotsForTeam,
   hasAnySubstitution,
 } from '@/lib/utils/substitutionFor'
+import { buildSpecialProgramSlotsByProgramId } from '@/lib/utils/specialProgramSlotMap'
+import { type SpecialProgram } from '@/types/allocation'
+import { type Weekday } from '@/types/staff'
 
 type OverridesByStaffId = Record<string, any>
 
@@ -83,6 +86,8 @@ export function computeStep3ResetForReentry(args: {
   bufferStaff: Staff[]
   staffOverrides: OverridesByStaffId
   averagePcaByTeam: AveragePcaByTeam
+  specialPrograms?: SpecialProgram[]
+  weekday?: Weekday
   /**
    * Optional stable prefix for generated manual buffer allocation IDs (e.g. YYYY-MM-DD).
    * Purely for display/debug; does not affect saved DB data.
@@ -102,26 +107,32 @@ export function computeStep3ResetForReentry(args: {
   const bufferFloatingIds = new Set(
     allStaff.filter((s) => s.rank === 'PCA' && s.floating && s.status === 'buffer').map((s) => s.id)
   )
+  const specialProgramSlotsByProgramId =
+    args.weekday && args.specialPrograms
+      ? buildSpecialProgramSlotsByProgramId({
+          specialPrograms: args.specialPrograms,
+          weekday: args.weekday,
+          staffOverrides: args.staffOverrides,
+        })
+      : new Map<string, Set<number>>()
 
   const getSpecialProgramSlotNumbers = (alloc: PCAAllocation): Array<1 | 2 | 3 | 4> => {
-    const staffId = String((alloc as any)?.staff_id ?? '')
     const spIdsRaw = (alloc as any)?.special_program_ids
     const spIds = Array.isArray(spIdsRaw) ? spIdsRaw.map((x: any) => String(x)) : []
     if (spIds.length === 0) return []
 
-    const override = args.staffOverrides?.[staffId]
-    const entries = Array.isArray((override as any)?.specialProgramOverrides) ? (override as any).specialProgramOverrides : []
     const out = new Set<1 | 2 | 3 | 4>()
 
-    for (const e of entries) {
-      if (!e || typeof e !== 'object') continue
-      const programId = String((e as any).programId ?? '')
-      if (!programId || !spIds.includes(programId)) continue
-      const slots = Array.isArray((e as any).slots) ? (e as any).slots : []
-      const required = Array.isArray((e as any).requiredSlots) ? (e as any).requiredSlots : []
-      for (const s of [...slots, ...required]) {
-        if (s === 1 || s === 2 || s === 3 || s === 4) out.add(s)
-      }
+    spIds.forEach((programId) => {
+      const slots = specialProgramSlotsByProgramId.get(programId)
+      if (!slots) return
+      slots.forEach((slot) => {
+        if (slot === 1 || slot === 2 || slot === 3 || slot === 4) out.add(slot)
+      })
+    })
+
+    if (out.size > 0) {
+      return Array.from(out).sort((a, b) => a - b)
     }
 
     // Fallback: preserve only slots that match the allocation's primary team.

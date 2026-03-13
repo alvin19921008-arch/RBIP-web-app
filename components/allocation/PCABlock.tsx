@@ -124,8 +124,9 @@ function usePcaBlockViewModel({
     return buildSpecialProgramSlotsByProgramId({
       specialPrograms: resolvedSpecialPrograms,
       weekday,
+      staffOverrides: resolvedStaffOverrides,
     })
-  }, [resolvedSpecialPrograms, weekday])
+  }, [resolvedSpecialPrograms, weekday, resolvedStaffOverrides])
 
   // Helper function to determine if slots in a team are part of special program assignment
   const areSlotsPartOfSpecialProgram = useCallback((

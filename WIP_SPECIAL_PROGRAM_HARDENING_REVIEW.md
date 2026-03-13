@@ -1,7 +1,7 @@
 # WIP — Special Program Flow Hardening Review
 
-**Last Updated**: 2026-03-09  
-**Status**: Bug chain fixed through schedule-page display. `F1`, `F2`, `F3`, and `F4` are fixed and regression-tested. `F5` to `F9` are open hardening / refactor findings.
+**Last Updated**: 2026-03-12
+**Status**: Bug chain fixed through export / secondary surface alignment. `F1` through `F9` are fixed and regression-tested. `P3` Slice 2 is complete, and Slice 3 has started with a first controller/runtime normalization pass.
 
 ---
 
@@ -79,11 +79,11 @@ That is how a “UI bug” can become a **wrong PCA calculation bug**.
 | F2 | **CRITICAL** | Step 2.0 existing override seeding | `staffOverrides` contains stale special-program fragments from a previous runner | Step 2.0 loads the wrong therapist even though canonical weekday config says otherwise | **FIXED** |
 | F3 | **CRITICAL** | Step 2 special-program PCA routing | Step 2 chooses the correct therapist runner, but PCA target team is still inferred from stale / non-explicit therapist tagging | Special-program PCA coverage is routed to the wrong team, reducing pending for the wrong team | **FIXED** |
 | F4 | **HIGH** | Schedule-page display + assigned math | Allocation is correct, but display/count helpers still use hardcoded CRP slot/team assumptions | Special-program slot is counted as floating/general coverage, inflating `assigned` and rendering wrong card styling | **FIXED** |
-| F5 | **CRITICAL** | Step 2.0 “Not running today” toggle | User disables a program in the dialog, but confirm emits no explicit “disabled” runtime state | Step 2/3 can still treat the program as active, reserving PCA capacity and distorting pending | **OPEN** |
-| F6 | **HIGH** | Step 3 bootstrap slot exclusion | Step 3 rebuilds special-program slot sets from raw fields / stale fallback logic instead of canonical effective runtime state | Special-program coverage can be miscounted as ordinary team coverage, skewing pending before floating allocation starts | **OPEN** |
-| F7 | **HIGH** | Display/read-side slot helpers | Display/count helpers read canonical weekday slots only, while capacity math reads Step 2 overrides too | Page rendering, drag protection, and capacity math can disagree on what slot is “special” | **OPEN** |
-| F8 | **MEDIUM** | Step 3 reset / re-entry preservation | Re-entry occurs without a fresh explicit override fragment, especially for multi-team or non-primary-team preservation cases | Legitimate special-program slots can be stripped on reset, inflating later pending | **OPEN** |
-| F9 | **MEDIUM** | Export / secondary display surfaces | Export/table code still carries old CRP/Robotic hardcoded slot-team assumptions | Exported schedule can diverge from live schedule and misrepresent special-program coverage | **OPEN** |
+| F5 | **CRITICAL** | Step 2.0 “Not running today” toggle | User disables a program in the dialog, but confirm emits no explicit “disabled” runtime state | Step 2/3 can still treat the program as active, reserving PCA capacity and distorting pending | **FIXED** |
+| F6 | **HIGH** | Step 3 bootstrap slot exclusion | Step 3 rebuilds special-program slot sets from raw fields / stale fallback logic instead of canonical effective runtime state | Special-program coverage can be miscounted as ordinary team coverage, skewing pending before floating allocation starts | **FIXED** |
+| F7 | **HIGH** | Display/read-side slot helpers | Display/count helpers read canonical weekday slots only, while capacity math reads Step 2 overrides too | Page rendering, drag protection, and capacity math can disagree on what slot is “special” | **FIXED** |
+| F8 | **MEDIUM** | Step 3 reset / re-entry preservation | Re-entry occurs without a fresh explicit override fragment, especially for multi-team or non-primary-team preservation cases | Legitimate special-program slots can be stripped on reset, inflating later pending | **FIXED** |
+| F9 | **MEDIUM** | Export / secondary display surfaces | Export/table code still carries old CRP/Robotic hardcoded slot-team assumptions | Exported schedule can diverge from live schedule and misrepresent special-program coverage | **FIXED** |
 
 ---
 
@@ -107,7 +107,7 @@ So in the status sections below, the “Latest Result” line always points to t
 
 ## Latest Regression Snapshot
 
-**Ran on 2026-03-09**
+**Ran on 2026-03-12**
 
 - `tests/regression/f9-special-program-zero-fte-spt-runner.test.ts` — **PASS**
 - `tests/regression/f10-crp-pca-target-follows-canonical-team.test.ts` — **PASS**
@@ -117,9 +117,24 @@ So in the status sections below, the “Latest Result” line always points to t
 - `tests/regression/f14-special-program-target-team-prefers-explicit-therapist-override.test.ts` — **PASS**
 - `tests/regression/f15-special-program-display-slots-use-actual-program-slots.test.ts` — **PASS**
 - `tests/regression/f16-special-program-slot-map-uses-actual-weekday-slots.test.ts` — **PASS**
+- `tests/regression/f17-disabled-special-program-overrides-release-capacity.test.ts` — **PASS**
+- `tests/regression/f18-step3-bootstrap-excludes-effective-special-program-slots.test.ts` — **PASS**
+- `tests/regression/f19-special-program-display-respects-step2-overrides.test.ts` — **PASS**
+- `tests/regression/f20-step3-reset-preserves-multi-team-special-program-slots.test.ts` — **PASS**
+- `tests/regression/f21-export-special-program-labels-respect-runtime-slots.test.ts` — **PASS**
+- `tests/regression/f22-special-program-runtime-model-slot-routing.test.ts` — **PASS**
+- `tests/regression/f23-special-program-controller-runtime-helpers.test.ts` — **PASS**
+- `tests/regression/f24-special-program-controller-runtime-state-bundle.test.ts` — **PASS**
+- `tests/regression/f25-special-program-runtime-model-configured-target-team.test.ts` — **PASS**
+- `tests/regression/f26-special-program-runtime-model-override-projection.test.ts` — **PASS**
+- `tests/regression/f27-special-program-runtime-model-explicit-therapist.test.ts` — **PASS**
+- `tests/regression/f28-special-program-runtime-model-drm-pca-override-semantics.test.ts` — **PASS**
+- `tests/regression/f29-special-program-runtime-model-shared-allocation-identity.test.ts` — **PASS**
+- `tests/regression/f30-special-program-runtime-model-allocator-default-target-team.test.ts` — **PASS**
+- `tests/regression/f31-special-program-runtime-model-primary-target-pending-gate.test.ts` — **PASS**
 
-**Current authoritative latest result**: `F16 PASS`  
-This is the newest narrow regression in the current bug chain and should be read as the latest confidence point for special-program slot resolution used by display/count helper paths.
+**Current authoritative latest result**: `F31 PASS`  
+This is the newest narrow regression in the current hardening sequence and should be read as the latest confidence point for the third `Slice 4` allocator migration pass.
 
 ---
 
@@ -383,15 +398,22 @@ If a disabled program still reserves capacity, average/pending PCA calculations 
 
 **Regression coverage**:
 
-- No dedicated regression found yet
+- `F17` — disabled special-program override releases reserved capacity and beats stale active fragments
 
 **Implementation status**:
 
-- **OPEN**
+- **FIXED**
+- Step 2.0 confirm now emits an explicit `enabled: false` special-program override marker instead of encoding disablement as “no override emitted”
+- Dialog initialization now rehydrates disabled programs from persisted override state, so reopening Step 2.0 matches the actual runtime state
+- Shared runtime override summary logic now makes explicit disablement authoritative for Step 2 runtime program activation, Step 3 reservation slot resolution, reserved PCA capacity, and DRM add-on calculation
 
-**Recommended hardening**:
+**Latest Result**:
 
-- introduce explicit `enabled: false` runtime state for a program/day instead of encoding disablement as “no override fragment”
+- `F17 PASS`
+
+**Code-quality / streamline suggestion**:
+
+- keep future special-program runtime consumers reading the shared override summary so `enabled: false` remains one authoritative disabled-state signal
 
 ---
 
@@ -420,16 +442,22 @@ This is a pure pending-math bug: special-program coverage can be credited to the
 
 **Regression coverage**:
 
-- current regression suite partially covers canonical slot semantics (`F11`, `F15`, `F16`)
-- no dedicated end-to-end Step 3 bootstrap regression located yet
+- `F18` — Step 3 bootstrap excludes canonical and Step 2 override-driven effective special-program slots from `existingTeamPCAAssigned`
 
 **Implementation status**:
 
-- **OPEN**
+- **FIXED**
+- Extracted Step 3 bootstrap seeding into `computeStep3BootstrapState()` so the pending seed logic is centralized instead of being inlined in the controller
+- Step 3 bootstrap now reads `buildSpecialProgramSlotsByProgramId({ specialPrograms, weekday, staffOverrides })` instead of reconstructing slot sets from raw weekday fields plus CRP/Robotic fallback assumptions
+- `buildSpecialProgramSlotsByProgramId()` now respects explicit Step 2 `requiredSlots` overrides and `enabled: false` disabled-program state, so Step 3 bootstrap aligns with the same runtime slot semantics already used by capacity/reservation logic
 
-**Recommended hardening**:
+**Latest Result**:
 
-- Step 3 bootstrap should consume the same effective runtime special-program model used by Step 2 and the schedule page
+- `F18 PASS`
+
+**Code-quality / streamline suggestion**:
+
+- continue moving read-side consumers onto the same override-aware slot-map helper so Step 3 bootstrap and schedule display cannot drift again
 
 ---
 
@@ -465,16 +493,22 @@ That is calculation / model drift even when the final numbers look close.
 
 **Regression coverage**:
 
-- partial helper-level coverage exists (`F11`, `F15`, `F16`)
-- no integrated override-aware read-path regression located yet
+- `F19` — display helper respects Step 2 `requiredSlots` overrides for special-program slot classification
 
 **Implementation status**:
 
-- **OPEN**
+- **FIXED**
+- `getSpecialProgramSlotsForAllocationTeam()` now resolves slots through the shared override-aware slot-map helper instead of reading canonical weekday slots directly
+- Schedule-page read-side consumers now pass `staffOverrides` / `baseOverrides` into slot classification so balance sanity checks, extra-coverage recomputation, and Step 3 dialog read paths stay aligned with override-aware reserved-capacity math
+- `PCABlock` now builds its special-program slot map with `staffOverrides`, so card splitting and assigned-FTE display stay consistent with the same effective slot semantics
 
-**Recommended hardening**:
+**Latest Result**:
 
-- unify all read-side helpers behind one resolver that accepts `specialPrograms + weekday + staffOverrides`
+- `F19 PASS`
+
+**Code-quality / streamline suggestion**:
+
+- keep pushing secondary read/display surfaces through the shared override-aware slot-map/display helpers so exports and reset preservation can reuse the same runtime definition
 
 ---
 
@@ -504,15 +538,22 @@ If preserved coverage is dropped, pending FTE is inflated and floating PCA alloc
 
 **Regression coverage**:
 
-- No dedicated reset/re-entry regression found yet for this case
+- `F20` — Step 3 reset preserves multi-team robotic special-program slots even when no fresh override fragment is present
 
 **Implementation status**:
 
-- **OPEN**
+- **FIXED**
+- `computeStep3ResetForReentry()` now accepts `specialPrograms` and `weekday` so reset preservation can read the same effective runtime slot map as the rest of the special-program pipeline
+- Reset preservation now derives special-program slots from `buildSpecialProgramSlotsByProgramId({ specialPrograms, weekday, staffOverrides })` before falling back to local allocation shape
+- This preserves non-primary-team / slot-team special-program coverage on re-entry instead of stripping it when `specialProgramOverrides` are absent
 
-**Recommended hardening**:
+**Latest Result**:
 
-- reset/re-entry should recover preserved special-program slots from the same effective runtime program model, not just local allocation shape
+- `F20 PASS`
+
+**Code-quality / streamline suggestion**:
+
+- keep reset/re-entry and export surfaces sharing the same override-aware slot-map helper so preserved state and derived display cannot diverge again
 
 ---
 
@@ -541,11 +582,14 @@ If export disagrees with the live schedule, users lose confidence in the underly
 
 **Regression coverage**:
 
-- No export-specific regression found yet
+- `F21 PASS`
 
 **Implementation status**:
 
-- **OPEN**
+- **FIXED**
+- `PCADedicatedScheduleTable` now resolves export slot labels through a shared helper instead of older `CRP` / `Robotic` hardcoded slot-team assumptions
+- Export labeling now derives effective weekday slots from `buildSpecialProgramSlotsByProgramId({ specialPrograms, weekday, staffOverrides })`, so explicit Step 2 overrides and disabled-state semantics stay aligned with the live schedule
+- This prevents export artifacts from disagreeing with the on-screen schedule when canonical slots are overridden or when legacy hardcoded mappings would have misclassified the assigned slot
 
 **Recommended hardening**:
 
@@ -561,34 +605,598 @@ If export disagrees with the live schedule, users lose confidence in the underly
 | F2 | **FIXED** | Existing override seeding now canonicalizes stale fragments toward the current weekday runner via shared seed helper |
 | F3 | **FIXED** | Step 2 PCA routing now prefers explicit therapist override to derive special-program target team |
 | F4 | **FIXED** | Schedule display/count helpers moved off stale CRP hardcoding onto shared actual-slot helpers |
-| F5 | **OPEN** | No explicit runtime disabled-program representation yet |
-| F6 | **OPEN** | Step 3 bootstrap still has a separate slot-exclusion path to unify |
-| F7 | **OPEN** | Override-aware effective slot reading is still not centralized for all display/read consumers |
-| F8 | **OPEN** | Reset/re-entry preservation still relies on fallback logic that may be too weak |
-| F9 | **OPEN** | Export / secondary display surfaces still need alignment with canonical slot helpers |
+| F5 | **FIXED** | Step 2.0 now emits explicit `enabled: false` disabled-program state, and shared runtime readers treat it as authoritative for allocation/capacity math |
+| F6 | **FIXED** | Step 3 bootstrap now uses shared effective slot-map resolution, so designated special-program slots are excluded from `existingTeamPCAAssigned` consistently |
+| F7 | **FIXED** | Override-aware slot classification is now centralized for the main read/display consumers via shared slot-map and display helpers |
+| F8 | **FIXED** | Step 3 reset now preserves multi-team / non-primary-team special-program slots via the shared effective slot-map before falling back to local allocation shape |
+| F9 | **FIXED** | Export dedicated schedule labeling now uses the same effective runtime slot resolution as the live schedule, removing stale CRP / Robotic hardcoding from the export path |
 
 ---
 
 ## Suggested Refactor Order
 
-### P0 — correctness / drift removal
-
-1. Fix `F5`: explicit disabled-program runtime state
-2. Fix `F6`: Step 3 bootstrap must use canonical effective runtime slot state
-3. Fix `F7`: unify override-aware read/display helpers
-
-### P1 — state-preservation safety
-
-4. Fix `F8`: reset/re-entry preservation from the same runtime resolver
-
-### P2 — secondary surface alignment
-
-5. Fix `F9`: export / dedicated schedule surfaces
-
 ### P3 — cleanup / maintainability
 
-6. Collapse remaining `CRP` / `Robotic` ad hoc branches into shared runtime utilities
-7. Replace “derive again from raw program object” code paths with a single effective runtime special-program model
+1. Collapse remaining `CRP` / `Robotic` ad hoc branches into shared runtime utilities
+2. Replace “derive again from raw program object” code paths with a single effective runtime special-program model
+
+---
+
+## P3 Runtime Model Design
+
+### Why `P3` still matters after `F1`-`F9`
+
+The concrete bugs in this chain are now fixed, but the remaining code shape still carries the same structural risk:
+
+- one helper resolves **effective weekday slots**
+- another helper resolves **effective target team**
+- another path mutates the raw `SpecialProgram` object to simulate runtime state
+- allocator logic still has embedded `CRP` / `Robotic` rules for slot-team routing and single-allocation behavior
+
+That means future bugs are still likely to appear as **model drift**, where one layer is “correct” but another layer is quietly using a different interpretation of the same program/day.
+
+### Existing shared building blocks
+
+These utilities already represent the strongest current source-of-truth pieces:
+
+- `lib/utils/specialProgramRuntimeOverrides.ts`
+  - reduces `staffOverrides` into runtime override facts like `explicitlyDisabled`, `requiredSlots`, therapist/PCA override fragments, and DRM add-on state
+- `lib/utils/specialProgramConfigRows.ts`
+  - resolves canonical weekday program config from normalized `staff_configs` plus legacy fallback fields
+- `lib/utils/specialProgramSlotMap.ts`
+  - composes canonical weekday slot resolution with override-aware runtime slot precedence
+- `lib/utils/specialProgramDisplay.ts`
+- `lib/utils/specialProgramExport.ts`
+  - downstream consumers already proving that read-side surfaces can share the same runtime slot logic
+
+### Remaining duplication hotspots
+
+The highest-value remaining consolidation targets are:
+
+- `lib/algorithms/pcaAllocation.ts`
+  - still carries the densest inline `program.name === 'Robotic' || program.name === 'CRP'` branching
+  - special-program allocation identity, slot-team routing, and slot-derived PCA FTE semantics are still embedded directly in allocator flow
+- `lib/features/schedule/controller/useScheduleController.ts`
+  - `applySpecialProgramOverrides()` is effectively a runtime projection step, but it expresses that by mutating legacy `SpecialProgram`-shaped data instead of returning a pure runtime model
+- `lib/utils/reservationLogic.ts`
+  - still re-encodes special-program slot classification, including `Robotic` slot-team interpretation
+- `lib/utils/specialProgramConfigRows.ts`
+  - still contains fallback slot semantics and `CRP`-specific candidate ranking logic that are partly runtime-model concerns
+
+### Proposed unified runtime projection
+
+Add a pure helper, e.g. `lib/utils/specialProgramRuntimeModel.ts`, that resolves one authoritative runtime projection for:
+
+- `program`
+- `weekday`
+- `staffOverrides`
+- optional supporting context such as `allStaff` or already-resolved therapist allocations where needed
+
+The projection should return data, not mutate program objects.
+
+**Recommended core fields**:
+
+- `isActiveOnWeekday`
+  - final enabled / disabled state for the specific weekday, including explicit `enabled: false`
+- `effectiveRequiredSlots`
+  - final runtime slot set after applying Step 2 override precedence, canonical weekday config, and fallback semantics
+- `slotTeamBySlot`
+  - authoritative slot-to-team routing for special-program coverage, so downstream consumers no longer hardcode `Robotic` slot-team mapping
+- `primaryTherapist`
+  - resolved therapist identity plus final therapist FTE subtraction semantics for the day
+- `targetTeam`
+  - final program target team used by allocation and pending math
+- `pcaRuntime`
+  - grouped PCA-facing runtime facts such as reserved FTE, preferred/manual PCA covers, DRM add-on, and allocation scope (`single shared allocation` vs `per-team allocation`)
+
+### Runtime projection data flow
+
+```mermaid
+flowchart TD
+  canonicalConfig[CanonicalWeekdayConfig]
+  runtimeOverrides[RuntimeOverrides]
+  runtimeProjection[SpecialProgramRuntimeProjection]
+  controller[ScheduleController]
+  readConsumers[ReadSideConsumers]
+  allocator[PcaAllocator]
+
+  canonicalConfig --> runtimeProjection
+  runtimeOverrides --> runtimeProjection
+  runtimeProjection --> controller
+  runtimeProjection --> readConsumers
+  runtimeProjection --> allocator
+```
+
+### Migration boundaries
+
+The intended rule for this refactor is:
+
+- move **runtime-model rules** into the shared runtime projection
+- keep **UI-only policy / presentation** in the dialog and dashboard components
+
+**Should move into shared runtime utilities**:
+
+- effective weekday activity / disablement
+- effective slot resolution
+- slot-to-team routing
+- target-team routing
+- allocation identity rules for special programs
+- slot-derived vs config-derived PCA FTE semantics
+
+**Should remain UI-specific**:
+
+- dropdown ordering and display heuristics in `components/allocation/SpecialProgramOverrideDialog.tsx`
+- render-only copy, labels, and conditional presentation
+- non-runtime editing affordances that do not affect allocation semantics
+
+### Planned rollout by slice
+
+**Slice 1 — document the runtime model**
+
+- write this design into the review doc
+- define the shared runtime projection fields and migration boundaries
+- treat current `applySpecialProgramOverrides()` behavior as the reference semantics to preserve
+
+**Slice 2 — migrate read-only consumers first**
+
+- move `reservationLogic`, display helpers, and export helpers onto the projection
+- remove duplicate weekday-activity and slot-team interpretation from these paths first
+
+**Slice 3 — normalize controller/runtime orchestration**
+
+- replace controller-side special-program runtime mutation with projection-building plus thin adaptation where legacy shapes are still needed
+
+**Slice 4 — migrate allocator last**
+
+- move allocator routing and allocation-identity behavior onto the projection only after narrower read-side consumers are stable
+- this is intentionally last because it is the highest-risk area for pending FTE, slot occupancy, and duplicate-assignment regressions
+
+### P3 implementation progress
+
+**Slice 1 status**: **DONE**
+
+- Added this `P3 Runtime Model Design` section to document the proposed unified runtime projection
+- Defined the initial projection contract (`isActiveOnWeekday`, `effectiveRequiredSlots`, `slotTeamBySlot`, `primaryTherapist`, `targetTeam`, `pcaRuntime`)
+- Recorded the migration boundary between shared runtime-model rules and UI-only behavior
+
+**Slice 2 status**: **DONE**
+
+Completed so far:
+
+- Added `lib/utils/specialProgramRuntimeModel.ts` as the first minimal runtime projection helper
+- Implemented the first projection fields needed for read-only consumers:
+  - `isActiveOnWeekday`
+  - `effectiveRequiredSlots`
+  - `slotTeamBySlot`
+  - `targetTeam`
+- Migrated `lib/utils/reservationLogic.ts` to consume the runtime projection instead of duplicating:
+  - override-aware effective slot resolution
+  - hardcoded `Robotic` slot-team routing
+- Migrated `lib/utils/specialProgramExport.ts` to consume the runtime projection for weekday activity, effective slots, and slot-team validation
+- Migrated `lib/utils/specialProgramDisplay.ts` to consume the runtime projection for weekday activity, effective slots, and slot-team validation
+- Added `F22` regression coverage for runtime-model slot routing:
+  - `tests/regression/f22-special-program-runtime-model-slot-routing.test.ts`
+
+Verification completed for `Slice 2`:
+
+- `F19 PASS`
+- `F21 PASS`
+- `F22 PASS`
+- `F7 PASS`
+- `F8 PASS`
+
+`Slice 2` completion note:
+
+- The main read-only consumers identified in the design pass are now on the shared runtime projection.
+- The next duplication hotspots are no longer in read-only helpers; they are now primarily in controller orchestration and allocator behavior.
+
+**Slice 3 status**: **DONE**
+
+Completed so far in iteration 1:
+
+- Added `lib/utils/specialProgramControllerRuntime.ts` as a shared controller-facing helper layer
+- Moved controller-side `applySpecialProgramOverrides()` out of `useScheduleController.ts` into the shared helper
+- Moved controller-side `buildSpecialProgramTargetTeamById()` out of `useScheduleController.ts` into the shared helper
+- `applySpecialProgramOverrides()` now reads weekday activity through `resolveSpecialProgramRuntimeModel()` while still emitting the legacy adapted-program shape that the current allocator expects
+- `resolveSpecialProgramTargetTeam()` now derives explicit therapist overrides through `getSpecialProgramRuntimeOverrideSummary()` instead of rescanning raw override fragments independently
+- Added `F23` regression coverage for this first controller/runtime extraction:
+  - `tests/regression/f23-special-program-controller-runtime-helpers.test.ts`
+
+Verification completed for `Slice 3` iteration 1:
+
+- `F14 PASS`
+- `F17 PASS`
+- `F21 PASS`
+- `F22 PASS`
+- `F23 PASS`
+
+Completed so far in iteration 2:
+
+- Added `buildSpecialProgramControllerRuntimeState()` to `lib/utils/specialProgramControllerRuntime.ts`
+- `Step 3` now consumes `specialPrograms` and `specialProgramTargetTeamById` together through one shared controller-runtime helper instead of deriving them in two separate controller passes
+- `Step 2` still needs a pre-therapist adapted-program pass before therapist allocation runs, but now reuses the same bundled controller-runtime helper for the post-therapist target-team stage once therapist allocations exist
+- `buildSpecialProgramTargetTeamById()` now skips disabled / inactive programs when producing target-team routing, keeping controller target-team state aligned with the same runtime weekday-activity semantics used elsewhere
+- Added `F24` regression coverage for the bundled controller runtime state:
+  - `tests/regression/f24-special-program-controller-runtime-state-bundle.test.ts`
+
+Verification completed for `Slice 3` iteration 2:
+
+- `F14 PASS`
+- `F21 PASS`
+- `F22 PASS`
+- `F23 PASS`
+- `F24 PASS`
+
+Completed so far in iteration 3:
+
+- `resolveSpecialProgramRuntimeModel()` now exposes `configuredPrimaryTherapistId` and `configuredFallbackTargetTeam`
+- The runtime model can now express the configured therapist-driven fallback team directly when given the effective therapist staff lookup for the weekday
+- `buildSpecialProgramTargetTeamById()` now consumes `runtimeModel.configuredFallbackTargetTeam` instead of separately calling back into controller-local therapist-team fallback resolution
+- This moves one more piece of target-team derivation out of controller orchestration and into the shared runtime model layer without changing allocator behavior
+- Added `F25` regression coverage for runtime-model configured therapist / fallback-team projection:
+  - `tests/regression/f25-special-program-runtime-model-configured-target-team.test.ts`
+
+Verification completed for `Slice 3` iteration 3:
+
+- `F14 PASS`
+- `F22 PASS`
+- `F24 PASS`
+- `F25 PASS`
+
+Completed so far in iteration 4:
+
+- `resolveSpecialProgramRuntimeModel()` now exposes controller-facing override payloads:
+  - `therapistOverrides`
+  - `pcaOverrides`
+  - `hasExplicitRequiredSlotsOverride`
+- `applySpecialProgramOverrides()` now consumes those runtime-model fields instead of reparsing raw override fragments through a second controller-local summary call
+- This reduces one more competing definition of “effective special-program runtime state” on the controller adaptation path while preserving the distinction between explicit Step 2 required-slot overrides and canonical weekday slots
+- Added `F26` regression coverage for runtime-model override projection:
+  - `tests/regression/f26-special-program-runtime-model-override-projection.test.ts`
+
+Verification completed for `Slice 3` iteration 4:
+
+- `F22 PASS`
+- `F23 PASS`
+- `F24 PASS`
+- `F25 PASS`
+- `F26 PASS`
+
+Completed so far in iteration 5:
+
+- `resolveSpecialProgramRuntimeModel()` now exposes `explicitOverrideTherapistId`
+- `buildSpecialProgramTargetTeamById()` no longer depends on the separate `resolveSpecialProgramTargetTeam()` override-reading path; it now resolves explicit-override therapist routing directly from the shared runtime projection plus therapist allocations
+- Tagged-allocation fallback remains in the controller helper, but the explicit-override branch now comes from the same runtime-model projection as the rest of the special-program controller state
+- Added `F27` regression coverage for runtime-model explicit therapist projection:
+  - `tests/regression/f27-special-program-runtime-model-explicit-therapist.test.ts`
+
+Verification completed for `Slice 3` iteration 5:
+
+- `F14 PASS`
+- `F24 PASS`
+- `F25 PASS`
+- `F26 PASS`
+- `F27 PASS`
+
+Completed so far in iteration 6:
+
+- `resolveSpecialProgramRuntimeModel()` now exposes `acceptsPcaCoverOverrides`, so DRM PCA-cover suppression semantics live in the shared runtime projection instead of a controller-local raw-name branch
+- `applySpecialProgramOverrides()` now consumes `runtimeModel.acceptsPcaCoverOverrides` and no longer branches on raw `program.name === 'DRM'`
+- Deleted the now-dead `lib/utils/specialProgramTargetTeam.ts` helper after removing its last controller/runtime caller path
+- Final controller audit confirmed:
+  - no remaining `CRP` / `Robotic` / `DRM` raw-name branches in `useScheduleController.ts`
+  - no remaining `resolveSpecialProgramTargetTeam()` callers in `lib/`
+  - controller-side special-program interpretation now flows through `specialProgramControllerRuntime.ts` + `specialProgramRuntimeModel.ts`
+- Added `F28` regression coverage for DRM PCA-cover override projection:
+  - `tests/regression/f28-special-program-runtime-model-drm-pca-override-semantics.test.ts`
+
+Verification completed for `Slice 3` iteration 6:
+
+- `F24 PASS`
+- `F26 PASS`
+- `F27 PASS`
+- `F28 PASS`
+
+`Slice 3` completion note:
+
+- The remaining special-program duplication hotspots are no longer in controller/runtime orchestration.
+- The substantial remaining hardcoded `CRP` / `Robotic` behavior is now concentrated in allocator paths (`lib/algorithms/pcaAllocation.ts`) and canonical-config utilities (`lib/utils/specialProgramConfigRows.ts`), which is the intended boundary for `Slice 4`.
+
+**Slice 4 status**: **IN PROGRESS**
+
+Completed so far in iteration 1:
+
+- `resolveSpecialProgramRuntimeModel()` now exposes `usesSharedAllocationIdentity`, so the “single shared special-program allocation vs per-team allocation” rule is projected from the shared runtime model instead of being redefined ad hoc inside allocator branches
+- `lib/algorithms/pcaAllocation.ts` now consumes that runtime-model flag for the repeated shared-allocation checks that previously hardcoded `program.name === 'Robotic' || program.name === 'CRP'`
+- The same allocator pass now also consumes the shared-allocation flag for its existing “use full slot FTE for shared special-program coverage” branches, preserving current allocator semantics while removing another parallel raw-name rule
+- Added `F29` regression coverage for runtime-model shared-allocation identity:
+  - `tests/regression/f29-special-program-runtime-model-shared-allocation-identity.test.ts`
+
+Verification completed for `Slice 4` iteration 1:
+
+- `F2 PASS`
+- `F10 PASS`
+- `F28 PASS`
+- `F29 PASS`
+
+`Slice 4` iteration 1 note:
+
+- The allocator no longer repeats the `Robotic` / `CRP` shared-allocation identity rule inline across its dense assignment branches.
+- The remaining `Slice 4` work is now narrower: move allocator slot-team routing and target-team derivation off the remaining local helpers (`getSlotTeamForSpecialProgram()` and `resolveTargetTeamsForSpecialProgram()`) and onto the shared runtime projection.
+
+Completed so far in iteration 2:
+
+- `resolveSpecialProgramRuntimeModel()` now exposes `allocatorDefaultTargetTeam`, preserving the allocator’s existing routing precedence in one shared place:
+  - explicit controller-provided target team first
+  - configured therapist fallback team next when available
+  - legacy CRP fallback to `CPPC` last
+  - Robotic defaults to its first routed slot team (`SMM`)
+- `resolveTargetTeamsForSpecialProgram()` in `lib/algorithms/pcaAllocation.ts` now consumes shared runtime-model routing facts instead of branching directly on raw `program.name === 'Robotic'` / `program.name === 'CRP'`
+- `getSlotTeamForSpecialProgram()` in `lib/algorithms/pcaAllocation.ts` now resolves slot-team routing through `runtimeModel.slotTeamBySlot` + `runtimeModel.allocatorDefaultTargetTeam` instead of re-encoding the Robotic slot map locally
+- Added `F30` regression coverage for allocator-default target-team projection:
+  - `tests/regression/f30-special-program-runtime-model-allocator-default-target-team.test.ts`
+
+Verification completed for `Slice 4` iteration 2:
+
+- `F10 PASS`
+- `F22 PASS`
+- `F29 PASS`
+- `F30 PASS`
+
+`Slice 4` iteration 2 note:
+
+- Allocator slot-team routing and shared-target-team fallback no longer depend on the old allocator-local raw-name helpers.
+- The remaining `Slice 4` work is now mostly at the “allocator semantics still embedded in control flow” layer rather than the “allocator owns its own routing model” layer.
+
+Completed so far in iteration 3:
+
+- `resolveSpecialProgramRuntimeModel()` now exposes `bypassesPrimaryTargetPendingGate`, projecting the remaining allocator rule that Robotic coverage should still run even when the primary routed target team itself no longer has pending FTE
+- `lib/algorithms/pcaAllocation.ts` now consumes that runtime-model flag for the Step 2 special-program `neededFTE <= 0` gate instead of branching on raw `program.name !== 'Robotic'`
+- Added `F31` regression coverage for this remaining allocator control-flow rule:
+  - `tests/regression/f31-special-program-runtime-model-primary-target-pending-gate.test.ts`
+
+Verification completed for `Slice 4` iteration 3:
+
+- `F10 PASS`
+- `F29 PASS`
+- `F30 PASS`
+- `F31 PASS`
+
+`Slice 4` iteration 3 note:
+
+- The active special-program allocator path no longer contains raw `CRP` / `Robotic` name branches for allocation identity, target-team routing, slot-team routing, or the primary-target pending gate.
+- The only remaining raw-name allocator branch in the active path is the intentional DRM skip (`DRM` has no designated PCA staff). The older commented legacy block still contains historical raw-name logic, but it is not executed.
+
+### Verification strategy for `P3`
+
+`P3` should be protected by narrow regressions, not one large rewrite test.
+
+Before touching allocator behavior, keep the current confidence chain intact:
+
+- preserve `F17` through `F21`
+- add helper-level coverage for the new runtime projection
+- add targeted allocator regressions for:
+  - special-program slot-team routing
+  - single shared allocation vs per-team allocation identity
+  - pending-FTE impact when special-program slots are already occupied
+
+### Recommended next implementation step from current state
+
+`Slice 3` is complete.
+
+The safest next code step is:
+
+1. continue `Slice 4` with allocator slot-team / target-team migration
+2. decide whether to leave the active DRM skip as an explicit allocator policy or project that last program-level allocator rule into the runtime model for full consistency
+3. preserve the current allocator confidence chain (`F2`, `F10`, `F22`, `F29`, `F30`, `F31`) while keeping the controller/runtime chain (`F24`-`F28`) green
+
+That preserves the now-stabilized controller/runtime layer while moving the remaining risk into the intended final migration boundary.
+
+---
+
+## P4 — Unified Allocation Runtime Projection
+
+### Why `P4` is the right next layer after `P3`
+
+`P3` and `Slice 4` have moved most special-program semantics onto `resolveSpecialProgramRuntimeModel()`, but the broader schedule pipeline still has the same structural split:
+
+- editable state lives across baseline snapshot data, `staffOverrides`, and per-step workflow state
+- each downstream consumer still builds its own partial runtime interpretation of that state
+
+The special-program hardening work shows that this pattern is where drift comes from. The next risk is no longer just “special program bugs”; it is **runtime interpretation drift** across:
+
+- therapist allocation
+- PCA allocation
+- Step 3 reservation/bootstrap logic
+- display/export/read-side helpers
+
+### Core principle
+
+The app should keep the current architecture distinction:
+
+- **editable source state**
+  - baseline snapshot
+  - `staffOverrides`
+  - workflow / step state
+- **derived runtime projection**
+  - pure interpretation of the above for one date / weekday
+
+`P4` should therefore **not** make the runtime projection the writable source of truth.
+
+Instead, `P4` should make the runtime projection the **single semantic interpreter** of schedule state.
+
+That means:
+
+- edits still write to baseline snapshot and `staffOverrides`
+- downstream consumers stop re-deriving meaning from raw partial objects
+- allocators, reservation logic, and display/export all read shared projected facts
+
+### Proposed final shape
+
+Add one schedule-level projection layer, e.g. `ScheduleRuntimeProjection`, that is built from:
+
+- `selectedDate`
+- `baselineSnapshot`
+- `staffOverrides`
+- live team settings / merge settings already applied for the schedule date
+- optional prior-step results where needed (for example therapist allocations when building PCA-facing views)
+
+Recommended top-level sections:
+
+- `meta`
+  - `date`
+  - `weekday`
+  - `currentStep`
+  - snapshot / workflow versioning metadata if useful for diagnostics only
+- `staffById`
+  - final per-staff runtime state after leave/FTE/team/day overrides are applied
+- `specialProgramsById`
+  - shared per-program runtime projection (today’s `SpecialProgramRuntimeModel`, expanded as needed)
+- `teamRuntime`
+  - derived per-team facts needed by allocators / reservation logic
+- `views`
+  - thin consumer-facing selectors / adapter outputs derived from the same projection instead of each subsystem re-reading raw state
+
+### `staffById` runtime entry
+
+This is the missing bridge between `staffOverrides` and allocator/read-side consumers.
+
+Recommended fields:
+
+- identity / static shape
+  - `staffId`
+  - `name`
+  - `rank`
+  - `baseTeam`
+- effective daily assignment state
+  - `effectiveTeam`
+  - `leaveType`
+  - `fteRemaining`
+  - `isOnDuty`
+  - `availableSlots`
+  - `invalidSlots`
+- therapist-facing runtime facts
+  - `specialProgramAvailable`
+  - `amPmSelection`
+  - `therapistManualSplits`
+  - `therapistNoAllocation`
+- PCA-facing runtime facts
+  - `floating`
+  - `floorPcaSelection`
+  - substitution / slot override facts
+  - preserved special-program slot occupancy / blocked-slot reasons where relevant
+- diagnostics
+  - optional `sourceFlags` showing which facts came from baseline vs override vs step-derived state
+
+This lets leave/FTE edits participate in the same runtime projection instead of being re-read ad hoc from `staffOverrides` in multiple places.
+
+### `specialProgramsById` runtime entry
+
+`resolveSpecialProgramRuntimeModel()` should remain the seed for this section, but `P4` should treat it as a nested component of the larger schedule runtime projection.
+
+Recommended fields:
+
+- weekday activity
+  - `isActiveOnWeekday`
+  - explicit disablement state
+- therapist routing
+  - configured primary therapist
+  - explicit override therapist
+  - configured fallback target team
+  - final effective target team
+- slot semantics
+  - `effectiveRequiredSlots`
+  - `slotTeamBySlot`
+- PCA semantics
+  - `acceptsPcaCoverOverrides`
+  - `usesSharedAllocationIdentity`
+  - `bypassesPrimaryTargetPendingGate`
+  - `allocatorDefaultTargetTeam`
+  - whether the program participates in dedicated PCA allocation vs add-on-only behavior (this is where the remaining DRM allocator skip should ultimately live)
+- override payloads
+  - therapist overrides
+  - PCA overrides
+  - explicit required-slot override flag
+
+### `teamRuntime`
+
+This section should centralize team-level facts that are currently recomputed in many places.
+
+Recommended fields:
+
+- `effectiveTeamOrder`
+- merged-team / display-team resolution
+- per-team therapist FTE after runtime adjustments
+- per-team PCA requirement inputs
+- per-team reserved special-program PCA burden
+- per-team pending FTE snapshots used by Step 3 / reservation logic
+
+This should not replace allocator result state; it should provide the shared team facts that allocators consume before and between steps.
+
+### Consumer views derived from one projection
+
+To keep the runtime object from becoming a giant “god object”, downstream systems should consume focused selectors built from the shared projection.
+
+Recommended views:
+
+- `buildTherapistAllocatorView(projection)`
+  - returns exactly the therapist allocator input shape, but sourced from runtime staff/program facts rather than scattered raw reads
+- `buildPcaAllocatorView(projection, therapistResult)`
+  - returns effective special-program routing, candidate PCA availability, blocked slots, and team requirement inputs from one place
+- `buildReservationView(projection, step3State)`
+  - returns the Step 3 reservation/bootstrap input without independently recalculating special-program occupancy
+- `buildDisplayView(projection)`
+  - powers schedule-page/export/read-only classification
+
+The rule should be:
+
+- consumers may adapt the shared projection into their local input shape
+- consumers should not reinterpret raw state directly
+
+### What should remain source state vs projection
+
+Keep as editable source state:
+
+- baseline snapshot
+- `staffOverrides`
+- step dialogs’ explicit user choices
+- saved allocator results / workflow state
+
+Move into shared runtime interpretation:
+
+- leave/FTE daily availability semantics
+- team override + slot availability meaning
+- special-program weekday activity / target-team / slot-team meaning
+- dedicated-PCA vs add-on-only program participation rules
+- blocked-slot / reserved-capacity / shared-allocation semantics
+
+### Recommended rollout
+
+`P4` should be design-first and incremental:
+
+1. **P4.1 — formalize `staffById` runtime entries**
+   - centralize leave/FTE/team/availability interpretation
+2. **P4.2 — add consumer views**
+   - therapist allocator and PCA allocator read selectors from the same projection
+3. **P4.3 — migrate reservation/bootstrap**
+   - Step 3 bootstrap/reservation uses runtime team + slot occupancy facts only
+4. **P4.4 — finish read-side parity**
+   - display/export/debug helpers consume the same schedule-level projection
+5. **P4.5 — remove legacy adapted raw-object flows**
+   - eliminate remaining “mutate `SpecialProgram` shape to simulate runtime state” patterns
+
+### Recommendation from current state
+
+Yes: `P4` should become the next explicit workstream.
+
+The recommended architecture is:
+
+- `staffOverrides` + leave/FTE edits + baseline snapshot remain the editable source state
+- one shared schedule runtime projection interprets them
+- therapist allocator, PCA allocator, reservation logic, display/export all consume that projection
+- no downstream layer infers semantics directly from raw program names or partial raw objects
+
+That preserves the existing three-layer architecture while finally giving the schedule pipeline one semantic source of truth.
 
 ---
 

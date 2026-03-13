@@ -39,6 +39,7 @@ interface SpecialProgramOverrideDialogProps {
     specialProgramAvailable?: boolean
     specialProgramOverrides?: Array<{
       programId: string
+      enabled?: boolean
       therapistId?: string
       pcaId?: string
       slots?: number[]
@@ -54,6 +55,7 @@ interface SpecialProgramOverrideDialogProps {
     availableSlots?: number[]
     specialProgramOverrides?: Array<{
       programId: string
+      enabled?: boolean
       therapistId?: string
       pcaId?: string
       slots?: number[]
@@ -412,6 +414,7 @@ export function SpecialProgramOverrideDialog({
     if (!open) return
 
     const initialOverrides: Record<string, ProgramOverride> = {}
+    const initialDisabledPrograms = new Set<string>()
     
     activePrograms.forEach(program => {
       // First, check if there are existing overrides in staffOverrides
@@ -440,6 +443,9 @@ export function SpecialProgramOverrideDialog({
             }
             // Collect all override data (may be split across therapist and PCA)
             programOverrideList.forEach((programOverride) => {
+              if (programOverride.enabled === false) {
+                initialDisabledPrograms.add(program.id)
+              }
               if (programOverride.therapistId !== undefined) {
                 foundTherapistId = programOverride.therapistId
               }
@@ -478,6 +484,10 @@ export function SpecialProgramOverrideDialog({
             })
           }
         }
+      }
+
+      if (initialDisabledPrograms.has(program.id)) {
+        return
       }
 
       // If we found any existing override data, use it
@@ -673,6 +683,7 @@ export function SpecialProgramOverrideDialog({
     })
 
     setProgramOverrides(initialOverrides)
+    setDisabledPrograms(initialDisabledPrograms)
   }, [open, activePrograms, allStaff, staffOverrides, weekday])
 
   useEffect(() => {
@@ -1300,6 +1311,13 @@ export function SpecialProgramOverrideDialog({
     })
   }
 
+  const getDisabledProgramAnchorId = (program: SpecialProgram): string => {
+    const primaryConfiguredTherapist = getPrimaryConfiguredTherapistIdForWeekday(program, weekday)
+    if (primaryConfiguredTherapist?.id) return primaryConfiguredTherapist.id
+    if (program.staff_ids[0]) return program.staff_ids[0]
+    return `__special-program-disabled__:${program.id}`
+  }
+
   const handleConfirm = () => {
     // Convert programOverrides to staffOverrides format
     const overrides: Record<string, {
@@ -1307,6 +1325,7 @@ export function SpecialProgramOverrideDialog({
       availableSlots?: number[]
       specialProgramOverrides?: Array<{
         programId: string
+        enabled?: boolean
         therapistId?: string
         pcaId?: string
         slots?: number[]
@@ -1384,6 +1403,20 @@ export function SpecialProgramOverrideDialog({
           requiredSlots: requiredSlots.length > 0 ? requiredSlots : undefined,
           pcaFTESubtraction: pcaFTE,
         })
+      })
+    })
+
+    disabledPrograms.forEach((programId) => {
+      const program = activePrograms.find((item) => item.id === programId)
+      if (!program) return
+      const anchorId = getDisabledProgramAnchorId(program)
+      if (!overrides[anchorId]) {
+        overrides[anchorId] = { specialProgramOverrides: [] }
+      }
+      overrides[anchorId].specialProgramOverrides ??= []
+      overrides[anchorId].specialProgramOverrides!.push({
+        programId,
+        enabled: false,
       })
     })
 

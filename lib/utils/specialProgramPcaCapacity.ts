@@ -1,38 +1,7 @@
 import type { SpecialProgram } from '@/types/allocation'
 import type { Weekday } from '@/types/staff'
 import { getEffectiveSpecialProgramWeekdaySlots } from '@/lib/utils/specialProgramConfigRows'
-
-const VALID_SLOTS = new Set([1, 2, 3, 4])
-
-function normalizeSlots(input: unknown): number[] {
-  if (!Array.isArray(input)) return []
-  const out: number[] = []
-  for (const v of input) {
-    if (typeof v !== 'number') continue
-    if (!VALID_SLOTS.has(v)) continue
-    out.push(v)
-  }
-  return Array.from(new Set(out)).sort((a, b) => a - b)
-}
-
-function getAllSpecialProgramOverrideEntries(
-  staffOverrides: Record<string, unknown> | undefined,
-  programId: string
-): any[] {
-  if (!staffOverrides) return []
-  const out: any[] = []
-  for (const value of Object.values(staffOverrides)) {
-    if (!value || typeof value !== 'object') continue
-    const list = (value as any).specialProgramOverrides
-    if (!Array.isArray(list)) continue
-    for (const entry of list) {
-      if (!entry || typeof entry !== 'object') continue
-      if (String((entry as any).programId ?? '') !== programId) continue
-      out.push(entry)
-    }
-  }
-  return out
-}
+import { getSpecialProgramRuntimeOverrideSummary } from '@/lib/utils/specialProgramRuntimeOverrides'
 
 /**
  * Special-program reserved PCA capacity (in FTE) for a given weekday.
@@ -59,18 +28,20 @@ export function computeReservedSpecialProgramPcaFte(args: {
     if (!Array.isArray((program as any).weekdays) || !(program as any).weekdays.includes(weekday)) continue
     if ((program as any).name === 'DRM') continue
 
-    const overrideEntries = getAllSpecialProgramOverrideEntries(staffOverrides, String(program.id))
-    const requiredUnion = new Set<number>()
-    const slotsUnion = new Set<number>()
+    const runtimeOverride = getSpecialProgramRuntimeOverrideSummary({
+      staffOverrides,
+      programId: String(program.id),
+    })
+    if (runtimeOverride.explicitlyDisabled) continue
 
-    for (const e of overrideEntries) {
-      for (const s of normalizeSlots((e as any).requiredSlots)) requiredUnion.add(s)
-      for (const s of normalizeSlots((e as any).slots)) slotsUnion.add(s)
-    }
+    const slotsUnion = new Set<number>()
+    runtimeOverride.pcaOverrides.forEach((entry) => {
+      entry.slots.forEach((slot) => slotsUnion.add(slot))
+    })
 
     const effectiveSlots =
-      requiredUnion.size > 0
-        ? Array.from(requiredUnion).sort((a, b) => a - b)
+      runtimeOverride.requiredSlots.length > 0
+        ? runtimeOverride.requiredSlots
         : slotsUnion.size > 0
           ? Array.from(slotsUnion).sort((a, b) => a - b)
           : getEffectiveSpecialProgramWeekdaySlots({ program, day: weekday })
@@ -98,11 +69,12 @@ export function computeDrmAddOnFte(args: {
   if (!drmProgram) return 0
   if (!Array.isArray((drmProgram as any).weekdays) || !(drmProgram as any).weekdays.includes(weekday)) return 0
 
-  const entries = getAllSpecialProgramOverrideEntries(staffOverrides, String((drmProgram as any).id ?? ''))
-  for (const e of entries) {
-    const v = (e as any)?.drmAddOn
-    if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return v
-  }
+  const runtimeOverride = getSpecialProgramRuntimeOverrideSummary({
+    staffOverrides,
+    programId: String((drmProgram as any).id ?? ''),
+  })
+  if (runtimeOverride.explicitlyDisabled) return 0
+  if (typeof runtimeOverride.drmAddOn === 'number') return runtimeOverride.drmAddOn
 
   return defaultAddOn
 }

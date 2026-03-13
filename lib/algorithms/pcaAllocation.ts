@@ -4,6 +4,7 @@ import { PCAPreference, SpecialProgram } from '@/types/allocation'
 import { roundToNearestQuarter, roundDownToQuarter, roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { assignSlotIfValid, getTeamFloor, isFloorPCAForTeam, TEAMS } from '@/lib/utils/floatingPCAHelpers'
 import { getEffectiveSpecialProgramWeekdaySlots } from '@/lib/utils/specialProgramConfigRows'
+import { resolveSpecialProgramRuntimeModel } from '@/lib/utils/specialProgramRuntimeModel'
 import type { PCAData } from './pcaAllocationTypes'
 
 export type { PCAData } from './pcaAllocationTypes'
@@ -86,27 +87,29 @@ function shouldAvoidGymSchedule(
  * Gets the team assignment for a slot in a special program.
  * For Robotic program: slot 1 or 2 → SMM, slot 3 or 4 → SFM
  * For other programs: use the target team
- * @param programName The name of the special program
+ * @param program The special program
  * @param slot The slot number (1, 2, 3, or 4)
  * @param targetTeam The original target team for allocation
  * @returns The team to assign this slot to
  */
 function getSlotTeamForSpecialProgram(
-  programName: string,
+  program: SpecialProgram,
   slot: number,
   targetTeam: Team
 ): Team | null {
-  if (programName === 'Robotic') {
-    // Robotic: slot 1 or 2 → SMM, slot 3 or 4 → SFM
-    if (slot === 1 || slot === 2) {
-      return 'SMM'
-    }
-    if (slot === 3 || slot === 4) {
-      return 'SFM'
-    }
-  }
-  // For other programs, use the target team
-  return targetTeam
+  const runtimeModel = resolveSpecialProgramRuntimeModel({
+    program,
+    targetTeam,
+  })
+  return runtimeModel.slotTeamBySlot[slot as 1 | 2 | 3 | 4] ?? runtimeModel.allocatorDefaultTargetTeam ?? targetTeam
+}
+
+function usesSharedAllocationIdentityForProgram(program: SpecialProgram): boolean {
+  return resolveSpecialProgramRuntimeModel({ program }).usesSharedAllocationIdentity
+}
+
+function bypassesPrimaryTargetPendingGateForProgram(program: SpecialProgram): boolean {
+  return resolveSpecialProgramRuntimeModel({ program }).bypassesPrimaryTargetPendingGate
 }
 
 /**
@@ -241,20 +244,22 @@ function resolveTargetTeamsForSpecialProgram(args: {
   teamPCAAssigned: Record<Team, number>
 }): Team[] {
   const { context, program, teamsNeedingProgram, teamPCAAssigned } = args
+  const runtimeModel = resolveSpecialProgramRuntimeModel({
+    program,
+    targetTeam: context.specialProgramTargetTeamById?.[program.id] ?? null,
+  })
+  const slotTeams = Array.from(new Set(Object.values(runtimeModel.slotTeamBySlot))) as Team[]
 
-  if (program.name === 'Robotic') {
-    if (
-      teamPCAAssigned.SMM < context.averagePCAPerTeam.SMM ||
-      teamPCAAssigned.SFM < context.averagePCAPerTeam.SFM
-    ) {
-      return ['SMM']
+  if (runtimeModel.usesSharedAllocationIdentity) {
+    if (slotTeams.length > 1) {
+      const anySlotTeamNeedsProgram = slotTeams.some(
+        (team) => teamPCAAssigned[team] < context.averagePCAPerTeam[team]
+      )
+      return anySlotTeamNeedsProgram && runtimeModel.allocatorDefaultTargetTeam
+        ? [runtimeModel.allocatorDefaultTargetTeam]
+        : []
     }
-    return []
-  }
-
-  if (program.name === 'CRP') {
-    const canonicalTargetTeam = context.specialProgramTargetTeamById?.[program.id]
-    return canonicalTargetTeam ? [canonicalTargetTeam] : ['CPPC']
+    return runtimeModel.allocatorDefaultTargetTeam ? [runtimeModel.allocatorDefaultTargetTeam] : []
   }
 
   return teamsNeedingProgram
@@ -493,7 +498,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
 
       if (baseAllocation) {
         slotsToApply.forEach((slot) => {
-          const slotTeam = getSlotTeamForSpecialProgram(args.program.name, slot, args.targetTeam)
+          const slotTeam = getSlotTeamForSpecialProgram(args.program, slot, args.targetTeam)
           if (!slotTeam) return
           if (assignSlotIfValid({ allocation: baseAllocation, slot, team: slotTeam, availableSlots: slotsToApply, minFteRemaining: 0.25 })) {
             teamPCAAssigned[slotTeam] += 0.25
@@ -515,10 +520,10 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         return slotsToApply
       }
 
-      const slot1Team = slotsToApply.includes(1) ? getSlotTeamForSpecialProgram(args.program.name, 1, args.targetTeam) : null
-      const slot2Team = slotsToApply.includes(2) ? getSlotTeamForSpecialProgram(args.program.name, 2, args.targetTeam) : null
-      const slot3Team = slotsToApply.includes(3) ? getSlotTeamForSpecialProgram(args.program.name, 3, args.targetTeam) : null
-      const slot4Team = slotsToApply.includes(4) ? getSlotTeamForSpecialProgram(args.program.name, 4, args.targetTeam) : null
+      const slot1Team = slotsToApply.includes(1) ? getSlotTeamForSpecialProgram(args.program, 1, args.targetTeam) : null
+      const slot2Team = slotsToApply.includes(2) ? getSlotTeamForSpecialProgram(args.program, 2, args.targetTeam) : null
+      const slot3Team = slotsToApply.includes(3) ? getSlotTeamForSpecialProgram(args.program, 3, args.targetTeam) : null
+      const slot4Team = slotsToApply.includes(4) ? getSlotTeamForSpecialProgram(args.program, 4, args.targetTeam) : null
       const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
       const allocation: PCAAllocation = {
         id: crypto.randomUUID(),
@@ -645,12 +650,12 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
 
       targetTeamsForProgram.forEach((targetTeam) => {
         // For Robotic/CRP, only create one allocation total (not per team)
-        if ((program.name === 'Robotic' || program.name === 'CRP') && !allowMultiSpecialProgramCoverage && programAllocationCreated) {
+        if (usesSharedAllocationIdentityForProgram(program) && !allowMultiSpecialProgramCoverage && programAllocationCreated) {
           return
         }
 
         const neededFTE = context.averagePCAPerTeam[targetTeam] - teamPCAAssigned[targetTeam]
-        if (neededFTE <= 0 && program.name !== 'Robotic') return // For Robotic, always create allocation if SMM/SFM need it
+        if (neededFTE <= 0 && !bypassesPrimaryTargetPendingGateForProgram(program)) return
 
         let assigned = false
 
@@ -664,7 +669,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               pca => pca.id === preferredPcaId &&
               pca.special_program?.includes(program.name) &&
               pca.is_available &&
-              (program.name === 'Robotic' || program.name === 'CRP'
+              (usesSharedAllocationIdentityForProgram(program)
                 ? !hasProgramAllocationForStaff(pca.id, program.id)
                 : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
             )
@@ -672,7 +677,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             if (floatingPca) {
               // For special programs (Robotic/CRP), find allocation by program, not by team
               // For other programs, find by team
-              const existingAllocation = (program.name === 'Robotic' || program.name === 'CRP')
+              const existingAllocation = usesSharedAllocationIdentityForProgram(program)
                 ? getAllocationsByStaffId(floatingPca.id).find((a) => a.special_program_ids?.includes(program.id))
                 : getAllocationsByStaffId(floatingPca.id).find((a) => a.team === targetTeam)
               const remainingFTE = existingAllocation?.fte_remaining ?? floatingPca.fte_pca
@@ -706,7 +711,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                 const ftePerSlot = 0.25
                 const fteForSlots = slotsToAssign * ftePerSlot
                 // For special programs, use all slots FTE, not just what's needed by the team
-                const fteToAssign = program.name === 'Robotic' || program.name === 'CRP'
+                const fteToAssign = usesSharedAllocationIdentityForProgram(program)
                   ? Math.min(remainingFTE, fteForSlots) // Use full slot FTE for special programs
                   : Math.min(neededFTE, remainingFTE, fteForSlots, program.pca_required || fteForSlots)
 
@@ -717,7 +722,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                   // Track newly assigned slots to avoid double-counting
                   const newlyAssignedSlots: { slot: number, team: Team }[] = []
                   programSlots.forEach(slot => {
-                    const slotTeam = getSlotTeamForSpecialProgram(program.name, slot, targetTeam)
+                    const slotTeam = getSlotTeamForSpecialProgram(program, slot, targetTeam)
                     if (slotTeam && assignSlotIfValid({ allocation: baseAllocationForPCA, slot, team: slotTeam, availableSlots: programSlots, minFteRemaining: 0.25 })) {
                       newlyAssignedSlots.push({ slot, team: slotTeam })
                     }
@@ -734,10 +739,10 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                     teamPCAAssigned[team] += 0.25
                   })
                 } else {
-                  const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program.name, 1, targetTeam) : null
-                  const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program.name, 2, targetTeam) : null
-                  const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program.name, 3, targetTeam) : null
-                  const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program.name, 4, targetTeam) : null
+                  const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program, 1, targetTeam) : null
+                  const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program, 2, targetTeam) : null
+                  const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program, 3, targetTeam) : null
+                  const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program, 4, targetTeam) : null
 
                   const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
                   const allocation: PCAAllocation = {
@@ -762,7 +767,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                 }
                 assigned = true
                 programAssigned = true
-                if (program.name === 'Robotic' || program.name === 'CRP') {
+                if (usesSharedAllocationIdentityForProgram(program)) {
                   programAllocationCreated = true
                 }
                 break
@@ -775,14 +780,14 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               pca => pca.id === preferredPcaId &&
               pca.special_program?.includes(program.name) &&
               pca.is_available &&
-              (program.name === 'Robotic' || program.name === 'CRP'
+              (usesSharedAllocationIdentityForProgram(program)
                 ? !hasProgramAllocationForStaff(pca.id, program.id)
                 : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
             )
 
             if (nonFloatingPca) {
               // For special programs (Robotic/CRP), find allocation by program, not by team
-              const existingAllocation = (program.name === 'Robotic' || program.name === 'CRP')
+              const existingAllocation = usesSharedAllocationIdentityForProgram(program)
                 ? getAllocationsByStaffId(nonFloatingPca.id).find((a) => a.special_program_ids?.includes(program.id))
                 : getAllocationsByStaffId(nonFloatingPca.id).find((a) => a.team === targetTeam)
               const remainingFTE = existingAllocation?.fte_remaining || 1
@@ -798,7 +803,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                   // Track newly assigned slots to avoid double-counting
                   const newlyAssignedSlots: { slot: number, team: Team }[] = []
                   programSlots.forEach(slot => {
-                    const slotTeam = getSlotTeamForSpecialProgram(program.name, slot, targetTeam)
+                    const slotTeam = getSlotTeamForSpecialProgram(program, slot, targetTeam)
                     if (slotTeam && assignSlotIfValid({ allocation: existingAllocation, slot, team: slotTeam, availableSlots: programSlots, minFteRemaining: 0.25 })) {
                       newlyAssignedSlots.push({ slot, team: slotTeam })
                     }
@@ -815,10 +820,10 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                     teamPCAAssigned[team] += 0.25
                   })
                 } else {
-                  const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program.name, 1, targetTeam) : null
-                  const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program.name, 2, targetTeam) : null
-                  const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program.name, 3, targetTeam) : null
-                  const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program.name, 4, targetTeam) : null
+                  const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program, 1, targetTeam) : null
+                  const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program, 2, targetTeam) : null
+                  const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program, 3, targetTeam) : null
+                  const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program, 4, targetTeam) : null
                   const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
 
                   const allocation: PCAAllocation = {
@@ -843,7 +848,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                 }
                 assigned = true
                 programAssigned = true
-                if (program.name === 'Robotic' || program.name === 'CRP') {
+                if (usesSharedAllocationIdentityForProgram(program)) {
                   programAllocationCreated = true
                 }
                 break
@@ -859,7 +864,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           const fallbackFloating = floatingPCA.find(
             pca => pca.special_program?.includes(program.name) &&
             pca.is_available &&
-            (program.name === 'Robotic' || program.name === 'CRP'
+            (usesSharedAllocationIdentityForProgram(program)
               ? !hasProgramAllocationForStaff(pca.id, program.id)
               : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
           )
@@ -874,7 +879,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               const ftePerSlot = 0.25
               const fteForSlots = slotsToAssign * ftePerSlot
               // For special programs, use all slots FTE, not just what's needed by the team
-              const fteToAssign = program.name === 'Robotic' || program.name === 'CRP'
+              const fteToAssign = usesSharedAllocationIdentityForProgram(program)
                 ? Math.min(remainingFTE, fteForSlots) // Use full slot FTE for special programs
                 : Math.min(neededFTE, remainingFTE, fteForSlots, program.pca_required || fteForSlots)
 
@@ -882,7 +887,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                 // Track newly assigned slots to avoid double-counting
                 const newlyAssignedSlots: { slot: number, team: Team }[] = []
                 programSlots.forEach(slot => {
-                  const slotTeam = getSlotTeamForSpecialProgram(program.name, slot, targetTeam)
+                  const slotTeam = getSlotTeamForSpecialProgram(program, slot, targetTeam)
                   if (slotTeam && assignSlotIfValid({ allocation: existingAllocation, slot, team: slotTeam, availableSlots: programSlots, minFteRemaining: 0.25 })) {
                     newlyAssignedSlots.push({ slot, team: slotTeam })
                   }
@@ -899,10 +904,10 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                   teamPCAAssigned[team] += 0.25
                 })
               } else {
-                const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program.name, 1, targetTeam) : null
-                const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program.name, 2, targetTeam) : null
-                const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program.name, 3, targetTeam) : null
-                const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program.name, 4, targetTeam) : null
+                const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program, 1, targetTeam) : null
+                const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program, 2, targetTeam) : null
+                const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program, 3, targetTeam) : null
+                const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program, 4, targetTeam) : null
                 const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
 
                 const allocation: PCAAllocation = {
@@ -936,7 +941,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             const fallbackNonFloating = nonFloatingPCA.find(
               pca => pca.special_program?.includes(program.name) &&
               pca.is_available &&
-              (program.name === 'Robotic' || program.name === 'CRP'
+              (usesSharedAllocationIdentityForProgram(program)
                 ? !hasProgramAllocationForStaff(pca.id, program.id)
                 : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
             )
@@ -956,7 +961,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                   // Track newly assigned slots to avoid double-counting
                   const newlyAssignedSlots: { slot: number, team: Team }[] = []
                   programSlots.forEach(slot => {
-                    const slotTeam = getSlotTeamForSpecialProgram(program.name, slot, targetTeam)
+                    const slotTeam = getSlotTeamForSpecialProgram(program, slot, targetTeam)
                     if (slotTeam && assignSlotIfValid({ allocation: existingAllocation, slot, team: slotTeam, availableSlots: programSlots, minFteRemaining: 0.25 })) {
                       newlyAssignedSlots.push({ slot, team: slotTeam })
                     }
@@ -973,10 +978,10 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                     teamPCAAssigned[team] += 0.25
                   })
                 } else {
-                  const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program.name, 1, targetTeam) : null
-                  const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program.name, 2, targetTeam) : null
-                  const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program.name, 3, targetTeam) : null
-                  const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program.name, 4, targetTeam) : null
+                  const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program, 1, targetTeam) : null
+                  const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program, 2, targetTeam) : null
+                  const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program, 3, targetTeam) : null
+                  const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program, 4, targetTeam) : null
                   const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
 
                   const allocation: PCAAllocation = {
@@ -2067,7 +2072,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
     
     targetTeamsForProgram.forEach((targetTeam) => {
       // For Robotic/CRP, only create one allocation total (not per team)
-      if ((program.name === 'Robotic' || program.name === 'CRP') && programAllocationCreated) {
+      if (usesSharedAllocationIdentityForProgram(program) && programAllocationCreated) {
         return
       }
       
@@ -2086,7 +2091,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             pca => pca.id === preferredPcaId &&
             pca.special_program?.includes(program.name) &&
             pca.is_available &&
-            (program.name === 'Robotic' || program.name === 'CRP'
+            (usesSharedAllocationIdentityForProgram(program)
               ? !hasProgramAllocationForStaff(pca.id, program.id)
               : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
           )
@@ -2094,7 +2099,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           if (floatingPca) {
             // For special programs (Robotic/CRP), find allocation by program, not by team
             // For other programs, find by team
-              const existingAllocation = (program.name === 'Robotic' || program.name === 'CRP')
+              const existingAllocation = usesSharedAllocationIdentityForProgram(program)
                 ? getAllocationsByStaffId(floatingPca.id).find((a) => a.special_program_ids?.includes(program.id))
                 : getAllocationsByStaffId(floatingPca.id).find((a) => a.team === targetTeam)
             const remainingFTE = existingAllocation?.fte_remaining ?? floatingPca.fte_pca
@@ -2127,7 +2132,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               const ftePerSlot = 0.25
               const fteForSlots = slotsToAssign * ftePerSlot
               // For special programs, use all slots FTE, not just what's needed by the team
-              const fteToAssign = program.name === 'Robotic' || program.name === 'CRP'
+              const fteToAssign = usesSharedAllocationIdentityForProgram(program)
                 ? Math.min(remainingFTE, fteForSlots) // Use full slot FTE for special programs
                 : Math.min(neededFTE, remainingFTE, fteForSlots, program.pca_required || fteForSlots)
               
@@ -2138,7 +2143,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                 // Track newly assigned slots to avoid double-counting
                 const newlyAssignedSlots: { slot: number, team: Team }[] = []
                 programSlots.forEach(slot => {
-                  const slotTeam = getSlotTeamForSpecialProgram(program.name, slot, targetTeam)
+                  const slotTeam = getSlotTeamForSpecialProgram(program, slot, targetTeam)
                   if (slotTeam && assignSlotIfValid({ allocation: baseAllocationForPCA, slot, team: slotTeam, availableSlots: programSlots, minFteRemaining: 0.25 })) {
                     newlyAssignedSlots.push({ slot, team: slotTeam })
                   }
@@ -2155,10 +2160,10 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                   teamPCAAssigned[team] += 0.25
                 })
               } else {
-                const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program.name, 1, targetTeam) : null
-                const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program.name, 2, targetTeam) : null
-                const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program.name, 3, targetTeam) : null
-                const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program.name, 4, targetTeam) : null
+                const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program, 1, targetTeam) : null
+                const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program, 2, targetTeam) : null
+                const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program, 3, targetTeam) : null
+                const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program, 4, targetTeam) : null
                 
                 const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
                 const allocation: PCAAllocation = {
@@ -2183,7 +2188,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               }
               assigned = true
               programAssigned = true
-              if (program.name === 'Robotic' || program.name === 'CRP') {
+              if (usesSharedAllocationIdentityForProgram(program)) {
                 programAllocationCreated = true
               }
               break
@@ -2196,14 +2201,14 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             pca => pca.id === preferredPcaId &&
             pca.special_program?.includes(program.name) &&
             pca.is_available &&
-            (program.name === 'Robotic' || program.name === 'CRP'
+            (usesSharedAllocationIdentityForProgram(program)
               ? !hasProgramAllocationForStaff(pca.id, program.id)
               : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
           )
           
           if (nonFloatingPca) {
             // For special programs (Robotic/CRP), find allocation by program, not by team
-            const existingAllocation = (program.name === 'Robotic' || program.name === 'CRP')
+            const existingAllocation = usesSharedAllocationIdentityForProgram(program)
               ? getAllocationsByStaffId(nonFloatingPca.id).find((a) => a.special_program_ids?.includes(program.id))
               : getAllocationsByStaffId(nonFloatingPca.id).find((a) => a.team === targetTeam)
             const remainingFTE = existingAllocation?.fte_remaining || 1
@@ -2219,7 +2224,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                 // Track newly assigned slots to avoid double-counting
                 const newlyAssignedSlots: { slot: number, team: Team }[] = []
                 programSlots.forEach(slot => {
-                  const slotTeam = getSlotTeamForSpecialProgram(program.name, slot, targetTeam)
+                  const slotTeam = getSlotTeamForSpecialProgram(program, slot, targetTeam)
                   if (slotTeam && assignSlotIfValid({ allocation: existingAllocation, slot, team: slotTeam, availableSlots: programSlots, minFteRemaining: 0.25 })) {
                     newlyAssignedSlots.push({ slot, team: slotTeam })
                   }
@@ -2236,10 +2241,10 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                   teamPCAAssigned[team] += 0.25
                 })
               } else {
-                const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program.name, 1, targetTeam) : null
-                const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program.name, 2, targetTeam) : null
-                const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program.name, 3, targetTeam) : null
-                const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program.name, 4, targetTeam) : null
+                const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program, 1, targetTeam) : null
+                const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program, 2, targetTeam) : null
+                const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program, 3, targetTeam) : null
+                const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program, 4, targetTeam) : null
                 const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
                 
                 const allocation: PCAAllocation = {
@@ -2264,7 +2269,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               }
               assigned = true
               programAssigned = true
-              if (program.name === 'Robotic' || program.name === 'CRP') {
+              if (usesSharedAllocationIdentityForProgram(program)) {
                 programAllocationCreated = true
               }
               break
@@ -2280,7 +2285,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
         const fallbackFloating = floatingPCA.find(
           pca => pca.special_program?.includes(program.name) &&
           pca.is_available &&
-          (program.name === 'Robotic' || program.name === 'CRP'
+          (usesSharedAllocationIdentityForProgram(program)
             ? !hasProgramAllocationForStaff(pca.id, program.id)
             : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
         )
@@ -2295,7 +2300,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
             const ftePerSlot = 0.25
             const fteForSlots = slotsToAssign * ftePerSlot
             // For special programs, use all slots FTE, not just what's needed by the team
-            const fteToAssign = program.name === 'Robotic' || program.name === 'CRP'
+            const fteToAssign = usesSharedAllocationIdentityForProgram(program)
               ? Math.min(remainingFTE, fteForSlots) // Use full slot FTE for special programs
               : Math.min(neededFTE, remainingFTE, fteForSlots, program.pca_required || fteForSlots)
             
@@ -2303,7 +2308,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
               // Track newly assigned slots to avoid double-counting
               const newlyAssignedSlots: { slot: number, team: Team }[] = []
               programSlots.forEach(slot => {
-                const slotTeam = getSlotTeamForSpecialProgram(program.name, slot, targetTeam)
+                const slotTeam = getSlotTeamForSpecialProgram(program, slot, targetTeam)
                 if (slotTeam && assignSlotIfValid({ allocation: existingAllocation, slot, team: slotTeam, availableSlots: programSlots, minFteRemaining: 0.25 })) {
                   newlyAssignedSlots.push({ slot, team: slotTeam })
                 }
@@ -2320,10 +2325,10 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                 teamPCAAssigned[team] += 0.25
               })
             } else {
-              const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program.name, 1, targetTeam) : null
-              const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program.name, 2, targetTeam) : null
-              const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program.name, 3, targetTeam) : null
-              const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program.name, 4, targetTeam) : null
+              const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program, 1, targetTeam) : null
+              const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program, 2, targetTeam) : null
+              const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program, 3, targetTeam) : null
+              const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program, 4, targetTeam) : null
               const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
               
               const allocation: PCAAllocation = {
@@ -2357,7 +2362,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
           const fallbackNonFloating = nonFloatingPCA.find(
             pca => pca.special_program?.includes(program.name) &&
             pca.is_available &&
-            (program.name === 'Robotic' || program.name === 'CRP'
+            (usesSharedAllocationIdentityForProgram(program)
               ? !hasProgramAllocationForStaff(pca.id, program.id)
               : !hasProgramAllocationForStaff(pca.id, program.id, targetTeam))
           )
@@ -2377,7 +2382,7 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                 // Track newly assigned slots to avoid double-counting
                 const newlyAssignedSlots: { slot: number, team: Team }[] = []
                 programSlots.forEach(slot => {
-                  const slotTeam = getSlotTeamForSpecialProgram(program.name, slot, targetTeam)
+                  const slotTeam = getSlotTeamForSpecialProgram(program, slot, targetTeam)
                   if (slotTeam && assignSlotIfValid({ allocation: existingAllocation, slot, team: slotTeam, availableSlots: programSlots, minFteRemaining: 0.25 })) {
                     newlyAssignedSlots.push({ slot, team: slotTeam })
                   }
@@ -2394,10 +2399,10 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
                   teamPCAAssigned[team] += 0.25
                 })
               } else {
-                const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program.name, 1, targetTeam) : null
-                const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program.name, 2, targetTeam) : null
-                const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program.name, 3, targetTeam) : null
-                const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program.name, 4, targetTeam) : null
+                const slot1Team = programSlots.includes(1) ? getSlotTeamForSpecialProgram(program, 1, targetTeam) : null
+                const slot2Team = programSlots.includes(2) ? getSlotTeamForSpecialProgram(program, 2, targetTeam) : null
+                const slot3Team = programSlots.includes(3) ? getSlotTeamForSpecialProgram(program, 3, targetTeam) : null
+                const slot4Team = programSlots.includes(4) ? getSlotTeamForSpecialProgram(program, 4, targetTeam) : null
                 const fteAssigned = calculateFTEAssigned(slot1Team, slot2Team, slot3Team, slot4Team)
                 
                 const allocation: PCAAllocation = {

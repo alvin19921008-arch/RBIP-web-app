@@ -11,7 +11,7 @@ import { PCAAllocation } from '@/types/schedule'
 import { PCAPreference, SpecialProgram } from '@/types/allocation'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
-import { getEffectiveSpecialProgramWeekdaySlots } from '@/lib/utils/specialProgramConfigRows'
+import { resolveSpecialProgramRuntimeModel } from '@/lib/utils/specialProgramRuntimeModel'
 import {
   assignSlotIfValid,
   findAvailablePCAs,
@@ -477,51 +477,9 @@ export interface AdjacentSlotResult {
   hasAnyAdjacentReservations: boolean
 }
 
-function normalizeSlots(slots: unknown): number[] {
-  if (!Array.isArray(slots)) return []
-  return Array.from(
-    new Set(slots.filter((slot): slot is number => typeof slot === 'number' && [1, 2, 3, 4].includes(slot)))
-  ).sort((a, b) => a - b)
-}
-
-function getResolvedProgramSlots(args: {
-  program: SpecialProgram
-  weekday?: Weekday
-  staffOverrides?: Record<string, StaffOverrideWithSubstitution>
-}): number[] {
-  const { program, weekday, staffOverrides } = args
-
-  const requiredSlots = new Set<number>()
-  Object.values(staffOverrides || {}).forEach((override) => {
-    const list = (override as any)?.specialProgramOverrides
-    if (!Array.isArray(list)) return
-    list.forEach((entry: any) => {
-      if (!entry || entry.programId !== program.id) return
-      normalizeSlots(entry.requiredSlots).forEach((slot) => requiredSlots.add(slot))
-    })
-  })
-  if (requiredSlots.size > 0) {
-    return Array.from(requiredSlots).sort((a, b) => a - b)
-  }
-
-  const resolvedWeekday =
-    weekday ??
-    (Array.isArray(program.weekdays) && program.weekdays.length === 1 ? program.weekdays[0] : undefined)
-  if (!resolvedWeekday) return []
-
-  return getEffectiveSpecialProgramWeekdaySlots({
-    program,
-    day: resolvedWeekday,
-    preferDirectWeekdaySlots: true,
-  })
-}
-
 /**
  * Helper function to check if a slot is actually assigned by the special program.
- * Different programs have different slot-team combinations:
- * - Robotic: slots 1-2 → SMM, slots 3-4 → SFM
- * - CRP: slot 2 → CPPC
- * - Other programs: all slots in the allocation's primary team
+ * The runtime model resolves both the effective slot set and the slot-team map.
  */
 function isSlotFromProgram(
   allocation: PCAAllocation,
@@ -531,17 +489,16 @@ function isSlotFromProgram(
   weekday?: Weekday,
   staffOverrides?: Record<string, StaffOverrideWithSubstitution>
 ): boolean {
-  const programSlots = getResolvedProgramSlots({ program, weekday, staffOverrides })
-  if (!programSlots.includes(slot)) return false
+  const runtimeModel = resolveSpecialProgramRuntimeModel({
+    program,
+    weekday,
+    staffOverrides: staffOverrides as Record<string, unknown> | undefined,
+    targetTeam: allocation.team,
+  })
+  if (!runtimeModel.isActiveOnWeekday) return false
+  if (!runtimeModel.effectiveRequiredSlots.includes(slot as 1 | 2 | 3 | 4)) return false
 
-  // For Robotic: slots 1-2 → SMM, slots 3-4 → SFM
-  if (program.name === 'Robotic') {
-    if (slot === 1 || slot === 2) return team === 'SMM'
-    if (slot === 3 || slot === 4) return team === 'SFM'
-    return false
-  }
-
-  return allocation.team === team
+  return runtimeModel.slotTeamBySlot[slot as 1 | 2 | 3 | 4] === team
 }
 
 function getProgramsForAllocation(

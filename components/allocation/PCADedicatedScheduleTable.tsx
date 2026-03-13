@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/toast-context'
 import { useAutoHideFlag } from '@/lib/hooks/useAutoHideFlag'
 import { useIsolatedWheelScroll } from '@/lib/hooks/useIsolatedWheelScroll'
 import { normalizeSubstitutionForBySlot } from '@/lib/utils/substitutionFor'
+import { getSpecialProgramNameBySlotForAllocation } from '@/lib/utils/specialProgramExport'
 
 type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
 
@@ -29,6 +30,12 @@ type StaffOverridesLike = Record<
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
     substitutionForBySlot?: Partial<Record<1 | 2 | 3 | 4, { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team }>>
     extraCoverageBySlot?: Partial<Record<1 | 2 | 3 | 4, true>>
+    specialProgramOverrides?: Array<{
+      programId: string
+      enabled?: boolean
+      requiredSlots?: number[]
+      slots?: number[]
+    }>
   }
 >
 
@@ -81,37 +88,6 @@ function sortPCAColumns(staff: Staff[]): Staff[] {
 function getBaseFTEForStaff(s: Staff): number {
   if (s.status === 'buffer' && typeof s.buffer_fte === 'number') return s.buffer_fte
   return 1.0
-}
-
-function getProgramSlotsForWeekday(program: SpecialProgram, day: Weekday, staffId?: string): number[] {
-  const rawSlots: any = (program as any).slots
-  if (!rawSlots) return []
-
-  // Shape A: weekday-keyed (ideal)
-  const direct = rawSlots?.[day]
-  if (Array.isArray(direct)) {
-    return (direct as any[]).filter((s) => typeof s === 'number').sort((a, b) => a - b)
-  }
-
-  // Shape B: staffId-keyed
-  if (staffId) {
-    const staffDaySlots = rawSlots?.[staffId]?.[day]
-    if (Array.isArray(staffDaySlots)) {
-      return (staffDaySlots as any[]).filter((s) => typeof s === 'number').sort((a, b) => a - b)
-    }
-  }
-
-  // Fallback: union across all staff configs for this weekday
-  const set = new Set<number>()
-  Object.values(rawSlots).forEach((v: any) => {
-    const daySlots = v?.[day]
-    if (Array.isArray(daySlots)) {
-      daySlots.forEach((s: any) => {
-        if (typeof s === 'number') set.add(s)
-      })
-    }
-  })
-  return Array.from(set).sort((a, b) => a - b)
 }
 
 function getFurthestPCAStage(stepStatus: StepStatus, initializedSteps: Set<string>): 'none' | 'step2' | 'step3' {
@@ -221,32 +197,16 @@ export function PCADedicatedScheduleTable({
       if (!Array.isArray(a.special_program_ids) || a.special_program_ids.length === 0) continue
       const staffSlots = byStaff.get(a.staff_id) ?? {}
 
-      for (const programId of a.special_program_ids) {
-        const program = specialPrograms.find((p) => p.id === programId)
-        if (!program) continue
-        if (!program.weekdays?.includes(weekday)) continue
-
-        // Robotic & CRP have explicit slot-team mappings (same logic as existing UI).
-        if (program.name === 'Robotic') {
-          if (a.slot1 === 'SMM') staffSlots[1] = 'Robotic'
-          if (a.slot2 === 'SMM') staffSlots[2] = 'Robotic'
-          if (a.slot3 === 'SFM') staffSlots[3] = 'Robotic'
-          if (a.slot4 === 'SFM') staffSlots[4] = 'Robotic'
-          continue
-        }
-        if (program.name === 'CRP') {
-          if (a.slot2 === 'CPPC') staffSlots[2] = 'CRP'
-          continue
-        }
-
-        const slots = getProgramSlotsForWeekday(program, weekday, a.staff_id)
-        for (const s of slots) {
-          if (!isValidSlot(s)) continue
-          // Mark program name for this slot if allocation actually assigns this slot somewhere
-          const assignedTeam = (s === 1 ? a.slot1 : s === 2 ? a.slot2 : s === 3 ? a.slot3 : a.slot4) as Team | null
-          if (assignedTeam) staffSlots[s] = program.name
-        }
-      }
+      const labels = getSpecialProgramNameBySlotForAllocation({
+        allocation: a,
+        specialPrograms,
+        weekday,
+        staffOverrides,
+      })
+      ;([1, 2, 3, 4] as const).forEach((slot) => {
+        const label = labels[slot]
+        if (label) staffSlots[slot] = label
+      })
 
       byStaff.set(a.staff_id, staffSlots)
     }

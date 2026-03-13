@@ -1,9 +1,10 @@
 import { getWeekday } from '@/lib/features/schedule/date'
-import { getEffectiveSpecialProgramWeekdaySlots } from '@/lib/utils/specialProgramConfigRows'
+import { resolveSpecialProgramRuntimeModel } from '@/lib/utils/specialProgramRuntimeModel'
 import type { SpecialProgram } from '@/types/allocation'
 import type { Team } from '@/types/staff'
 
 interface PcaAllocationLike {
+  team?: Team | null
   slot1?: Team | null
   slot2?: Team | null
   slot3?: Team | null
@@ -25,8 +26,9 @@ export function getSpecialProgramSlotsForAllocationTeam(args: {
   team: Team
   selectedDate: Date
   specialPrograms: SpecialProgram[]
+  staffOverrides?: Record<string, unknown>
 }): number[] {
-  const { allocation, team, selectedDate, specialPrograms } = args
+  const { allocation, team, selectedDate, specialPrograms, staffOverrides } = args
   if (!allocation.special_program_ids || allocation.special_program_ids.length === 0) {
     return []
   }
@@ -34,15 +36,27 @@ export function getSpecialProgramSlotsForAllocationTeam(args: {
   const weekday = getWeekday(selectedDate)
   const slotsForTeam = getSlotsForTeam(allocation, team)
   const out = new Set<number>()
+  const programById = new Map<string, SpecialProgram>()
+  for (const program of specialPrograms || []) {
+    programById.set(String(program.id), program)
+  }
 
   for (const programId of allocation.special_program_ids) {
-    const program = specialPrograms.find((item) => item.id === programId)
+    const program = programById.get(String(programId))
     if (!program) continue
-    const programSlots = getEffectiveSpecialProgramWeekdaySlots({ program, day: weekday })
-    for (const slot of programSlots) {
-      if (slotsForTeam.includes(slot)) {
-        out.add(slot)
-      }
+
+    const runtimeModel = resolveSpecialProgramRuntimeModel({
+      program,
+      weekday,
+      staffOverrides,
+      targetTeam: allocation.team ?? team,
+    })
+    if (!runtimeModel.isActiveOnWeekday) continue
+
+    for (const slot of runtimeModel.effectiveRequiredSlots) {
+      if (!slotsForTeam.includes(slot)) continue
+      if (runtimeModel.slotTeamBySlot[slot] !== team) continue
+      out.add(slot)
     }
   }
 

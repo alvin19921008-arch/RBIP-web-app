@@ -1246,9 +1246,11 @@ function SchedulePageContent() {
 
   type SpecialProgramOverrideEntry = {
     programId: string
+    enabled?: boolean
     therapistId?: string
     pcaId?: string
     slots?: number[]
+    requiredSlots?: number[]
     therapistFTESubtraction?: number
     pcaFTESubtraction?: number
     drmAddOn?: number
@@ -4242,6 +4244,7 @@ function SchedulePageContent() {
               availableSlots?: number[]
               specialProgramOverrides?: Array<{
                 programId: string
+                enabled?: boolean
                 therapistId?: string
                 pcaId?: string
                 slots?: number[]
@@ -5390,6 +5393,7 @@ function SchedulePageContent() {
     const slotsByProgramId = buildSpecialProgramSlotsByProgramId({
       specialPrograms: specialPrograms as any,
       weekday,
+      staffOverrides: staffOverrides as any,
     })
 
     for (const alloc of existingAllocationsForStep3Dialog) {
@@ -6305,6 +6309,7 @@ function SchedulePageContent() {
       team,
       selectedDate,
       specialPrograms,
+      staffOverrides: staffOverrides as any,
     })
   }
 
@@ -6786,6 +6791,7 @@ function SchedulePageContent() {
       const slotsByProgramId = buildSpecialProgramSlotsByProgramId({
         specialPrograms: specialPrograms as any,
         weekday,
+        staffOverrides: baseOverrides as any,
       })
 
       const staffById = new Map(staff.map((s) => [s.id, s]))
