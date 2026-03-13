@@ -1185,6 +1185,54 @@ Move into shared runtime interpretation:
 5. **P4.5 — remove legacy adapted raw-object flows**
    - eliminate remaining “mutate `SpecialProgram` shape to simulate runtime state” patterns
 
+#### P4.1 progress (2026-03-13)
+
+- Added `lib/utils/staffRuntimeProjection.ts` with `buildStaffRuntimeById()` plus normalization helpers (`deriveEffectiveInvalidSlot`, `normalizeAvailableSlotsWithInvalidAndSubstitution`) to make per-staff daily runtime semantics explicit and reusable.
+- Migrated Step 2 and Step 3 PCA pool construction in `useScheduleController` to consume `staffById` runtime entries instead of duplicating invalid-slot / substitution-slot / FTE interpretation logic inline.
+- Save path now falls back to runtime-derived `effectiveInvalidSlot` (including `invalidSlots[]`-only overrides) when building persisted PCA rows, reducing legacy `invalidSlot` drift.
+- Added regression `tests/regression/f32-staff-runtime-projection-normalization.test.ts` for invalid-slot derivation + slot normalization behavior.
+
+#### P4.2 progress (2026-03-13)
+
+- Added `lib/utils/scheduleRuntimeProjection.ts` with `buildScheduleRuntimeProjection()` and selector-style consumer views:
+  - `buildTherapistAllocatorView(projection, sptWeekdayByStaffId)`
+  - `buildPcaAllocatorView(projection, options)`
+- Step 2 now builds one shared runtime projection and sources both therapist allocator input (`StaffData[]`) and PCA allocator input (`PCAData[]`) from these selectors.
+- Step 3 now also sources floating PCA allocator input from the same projection/view path (with Step 3 substitution-slot exclusion and buffer clamp options).
+- Added regression `tests/regression/f33-schedule-runtime-views-use-shared-projection.test.ts` to assert therapist + PCA views read consistent team/FTE/slot semantics from one projection.
+
+#### P4.3 progress (2026-03-13)
+
+- Added `lib/utils/scheduleReservationRuntime.ts` as a shared runtime reservation interpreter for special-program slot occupancy:
+  - `buildReservationRuntimeProgramsById(...)`
+  - `isAllocationSlotFromSpecialProgram(...)`
+  - `getAllocationSpecialProgramNameForSlot(...)`
+- Migrated `lib/features/schedule/step3Bootstrap.ts` to consume this shared runtime occupancy view (slot + team aware) instead of per-program raw slot-set exclusion.
+- Migrated Step 3.3 logic in `lib/utils/reservationLogic.ts` to the same runtime occupancy interpreter for:
+  - identifying whether a slot is truly special-program-assigned
+  - deriving the corresponding special-program display name
+- Added regression `tests/regression/f34-reservation-bootstrap-use-slot-team-runtime-occupancy.test.ts` to lock slot-team-aware occupancy behavior for Step 3 bootstrap + Step 3.3 adjacent reservation.
+
+#### P4.4 progress (2026-03-13)
+
+- Extended `lib/utils/scheduleRuntimeProjection.ts` with a read-side `buildDisplayView(...)` / `buildDisplayViewForWeekday(...)` projection that caches runtime program interpretations by allocation target team.
+- Added read-side runtime helpers in `lib/utils/scheduleReservationRuntime.ts`:
+  - `getAllocationSpecialProgramSlotsForTeam(...)`
+  - `getAllocationSpecialProgramNamesBySlot(...)`
+- Migrated display/export read paths to shared projection-backed runtime facts:
+  - `lib/utils/specialProgramDisplay.ts`
+  - `lib/utils/specialProgramExport.ts`
+- Added regression `tests/regression/f35-read-side-display-export-share-runtime-occupancy.test.ts` to keep display and export slot classification aligned on the same slot-team-aware runtime occupancy semantics.
+
+#### P4.5 progress (2026-03-13)
+
+- Removed remaining slot-set adaptation paths in active schedule flows and switched them to slot-team-aware runtime occupancy checks:
+  - `lib/features/schedule/stepReset.ts`
+  - `app/(dashboard)/schedule/page.tsx` (Step 3 dialog pending-cap view + extra-coverage recompute)
+  - `components/allocation/PCABlock.tsx`
+- Rebased `lib/utils/specialProgramSlotMap.ts` to use the reservation runtime interpreter (`buildReservationRuntimeProgramsById`) as a compatibility adapter, so legacy callers no longer derive slots from raw override/config branches.
+- Net effect: special-program occupancy classification now consistently comes from shared runtime projection helpers, rather than per-consumer raw slot-set reconstruction.
+
 ### Recommendation from current state
 
 Yes: `P4` should become the next explicit workstream.

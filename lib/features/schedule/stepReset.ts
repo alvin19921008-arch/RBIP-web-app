@@ -7,7 +7,8 @@ import {
   getSubstitutionSlotsForTeam,
   hasAnySubstitution,
 } from '@/lib/utils/substitutionFor'
-import { buildSpecialProgramSlotsByProgramId } from '@/lib/utils/specialProgramSlotMap'
+import { getAllocationSpecialProgramNamesBySlot } from '@/lib/utils/scheduleReservationRuntime'
+import { buildDisplayViewForWeekday } from '@/lib/utils/scheduleRuntimeProjection'
 import { type SpecialProgram } from '@/types/allocation'
 import { type Weekday } from '@/types/staff'
 
@@ -107,46 +108,38 @@ export function computeStep3ResetForReentry(args: {
   const bufferFloatingIds = new Set(
     allStaff.filter((s) => s.rank === 'PCA' && s.floating && s.status === 'buffer').map((s) => s.id)
   )
-  const specialProgramSlotsByProgramId =
+  const displayView =
     args.weekday && args.specialPrograms
-      ? buildSpecialProgramSlotsByProgramId({
-          specialPrograms: args.specialPrograms,
+      ? buildDisplayViewForWeekday({
           weekday: args.weekday,
+          specialPrograms: args.specialPrograms,
           staffOverrides: args.staffOverrides,
         })
-      : new Map<string, Set<number>>()
+      : null
 
   const getSpecialProgramSlotNumbers = (alloc: PCAAllocation): Array<1 | 2 | 3 | 4> => {
-    const spIdsRaw = (alloc as any)?.special_program_ids
-    const spIds = Array.isArray(spIdsRaw) ? spIdsRaw.map((x: any) => String(x)) : []
-    if (spIds.length === 0) return []
-
-    const out = new Set<1 | 2 | 3 | 4>()
-
-    spIds.forEach((programId) => {
-      const slots = specialProgramSlotsByProgramId.get(programId)
-      if (!slots) return
-      slots.forEach((slot) => {
-        if (slot === 1 || slot === 2 || slot === 3 || slot === 4) out.add(slot)
+    if (displayView) {
+      const specialProgramsById = displayView.getProgramsByAllocationTeam((alloc as any)?.team as Team | null | undefined)
+      const labelsBySlot = getAllocationSpecialProgramNamesBySlot({
+        allocation: alloc,
+        specialProgramsById,
       })
-    })
-
-    if (out.size > 0) {
-      return Array.from(out).sort((a, b) => a - b)
+      const runtimeSlots = ([1, 2, 3, 4] as const).filter((slot) => !!labelsBySlot[slot])
+      if (runtimeSlots.length > 0) {
+        return [...runtimeSlots]
+      }
     }
 
     // Fallback: preserve only slots that match the allocation's primary team.
     // (Avoid preserving Step 3 slots assigned to other teams.)
-    if (out.size === 0) {
-      const primaryTeam = (alloc as any)?.team as Team | null | undefined
-      if (primaryTeam && TEAMS.includes(primaryTeam)) {
-        if ((alloc as any).slot1 === primaryTeam) out.add(1)
-        if ((alloc as any).slot2 === primaryTeam) out.add(2)
-        if ((alloc as any).slot3 === primaryTeam) out.add(3)
-        if ((alloc as any).slot4 === primaryTeam) out.add(4)
-      }
+    const out = new Set<1 | 2 | 3 | 4>()
+    const primaryTeam = (alloc as any)?.team as Team | null | undefined
+    if (primaryTeam && TEAMS.includes(primaryTeam)) {
+      if ((alloc as any).slot1 === primaryTeam) out.add(1)
+      if ((alloc as any).slot2 === primaryTeam) out.add(2)
+      if ((alloc as any).slot3 === primaryTeam) out.add(3)
+      if ((alloc as any).slot4 === primaryTeam) out.add(4)
     }
-
     return Array.from(out).sort((a, b) => a - b)
   }
 

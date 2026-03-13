@@ -73,8 +73,8 @@ import { useAccessControl } from '@/lib/access/useAccessControl'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
 import { getWeekday, formatDateDDMMYYYY, formatDateForInput, parseDateFromInput } from '@/lib/features/schedule/date'
 import { computeDrmAddOnFte, computeReservedSpecialProgramPcaFte } from '@/lib/utils/specialProgramPcaCapacity'
-import { getSpecialProgramSlotsForAllocationTeam } from '@/lib/utils/specialProgramDisplay'
-import { buildSpecialProgramSlotsByProgramId } from '@/lib/utils/specialProgramSlotMap'
+import { getAllocationSpecialProgramSlotsForTeam, isAllocationSlotFromSpecialProgram } from '@/lib/utils/scheduleReservationRuntime'
+import { buildDisplayViewForWeekday } from '@/lib/utils/scheduleRuntimeProjection'
 import { flushSync } from 'react-dom'
 import {
   buildStaffByIdMap,
@@ -1508,6 +1508,35 @@ function SchedulePageContent() {
         clearBufferedStep2Toast()
         // Merge special program overrides into staffOverrides (same logic as in resolver)
         const mergedOverrides = { ...staffOverrides }
+        const touchedProgramIds = new Set(
+          Object.values(overridesFromDialog).flatMap((override: any) =>
+            Array.isArray((override as any)?.specialProgramOverrides)
+              ? (override as any).specialProgramOverrides
+                  .map((entry: any) => String(entry?.programId ?? ''))
+                  .filter((id: string) => id.length > 0)
+              : []
+          )
+        )
+        // Prevent stale Step 2.0 therapist/PCA entries from previous runs lingering on other owners.
+        if (touchedProgramIds.size > 0) {
+          Object.entries(mergedOverrides).forEach(([ownerId, ownerOverride]: any) => {
+            const currentList = ownerOverride?.specialProgramOverrides
+            if (!Array.isArray(currentList) || currentList.length === 0) return
+            const filtered = currentList.filter(
+              (entry: any) => !touchedProgramIds.has(String(entry?.programId ?? ''))
+            )
+            if (filtered.length === currentList.length) return
+            if (filtered.length === 0) {
+              const { specialProgramOverrides: _omit, ...rest } = ownerOverride
+              mergedOverrides[ownerId] = rest
+              return
+            }
+            mergedOverrides[ownerId] = {
+              ...ownerOverride,
+              specialProgramOverrides: filtered,
+            }
+          })
+        }
         Object.entries(overridesFromDialog).forEach(([staffId, override]) => {
           if (mergedOverrides[staffId]) {
             mergedOverrides[staffId] = {
@@ -4304,6 +4333,35 @@ function SchedulePageContent() {
 
               // Merge special program overrides into staffOverrides
               const mergedOverrides = { ...staffOverrides }
+              const touchedProgramIds = new Set(
+                Object.values(overrides).flatMap((override: any) =>
+                  Array.isArray((override as any)?.specialProgramOverrides)
+                    ? (override as any).specialProgramOverrides
+                        .map((entry: any) => String(entry?.programId ?? ''))
+                        .filter((id: string) => id.length > 0)
+                    : []
+                )
+              )
+              // Prevent stale Step 2.0 therapist/PCA entries from previous runs lingering on other owners.
+              if (touchedProgramIds.size > 0) {
+                Object.entries(mergedOverrides).forEach(([ownerId, ownerOverride]: any) => {
+                  const currentList = ownerOverride?.specialProgramOverrides
+                  if (!Array.isArray(currentList) || currentList.length === 0) return
+                  const filtered = currentList.filter(
+                    (entry: any) => !touchedProgramIds.has(String(entry?.programId ?? ''))
+                  )
+                  if (filtered.length === currentList.length) return
+                  if (filtered.length === 0) {
+                    const { specialProgramOverrides: _omit, ...rest } = ownerOverride
+                    mergedOverrides[ownerId] = rest
+                    return
+                  }
+                  mergedOverrides[ownerId] = {
+                    ...ownerOverride,
+                    specialProgramOverrides: filtered,
+                  }
+                })
+              }
               Object.entries(overrides).forEach(([staffId, override]) => {
                 if (mergedOverrides[staffId]) {
                   mergedOverrides[staffId] = {
@@ -5355,6 +5413,16 @@ function SchedulePageContent() {
     return out
   }, [visibleTeams, effectiveTeamMergeConfig.mergedInto])
 
+  const displayViewForCurrentWeekday = useMemo(
+    () =>
+      buildDisplayViewForWeekday({
+        weekday: getWeekday(selectedDate),
+        specialPrograms: specialPrograms as any,
+        staffOverrides: staffOverrides as any,
+      }),
+    [selectedDate, specialPrograms, staffOverrides]
+  )
+
   const existingAllocationsForStep3Dialog = useMemo(() => {
     const canonical = (value: Team | null | undefined): Team | null => {
       if (!value) return null
@@ -5389,27 +5457,15 @@ function SchedulePageContent() {
 
   const specialProgramAssignedForStep3Dialog = useMemo(() => {
     const out = createEmptyTeamRecord<number>(0)
-    const weekday = getWeekday(selectedDate)
-    const slotsByProgramId = buildSpecialProgramSlotsByProgramId({
-      specialPrograms: specialPrograms as any,
-      weekday,
-      staffOverrides: staffOverrides as any,
-    })
 
     for (const alloc of existingAllocationsForStep3Dialog) {
       const ids = (alloc as any)?.special_program_ids
       if (!Array.isArray(ids) || ids.length === 0) continue
-      const specialSlotSet = new Set<number>()
-      ids.forEach((id: any) => {
-        const s = slotsByProgramId.get(String(id))
-        if (!s) return
-        s.forEach((slot) => specialSlotSet.add(slot))
-      })
-      if (specialSlotSet.size === 0) continue
+      const specialProgramsById = displayViewForCurrentWeekday.getProgramsByAllocationTeam(alloc.team as Team | null | undefined)
 
       const add = (slot: 1 | 2 | 3 | 4, team: Team | null) => {
         if (!team) return
-        if (!specialSlotSet.has(slot)) return
+        if (!isAllocationSlotFromSpecialProgram({ allocation: alloc, slot, team, specialProgramsById })) return
         out[team] = (out[team] || 0) + 0.25
       }
       add(1, alloc.slot1 ?? null)
@@ -5419,15 +5475,23 @@ function SchedulePageContent() {
 
       const inv = (alloc as any)?.invalid_slot as 1 | 2 | 3 | 4 | null | undefined
       if (inv === 1 || inv === 2 || inv === 3 || inv === 4) {
-        if (specialSlotSet.has(inv)) {
-          const invTeam = (inv === 1 ? alloc.slot1 : inv === 2 ? alloc.slot2 : inv === 3 ? alloc.slot3 : alloc.slot4) as Team | null
-          if (invTeam) out[invTeam] = Math.max(0, (out[invTeam] || 0) - 0.25)
+        const invTeam = (inv === 1 ? alloc.slot1 : inv === 2 ? alloc.slot2 : inv === 3 ? alloc.slot3 : alloc.slot4) as Team | null
+        if (
+          invTeam &&
+          isAllocationSlotFromSpecialProgram({
+            allocation: alloc,
+            slot: inv,
+            team: invTeam,
+            specialProgramsById,
+          })
+        ) {
+          out[invTeam] = Math.max(0, (out[invTeam] || 0) - 0.25)
         }
       }
     }
 
     return out
-  }, [existingAllocationsForStep3Dialog, specialPrograms, selectedDate])
+  }, [existingAllocationsForStep3Dialog, displayViewForCurrentWeekday])
 
   const pendingPCAFTEForStep3Dialog = useMemo(() => {
     const out = createEmptyTeamRecord<number>(0)
@@ -6304,12 +6368,10 @@ function SchedulePageContent() {
       return []
     }
 
-    return getSpecialProgramSlotsForAllocationTeam({
+    return getAllocationSpecialProgramSlotsForTeam({
       allocation,
       team,
-      selectedDate,
-      specialPrograms,
-      staffOverrides: staffOverrides as any,
+      specialProgramsById: displayViewForCurrentWeekday.getProgramsByAllocationTeam(allocation.team as Team | null | undefined),
     })
   }
 
@@ -6788,9 +6850,9 @@ function SchedulePageContent() {
       }
 
       const weekday = getWeekday(selectedDate)
-      const slotsByProgramId = buildSpecialProgramSlotsByProgramId({
-        specialPrograms: specialPrograms as any,
+      const displayView = buildDisplayViewForWeekday({
         weekday,
+        specialPrograms: specialPrograms as any,
         staffOverrides: baseOverrides as any,
       })
 
@@ -6817,15 +6879,7 @@ function SchedulePageContent() {
       >(() => [])
 
       for (const alloc of uniqueAllocations.values()) {
-        const ids = (alloc as any)?.special_program_ids
-        const specialSlotSet = new Set<number>()
-        if (Array.isArray(ids) && ids.length > 0) {
-          ids.forEach((id: any) => {
-            const s = slotsByProgramId.get(String(id))
-            if (!s) return
-            s.forEach((slot) => specialSlotSet.add(slot))
-          })
-        }
+        const specialProgramsById = displayView.getProgramsByAllocationTeam(alloc.team as Team | null | undefined)
 
         const invalidSlot = (alloc as any)?.invalid_slot as 1 | 2 | 3 | 4 | null | undefined
         const staffMember = staffById.get(alloc.staff_id) || alloc.staff
@@ -6840,7 +6894,12 @@ function SchedulePageContent() {
           const mainTeam = canonical(rawTeam as Team | null)
           if (!mainTeam) continue
 
-          const isSpecial = specialSlotSet.has(slot)
+          const isSpecial = isAllocationSlotFromSpecialProgram({
+            allocation: alloc,
+            slot,
+            team: rawTeam as Team,
+            specialProgramsById,
+          })
           if (isSpecial) continue
 
           assignedNonSpecialByMain[mainTeam] = (assignedNonSpecialByMain[mainTeam] || 0) + 0.25
@@ -12381,6 +12440,8 @@ function SchedulePageContent() {
                 }}
                 weekday={getWeekday(selectedDate)}
                 sptStaff={sptStaffForStep22}
+                allStaff={staff}
+                specialPrograms={specialPrograms}
                 sptWeekdayByStaffId={sptWeekdayByStaffId}
                 sptTeamsByStaffId={sptTeamsByStaffIdForStep22}
                 staffOverrides={staffOverrides as any}

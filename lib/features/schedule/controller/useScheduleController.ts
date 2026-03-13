@@ -61,6 +61,12 @@ import {
   sortPcaNonFloatingFirstOnly,
   sortPcaNonFloatingFirstThenName,
 } from '@/lib/features/schedule/grouping'
+import { buildStaffRuntimeById } from '@/lib/utils/staffRuntimeProjection'
+import {
+  buildPcaAllocatorView,
+  buildScheduleRuntimeProjection,
+  buildTherapistAllocatorView,
+} from '@/lib/utils/scheduleRuntimeProjection'
 
 let therapistAlgoImport: Promise<typeof import('@/lib/algorithms/therapistAllocation')> | null = null
 let pcaEngineImport: Promise<typeof import('@/lib/features/schedule/pcaAllocationEngine')> | null = null
@@ -2547,6 +2553,10 @@ export function useScheduleController(params: {
       const processedPcaStaffIds = new Set<string>()
       const therapistStaffIdsInAllocations = new Set<string>()
       const processedTherapistKeys = new Set<string>() // `${staffId}::${team}`
+      const saveRuntimeById = buildStaffRuntimeById({
+        staff,
+        staffOverrides: overridesToSave as Record<string, any>,
+      })
 
       for (const team of TEAMS) {
         ;(therapistAllocations[team] || []).forEach((alloc: any) => {
@@ -2598,7 +2608,7 @@ export function useScheduleController(params: {
             fteRemaining: override ? override.fteRemaining : alloc.fte_pca,
             leaveType: override ? override.leaveType : alloc.leave_type,
             alloc: alloc,
-            invalidSlot: override?.invalidSlot,
+            invalidSlot: saveRuntimeById[alloc.staff_id]?.effectiveInvalidSlot,
             fteSubtraction: override?.fteSubtraction,
           })
         })
@@ -2642,7 +2652,7 @@ export function useScheduleController(params: {
           fteRemaining: (override as any).fteRemaining,
           leaveType: (override as any).leaveType,
           alloc: currentAlloc,
-          invalidSlot: (override as any).invalidSlot,
+          invalidSlot: saveRuntimeById[staffId]?.effectiveInvalidSlot,
           fteSubtraction: (override as any).fteSubtraction,
         })
       })
@@ -3291,40 +3301,17 @@ export function useScheduleController(params: {
       } as Record<string, StaffOverrideState>
 
       // Transform staff data for algorithms
-      const weekday: Weekday = getWeekday(selectedDate)
+      const runtimeProjection = buildScheduleRuntimeProjection({
+        selectedDate,
+        staff,
+        staffOverrides: overrides as Record<string, any>,
+        replacedNonFloatingIds,
+      })
+      const weekday: Weekday = runtimeProjection.weekday
       const sptWeekdayByStaffId = getSptWeekdayConfigMap({ weekday, sptAllocations: sptAllocations as any })
-
-      const staffData: StaffData[] = staff.map((s) => {
-        const override = overrides[s.id]
-        const isBufferStaff = s.status === 'buffer'
-        const baseFTE =
-          s.rank === 'SPT'
-            ? (sptWeekdayByStaffId[s.id]?.baseFte ?? 0)
-            : isBufferStaff && (s as any).buffer_fte !== undefined
-              ? (s as any).buffer_fte
-              : 1.0
-        const effectiveFTE = override ? override.fteRemaining : baseFTE
-        const isOnDuty = isOnDutyLeaveType(override?.leaveType as any)
-        const isAvailable =
-          s.rank === 'SPT'
-            ? override
-              ? override.fteRemaining > 0 || (override.fteRemaining === 0 && isOnDuty)
-              : effectiveFTE >= 0
-            : override
-              ? override.fteRemaining > 0
-              : effectiveFTE > 0
-
-        return {
-          id: s.id,
-          name: s.name,
-          rank: s.rank,
-          team: override?.team ?? s.team,
-          special_program: (s as any).special_program,
-          fte_therapist: effectiveFTE,
-          leave_type: override ? override.leaveType : null,
-          is_available: isAvailable,
-          availableSlots: override?.availableSlots,
-        }
+      const staffData: StaffData[] = buildTherapistAllocatorView({
+        projection: runtimeProjection,
+        sptWeekdayByStaffId,
       })
 
       // Apply special program overrides:
@@ -3431,50 +3418,10 @@ export function useScheduleController(params: {
       setTherapistAllocations(therapistByTeam)
 
       // Prepare PCA data
-      const pcaData: PCAData[] = staff
-        .filter((s) => s.rank === 'PCA')
-        .map((s) => {
-          const override = overrides[s.id]
-          const isBufferStaff = s.status === 'buffer'
-          const baseFTE = isBufferStaff && (s as any).buffer_fte !== undefined ? (s as any).buffer_fte : 1.0
-          const baseFTERemaining =
-            override && override.fteSubtraction !== undefined
-              ? Math.max(0, baseFTE - override.fteSubtraction)
-              : override
-                ? override.fteRemaining
-                : baseFTE
-          const effectiveTeam = replacedNonFloatingIds.has(s.id) ? null : s.team
-          const effectiveAvailableSlots = override?.availableSlots
-
-          // NEW: Support the newer `invalidSlots` array (UI) by deriving the legacy `invalidSlot`
-          // that the PCA allocation algorithm understands.
-          const invalidSlotFromArray =
-            Array.isArray((override as any)?.invalidSlots) && (override as any).invalidSlots.length > 0
-              ? (override as any).invalidSlots[0]?.slot
-              : undefined
-          const effectiveInvalidSlot =
-            typeof (override as any)?.invalidSlot === 'number' ? (override as any).invalidSlot : invalidSlotFromArray
-
-          // IMPORTANT: invalid slot should NOT be in availableSlots (algorithm assumes this).
-          const normalizedAvailableSlots =
-            effectiveInvalidSlot && Array.isArray(effectiveAvailableSlots)
-              ? effectiveAvailableSlots.filter((x: any) => x !== effectiveInvalidSlot)
-              : effectiveAvailableSlots
-
-          return {
-            id: s.id,
-            name: s.name,
-            floating: (s as any).floating || false,
-            special_program: (s as any).special_program,
-            fte_pca: baseFTERemaining,
-            leave_type: override ? override.leaveType : null,
-            is_available: override ? override.fteRemaining > 0 : true,
-            team: effectiveTeam as any,
-            availableSlots: normalizedAvailableSlots,
-            invalidSlot: effectiveInvalidSlot,
-            floor_pca: (s as any).floor_pca || null,
-          }
-        })
+      const pcaData: PCAData[] = buildPcaAllocatorView({
+        projection: runtimeProjection,
+        fallbackToBaseTeamWhenEffectiveTeamMissing: false,
+      })
 
       // Calculate average PCA per team (keep same logic as schedule page):
       // - total PCA comes from staff DB + staffOverrides (buffer_fte supported)
@@ -3935,7 +3882,14 @@ export function useScheduleController(params: {
     setLoading(true)
     try {
       // Recalculate from current state to pick up any user edits after Step 2.
-      const weekday = getWeekday(selectedDate)
+      const runtimeProjection = buildScheduleRuntimeProjection({
+        selectedDate,
+        staff,
+        staffOverrides: staffOverrides as Record<string, any>,
+        excludeSubstitutionSlotsForFloating: true,
+        clampBufferFteRemaining: true,
+      })
+      const weekday = runtimeProjection.weekday
       const {
         existingTeamPCAAssigned: teamPCAAssigned,
         existingAllocations,
@@ -3947,56 +3901,10 @@ export function useScheduleController(params: {
         staffOverrides: staffOverrides as Record<string, unknown>,
       })
 
-      const pcaData: PCAData[] = staff
-        .filter((s) => s.rank === 'PCA')
-        .map((s) => {
-          const override = (staffOverrides as any)[s.id]
-          const isBufferStaff = s.status === 'buffer'
-          const baseFTE = isBufferStaff && (s as any).buffer_fte !== undefined ? (s as any).buffer_fte : 1.0
-          const baseFTERemaining =
-            override && override.fteSubtraction !== undefined
-              ? Math.max(0, baseFTE - override.fteSubtraction)
-              : override
-                ? override.fteRemaining
-                : baseFTE
-
-          const effectiveBaseFTERemaining = isBufferStaff ? Math.min(baseFTE, baseFTERemaining) : baseFTERemaining
-
-          let availableSlots = override?.availableSlots
-          if (s.floating && hasAnySubstitution(override as any)) {
-            const substitutionSlots = getAllSubstitutionSlots(override as any)
-            const baseAvailableSlots =
-              availableSlots && availableSlots.length > 0 ? availableSlots : [1, 2, 3, 4]
-            availableSlots = baseAvailableSlots.filter((slot: number) => !substitutionSlots.includes(slot))
-          }
-
-          // NEW: Support `invalidSlots` (UI) by deriving legacy invalidSlot for the algorithm.
-          const invalidSlotFromArray =
-            Array.isArray((override as any)?.invalidSlots) && (override as any).invalidSlots.length > 0
-              ? (override as any).invalidSlots[0]?.slot
-              : undefined
-          const effectiveInvalidSlot =
-            typeof (override as any)?.invalidSlot === 'number' ? (override as any).invalidSlot : invalidSlotFromArray
-
-          // IMPORTANT: invalid slot should NOT be in availableSlots.
-          if (effectiveInvalidSlot && Array.isArray(availableSlots)) {
-            availableSlots = availableSlots.filter((slot: number) => slot !== effectiveInvalidSlot)
-          }
-
-          return {
-            id: s.id,
-            name: s.name,
-            floating: (s as any).floating || false,
-            special_program: (s as any).special_program as string[] | null,
-            team: s.team,
-            fte_pca: effectiveBaseFTERemaining,
-            leave_type: override ? override.leaveType : null,
-            is_available: override ? override.fteRemaining > 0 : true,
-            availableSlots,
-            invalidSlot: effectiveInvalidSlot,
-            floor_pca: (s as any).floor_pca || null,
-          }
-        })
+      const pcaData: PCAData[] = buildPcaAllocatorView({
+        projection: runtimeProjection,
+        fallbackToBaseTeamWhenEffectiveTeamMissing: true,
+      })
 
       const totalPCAAvailable = pcaData.filter((p) => (p as any).is_available).reduce((sum, p) => sum + p.fte_pca, 0)
 

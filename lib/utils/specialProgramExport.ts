@@ -1,4 +1,5 @@
-import { resolveSpecialProgramRuntimeModel } from '@/lib/utils/specialProgramRuntimeModel'
+import { getAllocationSpecialProgramNamesBySlot } from '@/lib/utils/scheduleReservationRuntime'
+import { buildDisplayViewForWeekday } from '@/lib/utils/scheduleRuntimeProjection'
 import type { SpecialProgram } from '@/types/allocation'
 import type { PCAAllocation } from '@/types/schedule'
 
@@ -14,39 +15,14 @@ export function getSpecialProgramNameBySlotForAllocation(args: {
   if (!Array.isArray(args.allocation.special_program_ids) || args.allocation.special_program_ids.length === 0) {
     return labels
   }
-
-  const programById = new Map<string, SpecialProgram>()
-  for (const program of args.specialPrograms || []) {
-    programById.set(String(program.id), program)
-  }
-
-  for (const programId of args.allocation.special_program_ids) {
-    const program = programById.get(String(programId))
-    if (!program) continue
-
-    const runtimeModel = resolveSpecialProgramRuntimeModel({
-      program,
-      weekday: args.weekday,
-      staffOverrides: args.staffOverrides,
-      targetTeam: args.allocation.team,
-    })
-    if (!runtimeModel.isActiveOnWeekday) continue
-
-    for (const slot of runtimeModel.effectiveRequiredSlots) {
-      if (slot !== 1 && slot !== 2 && slot !== 3 && slot !== 4) continue
-      const assignedTeam =
-        slot === 1
-          ? args.allocation.slot1
-          : slot === 2
-            ? args.allocation.slot2
-            : slot === 3
-              ? args.allocation.slot3
-              : args.allocation.slot4
-      if (!assignedTeam) continue
-      if (runtimeModel.slotTeamBySlot[slot] !== assignedTeam) continue
-      labels[slot] = program.name
-    }
-  }
-
-  return labels
+  const displayView = buildDisplayViewForWeekday({
+    weekday: args.weekday,
+    specialPrograms: args.specialPrograms,
+    staffOverrides: args.staffOverrides,
+  })
+  const specialProgramsById = displayView.getProgramsByAllocationTeam(args.allocation.team)
+  return getAllocationSpecialProgramNamesBySlot({
+    allocation: args.allocation,
+    specialProgramsById,
+  })
 }

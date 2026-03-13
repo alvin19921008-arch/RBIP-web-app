@@ -11,7 +11,11 @@ import { PCAAllocation } from '@/types/schedule'
 import { PCAPreference, SpecialProgram } from '@/types/allocation'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
-import { resolveSpecialProgramRuntimeModel } from '@/lib/utils/specialProgramRuntimeModel'
+import {
+  buildReservationRuntimeProgramsById,
+  getAllocationSpecialProgramNameForSlot,
+  isAllocationSlotFromSpecialProgram,
+} from '@/lib/utils/scheduleReservationRuntime'
 import {
   assignSlotIfValid,
   findAvailablePCAs,
@@ -477,64 +481,32 @@ export interface AdjacentSlotResult {
   hasAnyAdjacentReservations: boolean
 }
 
-/**
- * Helper function to check if a slot is actually assigned by the special program.
- * The runtime model resolves both the effective slot set and the slot-team map.
- */
-function isSlotFromProgram(
-  allocation: PCAAllocation,
-  slot: number,
-  team: Team,
-  program: SpecialProgram,
-  weekday?: Weekday,
-  staffOverrides?: Record<string, StaffOverrideWithSubstitution>
-): boolean {
-  const runtimeModel = resolveSpecialProgramRuntimeModel({
-    program,
-    weekday,
-    staffOverrides: staffOverrides as Record<string, unknown> | undefined,
-    targetTeam: allocation.team,
-  })
-  if (!runtimeModel.isActiveOnWeekday) return false
-  if (!runtimeModel.effectiveRequiredSlots.includes(slot as 1 | 2 | 3 | 4)) return false
-
-  return runtimeModel.slotTeamBySlot[slot as 1 | 2 | 3 | 4] === team
-}
-
-function getProgramsForAllocation(
-  allocation: PCAAllocation,
-  specialPrograms: SpecialProgram[]
-): SpecialProgram[] {
-  const ids = allocation.special_program_ids
-  if (!Array.isArray(ids) || ids.length === 0) return []
-  return specialPrograms.filter((program) => ids.includes(program.id))
-}
-
 function isSlotFromSpecialProgram(
   allocation: PCAAllocation,
   slot: number,
   team: Team,
-  specialPrograms: SpecialProgram[],
-  weekday?: Weekday,
-  staffOverrides?: Record<string, StaffOverrideWithSubstitution>
+  specialProgramsById: ReturnType<typeof buildReservationRuntimeProgramsById>
 ): boolean {
-  return getProgramsForAllocation(allocation, specialPrograms).some((program) =>
-    isSlotFromProgram(allocation, slot, team, program, weekday, staffOverrides)
-  )
+  return isAllocationSlotFromSpecialProgram({
+    allocation,
+    slot,
+    team,
+    specialProgramsById,
+  })
 }
 
 function getSpecialProgramNameForSlot(
   allocation: PCAAllocation,
   slot: number,
   team: Team,
-  specialPrograms: SpecialProgram[],
-  weekday?: Weekday,
-  staffOverrides?: Record<string, StaffOverrideWithSubstitution>
+  specialProgramsById: ReturnType<typeof buildReservationRuntimeProgramsById>
 ): string {
-  const matchingProgram = getProgramsForAllocation(allocation, specialPrograms).find((program) =>
-    isSlotFromProgram(allocation, slot, team, program, weekday, staffOverrides)
-  )
-  return matchingProgram?.name || 'Unknown Program'
+  return getAllocationSpecialProgramNameForSlot({
+    allocation,
+    slot,
+    team,
+    specialProgramsById,
+  })
 }
 
 /**
@@ -561,6 +533,21 @@ export function computeAdjacentSlotReservations(
   staffOverrides?: Record<string, StaffOverrideWithSubstitution>,
   weekday?: Weekday
 ): AdjacentSlotResult {
+  const specialProgramsByTeamCache = new Map<string, ReturnType<typeof buildReservationRuntimeProgramsById>>()
+  const getSpecialProgramsByAllocationTeam = (allocationTeam: Team | null | undefined) => {
+    const cacheKey = allocationTeam ?? '__null__'
+    const cached = specialProgramsByTeamCache.get(cacheKey)
+    if (cached) return cached
+    const built = buildReservationRuntimeProgramsById({
+      specialPrograms,
+      weekday,
+      staffOverrides: staffOverrides as Record<string, unknown> | undefined,
+      allocationTargetTeam: allocationTeam ?? null,
+    })
+    specialProgramsByTeamCache.set(cacheKey, built)
+    return built
+  }
+
   // Initialize empty reservations for all teams
   const adjacentReservations: AdjacentSlotReservations = {
     FO: [], SMM: [], SFM: [], CPPC: [], MC: [], GMC: [], NSM: [], DRO: []
@@ -579,6 +566,7 @@ export function computeAdjacentSlotReservations(
   )
   
   for (const allocation of specialProgramAllocations) {
+    const specialProgramsById = getSpecialProgramsByAllocationTeam(allocation.team)
     const pca = floatingPcaById.get(allocation.staff_id)
     const pcaName = pca?.name || 'Unknown PCA'
     
@@ -595,7 +583,7 @@ export function computeAdjacentSlotReservations(
       
       // CRITICAL: Only process slots that were actually assigned by the special program
       // Skip slots assigned later (e.g., from Step 3.2 preferred slot assignment)
-      if (!isSlotFromSpecialProgram(allocation, slot, team, specialPrograms, weekday, staffOverrides)) {
+      if (!isSlotFromSpecialProgram(allocation, slot, team, specialProgramsById)) {
         continue
       }
       
@@ -644,9 +632,7 @@ export function computeAdjacentSlotReservations(
         allocation,
         slot,
         team,
-        specialPrograms,
-        weekday,
-        staffOverrides
+        specialProgramsById
       )
       adjacentReservations[team].push({
         pcaId: allocation.staff_id,

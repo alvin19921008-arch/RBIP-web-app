@@ -4,6 +4,7 @@ import * as React from 'react'
 import { Check, Plus, RotateCcw, Trash2, ArrowLeft, Briefcase, AlertCircle, X, MoreHorizontal } from 'lucide-react'
 
 import type { Staff, Team, Weekday, LeaveType } from '@/types/staff'
+import type { SpecialProgram } from '@/types/allocation'
 import type { SptWeekdayComputed } from '@/lib/features/schedule/sptConfig'
 import type { StaffOverrideState, SptOnDayOverrideState } from '@/lib/features/schedule/controller/useScheduleController'
 
@@ -20,6 +21,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { HorizontalCardCarousel } from '@/components/ui/horizontal-card-carousel'
 import { Tooltip } from '@/components/ui/tooltip'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
+import { resolveSpecialProgramRuntimeModel } from '@/lib/utils/specialProgramRuntimeModel'
+import { formatTimeRange, getSlotTime } from '@/lib/utils/slotHelpers'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Separator } from '@/components/ui/separator'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -162,6 +165,12 @@ function clampLeaveCost(raw: number, baseFte: number): number {
   return Math.max(0, Math.min(raw, baseFte))
 }
 
+function getPrimarySlotLabelFromRuntime(slots: number[]): string {
+  const firstSlot = slots.find((slot) => slot === 1 || slot === 2 || slot === 3 || slot === 4)
+  if (!firstSlot) return '0900-1030'
+  return formatTimeRange(getSlotTime(firstSlot as 1 | 2 | 3 | 4))
+}
+
 export function SptFinalEditDialog(props: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -169,6 +178,10 @@ export function SptFinalEditDialog(props: {
 
   /** All SPT staff that can be added. */
   sptStaff: Staff[]
+  /** All staff (for special-program therapist lookup). */
+  allStaff?: Pick<Staff, 'id' | 'rank' | 'team'>[]
+  /** Special programs (for SPT → program badge). */
+  specialPrograms?: SpecialProgram[]
   /** Dashboard weekday config (computed) */
   sptWeekdayByStaffId: Record<string, SptWeekdayComputed>
   /** Allowed teams from SPT dashboard config (staff_id -> teams[]) */
@@ -195,6 +208,8 @@ export function SptFinalEditDialog(props: {
     onOpenChange,
     weekday,
     sptStaff,
+    allStaff = [],
+    specialPrograms = [],
     sptWeekdayByStaffId,
     sptTeamsByStaffId,
     staffOverrides,
@@ -210,6 +225,34 @@ export function SptFinalEditDialog(props: {
     sptStaff.forEach((s) => m.set(s.id, s))
     return m
   }, [sptStaff])
+  const specialProgramBadgesByStaffId = React.useMemo(() => {
+    const out = new Map<string, Array<{ programId: string; programName: string; slotLabel: string }>>()
+    if (!Array.isArray(specialPrograms) || specialPrograms.length === 0) return out
+    if (!Array.isArray(allStaff) || allStaff.length === 0) return out
+
+    for (const program of specialPrograms) {
+      const runtimeModel = resolveSpecialProgramRuntimeModel({
+        program,
+        weekday,
+        staffOverrides: staffOverrides as Record<string, unknown>,
+        allStaff: allStaff as Array<Pick<Staff, 'id' | 'rank' | 'team'>>,
+      })
+      if (!runtimeModel.isActiveOnWeekday) continue
+
+      const therapistId = runtimeModel.explicitOverrideTherapistId ?? runtimeModel.configuredPrimaryTherapistId
+      if (!therapistId) continue
+
+      const list = out.get(therapistId) ?? []
+      list.push({
+        programId: String(program.id),
+        programName: program.name,
+        slotLabel: getPrimarySlotLabelFromRuntime(runtimeModel.effectiveRequiredSlots),
+      })
+      out.set(therapistId, list)
+    }
+
+    return out
+  }, [specialPrograms, allStaff, weekday, staffOverrides])
 
   const [cards, setCards] = React.useState<CardState[]>([])
   const [addStaffId, setAddStaffId] = React.useState<string>('')
@@ -710,6 +753,7 @@ export function SptFinalEditDialog(props: {
                 const allowedTeams = (card.allowedTeams?.length ? card.allowedTeams : TEAMS).filter((t) => TEAMS.includes(t))
                 const needsSlotsWarning = effectiveEnabled && card.contributesFte && card.slots.length === 0
                 const slotsChipText = card.slots.length > 0 ? card.slots.join(', ') : '—'
+                const specialProgramBadges = specialProgramBadgesByStaffId.get(card.staffId) ?? []
                 const fteChipText =
                   !effectiveEnabled
                     ? '—'
@@ -815,6 +859,11 @@ export function SptFinalEditDialog(props: {
                               {card.teamChoice === 'AUTO' || card.teamChoice === suggestedTeam ? `${suggestedTeam} (Auto)` : card.teamChoice}
                             </Badge>
                           )}
+                          {specialProgramBadges.map((badge) => (
+                            <Badge key={`sp-${badge.programId}`} variant="outline" className="select-none px-1 py-0.5 text-[9px] font-medium text-amber-900 border-amber-200 bg-amber-50 whitespace-nowrap dark:text-amber-200 dark:border-amber-800 dark:bg-amber-950/40">
+                              {badge.programName} · {badge.slotLabel}
+                            </Badge>
+                          ))}
                         </div>
 
                         {isPartialLeave && card.state === 'working' && (
@@ -836,6 +885,11 @@ export function SptFinalEditDialog(props: {
                             <Badge variant="secondary" className="border border-border/60 text-[10px] px-1.5 py-0.5">
                               {card.teamChoice === 'AUTO' || card.teamChoice === suggestedTeam ? `${suggestedTeam} (Auto)` : card.teamChoice}
                             </Badge>
+                            {specialProgramBadges.map((badge) => (
+                              <Badge key={`sp-partial-${badge.programId}`} variant="outline" className="select-none px-1 py-0.5 text-[9px] font-medium text-amber-900 border-amber-200 bg-amber-50 whitespace-nowrap dark:text-amber-200 dark:border-amber-800 dark:bg-amber-950/40">
+                                {badge.programName} · {badge.slotLabel}
+                              </Badge>
+                            ))}
                           </div>
                         )}
                       </div>

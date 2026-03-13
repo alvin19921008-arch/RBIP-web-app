@@ -13,7 +13,8 @@ import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { getSubstitutionSlotsForTeam, normalizeSubstitutionForBySlot } from '@/lib/utils/substitutionFor'
 import { computeDrmAddOnFte } from '@/lib/utils/specialProgramPcaCapacity'
-import { buildSpecialProgramSlotsByProgramId } from '@/lib/utils/specialProgramSlotMap'
+import { getAllocationSpecialProgramSlotsForTeam } from '@/lib/utils/scheduleReservationRuntime'
+import { buildDisplayViewForWeekday } from '@/lib/utils/scheduleRuntimeProjection'
 
 interface PCABlockProps {
   team: Team
@@ -112,21 +113,23 @@ function usePcaBlockViewModel({
   const resolvedStep2Initialized = step2Initialized ?? false
 
   const showSubstitutionStyling = resolvedCurrentStep !== 'leave-fte' && resolvedStep2Initialized
+  const displayView = useMemo(
+    () =>
+      weekday
+        ? buildDisplayViewForWeekday({
+            weekday,
+            specialPrograms: resolvedSpecialPrograms,
+            staffOverrides: resolvedStaffOverrides as any,
+          })
+        : null,
+    [weekday, resolvedSpecialPrograms, resolvedStaffOverrides]
+  )
 
   const specialProgramsById = useMemo(() => {
     const map = new Map<string, SpecialProgram>()
     for (const p of resolvedSpecialPrograms) map.set(p.id, p)
     return map
   }, [resolvedSpecialPrograms])
-
-  const specialProgramSlotsByProgramId = useMemo(() => {
-    if (!weekday) return new Map<string, Set<number>>()
-    return buildSpecialProgramSlotsByProgramId({
-      specialPrograms: resolvedSpecialPrograms,
-      weekday,
-      staffOverrides: resolvedStaffOverrides,
-    })
-  }, [resolvedSpecialPrograms, weekday, resolvedStaffOverrides])
 
   // Helper function to determine if slots in a team are part of special program assignment
   const areSlotsPartOfSpecialProgram = useCallback((
@@ -140,24 +143,16 @@ function usePcaBlockViewModel({
 
     if (slotsForTeam.length === 0) return false
 
-    const specialProgramSlots: number[] = []
-    for (const programId of allocation.special_program_ids) {
-      const slots = specialProgramSlotsByProgramId.get(programId)
-      if (!slots) continue
-      for (const slot of slots) {
-        if (
-          (slot === 1 && allocation.slot1 === currentTeam) ||
-          (slot === 2 && allocation.slot2 === currentTeam) ||
-          (slot === 3 && allocation.slot3 === currentTeam) ||
-          (slot === 4 && allocation.slot4 === currentTeam)
-        ) {
-          specialProgramSlots.push(slot)
-        }
-      }
-    }
+    const specialProgramSlots = getAllocationSpecialProgramSlotsForTeam({
+      allocation: allocation as any,
+      team: currentTeam,
+      specialProgramsById: displayView
+        ? displayView.getProgramsByAllocationTeam((allocation as any)?.team as Team | null | undefined)
+        : new Map(),
+    })
 
     return slotsForTeam.some((slot) => specialProgramSlots.includes(slot))
-  }, [specialProgramSlotsByProgramId])
+  }, [displayView])
 
   // Helper function to get slot display with optional slot filter
   const getSlotDisplayForTeamFiltered = (
@@ -508,25 +503,12 @@ function usePcaBlockViewModel({
 
   // Helper to get special program slots for a team
   const getSpecialProgramSlotsForTeam = (allocation: PCAAllocation & { staff: Staff }, team: Team): number[] => {
-    if (!allocation.special_program_ids || allocation.special_program_ids.length === 0) {
-      return []
-    }
-    const specialProgramSlots: number[] = []
-    for (const programId of allocation.special_program_ids) {
-      const slots = specialProgramSlotsByProgramId.get(programId)
-      if (!slots) continue
-      for (const slot of slots) {
-        if (
-          (slot === 1 && allocation.slot1 === team) ||
-          (slot === 2 && allocation.slot2 === team) ||
-          (slot === 3 && allocation.slot3 === team) ||
-          (slot === 4 && allocation.slot4 === team)
-        ) {
-          specialProgramSlots.push(slot)
-        }
-      }
-    }
-    return Array.from(new Set(specialProgramSlots)).sort((a, b) => a - b)
+    if (!displayView) return []
+    return getAllocationSpecialProgramSlotsForTeam({
+      allocation: allocation as any,
+      team,
+      specialProgramsById: displayView.getProgramsByAllocationTeam((allocation as any)?.team as Team | null | undefined),
+    })
   }
 
   const {

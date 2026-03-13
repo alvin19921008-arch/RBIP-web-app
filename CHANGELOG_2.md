@@ -3,6 +3,28 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-03-13 (P4 unified schedule runtime projection, slices 1-5)
+
+### Added
+- **Schedule runtime projection layer** — `lib/utils/staffRuntimeProjection.ts`, `lib/utils/scheduleRuntimeProjection.ts`, and `lib/utils/scheduleReservationRuntime.ts` introduce shared projection/view helpers for staff runtime semantics, allocator inputs, and slot-team-aware special-program occupancy.
+- **P4 regressions** — Added `tests/regression/f32` through `f35` to lock staff runtime normalization, shared allocator-view sourcing, reservation/bootstrap slot-team occupancy semantics, and display/export parity.
+
+### Changed
+- **Step 2 / Step 3 allocator inputs** — `useScheduleController` now builds shared projection-backed therapist/PCA views instead of duplicating raw override interpretation in each step.
+- **Step 3 bootstrap + reservation path** — `step3Bootstrap` and `reservationLogic` now consume shared runtime occupancy helpers for special-program slot checks and naming.
+- **Read-side parity** — Display/export and PCA UI slot classification paths (`specialProgramDisplay`, `specialProgramExport`, `PCABlock`, schedule page diagnostics) now consume projection/runtime occupancy facts rather than separate slot-set reconstruction.
+- **Compatibility slot map adapter** — `specialProgramSlotMap` now delegates to runtime interpreter output (`buildReservationRuntimeProgramsById`) so legacy callers align with shared runtime semantics.
+
+### Fixed / Hardened
+- **Invalid-slot persistence drift** — Save-path PCA rows now use runtime-derived `effectiveInvalidSlot`, including cases where only `invalidSlots[]` exists.
+- **Slot-team occupancy drift across layers** — Misrouted special-program slot assignments are consistently treated as non-special occupancy across bootstrap/reservation/display/export.
+- **Step 2.2 special-program badge** — Changing the CRP (or other program) therapist in Step 2.0 now updates the Step 2.2 SPT card badge; stale overrides on previous staff are removed before merging new overrides, and the badge reads from runtime model with `staffOverrides` instead of canonical config only.
+
+### Documentation
+- **P4 worklog** — `WIP_SPECIAL_PROGRAM_HARDENING_REVIEW.md` now includes progress notes for `P4.1` through `P4.5`.
+
+---
+
 ## [Unreleased] - 2026-03-12 (P3 unified runtime model + Slice 4 allocator migration)
 
 ### Added
