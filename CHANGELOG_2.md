@@ -23,6 +23,7 @@
 
 ### Fixed
 - **Extra PCA slots miscount after save/reload** — Placeholder PCA rows with leave overrides (e.g. VL at 0 FTE or 0.5 FTE) were incorrectly counted as active coverage; `deriveExtraCoverageByStaffId` now uses runtime `availableSlots` and `slot_assigned` so off-duty rows contribute zero. Regression f55.
+- **PCA placeholder row cleanup** — Override-only non-floating PCA rows no longer persisted; save path skips when no material allocation facts. Shared `buildDisplayPcaAllocationsByTeam` projects Step 1 state for display/export/reference; `hasMeaningfulStep1Overrides` / `classifyScheduleMeaning` centralize history/cleanup/schedule semantics. Regressions f56–f58.
 
 ### Documentation
 - **WIP hardening tracker** — Added `WIP_PCA_RUNTIME_STATE_HARDENING_REVIEW.md` with finding index (F1–F9), round tracker, and regression snapshot.
