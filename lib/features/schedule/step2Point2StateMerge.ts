@@ -1,4 +1,4 @@
-import type { LeaveType, Team } from '@/lib/types'
+import type { LeaveType, Team } from '@/types/staff'
 
 type Step2Point2SptFinalEditUpdate = {
   leaveType?: LeaveType | null
