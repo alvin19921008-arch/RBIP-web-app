@@ -163,6 +163,13 @@ function usePcaBlockViewModel({
     if (allocation.slot2 === team) slotsForThisTeam.push(2)
     if (allocation.slot3 === team) slotsForThisTeam.push(3)
     if (allocation.slot4 === team) slotsForThisTeam.push(4)
+    const displayOnlySlots = Array.isArray((allocation as any).__displaySlots)
+      ? ((allocation as any).__displaySlots as number[]).filter((slot): slot is 1 | 2 | 3 | 4 =>
+          [1, 2, 3, 4].includes(slot as 1 | 2 | 3 | 4)
+        )
+      : []
+    const baseSlotsForThisTeam =
+      slotsForThisTeam.length > 0 || allocation.staff.floating ? slotsForThisTeam : displayOnlySlots
     
     // Step 1 (leave-fte): For NON-floating PCA, show the a/v slots from staffOverrides early,
     // so the staff card updates immediately when user edits leave/FTE/slots.
@@ -188,8 +195,8 @@ function usePcaBlockViewModel({
 
     // If slotsToInclude is provided, filter to only those slots
     const filteredSlots = effectiveSlotsToInclude 
-      ? slotsForThisTeam.filter(slot => effectiveSlotsToInclude.includes(slot))
-      : slotsForThisTeam
+      ? baseSlotsForThisTeam.filter(slot => effectiveSlotsToInclude.includes(slot))
+      : baseSlotsForThisTeam
 
     if (filteredSlots.length === 0) return null
     

@@ -30,7 +30,10 @@ import { getSptWeekdayConfigMap } from '@/lib/features/schedule/sptConfig'
 import { computeStep3BootstrapState } from '@/lib/features/schedule/step3Bootstrap'
 import { computeStep3ResetForReentry } from '@/lib/features/schedule/stepReset'
 import { normalizeScheduleStateForSave } from '@/lib/features/schedule/saveNormalization'
-import { computeStalePcaStaffIdsForReplace } from '@/lib/features/schedule/saveReconciliation'
+import {
+  computeStalePcaStaffIdsForReplace,
+  shouldPersistPcaAllocationForSave,
+} from '@/lib/features/schedule/saveReconciliation'
 import { saveScheduleFallbackAtomically } from '@/lib/features/schedule/saveFallbackAtomic'
 import { getStoredCalculationsFromBaselineSnapshot, resolveBaselineSnapshotForCache } from '@/lib/features/schedule/snapshotCacheProjection'
 import { projectLoadStepGating } from '@/lib/features/schedule/workflowLoadProjection'
@@ -2558,10 +2561,19 @@ export function useScheduleController(params: {
 
       for (const team of TEAMS) {
         ;(normalizedForSave.pcaAllocations[team] || []).forEach((alloc: any) => {
-          if (processedPcaStaffIds.has(alloc.staff_id)) return
-          processedPcaStaffIds.add(alloc.staff_id)
           const staffMember = staff.find((s) => s.id === alloc.staff_id)
           if (!staffMember) return
+          if (
+            !shouldPersistPcaAllocationForSave({
+              staffTeam: (staffMember.team ?? alloc.team) as Team,
+              floating: !!staffMember.floating,
+              allocation: alloc as PCAAllocation,
+            })
+          ) {
+            return
+          }
+          if (processedPcaStaffIds.has(alloc.staff_id)) return
+          processedPcaStaffIds.add(alloc.staff_id)
           const override = overridesToSave[alloc.staff_id]
           allocationsToSave.push({
             staffId: alloc.staff_id,
@@ -2607,6 +2619,15 @@ export function useScheduleController(params: {
             }
           }
           if (staffMember.floating && !currentAlloc) return
+          if (
+            !shouldPersistPcaAllocationForSave({
+              staffTeam: (staffMember.team ?? team) as Team,
+              floating: !!staffMember.floating,
+              allocation: currentAlloc as PCAAllocation | null,
+            })
+          ) {
+            return
+          }
         }
 
         allocationsToSave.push({

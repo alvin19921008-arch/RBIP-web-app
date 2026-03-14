@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createServerComponentClient } from '@/lib/supabase/server'
 import { requireAuth } from '@/lib/auth'
 import { getRequesterContext } from '@/app/api/accounts/_utils'
+import { classifyScheduleMeaning } from '@/lib/utils/staffOverridesMeaningful'
 
 type WorkflowStateLike = {
   currentStep?: string | null
@@ -38,15 +39,22 @@ export async function POST(req: Request) {
 
     const { data: schedules, error: schedErr } = await supabase
       .from('daily_schedules')
-      .select('id, date, workflow_state')
+      .select('id, date, workflow_state, staff_overrides')
       .in('id', ids)
 
     if (schedErr) return NextResponse.json({ error: schedErr.message }, { status: 500 })
 
-    const rows = (schedules || []) as Array<{ id: string; date: string; workflow_state: any }>
+    const rows = (schedules || []) as Array<{ id: string; date: string; workflow_state: any; staff_overrides?: unknown }>
     const eligibleByMetadata = rows.filter((r) => {
       if (!isStep1OrLess(r.workflow_state)) return false
-      return true
+      return (
+        classifyScheduleMeaning({
+          staffOverrides: r.staff_overrides,
+          hasTherapistAllocations: false,
+          hasPCAAllocations: false,
+          hasBedAllocations: false,
+        }) === 'empty'
+      )
     })
 
     const eligibleIds = eligibleByMetadata.map((r) => r.id)

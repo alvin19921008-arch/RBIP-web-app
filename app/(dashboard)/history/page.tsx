@@ -22,7 +22,7 @@ import {
 } from '@/lib/utils/scheduleHistory'
 import { clearCachedSchedule } from '@/lib/utils/scheduleCache'
 import { clearDraftSchedule } from '@/lib/utils/scheduleDraftCache'
-import { hasAnyStaffOverrideKey } from '@/lib/utils/staffOverridesMeaningful'
+import { classifyScheduleMeaning, hasMeaningfulStep1Overrides } from '@/lib/utils/staffOverridesMeaningful'
 
 const LAST_OPEN_SCHEDULE_DATE_KEY = 'rbip_last_open_schedule_date'
 
@@ -57,7 +57,7 @@ export default function HistoryPage() {
     if (error) return null
     for (const row of (data || []) as Array<{ date?: string; staff_overrides?: unknown }>) {
       if (typeof row?.date !== 'string') continue
-      if (hasAnyStaffOverrideKey(row.staff_overrides)) return row.date
+      if (hasMeaningfulStep1Overrides(row.staff_overrides)) return row.date
     }
     return null
   }
@@ -151,7 +151,7 @@ export default function HistoryPage() {
       bumpTopLoadingTo(0.15)
       const { data: scheduleData, error: scheduleError } = await supabase
         .from('daily_schedules')
-        .select('id, date, workflow_state')
+        .select('id, date, workflow_state, staff_overrides')
         .order('date', { ascending: false })
 
       if (scheduleError) {
@@ -227,8 +227,47 @@ export default function HistoryPage() {
         }
       })
 
+      const step1MeaningfulEntries: ScheduleHistoryEntry[] = schedulesWithoutAllocations
+        .filter((schedule: any) => {
+          const meaning = classifyScheduleMeaning({
+            staffOverrides: (schedule as any).staff_overrides,
+            hasTherapistAllocations: false,
+            hasPCAAllocations: false,
+            hasBedAllocations: false,
+          })
+          return meaning === 'step1'
+        })
+        .map((schedule: any) => {
+          const date = new Date(schedule.date)
+          const weekday = getWeekday(date)
+          const weekdayName = getWeekdayName(weekday)
+          const workflowState = (schedule as any).workflow_state ?? null
+          const completionStatus = getCompletionStatusFromWorkflowState(workflowState) ?? 'step1'
+
+          return {
+            id: schedule.id,
+            date: schedule.date,
+            weekday,
+            weekdayName,
+            hasTherapistAllocations: false,
+            hasPCAAllocations: false,
+            hasBedAllocations: false,
+            workflowState,
+            completionStatus,
+          }
+        })
+
       const cleanupEntries: ScheduleHistoryEntry[] = schedulesWithoutAllocations
-        .filter((s: any) => isStep1OrLess((s as any).workflow_state ?? null))
+        .filter((schedule: any) => {
+          if (!isStep1OrLess((schedule as any).workflow_state ?? null)) return false
+          const meaning = classifyScheduleMeaning({
+            staffOverrides: (schedule as any).staff_overrides,
+            hasTherapistAllocations: false,
+            hasPCAAllocations: false,
+            hasBedAllocations: false,
+          })
+          return meaning === 'empty'
+        })
         .map((schedule: any) => {
           const date = new Date(schedule.date)
           const weekday = getWeekday(date)
@@ -251,7 +290,7 @@ export default function HistoryPage() {
         })
 
       bumpTopLoadingTo(0.98)
-      setSchedules(entries)
+      setSchedules([...entries, ...step1MeaningfulEntries].sort((a, b) => b.date.localeCompare(a.date)))
       setCleanupCandidates(cleanupEntries)
       finishTopLoading()
     } catch (error) {

@@ -87,6 +87,7 @@ import {
   stripExtraCoverageOverrides,
 } from '@/lib/features/schedule/extraCoverageVisibility'
 import { deriveExtraCoverageByStaffId } from '@/lib/features/schedule/extraCoverageRuntime'
+import { buildDisplayPcaAllocationsByTeam } from '@/lib/features/schedule/pcaDisplayProjection'
 import { flushSync } from 'react-dom'
 import {
   buildStaffByIdMap,
@@ -243,7 +244,7 @@ import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
 import { createTimingCollector, type TimingReport } from '@/lib/utils/timing'
 import { getCachedSchedule, cacheSchedule, clearCachedSchedule, getCacheSize } from '@/lib/utils/scheduleCache'
 import { clearDraftSchedule, getMostRecentDirtyScheduleDate, hasDraftSchedule } from '@/lib/utils/scheduleDraftCache'
-import { hasAnyStaffOverrideKey } from '@/lib/utils/staffOverridesMeaningful'
+import { hasMeaningfulStep1Overrides } from '@/lib/utils/staffOverridesMeaningful'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import {
   getAllSubstitutionSlots,
@@ -947,7 +948,7 @@ function SchedulePageContent() {
           const rows = (res.data || []) as Array<{ date?: string; staff_overrides?: unknown }>
           for (const row of rows) {
             if (typeof row?.date !== 'string') continue
-            if (hasAnyStaffOverrideKey(row.staff_overrides)) return row.date
+            if (hasMeaningfulStep1Overrides(row.staff_overrides)) return row.date
           }
           return null
         }
@@ -964,7 +965,7 @@ function SchedulePageContent() {
               .eq('date', stored)
               .maybeSingle()
             const storedExists = !!(storedRes.data as any)?.id
-            const storedIsMeaningful = hasAnyStaffOverrideKey((storedRes.data as any)?.staff_overrides)
+            const storedIsMeaningful = hasMeaningfulStep1Overrides((storedRes.data as any)?.staff_overrides)
 
             if (storedExists && storedIsMeaningful) {
               const parsed = parseDateFromInput(stored)
@@ -1024,7 +1025,7 @@ function SchedulePageContent() {
           const hasProgress =
             isScheduleCompletedToStep4(todayWorkflow) ||
             ((todayWorkflow?.completedSteps || [])?.length ?? 0) > 0 ||
-            hasAnyStaffOverrideKey(todayOverrides)
+            hasMeaningfulStep1Overrides(todayOverrides)
           if (!hasSavedRows && !hasProgress) {
             const lastMeaningfulKey = await findLastMeaningfulStep1ScheduleDateKey()
             if (lastMeaningfulKey) {
@@ -2583,28 +2584,6 @@ function SchedulePageContent() {
       adjacentSchedulePrefetchBaseKeyRef.current = baseKey
 
       adjacentSchedulePrefetchInFlightRef.current = (async () => {
-        const isMeaningfulStep1Edit = (rawStaffOverrides: any): boolean => {
-          if (!rawStaffOverrides || typeof rawStaffOverrides !== 'object') return false
-
-          // 1) Staff status overrides (counts as meaningful)
-          const statusOverrides = (rawStaffOverrides as any).__staffStatusOverrides
-          if (statusOverrides && typeof statusOverrides === 'object' && Object.keys(statusOverrides).length > 0) {
-            return true
-          }
-
-          // 2) Per-staff step-1 edits (ignore schedule-level __ keys like __allocationNotes)
-          for (const [k, v] of Object.entries(rawStaffOverrides as any)) {
-            if (k.startsWith('__')) continue
-            if (!v || typeof v !== 'object') continue
-            const o: any = v
-            if (o.leaveType != null) return true
-            if (typeof o.fteRemaining === 'number') return true
-            if (o.invalidSlot != null) return true
-            if (Array.isArray(o.invalidSlots) && o.invalidSlots.length > 0) return true
-          }
-          return false
-        }
-
         const prefetchOneIfMeaningful = async (date: Date) => {
           const dateKey = toDateKey(date)
           if (adjacentSchedulePrefetchedDatesRef.current.has(dateKey)) return
@@ -2636,7 +2615,7 @@ function SchedulePageContent() {
           const scheduleId = (schedRow as any).id as string
           const rawStaffOverrides = (schedRow as any).staff_overrides
 
-          const step1Edits = isMeaningfulStep1Edit(rawStaffOverrides)
+          const step1Edits = hasMeaningfulStep1Overrides(rawStaffOverrides)
 
           // Allocation presence check (any allocation row counts as meaningful)
           const [tRes, pRes, bRes] = await Promise.all([
@@ -5486,12 +5465,23 @@ function SchedulePageContent() {
     return out
   }, [visibleTeams, teamContributorsByMain, therapistAllocations])
 
+  const pcaDisplayAllocationsByTeam = useMemo(
+    () =>
+      buildDisplayPcaAllocationsByTeam({
+        selectedDate,
+        staff: [...staff, ...bufferStaff],
+        staffOverrides: staffOverrides as any,
+        pcaAllocationsByTeam: pcaAllocationsForUi as Record<Team, Array<PCAAllocation & { staff?: Staff }>>,
+      }),
+    [selectedDate, staff, bufferStaff, staffOverrides, pcaAllocationsForUi]
+  )
+
   const pcaAllocationsForDisplay = useMemo(() => {
     const out = createEmptyTeamRecordFactory<any[]>(() => [])
     visibleTeams.forEach((mainTeam) => {
       const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
       const mergedRows = contributors
-        .flatMap((team) => pcaAllocationsForUi[team] || [])
+        .flatMap((team) => pcaDisplayAllocationsByTeam[team] || [])
         .map((alloc: any) => {
           const canonical = (value: unknown) =>
             TEAMS.includes(value as Team)
@@ -5525,7 +5515,7 @@ function SchedulePageContent() {
       })
     })
     return out
-  }, [visibleTeams, teamContributorsByMain, pcaAllocationsForUi, effectiveTeamMergeConfig.mergedInto])
+  }, [visibleTeams, teamContributorsByMain, pcaDisplayAllocationsByTeam, effectiveTeamMergeConfig.mergedInto])
 
   const calculationsForDisplay = useMemo(() => {
     const out = createEmptyTeamRecord<ScheduleCalculations | null>(null)
@@ -12577,14 +12567,30 @@ function SplitReferencePortal(props: {
     })
     return out
   }, [refVisibleTeams, refContributorsByMain, refScheduleState.therapistAllocations])
+  const refPcaDisplayAllocationsByTeam = useMemo(
+    () =>
+      buildDisplayPcaAllocationsByTeam({
+        selectedDate: refSelectedDate,
+        staff: [...refScheduleState.staff, ...refScheduleState.bufferStaff],
+        staffOverrides: refScheduleState.staffOverrides as any,
+        pcaAllocationsByTeam: refScheduleState.pcaAllocations as Record<Team, Array<PCAAllocation & { staff?: Staff }>>,
+      }),
+    [
+      refSelectedDate,
+      refScheduleState.staff,
+      refScheduleState.bufferStaff,
+      refScheduleState.staffOverrides,
+      refScheduleState.pcaAllocations,
+    ]
+  )
   const refPcaAllocationsForDisplay = useMemo(() => {
     const out = createEmptyTeamRecordFactory<any[]>(() => [])
     refVisibleTeams.forEach((mainTeam) => {
       const contributors = refContributorsByMain[mainTeam] || [mainTeam]
-      out[mainTeam] = contributors.flatMap((team) => refScheduleState.pcaAllocations[team] || [])
+      out[mainTeam] = contributors.flatMap((team) => refPcaDisplayAllocationsByTeam[team] || [])
     })
     return out
-  }, [refVisibleTeams, refContributorsByMain, refScheduleState.pcaAllocations])
+  }, [refVisibleTeams, refContributorsByMain, refPcaDisplayAllocationsByTeam])
   const refCalculationsForDisplay = useMemo(() => {
     const out = createEmptyTeamRecord<ScheduleCalculations | null>(null)
     refVisibleTeams.forEach((mainTeam) => {
