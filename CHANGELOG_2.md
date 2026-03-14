@@ -3,6 +3,27 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-03-14 (PCA runtime interpretation hardening)
+
+### Added
+- **PCA runtime hardening** — Unify special-program, substitution, and extra-coverage semantics behind shared runtime helpers so controller, page, card, and dedicated table read the same slot meaning. New helpers: `computeSpecialProgramAssignedFteByTeam`, `derivePcaDisplayFlagsBySlot`, `buildPageStep3RuntimeState`, `deriveExtraCoverageByStaffId`, `saveScheduleFallbackAtomically`, `resolveBaselineSnapshotForCache`, `projectLoadStepGating`, `buildAuthoritativeStep2SubstitutionOverrides`. Regressions f46–f54 (special-program occupancy parity, page Step 3 runtime delegation, derived extra coverage, fallback save rollback, validated snapshot cache, workflow-first load gating, substitution write authority, auto-substitution slot consumption, card/table classification parity).
+
+### Changed
+- **Allocator + bootstrap special-program occupancy** — `pcaAllocation` and `step3Bootstrap` use shared `computeSpecialProgramAssignedFteByTeam`; allocator context includes `staffOverrides`.
+- **Fallback save atomicity** — Rollback-backed orchestration; metadata write failure restores pre-save rows.
+- **Cache snapshot projection** — Load prefers validated/repaired baseline snapshot for cache and return payloads.
+- **Load step gating** — `projectLoadStepGating` gives explicit workflow state precedence over row-presence heuristics.
+- **Substitution write path** — Controller is single authoritative writer; page wizard only relays selections.
+- **Auto-detected substitution** — Consumes slot ownership during matching to prevent overlapping claims.
+- **Card/table parity** — `PCABlock` and `PCADedicatedScheduleTable` use shared `derivePcaDisplayFlagsBySlot` for substitution/special-program semantics.
+- **Page Step 3 prep** — Deleted `recalculateFromCurrentState` / `buildPCADataFromCurrentState`; uses `buildPageStep3RuntimeState`.
+- **Extra coverage** — Derived at display time via `deriveExtraCoverageByStaffId`; no longer persisted in `staffOverrides`; save strips unconditionally.
+
+### Documentation
+- **WIP hardening tracker** — Added `WIP_PCA_RUNTIME_STATE_HARDENING_REVIEW.md` with finding index (F1–F9), round tracker, and regression snapshot.
+
+---
+
 ## [Unreleased] - 2026-03-13 (P4 unified schedule runtime projection, slices 1-5)
 
 ### Added
