@@ -21,6 +21,9 @@
 - **Page Step 3 prep** — Deleted `recalculateFromCurrentState` / `buildPCADataFromCurrentState`; uses `buildPageStep3RuntimeState`.
 - **Extra coverage** — Derived at display time via `deriveExtraCoverageByStaffId`; no longer persisted in `staffOverrides`; save strips unconditionally.
 
+### Fixed
+- **Extra PCA slots miscount after save/reload** — Placeholder PCA rows with leave overrides (e.g. VL at 0 FTE or 0.5 FTE) were incorrectly counted as active coverage; `deriveExtraCoverageByStaffId` now uses runtime `availableSlots` and `slot_assigned` so off-duty rows contribute zero. Regression f55.
+
 ### Documentation
 - **WIP hardening tracker** — Added `WIP_PCA_RUNTIME_STATE_HARDENING_REVIEW.md` with finding index (F1–F9), round tracker, and regression snapshot.
 
