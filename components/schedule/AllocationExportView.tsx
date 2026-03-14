@@ -6,7 +6,7 @@ import type { SpecialProgram, SPTAllocation } from '@/types/allocation'
 import type {
   BedAllocation,
   BedRelievingNotesByToTeam,
-  BedRelievingNoteRow,
+  BedRelievingNotesForToTeam,
   PCAAllocation,
   ScheduleCalculations,
   TherapistAllocation,
@@ -53,7 +53,7 @@ export type AllocationExportViewProps = {
     { shsBedCounts?: number | null; studentPlacementBedCounts?: number | null } | undefined
   >
   bedRelievingNotesByToTeam?: BedRelievingNotesByToTeam
-  onSaveBedRelievingNotesForToTeam?: (toTeam: Team, notes: Partial<Record<Team, BedRelievingNoteRow[]>>) => void
+  onSaveBedRelievingNotesForToTeam?: (toTeam: Team, notes: BedRelievingNotesForToTeam) => void
 
   stepStatus: Record<string, 'pending' | 'completed' | 'modified'>
   initializedSteps: Set<string>

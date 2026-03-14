@@ -175,6 +175,7 @@ export function SptFinalEditDialog(props: {
   open: boolean
   onOpenChange: (open: boolean) => void
   weekday: Weekday
+  showSubstituteStep?: boolean
 
   /** All SPT staff that can be added. */
   sptStaff: Staff[]
@@ -207,6 +208,7 @@ export function SptFinalEditDialog(props: {
     open,
     onOpenChange,
     weekday,
+    showSubstituteStep = true,
     sptStaff,
     allStaff = [],
     specialPrograms = [],
@@ -643,6 +645,13 @@ export function SptFinalEditDialog(props: {
     onOpenChange(false)
   }
 
+  const stepperSteps = React.useMemo(() => {
+    const steps: Array<{ step: '2.0' | '2.1' | '2.2'; label: string }> = [{ step: '2.0', label: 'Programs' }]
+    if (showSubstituteStep) steps.push({ step: '2.1', label: 'Substitute' })
+    steps.push({ step: '2.2', label: 'SPT' })
+    return steps
+  }, [showSubstituteStep])
+
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -650,11 +659,7 @@ export function SptFinalEditDialog(props: {
         {/* Wide: stepper top-right; narrow: under instruction */}
         <div className="absolute right-3 top-3 hidden sm:flex sm:right-4 sm:top-4 items-center gap-2">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            {[
-              { step: '2.0', label: 'Programs' },
-              { step: '2.1', label: 'Substitute' },
-              { step: '2.2', label: 'SPT' },
-            ].map(({ step, label }, i) => (
+            {stepperSteps.map(({ step, label }, i) => (
               <React.Fragment key={step}>
                 {i > 0 ? <span aria-hidden="true">·</span> : null}
                 <span className={cn('px-2.5 py-1 rounded-md', step === '2.2' && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>
@@ -682,11 +687,7 @@ export function SptFinalEditDialog(props: {
           <DialogDescription>
             <span className="block">Adjust SPT duty for this day. Dashboard weekday settings stay unchanged.</span>
             <div className="mt-3 flex sm:hidden flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
-              {[
-                { step: '2.0', label: 'Programs' },
-                { step: '2.1', label: 'Substitute' },
-                { step: '2.2', label: 'SPT' },
-              ].map(({ step, label }, i) => (
+              {stepperSteps.map(({ step, label }, i) => (
                 <React.Fragment key={step}>
                   {i > 0 ? <span aria-hidden="true">·</span> : null}
                   <span className={cn('px-2.5 py-1 rounded-md', step === '2.2' && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>

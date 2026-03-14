@@ -20,7 +20,7 @@ import type {
   TherapistAllocation,
   PCAAllocation,
   BedAllocation,
-  BedRelievingNoteRow,
+  BedRelievingNotesForToTeam,
   BedRelievingNotesByToTeam,
   ScheduleCalculations,
   AllocationTracker,
@@ -81,6 +81,7 @@ import {
   type Step3BootstrapSummary,
 } from '@/lib/features/schedule/step3Bootstrap'
 import { buildPageStep3RuntimeState } from '@/lib/features/schedule/pageStep3Runtime'
+import { willNeedStep21Substitution } from '@/lib/features/schedule/step2SubstitutionProjection'
 import { mergeStep2Point2StaffOverrides } from '@/lib/features/schedule/step2Point2StateMerge'
 import {
   mergeExtraCoverageIntoStaffOverridesForDisplay,
@@ -88,6 +89,7 @@ import {
 } from '@/lib/features/schedule/extraCoverageVisibility'
 import { deriveExtraCoverageByStaffId } from '@/lib/features/schedule/extraCoverageRuntime'
 import { buildDisplayPcaAllocationsByTeam } from '@/lib/features/schedule/pcaDisplayProjection'
+import { projectBedRelievingNotesForDisplay } from '@/lib/features/schedule/bedRelievingDisplayProjection'
 import { flushSync } from 'react-dom'
 import {
   buildStaffByIdMap,
@@ -1319,7 +1321,7 @@ function SchedulePageContent() {
   // Domain state moved into useScheduleController() (Stage 2 / Option A).
   const [editingBedTeam, setEditingBedTeam] = useState<Team | null>(null)
   const saveBedRelievingNotesForToTeam = useCallback(
-    (toTeam: Team, notes: Partial<Record<Team, BedRelievingNoteRow[]>>) => {
+    (toTeam: Team, notes: BedRelievingNotesForToTeam) => {
       try {
         flushSync(() => {
           scheduleActions.updateBedRelievingNotes({ toTeam, notes: notes as any })
@@ -1513,6 +1515,17 @@ function SchedulePageContent() {
   
   // Step 2.0: Special Program Override Dialog state
   const [showSpecialProgramOverrideDialog, setShowSpecialProgramOverrideDialog] = useState(false)
+  const [step21RuntimeVisible, setStep21RuntimeVisible] = useState<boolean | null>(null)
+  const step21PredictedVisible = useMemo(
+    () =>
+      willNeedStep21Substitution({
+        selectedDate,
+        staff,
+        staffOverrides: staffOverrides as Record<string, any>,
+      }),
+    [selectedDate, staff, staffOverrides]
+  )
+  const showStep21InStep2Stepper = step21RuntimeVisible ?? step21PredictedVisible
   const specialProgramOverrideResolverRef = useRef<
     ((overrides: Record<string, { specialProgramOverrides?: SpecialProgramOverrideEntry[] }> | null) => void) | null
   >(null)
@@ -3949,9 +3962,14 @@ function SchedulePageContent() {
   const generateStep2_TherapistAndNonFloatingPCA = async (
     cleanedOverrides?: typeof staffOverrides
   ): Promise<Record<Team, (PCAAllocation & { staff: Staff })[]>> => {
+    // Default to hidden unless runtime projection confirms Step 2.1 is needed.
+    setStep21RuntimeVisible(false)
     return await scheduleActions.runStep2TherapistAndNonFloatingPCA({
       cleanedOverrides: cleanedOverrides as any,
       toast: step2ToastProxy,
+      onStep21Projection: ({ showStep21 }) => {
+        setStep21RuntimeVisible(showStep21)
+      },
       onNonFloatingSubstitutionWizard: async ({
         teams,
         substitutionsByTeam,
@@ -4357,6 +4375,7 @@ function SchedulePageContent() {
             prefetchSpecialProgramOverrideDialog().catch(() => {})
             // Step 2 can also pause into substitution flow; warm it up too.
             prefetchNonFloatingSubstitutionDialog().catch(() => {})
+            setStep21RuntimeVisible(null)
             setShowSpecialProgramOverrideDialog(true)
           })
         }
@@ -4569,6 +4588,7 @@ function SchedulePageContent() {
     specialProgramOverrideResolverRef.current = null
     setShowSptFinalEditDialog(false)
     sptFinalEditResolverRef.current = null
+    setStep21RuntimeVisible(null)
     setSubstitutionWizardOpen(false)
     setSubstitutionWizardData(null)
     substitutionWizardResolverRef.current = null
@@ -4588,6 +4608,7 @@ function SchedulePageContent() {
     specialProgramOverrideResolverRef.current = null
     setShowSptFinalEditDialog(false)
     sptFinalEditResolverRef.current = null
+    setStep21RuntimeVisible(null)
     setSubstitutionWizardOpen(false)
     setSubstitutionWizardData(null)
     substitutionWizardResolverRef.current = null
@@ -5555,23 +5576,10 @@ function SchedulePageContent() {
   }, [visibleTeams, teamContributorsByMain, bedCountsOverridesByTeam])
 
   const bedRelievingNotesByToTeamForDisplay = useMemo(() => {
-    const out = createEmptyTeamRecord<Partial<Record<Team, BedRelievingNoteRow[]>>>({})
-    for (const [toTeamRaw, fromMapRaw] of Object.entries(bedRelievingNotesByToTeam || {})) {
-      const toTeam = toTeamRaw as Team
-      const main = getMainTeam(toTeam, effectiveTeamMergeConfig.mergedInto)
-      const existingToTeamMap = out[main] || {}
-      const fromMap = (fromMapRaw || {}) as Partial<Record<Team, BedRelievingNoteRow[]>>
-
-      for (const [fromTeamRaw, rowsRaw] of Object.entries(fromMap)) {
-        const fromTeam = fromTeamRaw as Team
-        const mainFromTeam = getMainTeam(fromTeam, effectiveTeamMergeConfig.mergedInto)
-        const rows = Array.isArray(rowsRaw) ? rowsRaw : []
-        existingToTeamMap[mainFromTeam] = [...(existingToTeamMap[mainFromTeam] || []), ...rows]
-      }
-
-      out[main] = existingToTeamMap
-    }
-    return out as BedRelievingNotesByToTeam
+    return projectBedRelievingNotesForDisplay({
+      bedRelievingNotesByToTeam,
+      mergedInto: effectiveTeamMergeConfig.mergedInto,
+    })
   }, [bedRelievingNotesByToTeam, effectiveTeamMergeConfig.mergedInto])
 
   const bedAllocationsForDisplay = useMemo(() => {
@@ -9825,9 +9833,13 @@ function SchedulePageContent() {
             setTieBreakDecisions={(next) => setTieBreakDecisions(next as any)}
             recalculateScheduleCalculations={recalculateScheduleCalculations}
             runStep2={async ({ cleanedOverrides }) => {
+              setStep21RuntimeVisible(false)
               return await scheduleActions.runStep2TherapistAndNonFloatingPCA({
                 cleanedOverrides: cleanedOverrides as any,
                 toast: showActionToast,
+                onStep21Projection: ({ showStep21 }) => {
+                  setStep21RuntimeVisible(showStep21)
+                },
               })
             }}
             runStep2Auto={async ({ autoStep20, autoStep21, autoStep22 }) => {
@@ -9852,6 +9864,7 @@ function SchedulePageContent() {
                   const resolver = (overrides: Record<string, any>) => resolve(overrides || {})
                   specialProgramOverrideResolverRef.current = resolver as any
                   prefetchSpecialProgramOverrideDialog().catch(() => {})
+                  setStep21RuntimeVisible(null)
                   setShowSpecialProgramOverrideDialog(true)
                 })
 
@@ -9928,9 +9941,13 @@ function SchedulePageContent() {
                   // Use the real substitution wizard flow.
                   await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides as any)
                 } else {
+                  setStep21RuntimeVisible(false)
                   await scheduleActions.runStep2TherapistAndNonFloatingPCA({
                     cleanedOverrides: cleanedOverrides as any,
                     toast: showActionToast,
+                    onStep21Projection: ({ showStep21 }) => {
+                      setStep21RuntimeVisible(showStep21)
+                    },
                     onNonFloatingSubstitutionWizard: async ({ teams, substitutionsByTeam }) => {
                       return autoSelectSubstitutions({ teams, substitutionsByTeam: substitutionsByTeam as any })
                     },
@@ -10216,13 +10233,32 @@ function SchedulePageContent() {
             onResetToBaseline={resetToBaseline}
             onStepClick={handleStepClick}
             canNavigateToStep={(stepId) => {
-              // Can always go to earlier steps
               const targetIndex = ALLOCATION_STEPS.findIndex(s => s.id === stepId)
               const currentIndex = ALLOCATION_STEPS.findIndex(s => s.id === currentStep)
+
+              // Can always go to earlier steps
               if (targetIndex <= currentIndex) return true
-              // Can only go forward if previous step has been started (completed or modified).
+
               const previousStep = ALLOCATION_STEPS[targetIndex - 1]
-              return previousStep && stepStatus[previousStep.id] !== 'pending'
+              if (!previousStep) return false
+
+              // Special case for Step 1 -> Step 2 navigation
+              if (previousStep.id === 'leave-fte') {
+                // Allow if Step 1 has leave data configured (fresh schedule case)
+                const hasLeaveData = Object.keys(staffOverrides).length > 0
+
+                // Allow if any later step is completed (loaded schedule case)
+                const anyLaterStepCompleted = ['therapist-pca', 'floating-pca', 'bed-relieving', 'review']
+                  .some(s => stepStatus[s] !== 'pending')
+
+                // Allow if Step 1 itself is completed/modified (normal case)
+                const step1Started = stepStatus['leave-fte'] !== 'pending'
+
+                return hasLeaveData || anyLaterStepCompleted || step1Started
+              }
+
+              // Standard check for other steps: can only go forward if previous step has been started
+              return stepStatus[previousStep.id] !== 'pending'
             }}
             onNext={handleNextStep}
             onPrevious={handlePreviousStep}
@@ -12200,6 +12236,7 @@ function SchedulePageContent() {
                 sptBaseFteByStaffId={sptBaseFteByStaffId}
                 staffOverrides={staffOverrides}
                 weekday={getWeekday(selectedDate)}
+                showSubstituteStep={showStep21InStep2Stepper}
                 onConfirm={(overrides) => {
                   const resolver = specialProgramOverrideResolverRef.current
                   if (resolver) {
@@ -12250,6 +12287,7 @@ function SchedulePageContent() {
                 sptWeekdayByStaffId={sptWeekdayByStaffId}
                 sptTeamsByStaffId={sptTeamsByStaffIdForStep22}
                 staffOverrides={staffOverrides as any}
+                showSubstituteStep={showStep21InStep2Stepper}
                 currentAllocationByStaffId={currentSptAllocationByStaffIdForStep22}
                 ptPerTeamByTeam={ptPerTeamByTeamForStep22}
                 onConfirm={(updates) => {
@@ -12629,23 +12667,10 @@ function SplitReferencePortal(props: {
     return out
   }, [refVisibleTeams, refContributorsByMain, refScheduleState.bedCountsOverridesByTeam])
   const refBedRelievingNotesByToTeamForDisplay = useMemo(() => {
-    const out = createEmptyTeamRecord<Partial<Record<Team, BedRelievingNoteRow[]>>>({})
-    for (const [toTeamRaw, fromMapRaw] of Object.entries(refScheduleState.bedRelievingNotesByToTeam || {})) {
-      const toTeam = toTeamRaw as Team
-      const mainToTeam = getMainTeam(toTeam, refEffectiveTeamMergeConfig.mergedInto)
-      const existingToTeamMap = out[mainToTeam] || {}
-      const fromMap = (fromMapRaw || {}) as Partial<Record<Team, BedRelievingNoteRow[]>>
-
-      for (const [fromTeamRaw, rowsRaw] of Object.entries(fromMap)) {
-        const fromTeam = fromTeamRaw as Team
-        const mainFromTeam = getMainTeam(fromTeam, refEffectiveTeamMergeConfig.mergedInto)
-        const rows = Array.isArray(rowsRaw) ? rowsRaw : []
-        existingToTeamMap[mainFromTeam] = [...(existingToTeamMap[mainFromTeam] || []), ...rows]
-      }
-
-      out[mainToTeam] = existingToTeamMap
-    }
-    return out as BedRelievingNotesByToTeam
+    return projectBedRelievingNotesForDisplay({
+      bedRelievingNotesByToTeam: refScheduleState.bedRelievingNotesByToTeam,
+      mergedInto: refEffectiveTeamMergeConfig.mergedInto,
+    })
   }, [refScheduleState.bedRelievingNotesByToTeam, refEffectiveTeamMergeConfig.mergedInto])
   const refBedAllocationsForDisplay = useMemo(() => {
     const mapped = (refScheduleState.bedAllocations || []).map((allocation) => ({

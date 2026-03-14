@@ -23,6 +23,13 @@
 
 ### Fixed
 - **Vercel build failure** — `step2Point2StateMerge.ts` imported from non-existent `@/lib/types`; corrected to `@/types/staff`.
+
+### Removed
+- **Scarcity Auto option** — Removed confusing "Auto" behavior; scarcity trigger now only "Remind" or "Off". Step 3.1 always defaults to Standard. Legacy `auto_select` config mapped to `remind_only`.
+
+### Changed (Step 3.1 / Bed relieving)
+- **Step 3.1 projected extra slots** — Preview shows purple "· projected extra slots: X" with tooltip (needed/available slots) when dry-run predicts extra coverage. Preview runs with `extraCoverageMode: 'round-robin-team-order'` so counts match final Extra tags.
+- **Bed relieving block** — Taken/Not released as Switch toggle; row layout `[Ward ▼] [+] [X]`; compact +/X buttons; purple styling for Extra tag consistency; "To take" label.
 - **Extra PCA slots miscount after save/reload** — Placeholder PCA rows with leave overrides (e.g. VL at 0 FTE or 0.5 FTE) were incorrectly counted as active coverage; `deriveExtraCoverageByStaffId` now uses runtime `availableSlots` and `slot_assigned` so off-duty rows contribute zero. Regression f55.
 - **PCA placeholder row cleanup** — Override-only non-floating PCA rows no longer persisted; save path skips when no material allocation facts. Shared `buildDisplayPcaAllocationsByTeam` projects Step 1 state for display/export/reference; `hasMeaningfulStep1Overrides` / `classifyScheduleMeaning` centralize history/cleanup/schedule semantics. Regressions f56–f58.
 

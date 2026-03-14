@@ -39,7 +39,7 @@ export function PCAPreferencePanel() {
   const [editingFloorMapping, setEditingFloorMapping] = useState(false)
   const [globalHead, setGlobalHead] = useState<any>(null)
   const [scarcityShortageSlots, setScarcityShortageSlots] = useState<string>('2')
-  const [scarcityBehavior, setScarcityBehavior] = useState<'auto_select' | 'remind_only' | 'off'>('auto_select')
+  const [scarcityBehavior, setScarcityBehavior] = useState<'remind_only' | 'off'>('remind_only')
   const [savingScarcity, setSavingScarcity] = useState(false)
   const expand = useDashboardExpandableCard<string>({ animationMs: 220 })
   const expandFloor = useDashboardExpandableCard<string>({ animationMs: 220 })
@@ -86,12 +86,11 @@ export function PCAPreferencePanel() {
             : typeof raw?.slack_slots === 'number'
               ? raw.slack_slots
               : Number(raw?.shortage_slots ?? raw?.shortageSlots ?? raw?.slack_slots ?? raw?.slackSlots ?? 2)
-        const behaviorRaw = String(raw?.behavior ?? 'auto_select')
+        const behaviorRaw = String(raw?.behavior ?? 'remind_only')
         const shortageSafe = Number.isFinite(shortageSlots) && shortageSlots >= 0 ? Math.round(shortageSlots) : 2
-        const behaviorSafe =
-          behaviorRaw === 'remind_only' || behaviorRaw === 'off' || behaviorRaw === 'auto_select'
-            ? (behaviorRaw as any)
-            : 'auto_select'
+        // Legacy: map auto_select → remind_only; only remind_only and off are supported.
+        const behaviorSafe: 'remind_only' | 'off' =
+          behaviorRaw === 'remind_only' || behaviorRaw === 'off' ? behaviorRaw : 'remind_only'
         setScarcityShortageSlots(String(shortageSafe))
         setScarcityBehavior(behaviorSafe)
       }
@@ -144,10 +143,9 @@ export function PCAPreferencePanel() {
             : Number(raw?.shortage_slots ?? raw?.shortageSlots ?? raw?.slack_slots ?? raw?.slackSlots ?? shortageSlots)
       const behaviorSaved = String(raw?.behavior ?? scarcityBehavior)
       const shortageSafe = Number.isFinite(shortageSaved) && shortageSaved >= 0 ? Math.round(shortageSaved) : Math.round(shortageSlots)
-      const behaviorSafe =
-        behaviorSaved === 'remind_only' || behaviorSaved === 'off' || behaviorSaved === 'auto_select'
-          ? (behaviorSaved as any)
-          : scarcityBehavior
+      // Legacy: map auto_select → remind_only; only remind_only and off are supported.
+      const behaviorSafe: 'remind_only' | 'off' =
+        behaviorSaved === 'remind_only' || behaviorSaved === 'off' ? behaviorSaved : 'remind_only'
       setScarcityShortageSlots(String(shortageSafe))
       setScarcityBehavior(behaviorSafe)
       toast.success('Scarcity threshold saved.')
@@ -475,8 +473,7 @@ export function PCAPreferencePanel() {
                 <div className="min-w-0">
                   <h4 className="font-semibold text-lg">Balanced mode trigger (Scarcity)</h4>
                   <p className="text-sm text-muted-foreground">
-                    Controls when Step 3.1 auto-selects Balanced mode.
-                    Trigger rule: Balanced is recommended when <span className="font-medium text-foreground">global shortage</span> is ≥ <span className="font-medium text-foreground">S</span> slot(s).
+                    When <span className="font-medium text-foreground">global shortage</span> is ≥ <span className="font-medium text-foreground">S</span> slot(s), show a reminder to consider Balanced mode in Step 3.1.
                   </p>
                 </div>
               </div>
@@ -485,7 +482,7 @@ export function PCAPreferencePanel() {
                 <div className="grid gap-2">
                   <Label>When threshold is met</Label>
                   <div className="flex gap-1">
-                    {(['auto_select', 'remind_only', 'off'] as const).map((v) => (
+                    {(['remind_only', 'off'] as const).map((v) => (
                       <button
                         key={v}
                         type="button"
@@ -496,7 +493,7 @@ export function PCAPreferencePanel() {
                             : 'bg-muted text-muted-foreground hover:bg-muted/80'
                         }`}
                       >
-                        {v === 'auto_select' ? 'Auto' : v === 'remind_only' ? 'Remind' : 'Off'}
+                        {v === 'remind_only' ? 'Remind' : 'Off'}
                       </button>
                     ))}
                   </div>
@@ -528,10 +525,9 @@ export function PCAPreferencePanel() {
                           : typeof raw?.slack_slots === 'number'
                             ? raw.slack_slots
                             : Number(raw?.shortage_slots ?? raw?.shortageSlots ?? raw?.slack_slots ?? raw?.slackSlots ?? 2)
-                      const behavior = String(raw?.behavior ?? 'auto_select')
+                      const behavior = String(raw?.behavior ?? 'remind_only')
                       const shortageSafe = Number.isFinite(shortageSlots) ? Math.round(shortageSlots) : 2
-                      const behaviorLabel =
-                        behavior === 'remind_only' ? 'Remind only' : behavior === 'off' ? 'Off' : 'Auto pre-select'
+                      const behaviorLabel = behavior === 'remind_only' ? 'Remind' : behavior === 'off' ? 'Off' : 'Remind'
                       return `shortage ≥ ${shortageSafe} slot(s) • ${behaviorLabel}`
                     })()}
                   </div>

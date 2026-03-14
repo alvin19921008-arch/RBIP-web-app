@@ -1,7 +1,13 @@
 'use client'
 
 import { Team } from '@/types/staff'
-import { BedAllocation, BedRelievingNoteRow, BedRelievingNotesByToTeam } from '@/types/schedule'
+import {
+  BedAllocation,
+  BedRelievingNoteRow,
+  BedRelievingNotesByToTeam,
+  BedRelievingNotesForToTeam,
+  BedRelievingTransferNote,
+} from '@/types/schedule'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,10 +22,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Check, Info, Pencil, Plus, Trash2, X, XCircle } from 'lucide-react'
+import { Check, Info, Pencil, Plus, X, XCircle } from 'lucide-react'
+import { Switch } from '@/components/ui/switch'
 import * as React from 'react'
+import {
+  formatBedCountLabel,
+  getTransferDisplayMode,
+  isBedRelievingTransferDone,
+  normalizeBedRelievingTransferEntry,
+} from '@/lib/features/schedule/bedRelievingTransferState'
 
-const EMPTY_NOTES_FOR_TO_TEAM: Partial<Record<Team, BedRelievingNoteRow[]>> = {}
+const EMPTY_NOTES_FOR_TO_TEAM: BedRelievingNotesForToTeam = {}
 
 interface BedBlockProps {
   team: Team
@@ -28,7 +41,7 @@ interface BedBlockProps {
   bedRelievingNotesByToTeam?: BedRelievingNotesByToTeam
   onSaveBedRelievingNotesForToTeam?: (
     toTeam: Team,
-    notes: Partial<Record<Team, BedRelievingNoteRow[]>>
+    notes: BedRelievingNotesForToTeam
   ) => void
   activeEditingTransfer?: { fromTeam: Team; toTeam: Team } | null
   onActiveEditingTransferChange?: (next: { fromTeam: Team; toTeam: Team } | null) => void
@@ -42,10 +55,6 @@ function countBedNumbers(text: string): number {
     .map(t => t.trim())
     .filter(Boolean)
     .filter(t => /^\d+$/.test(t)).length
-}
-
-function hasAnyBedNumbers(rows: BedRelievingNoteRow[] | undefined): boolean {
-  return (rows || []).some(r => (r.bedNumbersText || '').trim().length > 0)
 }
 
 function formatBedNumbersForDisplay(text: string): string {
@@ -79,11 +88,12 @@ export const BedBlock = React.memo(function BedBlock({
 
   const existingNotesForToTeam =
     bedRelievingNotesByToTeam?.[team] ?? EMPTY_NOTES_FOR_TO_TEAM
+  const hasSavedTakesState = Object.keys(existingNotesForToTeam as any).length > 0
 
   const [isEditingTakes, setIsEditingTakes] = React.useState(false)
   const [editingFromTeam, setEditingFromTeam] = React.useState<Team | null>(null)
   const [draftByFromTeam, setDraftByFromTeam] = React.useState<
-    Partial<Record<Team, BedRelievingNoteRow[]>>
+    Partial<Record<Team, Required<BedRelievingTransferNote>>>
   >({})
   const focusTargetRef = React.useRef<{ type: 'ward' | 'beds'; key: string } | null>(null)
   const pendingBedsFocusAfterSelectCloseRef = React.useRef<string | null>(null)
@@ -149,19 +159,18 @@ export const BedBlock = React.memo(function BedBlock({
 
   const openEditAll = React.useCallback(() => {
     if (!onSaveBedRelievingNotesForToTeam) return
-    const next: Partial<Record<Team, BedRelievingNoteRow[]>> = {}
+    const next: Partial<Record<Team, Required<BedRelievingTransferNote>>> = {}
     let focusKey: string | null = null
     let focusType: 'ward' | 'beds' = 'ward'
     for (const fromTeam of receivingFromTeams) {
-      const existing = (existingNotesForToTeam as any)?.[fromTeam] as BedRelievingNoteRow[] | undefined
+      const existing = normalizeBedRelievingTransferEntry((existingNotesForToTeam as any)?.[fromTeam])
       const seedRows =
-        existing && existing.length > 0
-          ? existing.map(r => ({ ward: r.ward || '', bedNumbersText: r.bedNumbersText || '' }))
+        existing.rows.length > 0
+          ? existing.rows.map((row) => ({ ward: row.ward || '', bedNumbersText: row.bedNumbersText || '' }))
           : [{ ward: '', bedNumbersText: '' }]
-      if (existing && existing.length > 0) {
-        next[fromTeam] = seedRows
-      } else {
-        next[fromTeam] = seedRows
+      next[fromTeam] = {
+        resolution: existing.resolution,
+        rows: seedRows,
       }
       if (!focusKey) {
         const firstRow = seedRows[0]
@@ -173,8 +182,10 @@ export const BedBlock = React.memo(function BedBlock({
     Object.entries(existingNotesForToTeam as any).forEach(([k, rows]) => {
       const fromTeam = k as Team
       if (next[fromTeam]) return
-      const r = (rows as BedRelievingNoteRow[]) || []
-      if (r.length > 0) next[fromTeam] = r
+      const normalized = normalizeBedRelievingTransferEntry(rows as any)
+      if (normalized.rows.length > 0 || normalized.resolution === 'not-released') {
+        next[fromTeam] = normalized
+      }
     })
     setEditingFromTeam(null)
     setDraftByFromTeam(next)
@@ -187,13 +198,18 @@ export const BedBlock = React.memo(function BedBlock({
   const openEditFromTeam = React.useCallback(
     (fromTeam: Team) => {
       if (!onSaveBedRelievingNotesForToTeam) return
-      const existing = (existingNotesForToTeam as any)?.[fromTeam] as BedRelievingNoteRow[] | undefined
+      const existing = normalizeBedRelievingTransferEntry((existingNotesForToTeam as any)?.[fromTeam])
       const rows =
-        existing && existing.length > 0
-          ? existing.map(r => ({ ward: r.ward || '', bedNumbersText: r.bedNumbersText || '' }))
+        existing.rows.length > 0
+          ? existing.rows.map((row) => ({ ward: row.ward || '', bedNumbersText: row.bedNumbersText || '' }))
           : [{ ward: '', bedNumbersText: '' }]
       setEditingFromTeam(fromTeam)
-      setDraftByFromTeam({ [fromTeam]: rows })
+      setDraftByFromTeam({
+        [fromTeam]: {
+          resolution: existing.resolution,
+          rows,
+        },
+      })
       const firstRow = rows[0]
       focusTargetRef.current = {
         type: (firstRow.ward || '').trim().length === 0 ? 'ward' : 'beds',
@@ -247,7 +263,7 @@ export const BedBlock = React.memo(function BedBlock({
     if (receiving.length === 0) return 'Takes: (none)'
     const parts = receivingFromTeams.map(fromTeam => {
       const n = expectedBedsFromTeam[fromTeam] ?? 0
-      return `${n} beds from ${fromTeam}`
+      return `${formatBedCountLabel(n)} from ${fromTeam}`
     })
     return `Takes: ${parts.join(', ')}`
   }, [receiving.length, receivingFromTeams, expectedBedsFromTeam])
@@ -258,7 +274,7 @@ export const BedBlock = React.memo(function BedBlock({
     releasing.forEach(a => {
       byTo[a.to_team] = (byTo[a.to_team] ?? 0) + a.num_beds
     })
-    const parts = Object.entries(byTo).map(([toTeam, n]) => `${n} beds to ${toTeam}`)
+    const parts = Object.entries(byTo).map(([toTeam, n]) => `${formatBedCountLabel(n)} to ${toTeam}`)
     return `Releases: ${parts.join(', ')}`
   }, [releasing])
 
@@ -272,11 +288,14 @@ export const BedBlock = React.memo(function BedBlock({
   const outgoingDoneByToTeam = React.useMemo(() => {
     const out: Partial<Record<Team, boolean>> = {}
     outgoingToTeams.forEach(toTeam => {
-      const rows = bedRelievingNotesByToTeam?.[toTeam]?.[team]
-      out[toTeam] = hasAnyBedNumbers(rows)
+      const entry = bedRelievingNotesByToTeam?.[toTeam]?.[team]
+      const expectedOutgoingBeds = releasing
+        .filter((allocation) => allocation.to_team === toTeam)
+        .reduce((sum, allocation) => sum + allocation.num_beds, 0)
+      out[toTeam] = isBedRelievingTransferDone(entry, expectedOutgoingBeds)
     })
     return out
-  }, [outgoingToTeams, bedRelievingNotesByToTeam, team])
+  }, [outgoingToTeams, bedRelievingNotesByToTeam, team, releasing])
 
   const shouldHideReleases =
     releasing.length > 0 && outgoingToTeams.every(t => outgoingDoneByToTeam[t])
@@ -300,26 +319,39 @@ export const BedBlock = React.memo(function BedBlock({
       return
     }
 
-    const cleaned: Partial<Record<Team, BedRelievingNoteRow[]>> = {}
-    Object.entries(draftByFromTeam as any).forEach(([k, rows]) => {
+    const cleaned: BedRelievingNotesForToTeam = {}
+    Object.entries(draftByFromTeam as any).forEach(([k, value]) => {
       const fromTeam = k as Team
-      const kept = (rows as BedRelievingNoteRow[]).filter(r => {
+      const normalized = normalizeBedRelievingTransferEntry(value as any)
+      if (normalized.resolution === 'not-released') {
+        cleaned[fromTeam] = {
+          resolution: 'not-released',
+          rows: [],
+        }
+        return
+      }
+      const kept = normalized.rows.filter(r => {
         const ward = (r.ward || '').trim()
         const beds = (r.bedNumbersText || '').trim()
         return ward.length > 0 || beds.length > 0
       })
-      if (kept.length > 0) cleaned[fromTeam] = kept
+      if (kept.length > 0) {
+        cleaned[fromTeam] = {
+          resolution: 'taken',
+          rows: kept,
+        }
+      }
     })
 
     // Merge into existing notes (so editing a single team doesn't wipe others)
-    const merged: Partial<Record<Team, BedRelievingNoteRow[]>> = { ...(existingNotesForToTeam as any) }
+    const merged: BedRelievingNotesForToTeam = { ...(existingNotesForToTeam as any) }
     Object.keys(draftByFromTeam as any).forEach(k => {
       const fromTeam = k as Team
-      const nextRows = cleaned[fromTeam]
-      if (!nextRows || nextRows.length === 0) {
+      const nextEntry = cleaned[fromTeam]
+      if (!nextEntry) {
         delete (merged as any)[fromTeam]
       } else {
-        ;(merged as any)[fromTeam] = nextRows
+        ;(merged as any)[fromTeam] = nextEntry
       }
     })
 
@@ -355,30 +387,7 @@ export const BedBlock = React.memo(function BedBlock({
     onActiveEditingTransferChange?.(null)
   }
 
-  const handleClear = () => {
-    if (onSaveBedRelievingNotesForToTeam) {
-      onSaveBedRelievingNotesForToTeam(team, {})
-    }
-    setIsEditingTakes(false)
-    setDraftByFromTeam({})
-    setEditingFromTeam(null)
-    onActiveEditingTransferChange?.(null)
-  }
-
   const renderTakesDisplay = () => {
-    const hasAnyNotes = Object.values(existingNotesForToTeam as any).some((rows: any) =>
-      (rows || []).some((r: any) => (r?.ward || '').trim() || (r?.bedNumbersText || '').trim())
-    )
-
-    if (!hasAnyNotes) {
-      // Show one line per releasing team (aggregated), consistent with the edit UI.
-      return receivingFromTeams.map((fromTeam) => (
-        <div key={`pending-${fromTeam}`} className="text-xs">
-          {expectedBedsFromTeam[fromTeam] ?? 0} beds from {fromTeam}
-        </div>
-      ))
-    }
-
     const allFromTeamsInDisplay: Team[] = Array.from(
       new Set<Team>([
         ...receivingFromTeams,
@@ -387,8 +396,19 @@ export const BedBlock = React.memo(function BedBlock({
     )
 
     const doneFromTeams = allFromTeamsInDisplay.filter((fromTeam) => {
-      const r = ((existingNotesForToTeam as any)?.[fromTeam] as BedRelievingNoteRow[]) || []
-      return r.length > 0
+      return isBedRelievingTransferDone(
+        (existingNotesForToTeam as any)?.[fromTeam],
+        expectedBedsFromTeam[fromTeam] ?? 0
+      )
+    })
+    const shownDoneFromTeams = doneFromTeams.filter((fromTeam) => {
+      const visible =
+        getTransferDisplayMode(
+          (existingNotesForToTeam as any)?.[fromTeam],
+          expectedBedsFromTeam[fromTeam] ?? 0
+        ) === 'shown'
+      const normalized = normalizeBedRelievingTransferEntry((existingNotesForToTeam as any)?.[fromTeam])
+      return visible && normalized.rows.length > 0
     })
 
     // "Pending" means: expected by algorithm for this taking team, but no saved bed numbers yet.
@@ -396,10 +416,13 @@ export const BedBlock = React.memo(function BedBlock({
       (fromTeam) => !doneFromTeams.includes(fromTeam)
     )
 
+    if (shownDoneFromTeams.length === 0 && pendingFromTeams.length === 0) return null
+
     return (
       <div className="space-y-1">
-        {doneFromTeams.map((fromTeam) => {
-          const r = ((existingNotesForToTeam as any)?.[fromTeam] as BedRelievingNoteRow[]) || []
+        {shownDoneFromTeams.map((fromTeam) => {
+          const normalized = normalizeBedRelievingTransferEntry((existingNotesForToTeam as any)?.[fromTeam])
+          const r = normalized.rows
           return (
             <div key={`notes-${fromTeam}`} className="group space-y-1">
               {r.map((row, idx) => (
@@ -443,13 +466,13 @@ export const BedBlock = React.memo(function BedBlock({
           )
         })}
 
-        {doneFromTeams.length > 0 && pendingFromTeams.length > 0 ? (
+        {shownDoneFromTeams.length > 0 && pendingFromTeams.length > 0 ? (
           <div className="border-t border-border/60 my-1" />
         ) : null}
 
         {pendingFromTeams.map((fromTeam) => (
           <div key={`pending-${fromTeam}`} className="text-xs text-muted-foreground">
-            {expectedBedsFromTeam[fromTeam] ?? 0} beds from {fromTeam}
+            {formatBedCountLabel(expectedBedsFromTeam[fromTeam] ?? 0)} from {fromTeam}
           </div>
         ))}
       </div>
@@ -457,12 +480,29 @@ export const BedBlock = React.memo(function BedBlock({
   }
 
   const renderTakesEditor = () => {
-    const doneFromTeams = receivingFromTeams.filter(ft => {
-      const rows = (existingNotesForToTeam as any)?.[ft] as BedRelievingNoteRow[] | undefined
-      return rows && rows.some(r => (r.ward || '').trim() || (r.bedNumbersText || '').trim())
+    const allEditableFromTeams: Team[] = Array.from(
+      new Set<Team>([
+        ...receivingFromTeams,
+        ...Object.keys(existingNotesForToTeam as any).map((key) => key as Team),
+      ])
+    )
+    const doneFromTeams = allEditableFromTeams.filter(ft => {
+      return isBedRelievingTransferDone(
+        (existingNotesForToTeam as any)?.[ft],
+        expectedBedsFromTeam[ft] ?? 0
+      )
     })
+    const hiddenDoneFromTeams = doneFromTeams.filter((ft) => {
+      return getTransferDisplayMode(
+        (existingNotesForToTeam as any)?.[ft],
+        expectedBedsFromTeam[ft] ?? 0
+      ) === 'hidden'
+    })
+    const savedOnlyFromTeams = allEditableFromTeams.filter((ft) => !receivingFromTeams.includes(ft))
     const pendingFromTeams = receivingFromTeams.filter(ft => !doneFromTeams.includes(ft))
-    const fromTeamsToEdit = editingFromTeam ? [editingFromTeam] : pendingFromTeams
+    const fromTeamsToEdit = editingFromTeam
+      ? [editingFromTeam]
+      : Array.from(new Set<Team>([...pendingFromTeams, ...hiddenDoneFromTeams, ...savedOnlyFromTeams]))
 
     return (
       <div className="space-y-1">
@@ -470,7 +510,9 @@ export const BedBlock = React.memo(function BedBlock({
         {!editingFromTeam && doneFromTeams.length > 0 ? (
           <div className="space-y-1">
             {doneFromTeams.map(ft => {
-              const rows = (existingNotesForToTeam as any)?.[ft] as BedRelievingNoteRow[] | undefined
+              const normalized = normalizeBedRelievingTransferEntry((existingNotesForToTeam as any)?.[ft])
+              if (normalized.resolution === 'not-released') return null
+              const rows = normalized.rows
               if (!rows || rows.length === 0) return null
               return (
                 <div key={`done-${ft}`} className="group space-y-1">
@@ -515,41 +557,63 @@ export const BedBlock = React.memo(function BedBlock({
         ) : null}
 
         {fromTeamsToEdit.map(fromTeam => {
-          const rows = (draftByFromTeam[fromTeam] || []) as BedRelievingNoteRow[]
+          const transfer = draftByFromTeam[fromTeam] ?? {
+            resolution: 'taken' as const,
+            rows: [{ ward: '', bedNumbersText: '' }],
+          }
+          const rows = transfer.rows
           const expected = expectedBedsFromTeam[fromTeam] ?? 0
           const typedCount = rows.reduce((sum, r) => sum + countBedNumbers(r.bedNumbersText || ''), 0)
-          const showWarn = typedCount > 0 && expected > 0 && typedCount !== expected
+          const showWarn =
+            transfer.resolution !== 'not-released' &&
+            typedCount > 0 &&
+            expected > 0 &&
+            typedCount !== expected
           const wardOptions = wardOptionsForFromTeam(fromTeam)
+          const canMarkNotReleased = expected === 1
 
           return (
             <div key={`edit-${fromTeam}`} className="space-y-1">
               <div className="flex items-center justify-between gap-2">
                 <div className="text-[11px] font-semibold">{fromTeam}</div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-5 w-5"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setDraftByFromTeam(prev => ({
-                      ...(prev as any),
-                      [fromTeam]: [
-                        ...(((prev as any)?.[fromTeam] as BedRelievingNoteRow[]) || []),
-                        { ward: '', bedNumbersText: '' },
-                      ],
-                    }))
-                  }}
-                  title="Add row"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </Button>
+                {canMarkNotReleased ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-muted-foreground">
+                      {transfer.resolution === 'taken' ? 'To take' : 'Not released'}
+                    </span>
+                    <Switch
+                      checked={transfer.resolution === 'taken'}
+                      onCheckedChange={(checked) => {
+                        setDraftByFromTeam((prev) => ({
+                          ...(prev as any),
+                          [fromTeam]: checked
+                            ? {
+                                resolution: 'taken',
+                                rows:
+                                  ((prev as any)?.[fromTeam]?.rows as BedRelievingNoteRow[] | undefined)?.length
+                                    ? ([...(prev as any)[fromTeam].rows] as BedRelievingNoteRow[])
+                                    : [{ ward: '', bedNumbersText: '' }],
+                              }
+                            : {
+                                resolution: 'not-released',
+                                rows: [],
+                              },
+                        }))
+                      }}
+                      className="h-4 w-7 data-[state=checked]:bg-emerald-600"
+                      aria-label={transfer.resolution === 'taken' ? 'To take' : 'Not released'}
+                    />
+                  </div>
+                ) : null}
               </div>
 
-              {rows.map((row, idx) => (
+              {transfer.resolution === 'not-released' ? (
+                <div className="text-xs text-muted-foreground italic">
+                  Marked as not released. This transfer stays hidden in display mode and can be changed here later.
+                </div>
+              ) : rows.map((row, idx) => (
                 <div key={`row-${fromTeam}-${idx}`} className="space-y-1">
-                  <div className="grid grid-cols-[1fr_auto] gap-2 items-center">
+                  <div className="grid grid-cols-[1fr_auto_auto] gap-2 items-center">
                     {wardOptions.length > 0 ? (
                       <Select
                         value={row.ward ? row.ward : undefined}
@@ -560,16 +624,16 @@ export const BedBlock = React.memo(function BedBlock({
                           pendingBedsFocusAfterSelectCloseRef.current = key
                           setDraftByFromTeam(prev => {
                             const next = { ...(prev as any) }
-                            const arr = ([...(next[fromTeam] || [])] as BedRelievingNoteRow[]).map((r, i) =>
+                            const arr = ([...(((next[fromTeam]?.rows as BedRelievingNoteRow[]) || []))] as BedRelievingNoteRow[]).map((r, i) =>
                               i === idx ? { ...r, ward: value } : r
                             )
-                            next[fromTeam] = arr
+                            next[fromTeam] = { resolution: 'taken', rows: arr }
                             return next
                           })
                         }}
                       >
                         <SelectTrigger
-                          className="h-7 px-2 text-xs"
+                          className="h-7 px-2 text-xs w-20"
                           ref={(el) => {
                             const key = `${fromTeam}:${idx}`
                             const entry = rowRefs.current.get(key) || {}
@@ -602,44 +666,73 @@ export const BedBlock = React.memo(function BedBlock({
                       </Select>
                     ) : (
                       <Input
-                        className="h-7 px-2 text-xs"
-                        placeholder="Ward (e.g. R9C)"
+                        className="h-7 px-2 text-xs w-20"
+                        placeholder="Ward"
                         value={row.ward || ''}
                         onChange={(e) => {
                           const value = e.target.value
                           setDraftByFromTeam(prev => {
                             const next = { ...(prev as any) }
-                            const arr = ([...(next[fromTeam] || [])] as BedRelievingNoteRow[]).map((r, i) =>
+                            const arr = ([...(((next[fromTeam]?.rows as BedRelievingNoteRow[]) || []))] as BedRelievingNoteRow[]).map((r, i) =>
                               i === idx ? { ...r, ward: value } : r
                             )
-                            next[fromTeam] = arr
+                            next[fromTeam] = { resolution: 'taken', rows: arr }
                             return next
                           })
                         }}
                       />
                     )}
 
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        setDraftByFromTeam(prev => {
-                          const next = { ...(prev as any) }
-                          const arr = ([...(next[fromTeam] || [])] as BedRelievingNoteRow[]).filter(
-                            (_, i) => i !== idx
-                          )
-                          next[fromTeam] = arr.length > 0 ? arr : [{ ward: '', bedNumbersText: '' }]
-                          return next
-                        })
-                      }}
-                      title="Remove row"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
+                    <Tooltip content="Add bed row">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 p-0"
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          setDraftByFromTeam((prev) => ({
+                            ...(prev as any),
+                            [fromTeam]: {
+                              resolution: 'taken',
+                              rows: [
+                                ...((((prev as any)?.[fromTeam]?.rows as BedRelievingNoteRow[]) || [])),
+                                { ward: '', bedNumbersText: '' },
+                              ],
+                            },
+                          }))
+                        }}
+                      >
+                        <Plus className="h-3 w-3" />
+                      </Button>
+                    </Tooltip>
+
+                    <Tooltip content="Remove bed row">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 p-0"
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          setDraftByFromTeam(prev => {
+                            const next = { ...(prev as any) }
+                            const arr = ([...(((next[fromTeam]?.rows as BedRelievingNoteRow[]) || []))] as BedRelievingNoteRow[]).filter(
+                              (_, i) => i !== idx
+                            )
+                            next[fromTeam] = {
+                              resolution: 'taken',
+                              rows: arr.length > 0 ? arr : [{ ward: '', bedNumbersText: '' }],
+                            }
+                            return next
+                          })
+                        }}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </Tooltip>
                   </div>
 
                   <Textarea
@@ -667,10 +760,10 @@ export const BedBlock = React.memo(function BedBlock({
                       e.currentTarget.style.height = `${e.currentTarget.scrollHeight}px`
                       setDraftByFromTeam(prev => {
                         const next = { ...(prev as any) }
-                        const arr = ([...(next[fromTeam] || [])] as BedRelievingNoteRow[]).map((r, i) =>
+                        const arr = ([...(((next[fromTeam]?.rows as BedRelievingNoteRow[]) || []))] as BedRelievingNoteRow[]).map((r, i) =>
                           i === idx ? { ...r, bedNumbersText: value } : r
                         )
-                        next[fromTeam] = arr
+                        next[fromTeam] = { resolution: 'taken', rows: arr }
                         return next
                       })
                     }}
@@ -680,7 +773,7 @@ export const BedBlock = React.memo(function BedBlock({
 
               {showWarn ? (
                 <div className="text-[11px] text-amber-600">
-                  Expected {expected} beds, you entered {typedCount}
+                  Expected {formatBedCountLabel(expected)}, you entered {formatBedCountLabel(typedCount)}
                 </div>
               ) : null}
             </div>
@@ -688,44 +781,6 @@ export const BedBlock = React.memo(function BedBlock({
         })}
 
         <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
-          {onSaveBedRelievingNotesForToTeam ? (
-            <Tooltip
-              side="top"
-              content={
-                editingFromTeam
-                  ? `Clear all inputs for ${editingFromTeam} (only in this team's Takes box).`
-                  : "Clear all saved bed-number inputs in this team's Takes box."
-              }
-            >
-              <span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 p-0"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    if (editingFromTeam) {
-                      // Clear only the currently edited releasing team (safer for re-edit).
-                      const merged: Partial<Record<Team, BedRelievingNoteRow[]>> = {
-                        ...(existingNotesForToTeam as any),
-                      }
-                      delete (merged as any)[editingFromTeam]
-                      onSaveBedRelievingNotesForToTeam(team, merged)
-                      setIsEditingTakes(false)
-                      setEditingFromTeam(null)
-                      setDraftByFromTeam({})
-                      return
-                    }
-                    handleClear()
-                  }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </span>
-            </Tooltip>
-          ) : null}
           <Tooltip side="top" content="Cancel editing (discard unsaved changes)">
             <span>
               <Button
@@ -769,7 +824,7 @@ export const BedBlock = React.memo(function BedBlock({
     <Card ref={cardRef} data-tour="bed-relieving">
       <CardContent className="p-2 pt-1">
         <div className="space-y-1">
-          {receiving.length > 0 && (
+          {(receiving.length > 0 || hasSavedTakesState) && (
             <div>
               <div className="flex items-center justify-between gap-2 mb-1">
                 <div className="flex items-center gap-1">
@@ -856,7 +911,7 @@ export const BedBlock = React.memo(function BedBlock({
                               : ''
                         )}
                       >
-                        {allocation.num_beds} beds to {allocation.to_team}
+                        {formatBedCountLabel(allocation.num_beds)} to {allocation.to_team}
                       </span>
                       {done ? <Check className="h-3.5 w-3.5 text-muted-foreground" /> : null}
                     </div>

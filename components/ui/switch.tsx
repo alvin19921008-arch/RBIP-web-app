@@ -32,7 +32,7 @@ export function Switch({
     >
       <span
         className={cn(
-          'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform',
+          'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform border border-border',
           checked ? 'translate-x-4' : 'translate-x-0.5'
         )}
       />

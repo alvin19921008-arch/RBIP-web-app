@@ -59,6 +59,11 @@ import {
   Step3StandardModeExplainerSvg,
   Step3BalancedModeExplainerSvg,
 } from '@/components/allocation/Step3ModeExplainerAnimated'
+import {
+  buildProjectedExtraSlotsTooltipLines,
+  buildStep31PreviewExtraCoverageOptions,
+  countProjectedExtraSlots,
+} from '@/lib/features/schedule/step31ProjectedExtraSlots'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -204,10 +209,7 @@ export function FloatingPCAConfigDialog({
   const [allocationMethodExpanded, setAllocationMethodExpanded] = useState(false)
   // Scarcity config (global head): treat threshold as "shortage slots" (0.25 FTE per slot)
   const [scarcityShortageSlotsThreshold, setScarcityShortageSlotsThreshold] = useState<number>(2)
-  const [scarcityAutoSelected, setScarcityAutoSelected] = useState(false)
-  // IMPORTANT: default to 'off' until config is loaded, to avoid auto-select firing before RPC returns.
-  const [scarcityBehavior, setScarcityBehavior] = useState<'auto_select' | 'remind_only' | 'off'>('off')
-  const [scarcityConfigLoaded, setScarcityConfigLoaded] = useState(false)
+  const [scarcityBehavior, setScarcityBehavior] = useState<'remind_only' | 'off'>('off')
   // Scarcity banner dismissal state
   const [scarcityDismissed, setScarcityDismissed] = useState(false)
 
@@ -219,6 +221,8 @@ export function FloatingPCAConfigDialog({
         computedAt: number
         standardZeroTeams: Team[]
         balancedShortTeams: Team[]
+        standardProjectedExtraSlots: number
+        balancedProjectedExtraSlots: number
       }
     | { status: 'error'; message: string }
 
@@ -273,15 +277,11 @@ export function FloatingPCAConfigDialog({
   // Load scarcity threshold from global config head (once per open)
   useEffect(() => {
     if (!open) return
-    setScarcityConfigLoaded(false)
     let cancelled = false
     ;(async () => {
       const res = await supabase.rpc('get_config_global_head_v1')
       if (cancelled) return
-      if (res.error) {
-        setScarcityConfigLoaded(true)
-        return
-      }
+      if (res.error) return
       const raw = (res.data as any)?.floating_pca_scarcity_threshold
       // Backward compatible read: historical key is slack_slots; we now interpret as shortage-slots threshold.
       const shortageSlots =
@@ -290,16 +290,15 @@ export function FloatingPCAConfigDialog({
           : typeof raw?.slack_slots === 'number'
             ? raw.slack_slots
             : Number(raw?.shortage_slots ?? raw?.shortageSlots ?? raw?.slack_slots ?? raw?.slackSlots ?? 2)
-      const behaviorRaw = String(raw?.behavior ?? 'auto_select')
+      const behaviorRaw = String(raw?.behavior ?? 'remind_only')
       const shortageSafe = Number.isFinite(shortageSlots) && shortageSlots >= 0 ? Math.round(shortageSlots) : 2
+      // Legacy: map auto_select → remind_only; only remind_only and off are supported.
       const behaviorSafe =
-        behaviorRaw === 'remind_only' || behaviorRaw === 'off' || behaviorRaw === 'auto_select'
-          ? (behaviorRaw as any)
-          : 'auto_select'
+        behaviorRaw === 'remind_only' || behaviorRaw === 'off'
+          ? (behaviorRaw as 'remind_only' | 'off')
+          : 'remind_only'
       setScarcityShortageSlotsThreshold(shortageSafe)
       setScarcityBehavior(behaviorSafe)
-      setScarcityAutoSelected(false)
-      setScarcityConfigLoaded(true)
     })().catch(() => {})
     return () => {
       cancelled = true
@@ -372,36 +371,20 @@ export function FloatingPCAConfigDialog({
 
   const shortageSlots = Math.max(0, scarcityMetrics.neededSlots - scarcityMetrics.availableSlots)
   const hasExcessFloatingSlots = scarcityMetrics.availableSlots > scarcityMetrics.neededSlots
+  const projectedExtraSlotsTooltipLines = useMemo(
+    () =>
+      buildProjectedExtraSlotsTooltipLines({
+        neededSlots: scarcityMetrics.neededSlots,
+        availableSlots: scarcityMetrics.availableSlots,
+      }),
+    [scarcityMetrics.neededSlots, scarcityMetrics.availableSlots]
+  )
 
   const scarcityTriggered =
     scarcityBehavior !== 'off' &&
     scarcityMetrics.neededSlots > 0 &&
     scarcityShortageSlotsThreshold >= 0 &&
     shortageSlots >= scarcityShortageSlotsThreshold
-
-  // Auto-select Balanced once when entering Step 3.1 (do not fight user toggles afterwards).
-  useEffect(() => {
-    if (
-      scarcityConfigLoaded &&
-      scarcityTriggered &&
-      scarcityBehavior === 'auto_select' &&
-      currentMiniStep === '3.1' &&
-      allocationMode !== 'balanced' &&
-      !scarcityAutoSelected
-    ) {
-      setAllocationMode('balanced')
-      setScarcityAutoSelected(true)
-    }
-  }, [
-    scarcityMetrics,
-    scarcityShortageSlotsThreshold,
-    scarcityBehavior,
-    scarcityTriggered,
-    scarcityConfigLoaded,
-    currentMiniStep,
-    allocationMode,
-    scarcityAutoSelected,
-  ])
 
   // Reset scarcity dismissal when scarcity conditions change
   useEffect(() => {
@@ -458,7 +441,7 @@ export function FloatingPCAConfigDialog({
       const balancedAllocations = existingAllocations.map((a) => ({ ...a }))
 
       const [standardRes, balancedRes] = await Promise.all([
-        allocateFloatingPCA_v2({
+        allocateFloatingPCA_v2(buildStep31PreviewExtraCoverageOptions({
           mode: 'standard',
           teamOrder,
           currentPendingFTE: standardPending,
@@ -469,8 +452,8 @@ export function FloatingPCAConfigDialog({
           preferenceSelectionMode: 'selected_only',
           preferenceProtectionMode,
           selectedPreferenceAssignments: [],
-        }),
-        allocateFloatingPCA_v2({
+        })),
+        allocateFloatingPCA_v2(buildStep31PreviewExtraCoverageOptions({
           mode: 'balanced',
           teamOrder,
           currentPendingFTE: balancedPending,
@@ -478,7 +461,7 @@ export function FloatingPCAConfigDialog({
           pcaPool: floatingPCAs,
           pcaPreferences,
           specialPrograms,
-        }),
+        })),
       ])
 
       if (runId !== previewRunIdRef.current) return
@@ -494,12 +477,16 @@ export function FloatingPCAConfigDialog({
         const left = roundToNearestQuarterWithMidpoint((balancedRes.pendingPCAFTEPerTeam as any)?.[t] || 0)
         return left >= 0.25
       })
+      const standardProjectedExtraSlots = countProjectedExtraSlots(standardRes.extraCoverageByStaffId)
+      const balancedProjectedExtraSlots = countProjectedExtraSlots(balancedRes.extraCoverageByStaffId)
 
       setStep31Preview({
         status: 'ready',
         computedAt: Date.now(),
         standardZeroTeams,
         balancedShortTeams,
+        standardProjectedExtraSlots,
+        balancedProjectedExtraSlots,
       })
     }
 
@@ -1431,9 +1418,7 @@ export function FloatingPCAConfigDialog({
             <div className="min-w-0 flex-1 space-y-0.5">
               <div className="flex items-start justify-between gap-2">
                 <div className="font-semibold">
-                  {scarcityBehavior === 'auto_select'
-                    ? 'Scarcity detected — Balanced auto-selected'
-                    : 'Scarcity detected — Balanced recommended'}
+                  Scarcity detected — Balanced recommended
                 </div>
                 <button
                   type="button"
@@ -1452,9 +1437,7 @@ export function FloatingPCAConfigDialog({
                   Today: need {scarcityMetrics.neededSlots}, available {scarcityMetrics.availableSlots} → shortage {shortageSlots}
                 </div>
                 <div>
-                  {scarcityBehavior === 'remind_only'
-                    ? 'Standard keeps Step 3.2/3.3; Balanced may reduce 0-slot teams.'
-                    : 'Switch back to Standard if you want Step 3.2/3.3.'}
+                  Standard keeps Step 3.2/3.3; Balanced may reduce 0-slot teams.
                 </div>
               </div>
             </div>
@@ -1584,21 +1567,59 @@ export function FloatingPCAConfigDialog({
                   <span className="text-[11px] text-muted-foreground/60 shrink-0">·  computing…</span>
                 ) : step31Preview.status === 'ready' ? (
                   allocationMode === 'standard' ? (
-                    step31Preview.standardZeroTeams.length === 0 ? (
-                      <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0">· 0-slot teams: nil</span>
-                    ) : (
-                      <span className="text-[11px] text-amber-600 dark:text-amber-400 truncate">
-                        · 0-slot teams: {step31Preview.standardZeroTeams.join(', ')}
-                      </span>
-                    )
+                    <>
+                      {step31Preview.standardZeroTeams.length === 0 ? (
+                        <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0">· 0-slot teams: nil</span>
+                      ) : (
+                        <span className="text-[11px] text-amber-600 dark:text-amber-400 truncate">
+                          · 0-slot teams: {step31Preview.standardZeroTeams.join(', ')}
+                        </span>
+                      )}
+                      {step31Preview.standardProjectedExtraSlots > 0 ? (
+                        <Tooltip
+                          content={
+                            <div className="space-y-0.5">
+                              <div>{projectedExtraSlotsTooltipLines[0]}</div>
+                              <div>{projectedExtraSlotsTooltipLines[1]}</div>
+                            </div>
+                          }
+                          side="top"
+                          zIndex={120000}
+                          className="whitespace-normal max-w-[260px]"
+                        >
+                          <span className="text-[11px] text-purple-700 dark:text-purple-300 shrink-0">
+                            · projected extra slots: {step31Preview.standardProjectedExtraSlots}
+                          </span>
+                        </Tooltip>
+                      ) : null}
+                    </>
                   ) : (
-                    step31Preview.balancedShortTeams.length === 0 ? (
-                      <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0">· short teams: nil</span>
-                    ) : (
-                      <span className="text-[11px] text-amber-600 dark:text-amber-400 truncate">
-                        · short teams: {step31Preview.balancedShortTeams.join(', ')}
-                      </span>
-                    )
+                    <>
+                      {step31Preview.balancedShortTeams.length === 0 ? (
+                        <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0">· short teams: nil</span>
+                      ) : (
+                        <span className="text-[11px] text-amber-600 dark:text-amber-400 truncate">
+                          · short teams: {step31Preview.balancedShortTeams.join(', ')}
+                        </span>
+                      )}
+                      {step31Preview.balancedProjectedExtraSlots > 0 ? (
+                        <Tooltip
+                          content={
+                            <div className="space-y-0.5">
+                              <div>{projectedExtraSlotsTooltipLines[0]}</div>
+                              <div>{projectedExtraSlotsTooltipLines[1]}</div>
+                            </div>
+                          }
+                          side="top"
+                          zIndex={120000}
+                          className="whitespace-normal max-w-[260px]"
+                        >
+                          <span className="text-[11px] text-purple-700 dark:text-purple-300 shrink-0">
+                            · projected extra slots: {step31Preview.balancedProjectedExtraSlots}
+                          </span>
+                        </Tooltip>
+                      ) : null}
+                    </>
                   )
                 ) : null}
               </div>

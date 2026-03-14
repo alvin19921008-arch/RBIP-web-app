@@ -73,6 +73,7 @@ import {
   buildScheduleRuntimeProjection,
   buildTherapistAllocatorView,
 } from '@/lib/utils/scheduleRuntimeProjection'
+import { willNeedStep21Substitution } from '@/lib/features/schedule/step2SubstitutionProjection'
 
 let therapistAlgoImport: Promise<typeof import('@/lib/algorithms/therapistAllocation')> | null = null
 let pcaEngineImport: Promise<typeof import('@/lib/features/schedule/pcaAllocationEngine')> | null = null
@@ -3214,6 +3215,13 @@ export function useScheduleController(params: {
   const runStep2TherapistAndNonFloatingPCA = async (args: {
     cleanedOverrides?: Record<string, StaffOverrideState>
     toast?: (title: string, variant?: any, description?: string) => void
+    onStep21Projection?: (projection: {
+      showStep21: boolean
+      teams?: Team[]
+      substitutionsByTeam?: Record<Team, any[]>
+      isWizardMode?: boolean
+      initialSelections?: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>
+    }) => void
     onNonFloatingSubstitutionWizard?: (params: {
       teams: Team[]
       substitutionsByTeam: Record<Team, any[]>
@@ -3228,6 +3236,13 @@ export function useScheduleController(params: {
     setLoading(true)
     try {
       const overridesBase = (args.cleanedOverrides ?? (staffOverrides as any)) as Record<string, StaffOverrideState>
+      args.onStep21Projection?.({
+        showStep21: willNeedStep21Substitution({
+          selectedDate,
+          staff,
+          staffOverrides: overridesBase as Record<string, any>,
+        }),
+      })
 
       // Buffer non-floating PCA substitution (whole-day).
       const replacedNonFloatingIds = new Set<string>()
@@ -3563,6 +3578,13 @@ export function useScheduleController(params: {
         if (teamsWithSubstitutions.length === 0) return {}
 
         const isWizardMode = teamsWithSubstitutions.length > 1
+        args.onStep21Projection?.({
+          showStep21: teamsWithSubstitutions.length > 0,
+          teams: teamsWithSubstitutions,
+          substitutionsByTeam,
+          isWizardMode,
+          initialSelections: Object.keys(preSelections).length > 0 ? preSelections : undefined,
+        })
 
         if (!args.onNonFloatingSubstitutionWizard) {
           return Object.keys(preSelections).length > 0 ? preSelections : {}

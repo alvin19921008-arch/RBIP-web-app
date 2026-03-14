@@ -7,14 +7,14 @@ import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { formatTimeRange, getSlotTime } from '@/lib/utils/slotHelpers'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { SpecialProgram, SPTAllocation } from '@/types/allocation'
 import { LEAVE_TYPE_FTE_MAP, LeaveType, Staff, Weekday } from '@/types/staff'
-import { CircleHelp, Plus, RotateCcw, Search, X } from 'lucide-react'
+import { Check, CircleHelp, Plus, RotateCcw, Search, X } from 'lucide-react'
 import { getTeamBadgeClass } from '@/components/allocation/teamThemePalette'
 import { TimeIntervalSlider } from '@/components/allocation/TimeIntervalSlider'
 import { matchesStaffName } from '@/lib/utils/staffFilters'
@@ -1193,6 +1193,18 @@ export function Step1LeaveSetupDialog({
                                     }))
                                   }}
                                 />
+                                <div className="flex justify-end gap-2 mt-3">
+                                  <PopoverClose asChild>
+                                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Dismiss">
+                                      <X className="h-4 w-4" />
+                                    </Button>
+                                  </PopoverClose>
+                                  <PopoverClose asChild>
+                                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Confirm">
+                                      <Check className="h-4 w-4" />
+                                    </Button>
+                                  </PopoverClose>
+                                </div>
                               </PopoverContent>
                             </Popover>
                             {!isValidRange(existing.timeRange) ? (

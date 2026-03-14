@@ -6,7 +6,7 @@ import type { SpecialProgram, SPTAllocation } from '@/types/allocation'
 import type {
   BedAllocation,
   BedRelievingNotesByToTeam,
-  BedRelievingNoteRow,
+  BedRelievingNotesForToTeam,
   PCAAllocation,
   ScheduleCalculations,
   TherapistAllocation,
@@ -63,7 +63,7 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
 
   // Bed relieving note editing is only enabled when this callback is provided AND currentStep === 'bed-relieving' within BedBlock.
   bedRelievingNotesByToTeam?: BedRelievingNotesByToTeam
-  onSaveBedRelievingNotesForToTeam?: (toTeam: Team, notes: Partial<Record<Team, BedRelievingNoteRow[]>>) => void
+  onSaveBedRelievingNotesForToTeam?: (toTeam: Team, notes: BedRelievingNotesForToTeam) => void
 
   // For PCA block diagnostics/styling (optional)
   stepStatus?: Record<string, 'pending' | 'completed' | 'modified'>

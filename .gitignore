@@ -33,6 +33,7 @@ rbip-dev-leave-sim-*.json
 .cursor/debug.log
 .cursor/*.log
 .cursor/.DS_Store
+.worktrees/
 yarn-error.log*
 
 # local env files

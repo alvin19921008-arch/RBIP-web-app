@@ -139,7 +139,7 @@ export function TimeIntervalSlider({
     <div className="space-y-2">
       {/* Instructional text */}
       <p className="text-xs text-muted-foreground">
-        Slide or click the bar to indicate which time interval the PCA would be present
+        Slide or click the bar to indicate which time interval the PCA <strong>would be present</strong>
       </p>
       
       {/* Time labels below slider */}

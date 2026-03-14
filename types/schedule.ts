@@ -77,6 +77,21 @@ export interface BedRelievingNoteRow {
   bedNumbersText: string
 }
 
+export type BedRelievingTransferResolution = 'taken' | 'not-released'
+
+/**
+ * Per transfer (fromTeam -> toTeam) state for the TAKING side.
+ * Backward compatibility: older schedules may still store just `BedRelievingNoteRow[]`.
+ */
+export interface BedRelievingTransferNote {
+  resolution?: BedRelievingTransferResolution
+  rows: BedRelievingNoteRow[]
+}
+
+export type BedRelievingTransferNoteInput = BedRelievingTransferNote | BedRelievingNoteRow[]
+
+export type BedRelievingNotesForToTeam = Partial<Record<Team, BedRelievingTransferNoteInput>>
+
 // ============================================================================
 // Allocation notes (Points to note) - rich text per schedule, carried across days
 // ============================================================================
@@ -99,7 +114,7 @@ export type AllocationNotesPayload = {
  * Stored under `daily_schedules.staff_overrides.__bedRelieving.byToTeam`.
  */
 export type BedRelievingNotesByToTeam = Partial<
-  Record<Team, Partial<Record<Team, BedRelievingNoteRow[]>>>
+  Record<Team, BedRelievingNotesForToTeam>
 >
 
 export interface ScheduleCalculations {
