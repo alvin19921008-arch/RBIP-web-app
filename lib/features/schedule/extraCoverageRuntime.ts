@@ -1,5 +1,6 @@
 import { buildDisplayViewForWeekday } from '@/lib/utils/scheduleRuntimeProjection'
 import { isAllocationSlotFromSpecialProgram } from '@/lib/utils/scheduleReservationRuntime'
+import { buildStaffRuntimeById } from '@/lib/utils/staffRuntimeProjection'
 import { getMainTeam } from '@/lib/utils/teamMerge'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
@@ -34,6 +35,10 @@ export function deriveExtraCoverageByStaffId(args: {
   })
 
   const staffById = new Map(args.staff.map((staffMember) => [staffMember.id, staffMember]))
+  const runtimeById = buildStaffRuntimeById({
+    staff: args.staff,
+    staffOverrides: args.staffOverrides as any,
+  })
   const uniqueAllocations = new Map<string, PCAAllocation & { staff?: Staff }>()
   ;(Object.keys(args.pcaAllocationsByTeam) as Team[]).forEach((team) => {
     ;(args.pcaAllocationsByTeam[team] || []).forEach((allocation) => {
@@ -58,14 +63,25 @@ export function deriveExtraCoverageByStaffId(args: {
   >(() => [])
 
   for (const allocation of uniqueAllocations.values()) {
-    const specialProgramsById = displayView.getProgramsByAllocationTeam(allocation.team as Team | null | undefined)
+    const runtime = runtimeById[allocation.staff_id]
     const invalidSlot = (allocation as any)?.invalid_slot as 1 | 2 | 3 | 4 | null | undefined
+    const slotAssigned = typeof (allocation as any)?.slot_assigned === 'number' ? (allocation as any).slot_assigned : null
+    const maxActiveSlots =
+      slotAssigned != null
+        ? Math.max(0, Math.min(4, Math.round(slotAssigned / 0.25)))
+        : null
     const staffMember = staffById.get(allocation.staff_id) || allocation.staff
     const isFloatingPca = staffMember?.rank === 'PCA' && !!staffMember?.floating
     const staffName = staffMember?.name || allocation.staff_id
+    const runtimeAvailableSlots = Array.isArray(runtime?.availableSlots)
+      ? new Set(runtime.availableSlots.filter((slot): slot is 1 | 2 | 3 | 4 => slot === 1 || slot === 2 || slot === 3 || slot === 4))
+      : null
+    let activeSlotsSeen = 0
 
     for (const slot of [1, 2, 3, 4] as const) {
+      if (maxActiveSlots !== null && activeSlotsSeen >= maxActiveSlots) continue
       if (invalidSlot === slot) continue
+      if (runtimeAvailableSlots && !runtimeAvailableSlots.has(slot)) continue
       const rawTeam =
         slot === 1
           ? allocation.slot1
@@ -77,6 +93,7 @@ export function deriveExtraCoverageByStaffId(args: {
       const mainTeam = canonical(rawTeam as Team | null)
       if (!mainTeam) continue
 
+      const specialProgramsById = displayView.getProgramsByAllocationTeam(allocation.team as Team | null | undefined)
       const isSpecial = isAllocationSlotFromSpecialProgram({
         allocation,
         slot,
@@ -85,6 +102,7 @@ export function deriveExtraCoverageByStaffId(args: {
       })
       if (isSpecial) continue
 
+      activeSlotsSeen += 1
       assignedNonSpecialByMain[mainTeam] = (assignedNonSpecialByMain[mainTeam] || 0) + 0.25
       if (isFloatingPca) {
         floatingCandidatesByMain[mainTeam] = [

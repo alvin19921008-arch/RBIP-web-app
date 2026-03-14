@@ -9,6 +9,8 @@
 - **PCA runtime hardening** — Unify special-program, substitution, and extra-coverage semantics behind shared runtime helpers so controller, page, card, and dedicated table read the same slot meaning. New helpers: `computeSpecialProgramAssignedFteByTeam`, `derivePcaDisplayFlagsBySlot`, `buildPageStep3RuntimeState`, `deriveExtraCoverageByStaffId`, `saveScheduleFallbackAtomically`, `resolveBaselineSnapshotForCache`, `projectLoadStepGating`, `buildAuthoritativeStep2SubstitutionOverrides`. Regressions f46–f54 (special-program occupancy parity, page Step 3 runtime delegation, derived extra coverage, fallback save rollback, validated snapshot cache, workflow-first load gating, substitution write authority, auto-substitution slot consumption, card/table classification parity).
 
 ### Changed
+- **Step 2 completion toast** — Extended style (longer dismiss, countdown bar, hover-pause) only when handoff delta exists (avg PCA/target change); regular completion uses standard toast.
+- **Extra coverage respects PCA runtime** — `deriveExtraCoverageByStaffId` uses `buildStaffRuntimeById` to respect `slot_assigned`, `availableSlots`, and `invalidSlot` when counting non-special slots; caps active slots per allocation. Regression f55.
 - **Allocator + bootstrap special-program occupancy** — `pcaAllocation` and `step3Bootstrap` use shared `computeSpecialProgramAssignedFteByTeam`; allocator context includes `staffOverrides`.
 - **Fallback save atomicity** — Rollback-backed orchestration; metadata write failure restores pre-save rows.
 - **Cache snapshot projection** — Load prefers validated/repaired baseline snapshot for cache and return payloads.
