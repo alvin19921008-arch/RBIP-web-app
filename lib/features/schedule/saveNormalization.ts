@@ -1,5 +1,6 @@
 import type { Team } from '@/types/staff'
 import type { BedAllocation, PCAAllocation, TherapistAllocation } from '@/types/schedule'
+import { stripExtraCoverageOverrides } from '@/lib/features/schedule/extraCoverageVisibility'
 
 type StepState = 'pending' | 'completed' | 'modified'
 
@@ -14,17 +15,6 @@ function emptyTeamRecord<T>(value: T): Record<Team, T> {
     NSM: value,
     DRO: value,
   }
-}
-
-function stripExtraCoverageOverrides(overrides: Record<string, any>): Record<string, any> {
-  const next = { ...(overrides ?? {}) }
-  Object.entries(next).forEach(([staffId, override]) => {
-    if (!override || typeof override !== 'object' || !('extraCoverageBySlot' in override)) return
-    const { extraCoverageBySlot: _extra, ...rest } = override as any
-    if (Object.keys(rest).length > 0) next[staffId] = rest
-    else delete next[staffId]
-  })
-  return next
 }
 
 export function normalizeScheduleStateForSave(args: {
@@ -44,14 +34,13 @@ export function normalizeScheduleStateForSave(args: {
 } {
   const persistTherapistData = true
   const persistPcaData = args.stepStatus['therapist-pca'] !== 'pending'
-  const persistFloatingData = args.stepStatus['floating-pca'] !== 'pending'
   const persistBedData = persistPcaData && args.stepStatus['bed-relieving'] !== 'pending'
 
   return {
     persistTherapistData,
     persistPcaData,
     persistBedData,
-    staffOverrides: persistFloatingData ? args.staffOverrides : stripExtraCoverageOverrides(args.staffOverrides),
+    staffOverrides: stripExtraCoverageOverrides(args.staffOverrides),
     therapistAllocations: persistTherapistData
       ? args.therapistAllocations
       : emptyTeamRecord<(TherapistAllocation & { staff: any })[]>([]),

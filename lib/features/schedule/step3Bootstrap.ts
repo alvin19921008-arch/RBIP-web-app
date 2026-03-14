@@ -2,8 +2,7 @@ import type { PCAData } from '@/lib/algorithms/pcaAllocation'
 import { roundDownToQuarter, roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { createEmptyTeamRecord } from '@/lib/utils/types'
 import {
-  buildReservationRuntimeProgramsById,
-  isAllocationSlotFromSpecialProgram,
+  computeSpecialProgramAssignedFteByTeam,
 } from '@/lib/utils/scheduleReservationRuntime'
 import type { SpecialProgram } from '@/types/allocation'
 import type { PCAAllocation } from '@/types/schedule'
@@ -32,77 +31,28 @@ export function computeStep3BootstrapState(args: {
   existingAllocations: PCAAllocation[]
 } {
   const teamPCAAssigned = createEmptyTeamRecord<number>(0)
+  const uniqueAllocations = Array.from(new Set(Object.values(args.pcaAllocations).flat()))
+  const specialProgramAssignedByTeam = computeSpecialProgramAssignedFteByTeam({
+    allocations: uniqueAllocations,
+    specialPrograms: args.specialPrograms,
+    weekday: args.weekday,
+    staffOverrides: args.staffOverrides,
+  })
   const existingAllocations: PCAAllocation[] = []
   const addedStaffIds = new Set<string>()
-
-  const specialProgramsByTeamCache = new Map<string, ReturnType<typeof buildReservationRuntimeProgramsById>>()
-  const getSpecialProgramsByAllocationTeam = (allocationTeam: Team | null | undefined) => {
-    const cacheKey = allocationTeam ?? '__null__'
-    const cached = specialProgramsByTeamCache.get(cacheKey)
-    if (cached) return cached
-    const built = buildReservationRuntimeProgramsById({
-      specialPrograms: args.specialPrograms,
-      weekday: args.weekday,
-      staffOverrides: args.staffOverrides,
-      allocationTargetTeam: allocationTeam ?? null,
-    })
-    specialProgramsByTeamCache.set(cacheKey, built)
-    return built
-  }
 
   Object.entries(args.pcaAllocations).forEach(([team, allocs]) => {
     ;(allocs || []).forEach((alloc: any) => {
       let slotsInTeam = 0
-      const specialProgramsById = getSpecialProgramsByAllocationTeam(alloc.team as Team | null | undefined)
-      if (
-        alloc.slot1 === team &&
-        !isAllocationSlotFromSpecialProgram({
-          allocation: alloc,
-          slot: 1,
-          team: team as Team,
-          specialProgramsById,
-        })
-      ) slotsInTeam++
-      if (
-        alloc.slot2 === team &&
-        !isAllocationSlotFromSpecialProgram({
-          allocation: alloc,
-          slot: 2,
-          team: team as Team,
-          specialProgramsById,
-        })
-      ) slotsInTeam++
-      if (
-        alloc.slot3 === team &&
-        !isAllocationSlotFromSpecialProgram({
-          allocation: alloc,
-          slot: 3,
-          team: team as Team,
-          specialProgramsById,
-        })
-      ) slotsInTeam++
-      if (
-        alloc.slot4 === team &&
-        !isAllocationSlotFromSpecialProgram({
-          allocation: alloc,
-          slot: 4,
-          team: team as Team,
-          specialProgramsById,
-        })
-      ) slotsInTeam++
+      if (alloc.slot1 === team) slotsInTeam++
+      if (alloc.slot2 === team) slotsInTeam++
+      if (alloc.slot3 === team) slotsInTeam++
+      if (alloc.slot4 === team) slotsInTeam++
 
-      const invalidSlot = (alloc as any).invalid_slot
-      if (invalidSlot) {
+      const invalidSlot = (alloc as any).invalid_slot as 1 | 2 | 3 | 4 | null | undefined
+      if (invalidSlot === 1 || invalidSlot === 2 || invalidSlot === 3 || invalidSlot === 4) {
         const slotField = `slot${invalidSlot}` as keyof PCAAllocation
-        if (
-          (alloc as any)[slotField] === team &&
-          !isAllocationSlotFromSpecialProgram({
-            allocation: alloc,
-            slot: invalidSlot,
-            team: team as Team,
-            specialProgramsById,
-          })
-        ) {
+        if ((alloc as any)[slotField] === team) {
           slotsInTeam = Math.max(0, slotsInTeam - 1)
         }
       }
@@ -120,6 +70,13 @@ export function computeStep3BootstrapState(args: {
       }
     })
   })
+
+  for (const team of TEAM_ORDER) {
+    teamPCAAssigned[team] = Math.max(
+      0,
+      (teamPCAAssigned[team] || 0) - (specialProgramAssignedByTeam[team] || 0)
+    )
+  }
 
   return {
     existingTeamPCAAssigned: teamPCAAssigned,

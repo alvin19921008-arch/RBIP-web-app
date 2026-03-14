@@ -80,8 +80,13 @@ import {
   describeStep3BootstrapDelta,
   type Step3BootstrapSummary,
 } from '@/lib/features/schedule/step3Bootstrap'
+import { buildPageStep3RuntimeState } from '@/lib/features/schedule/pageStep3Runtime'
 import { mergeStep2Point2StaffOverrides } from '@/lib/features/schedule/step2Point2StateMerge'
-import { sanitizeExtraCoverageOverrides } from '@/lib/features/schedule/extraCoverageVisibility'
+import {
+  mergeExtraCoverageIntoStaffOverridesForDisplay,
+  stripExtraCoverageOverrides,
+} from '@/lib/features/schedule/extraCoverageVisibility'
+import { deriveExtraCoverageByStaffId } from '@/lib/features/schedule/extraCoverageRuntime'
 import { flushSync } from 'react-dom'
 import {
   buildStaffByIdMap,
@@ -241,10 +246,8 @@ import { clearDraftSchedule, getMostRecentDirtyScheduleDate, hasDraftSchedule } 
 import { hasAnyStaffOverrideKey } from '@/lib/utils/staffOverridesMeaningful'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import {
-  applySubstitutionSlotsToOverride,
   getAllSubstitutionSlots,
   hasAnySubstitution,
-  removeSubstitutionForTargetsFromOverride,
 } from '@/lib/utils/substitutionFor'
 import { ALLOCATION_STEPS, EMPTY_BED_ALLOCATIONS, TEAMS, WEEKDAYS, WEEKDAY_NAMES } from '@/lib/features/schedule/constants'
 import { useScheduleController } from '@/lib/features/schedule/controller/useScheduleController'
@@ -3848,167 +3851,22 @@ function SchedulePageContent() {
   // HELPER FUNCTIONS FOR STEP-WISE ALLOCATION
   // ============================================================================
 
-  /**
-   * Recalculates teamPCAAssigned and extracts non-floating allocations from current state.
-   * This ensures Step 3 uses the latest data after any user edits in Step 2.
-   * 
-   * @returns Object containing recalculated teamPCAAssigned and non-floating allocations
-   */
-  const recalculateFromCurrentState = useCallback(() => {
-    const teamPCAAssigned: Record<Team, number> = { 
-      FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 
-    }
-    const existingAllocations: PCAAllocation[] = []
-
-    // Track which staff IDs we've already added to avoid duplicates
-    const addedStaffIds = new Set<string>()
-
-    // Iterate through all current PCA allocations
-    Object.entries(pcaAllocations).forEach(([team, allocs]) => {
-      allocs.forEach(alloc => {
-        // Use staffOverrides for latest FTE, fallback to alloc.fte_pca
-        const currentFTE = staffOverrides[alloc.staff_id]?.fteRemaining ?? alloc.fte_pca ?? 1
-
-        // Calculate slots assigned to this team
-        let slotsInTeam = 0
-        if (alloc.slot1 === team) slotsInTeam++
-        if (alloc.slot2 === team) slotsInTeam++
-        if (alloc.slot3 === team) slotsInTeam++
-        if (alloc.slot4 === team) slotsInTeam++
-
-        // Exclude invalid slot from count
-        const invalidSlot = (alloc as any).invalid_slot
-        if (invalidSlot) {
-          const slotField = `slot${invalidSlot}` as keyof PCAAllocation
-          if (alloc[slotField] === team) {
-            slotsInTeam = Math.max(0, slotsInTeam - 1)
-          }
-        }
-
-        // Add FTE contribution (0.25 per slot)
-        teamPCAAssigned[team as Team] += slotsInTeam * 0.25
-
-        // Collect ALL allocations (non-floating AND floating with slots assigned)
-        // This ensures floating PCAs used for substitution in Step 2 are passed to Step 3
-        const staffMember = staff.find(s => s.id === alloc.staff_id)
-        if (staffMember && !addedStaffIds.has(alloc.staff_id)) {
-          // For floating PCAs, only include if they have slots assigned
-          const hasSlots = alloc.slot1 !== null || alloc.slot2 !== null || 
-                          alloc.slot3 !== null || alloc.slot4 !== null
-          
-          if (!staffMember.floating || hasSlots) {
-            existingAllocations.push(alloc)
-            addedStaffIds.add(alloc.staff_id)
-          }
-        }
-      })
-    })
-
-    return { teamPCAAssigned, existingAllocations }
-  }, [pcaAllocations, staffOverrides, staff])
-
-  const existingAllocationsForStep3 = useMemo(
-    () => recalculateFromCurrentState().existingAllocations,
-    [recalculateFromCurrentState]
+  const step3RuntimeState = useMemo(
+    () =>
+      buildPageStep3RuntimeState({
+        selectedDate,
+        staff,
+        staffOverrides: staffOverrides as Record<string, any>,
+        pcaAllocations: pcaAllocations as Record<Team, Array<PCAAllocation & { staff?: Staff }>>,
+        specialPrograms: (specialPrograms || []) as SpecialProgram[],
+      }),
+    [selectedDate, staff, staffOverrides, pcaAllocations, specialPrograms]
   )
 
-  /**
-   * Builds PCA data array from current staff and staffOverrides.
-   * This ensures the algorithm uses the latest FTE values from user edits.
-   */
-  const buildPCADataFromCurrentState = useCallback((): PCAData[] => {
-    return staff
-      .filter(s => s.rank === 'PCA')
-      .map(s => {
-        const override = staffOverrides[s.id]
-        // For buffer staff, use buffer_fte as base
-        const isBufferStaff = s.status === 'buffer'
-        const baseFTE = isBufferStaff && s.buffer_fte !== undefined ? s.buffer_fte : 1.0
-        const baseFTERemaining = override && override.fteSubtraction !== undefined
-          ? Math.max(0, baseFTE - override.fteSubtraction)
-          : (override ? override.fteRemaining : baseFTE)
-        
-        // Safety: buffer staff should never exceed its base FTE capacity.
-        const effectiveBaseFTERemaining = isBufferStaff
-          ? Math.min(baseFTE, baseFTERemaining)
-          : baseFTERemaining
-        
-        // For floating PCAs, exclude substitution slots that are currently occupied,
-        // and exclude special-program reserved slots from Step 2.0 so Step 3 does not
-        // reclaim capacity that was already earmarked for designated program coverage.
-        let availableSlots = override?.availableSlots
-        if (s.floating && hasAnySubstitution(override as any)) {
-          const substitutionSlots = getAllSubstitutionSlots(override as any)
-          const allocForStaff = Object.values(pcaAllocations).flat().find((a) => a.staff_id === s.id)
-          const occupiedSubstitutionSlots = substitutionSlots.filter((slot) => {
-            if (!allocForStaff) return false
-            if (slot === 1) return !!allocForStaff.slot1
-            if (slot === 2) return !!allocForStaff.slot2
-            if (slot === 3) return !!allocForStaff.slot3
-            if (slot === 4) return !!allocForStaff.slot4
-            return false
-          })
-          const baseAvailableSlots = availableSlots && availableSlots.length > 0
-            ? availableSlots
-            : [1, 2, 3, 4]
-          // Remove only occupied substitution slots from available slots
-          availableSlots = baseAvailableSlots.filter((slot) => !occupiedSubstitutionSlots.includes(slot))
-        }
-        if (s.floating && Array.isArray((override as any)?.specialProgramOverrides)) {
-          const reservedProgramSlots = Array.from(
-            new Set(
-              ((override as any).specialProgramOverrides as Array<{ slots?: number[] }>)
-                .flatMap((entry) => (Array.isArray(entry?.slots) ? entry.slots : []))
-                .filter((slot): slot is number => [1, 2, 3, 4].includes(slot))
-            )
-          )
-          if (reservedProgramSlots.length > 0) {
-            const baseAvailableSlots = availableSlots && availableSlots.length > 0
-              ? availableSlots
-              : [1, 2, 3, 4]
-            availableSlots = baseAvailableSlots.filter((slot) => !reservedProgramSlots.includes(slot))
-          }
-        }
-
-        // Derive legacy invalidSlot from newer invalidSlots array when present (fallback to legacy invalidSlot).
-        const invalidSlotFromArray =
-          Array.isArray((override as any)?.invalidSlots) && (override as any).invalidSlots.length > 0
-            ? (override as any).invalidSlots[0]?.slot
-            : undefined
-        const effectiveInvalidSlot =
-          typeof (override as any)?.invalidSlot === 'number' ? (override as any).invalidSlot : invalidSlotFromArray
-
-        // IMPORTANT: invalid slot should NOT be in availableSlots.
-        if (effectiveInvalidSlot && Array.isArray(availableSlots)) {
-          availableSlots = availableSlots.filter((slot) => slot !== effectiveInvalidSlot)
-        }
-
-        // NOTE: Do NOT clamp buffer PCA availableSlots here.
-        // A floating buffer PCA with buffer_fte=0.5 does not mean it is only available for slots [1,2].
-        // It means it has CAPACITY for 2 slots, and Step 2.1 should still be able to pick which missing slots it covers.
-        // We handle "capacity" display separately in UI (and rely on fte_pca / fteRemaining to limit usage).
-        
-        
-        
-        return {
-          id: s.id,
-          name: s.name,
-          floating: s.floating || false,
-          special_program: s.special_program as string[] | null,
-          team: s.team,
-          fte_pca: effectiveBaseFTERemaining,
-          leave_type: override?.leaveType || null,
-          is_available: effectiveBaseFTERemaining > 0,
-          availableSlots: availableSlots,
-          invalidSlot: effectiveInvalidSlot,
-          floor_pca: s.floor_pca || null,  // Include floor_pca for floor matching detection
-        }
-      })
-  }, [staff, staffOverrides, pcaAllocations])
-
+  const existingAllocationsForStep3 = step3RuntimeState.existingAllocations
   const floatingPCAsForStep3 = useMemo(
-    () => buildPCADataFromCurrentState().filter((p) => p.floating),
-    [buildPCADataFromCurrentState]
+    () => step3RuntimeState.pcaData.filter((p) => p.floating),
+    [step3RuntimeState]
   )
 
   // ============================================================================
@@ -4859,10 +4717,10 @@ function SchedulePageContent() {
     setAdjustedPendingFTE(result.pendingPCAFTEPerTeam)
     
     // Update staffOverrides for all assigned PCAs (from 3.2, 3.3, and 3.4)
-    const floatingPCAs = buildPCADataFromCurrentState().filter(p => p.floating)
+    const floatingPCAs = floatingPCAsForStep3
     const allAssignments = [...step32Assignments, ...step33Assignments]
     
-    const newOverrides = { ...staffOverrides }
+    const newOverrides = stripExtraCoverageOverrides({ ...staffOverrides } as any)
 
     // Step 3.4 extra coverage markers are recomputed each run; clear previous markers for floating PCAs.
     for (const pca of floatingPCAs) {
@@ -4903,27 +4761,6 @@ function SchedulePageContent() {
       }
     }
 
-    // Persist extra coverage slot markers (display + export).
-    const extraByStaff = (result as any)?.extraCoverageByStaffId as Record<string, Array<1 | 2 | 3 | 4>> | undefined
-    if (extraByStaff && typeof extraByStaff === 'object') {
-      for (const [staffId, slots] of Object.entries(extraByStaff)) {
-        if (!Array.isArray(slots) || slots.length === 0) continue
-        const alloc = result.allocations.find((a) => a.staff_id === staffId)
-        if (!alloc) continue
-        const bySlot: Partial<Record<1 | 2 | 3 | 4, true>> = {}
-        for (const s of slots) {
-          if (s !== 1 && s !== 2 && s !== 3 && s !== 4) continue
-          const slotTeam = s === 1 ? alloc.slot1 : s === 2 ? alloc.slot2 : s === 3 ? alloc.slot3 : alloc.slot4
-          if (!slotTeam) continue
-          bySlot[s] = true
-        }
-        if (Object.keys(bySlot).length === 0) continue
-        newOverrides[staffId] = {
-          ...(newOverrides as any)[staffId],
-          extraCoverageBySlot: bySlot,
-        } as any
-      }
-    }
     setStaffOverrides(newOverrides)
     
     // Update PCA allocations state with all new slot assignments
@@ -5003,62 +4840,8 @@ function SchedulePageContent() {
       substitutionWizardResolverRef.current = null
     }
     
-    // Also update staffOverrides for persistence
-    const newOverrides = { ...staffOverrides }
-
-    // Clear any existing substitutionFor that targets any of the keys in this submission
-    // so stale substitute mappings don't linger after edits.
-    const targets = new Set(
-      Object.keys(selections || {}).map((key) => {
-        const dashIdx = key.indexOf('-')
-        const team = (dashIdx >= 0 ? key.slice(0, dashIdx) : key) as Team
-        const nonFloatingPCAId = dashIdx >= 0 ? key.slice(dashIdx + 1) : ''
-        return `${team}::${nonFloatingPCAId}`
-      })
-    )
-    Object.entries(newOverrides).forEach(([staffId, o]) => {
-      newOverrides[staffId] = removeSubstitutionForTargetsFromOverride({
-        override: o,
-        targets,
-      })
-    })
-
-    // Apply all selections to staffOverrides
-    Object.entries(selections).forEach(([key, selectionArr]) => {
-      // Key format is `${team}-${nonFloatingPCAId}` but nonFloatingPCAId is a UUID containing '-'.
-      // So we must split ONLY on the first '-' to avoid truncating the UUID.
-      const dashIdx = key.indexOf('-')
-      const team = (dashIdx >= 0 ? key.slice(0, dashIdx) : key) as Team
-      const nonFloatingPCAId = dashIdx >= 0 ? key.slice(dashIdx + 1) : ''
-
-      const nonFloatingPCA = staff.find(s => s.id === nonFloatingPCAId)
-      if (!nonFloatingPCA) return
-
-      ;(selectionArr || []).forEach((selection) => {
-        // Update floating PCA's staffOverrides with substitutionFor
-        const floatingPCA = staff.find(s => s.id === selection.floatingPCAId)
-        if (floatingPCA) {
-          const existingOverride = newOverrides[selection.floatingPCAId] || {
-            leaveType: null,
-            fteRemaining: 1.0,
-          }
-          newOverrides[selection.floatingPCAId] = applySubstitutionSlotsToOverride({
-            existingOverride,
-            team,
-            nonFloatingPCAId,
-            nonFloatingPCAName: nonFloatingPCA.name,
-            slots: selection.slots,
-          })
-        }
-      })
-
-    })
-
-    setStaffOverrides(newOverrides)
-
-    
-
-    // Note: pcaAllocations will be updated by the algorithm after it receives the selections
+    // Substitution intent persistence is controller-authoritative.
+    // The page only relays wizard selections back to controller.
   }
 
   /**
@@ -5634,11 +5417,12 @@ function SchedulePageContent() {
           ? handoffDelta.details
           : payload.description
 
-    showActionToast(payload.title, payload.variant, description, {
-      durationMs: 15000,
-      showDurationProgress: true,
-      pauseOnHover: true,
-    })
+    // Apply extended toast (longer dismiss, countdown bar, hover-pause) only when there is
+    // a handoff delta (e.g. avg PCA/target change). Regular completion uses standard toast style.
+    const hasHandoffDelta = !!handoffDelta
+    showActionToast(payload.title, payload.variant, description, hasHandoffDelta
+      ? { durationMs: 15000, showDurationProgress: true, pauseOnHover: true }
+      : undefined)
     step3BootstrapBaselineRef.current = step3BootstrapSummary
   }, [bufferedStep2ToastFlushVersion, calculations, showActionToast, step3BootstrapSummary])
 
@@ -5904,14 +5688,41 @@ function SchedulePageContent() {
     return next
   }, [visibleTeams, therapistAllocationsForDisplay, therapistAllocations, staffOverrides])
 
+  const extraCoverageByStaffIdForDisplay = useMemo(
+    () =>
+      deriveExtraCoverageByStaffId({
+        selectedDate,
+        pcaAllocationsByTeam: pcaAllocationsForUi as Record<Team, Array<PCAAllocation & { staff?: Staff }>>,
+        staff,
+        specialPrograms: (specialPrograms || []) as SpecialProgram[],
+        staffOverrides: stripExtraCoverageOverrides(staffOverrides as Record<string, any>),
+        visibleTeams,
+        teamContributorsByMain,
+        calculations,
+        mergedInto: effectiveTeamMergeConfig.mergedInto,
+      }),
+    [
+      selectedDate,
+      pcaAllocationsForUi,
+      staff,
+      specialPrograms,
+      staffOverrides,
+      visibleTeams,
+      teamContributorsByMain,
+      calculations,
+      effectiveTeamMergeConfig.mergedInto,
+    ]
+  )
+
   const staffOverridesForPcaDisplay = useMemo(
     () =>
-      sanitizeExtraCoverageOverrides({
+      mergeExtraCoverageIntoStaffOverridesForDisplay({
         staffOverrides: staffOverrides as any,
+        extraCoverageByStaffId: extraCoverageByStaffIdForDisplay,
         currentStep,
         initializedSteps,
       }),
-    [staffOverrides, currentStep, initializedSteps]
+    [staffOverrides, extraCoverageByStaffIdForDisplay, currentStep, initializedSteps]
   )
 
   const pcaOverridesByTeam = useMemo(() => {
@@ -6970,134 +6781,6 @@ function SchedulePageContent() {
     []
   )
 
-  const recomputeExtraCoverageBySlotForCurrentTeams = useCallback(
-    (
-      nextAllocationsByTeam: Record<Team, (PCAAllocation & { staff: Staff })[]>,
-      baseOverrides: Record<string, any>
-    ) => {
-      const canonical = (value: Team | null | undefined): Team | null => {
-        if (!value) return null
-        return getMainTeam(value, effectiveTeamMergeConfig.mergedInto)
-      }
-
-      const weekday = getWeekday(selectedDate)
-      const displayView = buildDisplayViewForWeekday({
-        weekday,
-        specialPrograms: specialPrograms as any,
-        staffOverrides: baseOverrides as any,
-      })
-
-      const staffById = new Map(staff.map((s) => [s.id, s]))
-      const uniqueAllocations = new Map<string, PCAAllocation & { staff: Staff }>()
-      TEAMS.forEach((team) => {
-        ;(nextAllocationsByTeam[team] || []).forEach((alloc) => {
-          if (!uniqueAllocations.has(alloc.staff_id)) uniqueAllocations.set(alloc.staff_id, alloc)
-        })
-      })
-
-      const requiredByMain = createEmptyTeamRecord<number>(0)
-      visibleTeams.forEach((mainTeam) => {
-        const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
-        requiredByMain[mainTeam] = contributors.reduce(
-          (sum, team) => sum + (calculations[team]?.average_pca_per_team || 0),
-          0
-        )
-      })
-
-      const assignedNonSpecialByMain = createEmptyTeamRecord<number>(0)
-      const floatingCandidatesByMain = createEmptyTeamRecordFactory<
-        Array<{ staffId: string; slot: 1 | 2 | 3 | 4; staffName: string }>
-      >(() => [])
-
-      for (const alloc of uniqueAllocations.values()) {
-        const specialProgramsById = displayView.getProgramsByAllocationTeam(alloc.team as Team | null | undefined)
-
-        const invalidSlot = (alloc as any)?.invalid_slot as 1 | 2 | 3 | 4 | null | undefined
-        const staffMember = staffById.get(alloc.staff_id) || alloc.staff
-        const isFloatingPca = staffMember?.rank === 'PCA' && !!staffMember?.floating
-        const staffName = staffMember?.name || alloc.staff_id
-
-        const slots: Array<1 | 2 | 3 | 4> = [1, 2, 3, 4]
-        for (const slot of slots) {
-          if (invalidSlot === slot) continue
-          const rawTeam =
-            slot === 1 ? alloc.slot1 : slot === 2 ? alloc.slot2 : slot === 3 ? alloc.slot3 : alloc.slot4
-          const mainTeam = canonical(rawTeam as Team | null)
-          if (!mainTeam) continue
-
-          const isSpecial = isAllocationSlotFromSpecialProgram({
-            allocation: alloc,
-            slot,
-            team: rawTeam as Team,
-            specialProgramsById,
-          })
-          if (isSpecial) continue
-
-          assignedNonSpecialByMain[mainTeam] = (assignedNonSpecialByMain[mainTeam] || 0) + 0.25
-          if (isFloatingPca) {
-            floatingCandidatesByMain[mainTeam] = [
-              ...(floatingCandidatesByMain[mainTeam] || []),
-              { staffId: alloc.staff_id, slot, staffName },
-            ]
-          }
-        }
-      }
-
-      const nextExtraByStaff: Record<string, Partial<Record<1 | 2 | 3 | 4, true>>> = {}
-      visibleTeams.forEach((mainTeam) => {
-        const required = requiredByMain[mainTeam] || 0
-        const assigned = assignedNonSpecialByMain[mainTeam] || 0
-        const surplusFte = Math.max(0, roundToNearestQuarterWithMidpoint(assigned - required))
-        const extraSlotsNeeded = Math.max(0, Math.round(surplusFte * 4))
-        if (extraSlotsNeeded === 0) return
-
-        const candidates = [...(floatingCandidatesByMain[mainTeam] || [])].sort((a, b) => {
-          if (a.slot !== b.slot) return b.slot - a.slot
-          const nameCmp = a.staffName.localeCompare(b.staffName)
-          if (nameCmp !== 0) return nameCmp
-          return a.staffId.localeCompare(b.staffId)
-        })
-        if (candidates.length === 0) return
-
-        candidates.slice(0, extraSlotsNeeded).forEach((c) => {
-          const prev = nextExtraByStaff[c.staffId] || {}
-          prev[c.slot] = true
-          nextExtraByStaff[c.staffId] = prev
-        })
-      })
-
-      const nextOverrides: Record<string, any> = { ...baseOverrides }
-      Object.entries(nextOverrides).forEach(([staffId, override]) => {
-        if (!override || typeof override !== 'object') return
-        const s = staffById.get(staffId)
-        if (!s || s.rank !== 'PCA' || !s.floating) return
-        if (!('extraCoverageBySlot' in (override as any))) return
-        const { extraCoverageBySlot: _extra, ...rest } = override as any
-        if (Object.keys(rest).length > 0) nextOverrides[staffId] = rest
-        else delete nextOverrides[staffId]
-      })
-
-      Object.entries(nextExtraByStaff).forEach(([staffId, bySlot]) => {
-        if (!bySlot || Object.keys(bySlot).length === 0) return
-        nextOverrides[staffId] = {
-          ...(nextOverrides[staffId] || {}),
-          extraCoverageBySlot: bySlot,
-        }
-      })
-
-      return nextOverrides
-    },
-    [
-      effectiveTeamMergeConfig.mergedInto,
-      selectedDate,
-      specialPrograms,
-      staff,
-      visibleTeams,
-      teamContributorsByMain,
-      calculations,
-    ]
-  )
-
   // Perform slot discard (opposite of slot transfer) - for PCA
   const performSlotDiscard = (staffId: string, sourceTeam: Team, slotsToDiscard: number[]) => {
     if (slotsToDiscard.length === 0) return
@@ -7186,7 +6869,7 @@ function SchedulePageContent() {
           ...(isBufferStaff ? { bufferManualSlotOverrides: updatedManualSlotOverrides } : {}),
         },
       }
-      return recomputeExtraCoverageBySlotForCurrentTeams(nextPcaAllocations as any, rawNextOverrides as any)
+      return stripExtraCoverageOverrides(rawNextOverrides as any)
     })
   }
   
@@ -7270,7 +6953,7 @@ function SchedulePageContent() {
             fteRemaining: bufferFTE,
           },
         }
-        return recomputeExtraCoverageBySlotForCurrentTeams(nextPcaAllocations as any, rawNextOverrides as any)
+        return stripExtraCoverageOverrides(rawNextOverrides as any)
       })
       
       // Update pending FTE per team (reduce target team's pending by buffer PCA FTE)
@@ -7374,7 +7057,7 @@ function SchedulePageContent() {
           leaveType: currentOverride.leaveType ?? existingAlloc?.leave_type ?? null,
         },
       }
-      return recomputeExtraCoverageBySlotForCurrentTeams(nextPcaAllocations as any, rawNextOverrides as any)
+      return stripExtraCoverageOverrides(rawNextOverrides as any)
     })
     
     // Update pending FTE per team
@@ -7502,7 +7185,7 @@ function SchedulePageContent() {
           leaveType: currentOverride.leaveType ?? existingAlloc?.leave_type ?? null,
         },
       }
-      return recomputeExtraCoverageBySlotForCurrentTeams(nextPcaAllocations as any, rawNextOverrides as any)
+      return stripExtraCoverageOverrides(rawNextOverrides as any)
     })
 
     // Reduce target team's pending by assigned FTE (slot-based)
@@ -10293,8 +9976,8 @@ function SchedulePageContent() {
                 return runtimeTeams.indexOf(a) - runtimeTeams.indexOf(b)
               })
 
-              const floatingPCAs = buildPCADataFromCurrentState().filter((p) => p.floating)
-              const baseExistingAllocations = recalculateFromCurrentState().existingAllocations
+              const floatingPCAs = floatingPCAsForStep3
+              const baseExistingAllocations = existingAllocationsForStep3
 
               const { allocateFloatingPCA_v2 } = await import('@/lib/algorithms/pcaAllocation')
               const {

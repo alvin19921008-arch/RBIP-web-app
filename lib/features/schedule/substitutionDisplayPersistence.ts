@@ -109,6 +109,7 @@ export function detectAutoAssignedSubstitutions(args: {
         !item.alloc.special_program_ids?.length &&
         !hasAnySubstitution(args.overrides[item.alloc.staff_id] as any)
     )
+    const claimedSlotsByFloatingId = new Map<string, Set<number>>()
 
     for (const nfItem of nonFloatingPCAs) {
       const nfAlloc = nfItem.alloc as any
@@ -134,22 +135,26 @@ export function detectAutoAssignedSubstitutions(args: {
 
       for (const floatItem of floatingPCAAllocs) {
         const floatAlloc = floatItem.alloc as any
+        const floatingId = floatItem.staff.id
+        const claimedSlots = claimedSlotsByFloatingId.get(floatingId) ?? new Set<number>()
         const assignedSlots: number[] = []
         if (floatAlloc.slot1 === team) assignedSlots.push(1)
         if (floatAlloc.slot2 === team) assignedSlots.push(2)
         if (floatAlloc.slot3 === team) assignedSlots.push(3)
         if (floatAlloc.slot4 === team) assignedSlots.push(4)
 
-        const matchingSlots = assignedSlots.filter((slot) => missingSlots.includes(slot))
+        const matchingSlots = assignedSlots.filter((slot) => missingSlots.includes(slot) && !claimedSlots.has(slot))
         if (matchingSlots.length === 0) continue
 
-        autoSubstitutionUpdates[floatItem.staff.id] = autoSubstitutionUpdates[floatItem.staff.id] ?? []
-        autoSubstitutionUpdates[floatItem.staff.id].push({
+        autoSubstitutionUpdates[floatingId] = autoSubstitutionUpdates[floatingId] ?? []
+        autoSubstitutionUpdates[floatingId].push({
           nonFloatingPCAId: nfStaff.id,
           nonFloatingPCAName: nfStaff.name,
           team,
           slots: matchingSlots,
         })
+        matchingSlots.forEach((slot) => claimedSlots.add(slot))
+        claimedSlotsByFloatingId.set(floatingId, claimedSlots)
         break
       }
     }

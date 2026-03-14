@@ -31,6 +31,9 @@ import { computeStep3BootstrapState } from '@/lib/features/schedule/step3Bootstr
 import { computeStep3ResetForReentry } from '@/lib/features/schedule/stepReset'
 import { normalizeScheduleStateForSave } from '@/lib/features/schedule/saveNormalization'
 import { computeStalePcaStaffIdsForReplace } from '@/lib/features/schedule/saveReconciliation'
+import { saveScheduleFallbackAtomically } from '@/lib/features/schedule/saveFallbackAtomic'
+import { getStoredCalculationsFromBaselineSnapshot, resolveBaselineSnapshotForCache } from '@/lib/features/schedule/snapshotCacheProjection'
+import { projectLoadStepGating } from '@/lib/features/schedule/workflowLoadProjection'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
 import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
@@ -45,10 +48,7 @@ import {
   getAllSubstitutionSlots,
   normalizeSubstitutionForBySlot,
 } from '@/lib/utils/substitutionFor'
-import {
-  applyResolvedSubstitutionSelectionsToOverrides,
-  buildStep2SubstitutionDisplayOverrides,
-} from '@/lib/features/schedule/substitutionDisplayPersistence'
+import { buildAuthoritativeStep2SubstitutionOverrides } from '@/lib/features/schedule/substitutionWriteAuthority'
 import { buildTeamMergeSnapshotFromTeamSettings } from '@/lib/utils/teamMerge'
 import {
   normalizeFTE,
@@ -1348,6 +1348,7 @@ export function useScheduleController(params: {
     // Extract baseline snapshot and workflow state if present
     const rawBaselineSnapshotStored = (scheduleData as any).baseline_snapshot as BaselineSnapshotStored | null | undefined
     const hasBaselineSnapshot = !!rawBaselineSnapshotStored
+    let validatedBaselineSnapshotData: BaselineSnapshot | null = null
     const rawWorkflowState = (scheduleData as any).workflow_state as WorkflowState | null | undefined
     effectiveWorkflowState = effectiveWorkflowState ?? (rawWorkflowState ?? null)
 
@@ -1425,6 +1426,7 @@ export function useScheduleController(params: {
           sourceForNewEnvelope: 'migration',
         })
         innerTimer.stage('validate:baseline_snapshot')
+        validatedBaselineSnapshotData = validated.data
         if (shouldApplyToState) {
           setSnapshotHealthReport(validated.report)
           applyBaselineSnapshot(validated.data, overrides)
@@ -1449,6 +1451,12 @@ export function useScheduleController(params: {
         setSnapshotHealthReport(null)
       }
     }
+
+    const baselineSnapshotData = resolveBaselineSnapshotForCache({
+      hasBaselineSnapshot,
+      rawBaselineSnapshotStored,
+      validatedBaselineSnapshot: validatedBaselineSnapshotData,
+    })
 
     // Bed overrides + notes + allocation notes (in staff_overrides JSON)
     const bedCountsByTeamForCache = (overrides as any)?.__bedCounts?.byTeam || {}
@@ -1484,17 +1492,13 @@ export function useScheduleController(params: {
       })
       storedCalculations = byTeam
       calculationsSource = 'schedule_calculations'
-    } else if (hasBaselineSnapshot) {
-      const snapshotData = unwrapBaselineSnapshotStored(rawBaselineSnapshotStored as BaselineSnapshotStored).data
-      if (snapshotData.calculatedValues && snapshotData.calculatedValues.calculations) {
-        storedCalculations = snapshotData.calculatedValues.calculations
+    } else if (baselineSnapshotData) {
+      const calculationsFromSnapshot = getStoredCalculationsFromBaselineSnapshot(baselineSnapshotData)
+      if (calculationsFromSnapshot) {
+        storedCalculations = calculationsFromSnapshot
         calculationsSource = 'snapshot.calculatedValues'
       }
     }
-
-    const baselineSnapshotData = hasBaselineSnapshot
-      ? unwrapBaselineSnapshotStored(rawBaselineSnapshotStored as BaselineSnapshotStored).data
-      : null
 
     let snapshotBytes: number | null = null
     if (hasBaselineSnapshot) {
@@ -1691,24 +1695,6 @@ export function useScheduleController(params: {
       }
 
       const loadedWorkflowState: WorkflowState | null = (resultAny?.workflowState ?? null) as any
-      if (loadedWorkflowState && typeof loadedWorkflowState === 'object') {
-        if (loadedWorkflowState.currentStep) {
-          setCurrentStep(loadedWorkflowState.currentStep)
-        }
-        if (Array.isArray(loadedWorkflowState.completedSteps)) {
-          const baseStatus: Record<string, 'pending' | 'completed' | 'modified'> = {
-            'leave-fte': 'pending',
-            'therapist-pca': 'pending',
-            'floating-pca': 'pending',
-            'bed-relieving': 'pending',
-            review: 'pending',
-          }
-          loadedWorkflowState.completedSteps.forEach((stepId: string) => {
-            if (baseStatus[stepId]) baseStatus[stepId] = 'completed'
-          })
-          setStepStatus(baseStatus)
-        }
-      }
       timer.stage('applyWorkflowState')
 
       // Prefer stored calculations if available to avoid recalculation on load.
@@ -1732,6 +1718,19 @@ export function useScheduleController(params: {
       const hasTherapistData = resultAny.therapistAllocs && resultAny.therapistAllocs.length > 0
       const hasPCAData = resultAny.pcaAllocs && resultAny.pcaAllocs.length > 0
       const hasBedData = resultAny.bedAllocs && resultAny.bedAllocs.length > 0
+      const initializedStepsFromLoaded: string[] | null = (() => {
+        const raw = (resultAny as any)?.initializedSteps
+        if (!Array.isArray(raw)) return null
+        return raw.filter((x: any) => typeof x === 'string') as string[]
+      })()
+      const loadStepProjection = projectLoadStepGating({
+        workflowState: loadedWorkflowState,
+        initializedStepsFromLoaded,
+        hasLeaveData,
+        hasTherapistData,
+        hasPCAData,
+        hasBedData,
+      })
 
       if (hasPCAData) {
         applySavedAllocationsFromDb({
@@ -1745,21 +1744,9 @@ export function useScheduleController(params: {
         // Without this, Block 3 can appear empty after refresh even though loadScheduleForDate returned bedAllocs.
         setBedAllocations((hasBedData ? (resultAny.bedAllocs || []) : []) as any)
 
-        const initializedStepsFromLoaded: string[] | null = (() => {
-          const raw = (resultAny as any)?.initializedSteps
-          if (!Array.isArray(raw)) return null
-          return raw.filter((x: any) => typeof x === 'string') as string[]
-        })()
-
-        const initializedStepsFallback: string[] = [
-          'therapist-pca',
-          'floating-pca',
-          ...(hasBedData ? ['bed-relieving'] : []),
-        ]
-
-        const initializedStepsToApply = initializedStepsFromLoaded ?? initializedStepsFallback
-
-        setInitializedSteps(new Set<string>(initializedStepsToApply))
+        setInitializedSteps(new Set<string>(loadStepProjection.initializedStepsToApply))
+        setCurrentStep(loadStepProjection.currentStepToApply)
+        setStepStatus(loadStepProjection.stepStatus)
 
         if (!resultAny.calculations && typeof queueMicrotask === 'function' && args.recalculateScheduleCalculations) {
           queueMicrotask(() => {
@@ -1767,27 +1754,6 @@ export function useScheduleController(params: {
           })
         }
 
-        const workflowState: WorkflowState | null = resultAny.workflowState ?? persistedWorkflowState
-        let newStepStatus: Record<string, 'pending' | 'completed' | 'modified'> = {
-          'leave-fte': hasLeaveData ? 'completed' : 'pending',
-          'therapist-pca': hasTherapistData ? 'completed' : 'pending',
-          'floating-pca': hasPCAData ? 'completed' : 'pending',
-          'bed-relieving': hasBedData ? 'completed' : 'pending',
-          review: 'pending',
-        }
-
-        if (workflowState && Array.isArray(workflowState.completedSteps)) {
-          workflowState.completedSteps.forEach((stepId) => {
-            if (newStepStatus[stepId]) newStepStatus[stepId] = 'completed'
-          })
-          if (workflowState.currentStep) {
-            setCurrentStep(workflowState.currentStep)
-          }
-        } else if (hasLeaveData && hasTherapistData && hasPCAData) {
-          setCurrentStep('review')
-          newStepStatus = { ...newStepStatus, review: 'completed' }
-        }
-        setStepStatus(newStepStatus)
       } else if (resultAny && resultAny.overrides) {
         // Step 1 baseline view (no saved allocations): show leave/FTE only.
         const overrides = (resultAny as any).overrides || {}
@@ -1874,26 +1840,9 @@ export function useScheduleController(params: {
         setPcaAllocations(baselinePCAByTeam)
         setPendingPCAFTEPerTeam({ FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 })
         setBedAllocations([])
-        setInitializedSteps(new Set())
-
-        const ws: WorkflowState =
-          loadedWorkflowState && typeof loadedWorkflowState === 'object'
-            ? loadedWorkflowState
-            : { currentStep: 'leave-fte', completedSteps: [] }
-        setCurrentStep(ws.currentStep ?? 'leave-fte')
-        const nextStatus: Record<string, 'pending' | 'completed' | 'modified'> = {
-          'leave-fte': 'pending',
-          'therapist-pca': 'pending',
-          'floating-pca': 'pending',
-          'bed-relieving': 'pending',
-          review: 'pending',
-        }
-        if (Array.isArray(ws.completedSteps)) {
-          ws.completedSteps.forEach((stepId) => {
-            if (nextStatus[stepId]) nextStatus[stepId] = 'completed'
-          })
-        }
-        setStepStatus(nextStatus)
+        setInitializedSteps(new Set<string>(loadStepProjection.initializedStepsToApply))
+        setCurrentStep(loadStepProjection.currentStepToApply)
+        setStepStatus(loadStepProjection.stepStatus)
         timer.stage('baselineView')
       } else {
         // No overrides and no saved allocations: keep everything empty.
@@ -2508,6 +2457,7 @@ export function useScheduleController(params: {
     let snapshotBytes: number | null = null
     let specialProgramsBytes: number | null = null
     let saveError: unknown = null
+    let fallbackUpdatedAt: string | null = null
 
     onProgress(0.12)
 
@@ -2899,66 +2849,33 @@ export function useScheduleController(params: {
       if (!usedRpc) {
         onProgress(0.55)
         startSoftAdvance(0.82)
-        const upsertPromises: PromiseLike<any>[] = []
-        if (calcRows.length > 0) {
-          upsertPromises.push(params.supabase.from('schedule_calculations').upsert(calcRows, { onConflict: 'schedule_id,team' }))
-        }
-
-        const pcaDeletePromise: PromiseLike<any> = params.supabase.from('schedule_pca_allocations').delete().eq('schedule_id', scheduleId)
-        const therapistDeletePromise: PromiseLike<any> = params.supabase
-          .from('schedule_therapist_allocations')
-          .delete()
-          .eq('schedule_id', scheduleId)
-        const bedDeletePromise: PromiseLike<any> = params.supabase.from('schedule_bed_allocations').delete().eq('schedule_id', scheduleId)
-
-        const [pcaDeleteRes, therapistDeleteRes, bedDeleteRes, ...upsertResults] = await Promise.all([
-          pcaDeletePromise,
-          therapistDeletePromise,
-          bedDeletePromise,
-          ...upsertPromises,
-        ])
-
-        const firstWriteError =
-          (pcaDeleteRes as any)?.error ||
-          (therapistDeleteRes as any)?.error ||
-          (bedDeleteRes as any)?.error ||
-          upsertResults.find((r) => (r as any)?.error)?.error
-        if (firstWriteError) {
-          toast(`Error saving schedule: ${firstWriteError.message || 'Unknown error'}`, 'error')
-          saveError = firstWriteError
+        const fallbackSaveRes = await saveScheduleFallbackAtomically({
+          supabase: params.supabase as any,
+          scheduleId,
+          rows: {
+            therapistRows,
+            pcaRows,
+            bedRows,
+            calcRows,
+          },
+          metadata: {
+            tieBreakDecisions,
+            staffOverrides: staffOverridesPayloadForDb,
+            workflowState: workflowStateToSave as any,
+          },
+        })
+        if (!fallbackSaveRes.ok) {
+          const message = (fallbackSaveRes.error as any)?.message || 'Unknown error'
+          toast(`Error saving schedule: ${message}`, 'error')
+          if (fallbackSaveRes.rollbackAttempted && fallbackSaveRes.rollbackError) {
+            const rollbackMessage = (fallbackSaveRes.rollbackError as any)?.message || 'Unknown rollback error'
+            toast(`Fallback rollback issue: ${rollbackMessage}`, 'warning')
+          }
+          saveError = fallbackSaveRes.error
           timer.stage('writeAllocations.error')
           return timer.finalize({ ok: false })
         }
-
-        if (pcaRows.length > 0) {
-          const pcaInsertRes = await params.supabase.from('schedule_pca_allocations').insert(pcaRows)
-          if (pcaInsertRes.error) {
-            toast(`Error saving PCA allocations: ${pcaInsertRes.error.message || 'Unknown error'}`, 'error')
-            saveError = pcaInsertRes.error
-            timer.stage('writeAllocations.error')
-            return timer.finalize({ ok: false })
-          }
-        }
-
-        if (therapistRows.length > 0) {
-          const therapistInsertRes = await params.supabase.from('schedule_therapist_allocations').insert(therapistRows)
-          if (therapistInsertRes.error) {
-            toast(`Error saving therapist allocations: ${therapistInsertRes.error.message || 'Unknown error'}`, 'error')
-            saveError = therapistInsertRes.error
-            timer.stage('writeAllocations.error')
-            return timer.finalize({ ok: false })
-          }
-        }
-
-        if (bedRows.length > 0) {
-          const bedInsertRes = await params.supabase.from('schedule_bed_allocations').insert(bedRows)
-          if (bedInsertRes.error) {
-            toast(`Error saving bed allocations: ${bedInsertRes.error.message || 'Unknown error'}`, 'error')
-            saveError = bedInsertRes.error
-            timer.stage('writeAllocations.error')
-            return timer.finalize({ ok: false })
-          }
-        }
+        fallbackUpdatedAt = fallbackSaveRes.value.updatedAt ?? null
       }
 
       stopSoftAdvance()
@@ -3113,19 +3030,24 @@ export function useScheduleController(params: {
       let savedUpdatedAt: string | null = null
 
       if (!usedRpc) {
-        const { data: metaData, error: scheduleMetaError } = await params.supabase
-          .from('daily_schedules')
-          .update({
-            tie_break_decisions: tieBreakDecisions,
-            staff_overrides: staffOverridesPayloadForDb,
-            workflow_state: workflowStateToSave,
-          })
-          .eq('id', scheduleId)
-          .select('updated_at')
-          .single()
-        if (!scheduleMetaError) {
+        if (fallbackUpdatedAt !== null) {
           setPersistedWorkflowState(workflowStateToSave)
-          savedUpdatedAt = (metaData as any)?.updated_at ?? null
+          savedUpdatedAt = fallbackUpdatedAt
+        } else {
+          const { data: metaData, error: scheduleMetaError } = await params.supabase
+            .from('daily_schedules')
+            .update({
+              tie_break_decisions: tieBreakDecisions,
+              staff_overrides: staffOverridesPayloadForDb,
+              workflow_state: workflowStateToSave,
+            })
+            .eq('id', scheduleId)
+            .select('updated_at')
+            .single()
+          if (!scheduleMetaError) {
+            setPersistedWorkflowState(workflowStateToSave)
+            savedUpdatedAt = (metaData as any)?.updated_at ?? null
+          }
         }
       } else {
         setPersistedWorkflowState(workflowStateToSave)
@@ -3636,21 +3558,6 @@ export function useScheduleController(params: {
         const resolvedSelections = keys.length === 0 && Object.keys(preSelections).length > 0 ? preSelections : (selections || {})
         resolvedSubstitutionSelectionsSnapshot = resolvedSelections
 
-        // Persist substitution selections into staffOverrides so:
-        // - UI substitution highlighting is accurate (no heuristic mismatch)
-        // - Step 3 can reliably exclude substitution slots via staffOverrides.substitutionFor
-        //
-        // Note: Page-level manual confirm also persists; this is mainly for auto/wizard flows.
-        try {
-          setStaffOverrides((prev: any) =>
-            applyResolvedSubstitutionSelectionsToOverrides({
-              baseOverrides: prev ?? {},
-              resolvedSelections,
-              staff,
-            })
-          )
-        } catch {}
-
         return resolvedSelections
       }
 
@@ -3678,6 +3585,7 @@ export function useScheduleController(params: {
         specialPrograms: modifiedSpecialPrograms,
         specialProgramTargetTeamById,
         pcaPreferences,
+        staffOverrides: overrides,
         phase: 'non-floating-with-special',
         onNonFloatingSubstitution,
         existingAllocations: existingAllocsForSubstitution as any,
@@ -3737,11 +3645,11 @@ export function useScheduleController(params: {
       // Explicit wizard selections remain the source of truth; otherwise we fall back
       // to auto-detecting substitution intent from the resulting allocations.
       setStaffOverrides((prev: any) => {
-        const nextOverrides = buildStep2SubstitutionDisplayOverrides({
+        const nextOverrides = buildAuthoritativeStep2SubstitutionOverrides({
           baseOverrides: prev ?? {},
-          resolvedSelections: resolvedSubstitutionSelectionsSnapshot ?? undefined,
           staff,
           allocations: ((pcaResult as any).allocations || []) as PCAAllocation[],
+          resolvedSelections: resolvedSubstitutionSelectionsSnapshot ?? undefined,
         })
         return nextOverrides
       })
@@ -3872,6 +3780,7 @@ export function useScheduleController(params: {
         specialPrograms: modifiedSpecialPrograms,
         specialProgramTargetTeamById,
         pcaPreferences,
+        staffOverrides,
         onTieBreak: handleTieBreak,
         phase: 'floating',
         existingAllocations,

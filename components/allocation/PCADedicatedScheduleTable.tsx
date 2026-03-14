@@ -13,9 +13,9 @@ import { cn } from '@/lib/utils'
 import { useToast } from '@/components/ui/toast-context'
 import { useAutoHideFlag } from '@/lib/hooks/useAutoHideFlag'
 import { useIsolatedWheelScroll } from '@/lib/hooks/useIsolatedWheelScroll'
-import { normalizeSubstitutionForBySlot } from '@/lib/utils/substitutionFor'
 import { getSpecialProgramNameBySlotForAllocation } from '@/lib/utils/specialProgramExport'
 import { shouldShowExtraCoverage } from '@/lib/features/schedule/extraCoverageVisibility'
+import { derivePcaDisplayFlagsBySlot, type PcaDisplayFlagsBySlot } from '@/lib/features/schedule/pcaDisplayClassification'
 
 type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
 
@@ -284,7 +284,16 @@ export function PCADedicatedScheduleTable({
       const invalids = invalidSlotByStaffId.get(s.id) ?? {}
       const programBySlot = programNameByStaffIdBySlot.get(s.id) ?? {}
       const slotTeams = slotTeamByStaffId.get(s.id) ?? { 1: null, 2: null, 3: null, 4: null }
-      const substitutionBySlotEntry = normalizeSubstitutionForBySlot(o as any)
+      const slotDisplayFlags: PcaDisplayFlagsBySlot | null = alloc
+        ? derivePcaDisplayFlagsBySlot({
+            allocation: alloc as any,
+            staffOverrides: staffOverrides as Record<string, any>,
+            allPCAStaff: allPCAStaff as Staff[],
+            specialPrograms: specialPrograms as SpecialProgram[],
+            weekday,
+            showExtraCoverageStyling,
+          })
+        : null
 
       if (!s.floating || isPreAlgo) {
         // Non-floating PCA: show 主位 for available-slot runs; NA for unavailable slots with leaveType.
@@ -408,11 +417,10 @@ export function PCADedicatedScheduleTable({
       for (const slot of [1, 2, 3, 4] as const) {
         const assignedTeam = slotTeams[slot]
         const inv = invalids[slot]
-        const prog = programBySlot[slot]
-        const isExtraCoverage = showExtraCoverageStyling && !!(o as any)?.extraCoverageBySlot?.[slot]
-
-        const substitutionEntry = substitutionBySlotEntry[slot]
-        const isSubstitution = !!assignedTeam && !!substitutionEntry && substitutionEntry.team === assignedTeam
+        const slotFlags = slotDisplayFlags?.[slot]
+        const prog = slotFlags?.programName ?? programBySlot[slot]
+        const isExtraCoverage = !!slotFlags?.isExtraCoverage
+        const isSubstitution = !!slotFlags?.isSubstitution
         substitutionBySlot[slot] = isSubstitution
 
         // Invalid slots should render even if this slot isn't assigned (displayTeam comes from paired slot).
@@ -420,12 +428,7 @@ export function PCADedicatedScheduleTable({
           const pairedSlot: RowSlot | null = slot === 1 ? 2 : slot === 2 ? 1 : slot === 3 ? 4 : slot === 4 ? 3 : null
           const pairedTeam = pairedSlot ? slotTeams[pairedSlot] : null
           const displayTeam = pairedTeam ?? assignedTeam
-          const slotSubEntry = substitutionBySlotEntry[slot]
-          const pairedSubEntry = pairedSlot ? substitutionBySlotEntry[pairedSlot] : undefined
-          const invIsSub = !!displayTeam && (
-            (!!slotSubEntry && slotSubEntry.team === displayTeam) ||
-            (!!pairedSubEntry && pairedSubEntry.team === displayTeam)
-          )
+          const invIsSub = !!displayTeam && !!(slotDisplayFlags?.[slot]?.isSubstitution || (pairedSlot ? slotDisplayFlags?.[pairedSlot]?.isSubstitution : false))
 
           if (!displayTeam) {
             // No team context → show empty.
@@ -534,6 +537,10 @@ export function PCADedicatedScheduleTable({
   }, [
     stage,
     columns,
+    allPCAStaff,
+    specialPrograms,
+    weekday,
+    showExtraCoverageStyling,
     staffOverrides,
     allocationByStaffId,
     slotTeamByStaffId,

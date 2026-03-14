@@ -15,7 +15,7 @@ import { computeDrmAddOnFte } from '@/lib/utils/specialProgramPcaCapacity'
 import { getAllocationSpecialProgramSlotsForTeam } from '@/lib/utils/scheduleReservationRuntime'
 import { buildDisplayViewForWeekday } from '@/lib/utils/scheduleRuntimeProjection'
 import { shouldShowExtraCoverage } from '@/lib/features/schedule/extraCoverageVisibility'
-import { derivePcaSubstitutionInfo } from '@/lib/features/schedule/pcaSubstitutionDisplay'
+import { derivePcaDisplayFlagsBySlot } from '@/lib/features/schedule/pcaDisplayClassification'
 
 interface PCABlockProps {
   team: Team
@@ -343,12 +343,31 @@ function usePcaBlockViewModel({
     if (!floatingAlloc.staff?.floating) {
       return { isSubstituting: false, isWholeDaySubstitution: false, substitutedSlots: [] }
     }
-    return derivePcaSubstitutionInfo({
-      team,
-      floatingAlloc,
+    const slotFlags = derivePcaDisplayFlagsBySlot({
+      allocation: floatingAlloc as any,
       staffOverrides: resolvedStaffOverrides as Record<string, any>,
       allPCAStaff: resolvedAllPCAStaff,
+      specialPrograms: resolvedSpecialPrograms,
+      weekday,
+      showExtraCoverageStyling: true,
     })
+    const substitutedSlots = ([1, 2, 3, 4] as const).filter((slot) => {
+      const slotTeam =
+        slot === 1 ? floatingAlloc.slot1 : slot === 2 ? floatingAlloc.slot2 : slot === 3 ? floatingAlloc.slot3 : floatingAlloc.slot4
+      return slotTeam === team && !!slotFlags[slot]?.isSubstitution
+    })
+    const isWholeDaySubstitution =
+      substitutedSlots.length >= 3 ||
+      (substitutedSlots.length === 4 &&
+        substitutedSlots.includes(1) &&
+        substitutedSlots.includes(2) &&
+        substitutedSlots.includes(3) &&
+        substitutedSlots.includes(4))
+    return {
+      isSubstituting: substitutedSlots.length > 0,
+      isWholeDaySubstitution,
+      substitutedSlots,
+    }
   }
 
   // Helper to get special program slots for a team

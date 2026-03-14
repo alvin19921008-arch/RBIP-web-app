@@ -1,4 +1,5 @@
 import { resolveSpecialProgramRuntimeModel } from '@/lib/utils/specialProgramRuntimeModel'
+import { createEmptyTeamRecord } from '@/lib/utils/types'
 import type { SpecialProgram } from '@/types/allocation'
 import type { PCAAllocation } from '@/types/schedule'
 import type { Team, Weekday } from '@/types/staff'
@@ -139,4 +140,80 @@ export function getAllocationSpecialProgramNamesBySlot(args: {
     }
   }
   return labels
+}
+
+export function computeSpecialProgramAssignedFteByTeam(args: {
+  allocations: PCAAllocation[]
+  specialPrograms: SpecialProgram[]
+  weekday?: Weekday
+  staffOverrides?: Record<string, unknown>
+}): Record<Team, number> {
+  const assignedByTeam = createEmptyTeamRecord<number>(0)
+  const specialProgramsByTeamCache = new Map<string, ReturnType<typeof buildReservationRuntimeProgramsById>>()
+  const getSpecialProgramsByAllocationTeam = (allocationTeam: Team | null | undefined) => {
+    const cacheKey = allocationTeam ?? '__null__'
+    const cached = specialProgramsByTeamCache.get(cacheKey)
+    if (cached) return cached
+    const built = buildReservationRuntimeProgramsById({
+      specialPrograms: args.specialPrograms,
+      weekday: args.weekday,
+      staffOverrides: args.staffOverrides,
+      allocationTargetTeam: allocationTeam ?? null,
+    })
+    specialProgramsByTeamCache.set(cacheKey, built)
+    return built
+  }
+
+  for (const allocation of args.allocations || []) {
+    const ids = allocation.special_program_ids
+    if (!Array.isArray(ids) || ids.length === 0) continue
+
+    const specialProgramsById = getSpecialProgramsByAllocationTeam(allocation.team)
+    for (const slot of [1, 2, 3, 4] as const) {
+      const assignedTeam =
+        slot === 1
+          ? allocation.slot1
+          : slot === 2
+            ? allocation.slot2
+            : slot === 3
+              ? allocation.slot3
+              : allocation.slot4
+      if (!assignedTeam) continue
+      if (
+        isAllocationSlotFromSpecialProgram({
+          allocation,
+          slot,
+          team: assignedTeam,
+          specialProgramsById,
+        })
+      ) {
+        assignedByTeam[assignedTeam] += 0.25
+      }
+    }
+
+    const invalidSlot = (allocation as any)?.invalid_slot as 1 | 2 | 3 | 4 | null | undefined
+    if (invalidSlot !== 1 && invalidSlot !== 2 && invalidSlot !== 3 && invalidSlot !== 4) continue
+
+    const invalidTeam =
+      invalidSlot === 1
+        ? allocation.slot1
+        : invalidSlot === 2
+          ? allocation.slot2
+          : invalidSlot === 3
+            ? allocation.slot3
+            : allocation.slot4
+    if (!invalidTeam) continue
+    if (
+      isAllocationSlotFromSpecialProgram({
+        allocation,
+        slot: invalidSlot,
+        team: invalidTeam,
+        specialProgramsById,
+      })
+    ) {
+      assignedByTeam[invalidTeam] = Math.max(0, assignedByTeam[invalidTeam] - 0.25)
+    }
+  }
+
+  return assignedByTeam
 }

@@ -4,6 +4,7 @@ import { PCAPreference, SpecialProgram } from '@/types/allocation'
 import { roundToNearestQuarter, roundDownToQuarter, roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { assignSlotIfValid, getTeamFloor, isFloorPCAForTeam, TEAMS } from '@/lib/utils/floatingPCAHelpers'
 import { getEffectiveSpecialProgramWeekdaySlots } from '@/lib/utils/specialProgramConfigRows'
+import { computeSpecialProgramAssignedFteByTeam } from '@/lib/utils/scheduleReservationRuntime'
 import { resolveSpecialProgramRuntimeModel } from '@/lib/utils/specialProgramRuntimeModel'
 import type { PCAData } from './pcaAllocationTypes'
 
@@ -17,6 +18,7 @@ export interface PCAAllocationContext {
   specialPrograms: SpecialProgram[]
   specialProgramTargetTeamById?: Partial<Record<string, Team>>
   pcaPreferences: PCAPreference[]
+  staffOverrides?: Record<string, unknown>
   gymSchedules?: Record<Team, number | null> // Deprecated - gym schedules now come from pcaPreferences
   onTieBreak?: (teams: Team[], pendingFTE: number) => Promise<Team> // Callback for tie-breaking dialog
   // Phase control for step-wise allocation
@@ -1948,51 +1950,14 @@ export async function allocatePCA(context: PCAAllocationContext): Promise<PCAAll
   // Exclude special-program slot assignments from "assigned" when computing pending needs for Step 3.
   // Special program slots are designated work and should not satisfy per-team floating needs.
   if (shouldDoSpecialProgram) {
-    TEAMS.forEach((t) => {
-      teamPCASpecialProgramAssigned[t] = 0
+    const assignedByTeam = computeSpecialProgramAssignedFteByTeam({
+      allocations,
+      specialPrograms: context.specialPrograms || [],
+      weekday,
+      staffOverrides: context.staffOverrides,
     })
-
-    const slotsByProgramId = new Map<string, Set<number>>()
-    ;(context.specialPrograms || []).forEach((program) => {
-      const programSlots = getEffectiveSpecialProgramWeekdaySlots({
-        program,
-        day: weekday,
-        preferDirectWeekdaySlots: true,
-      })
-      slotsByProgramId.set(program.id, new Set(programSlots))
-    })
-
-    allocations.forEach((alloc) => {
-      const ids = (alloc as any)?.special_program_ids
-      if (!Array.isArray(ids) || ids.length === 0) return
-
-      const specialSlotSet = new Set<number>()
-      ids.forEach((id: any) => {
-        const s = slotsByProgramId.get(String(id))
-        if (!s) return
-        s.forEach((slot) => specialSlotSet.add(slot))
-      })
-      if (specialSlotSet.size === 0) return
-
-      const add = (slotNum: 1 | 2 | 3 | 4, slotTeam: Team | null) => {
-        if (!slotTeam) return
-        if (!specialSlotSet.has(slotNum)) return
-        teamPCASpecialProgramAssigned[slotTeam] += 0.25
-      }
-      add(1, (alloc as any).slot1 ?? null)
-      add(2, (alloc as any).slot2 ?? null)
-      add(3, (alloc as any).slot3 ?? null)
-      add(4, (alloc as any).slot4 ?? null)
-
-      const inv = (alloc as any)?.invalid_slot as 1 | 2 | 3 | 4 | null | undefined
-      if (inv === 1 || inv === 2 || inv === 3 || inv === 4) {
-        if (specialSlotSet.has(inv)) {
-          const invTeam = (inv === 1 ? (alloc as any).slot1 : inv === 2 ? (alloc as any).slot2 : inv === 3 ? (alloc as any).slot3 : (alloc as any).slot4) as Team | null
-          if (invTeam) {
-            teamPCASpecialProgramAssigned[invTeam] = Math.max(0, teamPCASpecialProgramAssigned[invTeam] - 0.25)
-          }
-        }
-      }
+    TEAMS.forEach((team) => {
+      teamPCASpecialProgramAssigned[team] = assignedByTeam[team] || 0
     })
   }
 
