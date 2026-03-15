@@ -31,7 +31,6 @@ import { computeStep3BootstrapState } from '@/lib/features/schedule/step3Bootstr
 import { computeStep3ResetForReentry } from '@/lib/features/schedule/stepReset'
 import { normalizeScheduleStateForSave } from '@/lib/features/schedule/saveNormalization'
 import {
-  computeStalePcaStaffIdsForReplace,
   shouldPersistPcaAllocationForSave,
 } from '@/lib/features/schedule/saveReconciliation'
 import { saveScheduleFallbackAtomically } from '@/lib/features/schedule/saveFallbackAtomic'
@@ -2463,11 +2462,24 @@ export function useScheduleController(params: {
     const stopSoftAdvance = args.stopSoftAdvance ?? (() => {})
 
     let usedRpc = false
+    let rpcAttempted = false
+    let rpcProxyUsed = false
+    let rpcProxyError: string | null = null
+    let rpcErrorCode: string | null = null
+    let rpcErrorMessage: string | null = null
+    let rpcFallbackReason: string | null = null
+    let rpcServerDiagnostics: Record<string, unknown> | null = null
     let snapshotWritten = false
     let snapshotBytes: number | null = null
     let specialProgramsBytes: number | null = null
     let saveError: unknown = null
     let fallbackUpdatedAt: string | null = null
+    let rpcUpdatedAt: string | null = null
+    let therapistRowsCount = 0
+    let pcaRowsCount = 0
+    let bedRowsCount = 0
+    let calcRowsCount = 0
+    let payloadBytes: { total: number; therapist: number; pca: number; bed: number; calc: number; overrides: number } | null = null
 
     onProgress(0.12)
 
@@ -2802,6 +2814,10 @@ export function useScheduleController(params: {
         num_beds: (b as any).num_beds,
         slot: (b as any).slot ?? null,
       }))
+      therapistRowsCount = therapistRows.length
+      pcaRowsCount = pcaRows.length
+      bedRowsCount = bedRows.length
+      calcRowsCount = calcRows.length
 
       const completedStepsForWorkflow = ALLOCATION_STEPS
         .filter((step: any) => stepStatus[step.id] === 'completed')
@@ -2811,67 +2827,125 @@ export function useScheduleController(params: {
         currentStep: currentStep as WorkflowState['currentStep'],
         completedSteps: completedStepsForWorkflow,
       }
+      try {
+        const therapistBytes = JSON.stringify(therapistRows).length
+        const pcaBytes = JSON.stringify(pcaRows).length
+        const bedBytes = JSON.stringify(bedRows).length
+        const calcBytes = JSON.stringify(calcRows).length
+        const overridesBytes = JSON.stringify(staffOverridesPayloadForDb).length
+        payloadBytes = {
+          total: therapistBytes + pcaBytes + bedBytes + calcBytes + overridesBytes,
+          therapist: therapistBytes,
+          pca: pcaBytes,
+          bed: bedBytes,
+          calc: calcBytes,
+          overrides: overridesBytes,
+        }
+      } catch {
+        payloadBytes = null
+      }
 
       if (cachedSaveScheduleRpcAvailable !== false) {
         onProgress(0.55)
         startSoftAdvance(0.86)
-        const rpcRes = await params.supabase.rpc('save_schedule_v1', {
-          p_schedule_id: scheduleId,
-          therapist_allocations: therapistRows,
-          pca_allocations: pcaRows,
-          bed_allocations: bedRows,
-          calculations: calcRows,
-          tie_break_decisions: tieBreakDecisions,
-          staff_overrides: staffOverridesPayloadForDb,
-          workflow_state: workflowStateToSave,
-        })
-
-        if (!rpcRes.error) {
-          const submittedPcaStaffIds = Array.from(new Set(pcaRows.map((row: any) => row?.staff_id).filter(Boolean)))
-          const existingPcaRes = await params.supabase
-            .from('schedule_pca_allocations')
-            .select('staff_id')
-            .eq('schedule_id', scheduleId)
-
-          if (existingPcaRes.error) {
-            toast(`Error reconciling PCA allocations: ${existingPcaRes.error.message || 'Unknown error'}`, 'error')
-            saveError = existingPcaRes.error
-            timer.stage('writeAllocations.error')
-            return timer.finalize({ ok: false })
-          }
-
-          const stalePcaStaffIds = computeStalePcaStaffIdsForReplace({
-            existingStaffIds: ((existingPcaRes.data as any[]) || []).map((row: any) => row?.staff_id).filter(Boolean),
-            submittedStaffIds: submittedPcaStaffIds,
+        rpcAttempted = true
+        let rpcData: any = null
+        let rpcErr: any = null
+        try {
+          const proxyRes = await fetch('/api/schedules/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              scheduleId,
+              therapistRows,
+              pcaRows,
+              bedRows,
+              calcRows,
+              tieBreakDecisions,
+              staffOverridesPayloadForDb,
+              workflowStateToSave,
+            }),
           })
+          rpcProxyUsed = true
+          const proxyJson = await proxyRes.json().catch(() => ({} as any))
+          if (!proxyRes.ok) {
+            rpcProxyError = String(proxyJson?.error || `HTTP ${proxyRes.status}`)
+            rpcErr = { message: rpcProxyError, code: proxyJson?.code ?? null }
+          } else {
+            rpcData = proxyJson?.data ?? null
+          }
+        } catch (e) {
+          rpcProxyUsed = true
+          rpcProxyError = e instanceof Error ? e.message : 'Proxy request failed'
+          rpcErr = { message: rpcProxyError, code: null }
+        }
 
-          if (stalePcaStaffIds.length > 0) {
-            const staleDeleteRes = await params.supabase
-              .from('schedule_pca_allocations')
-              .delete()
-              .eq('schedule_id', scheduleId)
-              .in('staff_id', stalePcaStaffIds)
+        if (rpcErr) {
+          // Safety fallback: try direct browser RPC if proxy failed.
+          const directRes = await params.supabase.rpc('save_schedule_v1', {
+            p_schedule_id: scheduleId,
+            therapist_allocations: therapistRows,
+            pca_allocations: pcaRows,
+            bed_allocations: bedRows,
+            calculations: calcRows,
+            tie_break_decisions: tieBreakDecisions,
+            staff_overrides: staffOverridesPayloadForDb,
+            workflow_state: workflowStateToSave,
+          })
+          rpcErr = directRes.error ?? null
+          rpcData = directRes.data ?? null
+        }
 
-            if (staleDeleteRes.error) {
-              toast(`Error clearing stale PCA allocations: ${staleDeleteRes.error.message || 'Unknown error'}`, 'error')
-              saveError = staleDeleteRes.error
-              timer.stage('writeAllocations.error')
-              return timer.finalize({ ok: false })
+        if (!rpcErr) {
+          // save_schedule_v1 now replaces PCA rows inside the RPC and returns updated_at.
+          if (typeof rpcData === 'string' && rpcData.length > 0) {
+            rpcUpdatedAt = rpcData
+          } else if (rpcData && !Array.isArray(rpcData) && typeof rpcData === 'object') {
+            if (typeof rpcData.updated_at === 'string' && rpcData.updated_at.length > 0) {
+              rpcUpdatedAt = rpcData.updated_at
+            }
+            rpcServerDiagnostics = rpcData as Record<string, unknown>
+          } else if (Array.isArray(rpcData) && rpcData.length > 0) {
+            const row = rpcData[0] as any
+            if (typeof row?.updated_at === 'string' && row.updated_at.length > 0) {
+              rpcUpdatedAt = row.updated_at
+            }
+            if (row && typeof row === 'object') {
+              rpcServerDiagnostics = row as Record<string, unknown>
             }
           }
 
           cachedSaveScheduleRpcAvailable = true
           usedRpc = true
         } else {
-          const msg = rpcRes.error.message || ''
-          if (
-            msg.includes('save_schedule_v1') ||
-            msg.includes('Could not find the function') ||
-            (rpcRes.error as any)?.code === 'PGRST202'
-          ) {
+          const rawCode = (rpcErr as any)?.code
+          const rawMessage = (rpcErr as any)?.message || ''
+          const msg = rawMessage.toLowerCase()
+          rpcErrorCode = typeof rawCode === 'string' ? rawCode : null
+          rpcErrorMessage = rawMessage || null
+          rpcFallbackReason = rpcProxyError ? 'rpc-proxy-error' : 'rpc-error'
+
+          const isMissingFunctionError =
+            rpcErrorCode === 'PGRST202' ||
+            msg.includes('could not find the function') ||
+            (msg.includes('function public.save_schedule_v1') && msg.includes('does not exist'))
+
+          const isLegacyPcaLeaveColumnDrift =
+            msg.includes('leave_comeback_time') ||
+            msg.includes('leave_mode')
+
+          // Only disable RPC fast-path when function truly does not exist.
+          // For other errors (RLS/permission/temporary), keep trying on next save.
+          if (isMissingFunctionError) {
             cachedSaveScheduleRpcAvailable = false
+            rpcFallbackReason = 'rpc-function-missing'
+          } else if (isLegacyPcaLeaveColumnDrift) {
+            cachedSaveScheduleRpcAvailable = false
+            rpcFallbackReason = 'rpc-schema-drift'
           }
         }
+      } else {
+        rpcFallbackReason = 'rpc-disabled-cache'
       }
 
       if (!usedRpc) {
@@ -3079,13 +3153,17 @@ export function useScheduleController(params: {
         }
       } else {
         setPersistedWorkflowState(workflowStateToSave)
-        // RPC does not return updated_at — fetch it with a minimal select.
-        const { data: tsData } = await params.supabase
-          .from('daily_schedules')
-          .select('updated_at')
-          .eq('id', scheduleId)
-          .single()
-        savedUpdatedAt = (tsData as any)?.updated_at ?? null
+        if (rpcUpdatedAt) {
+          savedUpdatedAt = rpcUpdatedAt
+        } else {
+          // Backward compatibility: older save_schedule_v1 versions may still return void.
+          const { data: tsData } = await params.supabase
+            .from('daily_schedules')
+            .select('updated_at')
+            .eq('id', scheduleId)
+            .single()
+          savedUpdatedAt = (tsData as any)?.updated_at ?? null
+        }
       }
 
       timer.stage('metadata')
@@ -3111,6 +3189,21 @@ export function useScheduleController(params: {
     return timer.finalize({
       ok: !saveError,
       rpcUsed: usedRpc,
+      rpcAttempted,
+      rpcErrorCode,
+      rpcErrorMessage,
+      rpcFallbackReason,
+      rpcCacheState: cachedSaveScheduleRpcAvailable,
+      rpcProxyUsed,
+      rpcProxyError,
+      rpcServerDiagnostics,
+      rowCounts: {
+        therapist: therapistRowsCount,
+        pca: pcaRowsCount,
+        bed: bedRowsCount,
+        calc: calcRowsCount,
+      },
+      payloadBytes,
       snapshotWritten,
       snapshotHasMinifiedPrograms: true,
       snapshotBytes,

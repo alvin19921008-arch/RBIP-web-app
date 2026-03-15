@@ -10036,18 +10036,57 @@ function SchedulePageContent() {
                               const meta = lastSaveTiming.meta as any
                               if (!meta) return null
                               return (
-                                <div className="text-[11px] text-slate-400">
-                                  rpc:{meta.rpcUsed ? 'yes' : 'no'}
-                                  {typeof meta.snapshotWritten === 'boolean'
-                                    ? `, snapshotWrite:${meta.snapshotWritten ? 'yes' : 'no'}`
-                                    : null}
-                                  {typeof meta.snapshotBytes === 'number'
-                                    ? `, baseline:${Math.round(meta.snapshotBytes / 1024)}KB`
-                                    : null}
-                                  {typeof meta.specialProgramsBytes === 'number'
-                                    ? `, sp:${Math.round(meta.specialProgramsBytes / 1024)}KB`
-                                    : null}
-                                </div>
+                                <>
+                                  <div className="text-[11px] text-slate-400">
+                                    rpc:{meta.rpcUsed ? 'yes' : 'no'}
+                                    {typeof meta.rpcAttempted === 'boolean'
+                                      ? `, attempted:${meta.rpcAttempted ? 'yes' : 'no'}`
+                                      : null}
+                                    {typeof meta.rpcProxyUsed === 'boolean'
+                                      ? `, proxy:${meta.rpcProxyUsed ? 'yes' : 'no'}`
+                                      : null}
+                                    {meta.rpcFallbackReason ? `, fallback:${meta.rpcFallbackReason}` : null}
+                                    {meta.rpcErrorCode ? `, rpcErr:${meta.rpcErrorCode}` : null}
+                                    {typeof meta.snapshotWritten === 'boolean'
+                                      ? `, snapshotWrite:${meta.snapshotWritten ? 'yes' : 'no'}`
+                                      : null}
+                                    {typeof meta.snapshotBytes === 'number'
+                                      ? `, baseline:${Math.round(meta.snapshotBytes / 1024)}KB`
+                                      : null}
+                                    {typeof meta.specialProgramsBytes === 'number'
+                                      ? `, sp:${Math.round(meta.specialProgramsBytes / 1024)}KB`
+                                      : null}
+                                    {meta.rowCounts
+                                      ? `, rows:t${meta.rowCounts.therapist ?? 0}/p${meta.rowCounts.pca ?? 0}/b${meta.rowCounts.bed ?? 0}/c${meta.rowCounts.calc ?? 0}`
+                                      : null}
+                                    {typeof meta.payloadBytes?.total === 'number'
+                                      ? `, payload:${Math.round(meta.payloadBytes.total / 1024)}KB`
+                                      : null}
+                                    {typeof meta.rpcServerDiagnostics?.timings?.total_ms === 'number'
+                                      ? `, rpcMs:${Math.round(meta.rpcServerDiagnostics.timings.total_ms)}`
+                                      : null}
+                                  </div>
+                                  {typeof meta.rpcProxyError === 'string' && meta.rpcProxyError.length > 0 ? (
+                                    <div className="text-[10px] text-orange-300/90 truncate" title={meta.rpcProxyError}>
+                                      proxyMsg: {meta.rpcProxyError}
+                                    </div>
+                                  ) : null}
+                                  {typeof meta.rpcErrorMessage === 'string' && meta.rpcErrorMessage.length > 0 ? (
+                                    <div className="text-[10px] text-amber-300/90 truncate" title={meta.rpcErrorMessage}>
+                                      rpcMsg: {meta.rpcErrorMessage}
+                                    </div>
+                                  ) : null}
+                                  {meta.rpcServerDiagnostics?.timings ? (
+                                    <div className="text-[10px] text-slate-300/90 truncate">
+                                      rpcServer:
+                                      {' '}th {Math.round(meta.rpcServerDiagnostics.timings.therapist_ms ?? 0)}ms
+                                      {' '}| pca {Math.round(meta.rpcServerDiagnostics.timings.pca_ms ?? 0)}ms
+                                      {' '}| bed {Math.round(meta.rpcServerDiagnostics.timings.bed_ms ?? 0)}ms
+                                      {' '}| calc {Math.round(meta.rpcServerDiagnostics.timings.calc_ms ?? 0)}ms
+                                      {' '}| meta {Math.round(meta.rpcServerDiagnostics.timings.metadata_ms ?? 0)}ms
+                                    </div>
+                                  ) : null}
+                                </>
                               )
                             })()}
                             {lastSaveTiming.stages.length > 0 && (
@@ -11711,18 +11750,57 @@ function SchedulePageContent() {
                               const meta = lastSaveTiming.meta as any
                               if (!meta) return null
                               return (
-                                <div className="text-[11px] text-slate-400">
-                                  rpc:{meta.rpcUsed ? 'yes' : 'no'}
-                                  {typeof meta.snapshotWritten === 'boolean'
-                                    ? `, snapshotWrite:${meta.snapshotWritten ? 'yes' : 'no'}`
-                                    : null}
-                                  {typeof meta.snapshotBytes === 'number'
-                                    ? `, baseline:${Math.round(meta.snapshotBytes / 1024)}KB`
-                                    : null}
-                                  {typeof meta.specialProgramsBytes === 'number'
-                                    ? `, sp:${Math.round(meta.specialProgramsBytes / 1024)}KB`
-                                    : null}
-                                </div>
+                                <>
+                                  <div className="text-[11px] text-slate-400">
+                                    rpc:{meta.rpcUsed ? 'yes' : 'no'}
+                                    {typeof meta.rpcAttempted === 'boolean'
+                                      ? `, attempted:${meta.rpcAttempted ? 'yes' : 'no'}`
+                                      : null}
+                                    {typeof meta.rpcProxyUsed === 'boolean'
+                                      ? `, proxy:${meta.rpcProxyUsed ? 'yes' : 'no'}`
+                                      : null}
+                                    {meta.rpcFallbackReason ? `, fallback:${meta.rpcFallbackReason}` : null}
+                                    {meta.rpcErrorCode ? `, rpcErr:${meta.rpcErrorCode}` : null}
+                                    {typeof meta.snapshotWritten === 'boolean'
+                                      ? `, snapshotWrite:${meta.snapshotWritten ? 'yes' : 'no'}`
+                                      : null}
+                                    {typeof meta.snapshotBytes === 'number'
+                                      ? `, baseline:${Math.round(meta.snapshotBytes / 1024)}KB`
+                                      : null}
+                                    {typeof meta.specialProgramsBytes === 'number'
+                                      ? `, sp:${Math.round(meta.specialProgramsBytes / 1024)}KB`
+                                      : null}
+                                    {meta.rowCounts
+                                      ? `, rows:t${meta.rowCounts.therapist ?? 0}/p${meta.rowCounts.pca ?? 0}/b${meta.rowCounts.bed ?? 0}/c${meta.rowCounts.calc ?? 0}`
+                                      : null}
+                                    {typeof meta.payloadBytes?.total === 'number'
+                                      ? `, payload:${Math.round(meta.payloadBytes.total / 1024)}KB`
+                                      : null}
+                                    {typeof meta.rpcServerDiagnostics?.timings?.total_ms === 'number'
+                                      ? `, rpcMs:${Math.round(meta.rpcServerDiagnostics.timings.total_ms)}`
+                                      : null}
+                                  </div>
+                                  {typeof meta.rpcProxyError === 'string' && meta.rpcProxyError.length > 0 ? (
+                                    <div className="text-[10px] text-orange-300/90 truncate" title={meta.rpcProxyError}>
+                                      proxyMsg: {meta.rpcProxyError}
+                                    </div>
+                                  ) : null}
+                                  {typeof meta.rpcErrorMessage === 'string' && meta.rpcErrorMessage.length > 0 ? (
+                                    <div className="text-[10px] text-amber-300/90 truncate" title={meta.rpcErrorMessage}>
+                                      rpcMsg: {meta.rpcErrorMessage}
+                                    </div>
+                                  ) : null}
+                                  {meta.rpcServerDiagnostics?.timings ? (
+                                    <div className="text-[10px] text-slate-300/90 truncate">
+                                      rpcServer:
+                                      {' '}th {Math.round(meta.rpcServerDiagnostics.timings.therapist_ms ?? 0)}ms
+                                      {' '}| pca {Math.round(meta.rpcServerDiagnostics.timings.pca_ms ?? 0)}ms
+                                      {' '}| bed {Math.round(meta.rpcServerDiagnostics.timings.bed_ms ?? 0)}ms
+                                      {' '}| calc {Math.round(meta.rpcServerDiagnostics.timings.calc_ms ?? 0)}ms
+                                      {' '}| meta {Math.round(meta.rpcServerDiagnostics.timings.metadata_ms ?? 0)}ms
+                                    </div>
+                                  ) : null}
+                                </>
                               )
                             })()}
                             {lastSaveTiming.stages.length > 0 && (
@@ -12149,18 +12227,57 @@ function SchedulePageContent() {
                               const meta = lastSaveTiming.meta as any
                               if (!meta) return null
                               return (
-                                <div className="text-[11px] text-slate-400">
-                                  rpc:{meta.rpcUsed ? 'yes' : 'no'}
-                                  {typeof meta.snapshotWritten === 'boolean'
-                                    ? `, snapshotWrite:${meta.snapshotWritten ? 'yes' : 'no'}`
-                                    : null}
-                                  {typeof meta.snapshotBytes === 'number'
-                                    ? `, baseline:${Math.round(meta.snapshotBytes / 1024)}KB`
-                                    : null}
-                                  {typeof meta.specialProgramsBytes === 'number'
-                                    ? `, sp:${Math.round(meta.specialProgramsBytes / 1024)}KB`
-                                    : null}
-                                </div>
+                                <>
+                                  <div className="text-[11px] text-slate-400">
+                                    rpc:{meta.rpcUsed ? 'yes' : 'no'}
+                                    {typeof meta.rpcAttempted === 'boolean'
+                                      ? `, attempted:${meta.rpcAttempted ? 'yes' : 'no'}`
+                                      : null}
+                                    {typeof meta.rpcProxyUsed === 'boolean'
+                                      ? `, proxy:${meta.rpcProxyUsed ? 'yes' : 'no'}`
+                                      : null}
+                                    {meta.rpcFallbackReason ? `, fallback:${meta.rpcFallbackReason}` : null}
+                                    {meta.rpcErrorCode ? `, rpcErr:${meta.rpcErrorCode}` : null}
+                                    {typeof meta.snapshotWritten === 'boolean'
+                                      ? `, snapshotWrite:${meta.snapshotWritten ? 'yes' : 'no'}`
+                                      : null}
+                                    {typeof meta.snapshotBytes === 'number'
+                                      ? `, baseline:${Math.round(meta.snapshotBytes / 1024)}KB`
+                                      : null}
+                                    {typeof meta.specialProgramsBytes === 'number'
+                                      ? `, sp:${Math.round(meta.specialProgramsBytes / 1024)}KB`
+                                      : null}
+                                    {meta.rowCounts
+                                      ? `, rows:t${meta.rowCounts.therapist ?? 0}/p${meta.rowCounts.pca ?? 0}/b${meta.rowCounts.bed ?? 0}/c${meta.rowCounts.calc ?? 0}`
+                                      : null}
+                                    {typeof meta.payloadBytes?.total === 'number'
+                                      ? `, payload:${Math.round(meta.payloadBytes.total / 1024)}KB`
+                                      : null}
+                                    {typeof meta.rpcServerDiagnostics?.timings?.total_ms === 'number'
+                                      ? `, rpcMs:${Math.round(meta.rpcServerDiagnostics.timings.total_ms)}`
+                                      : null}
+                                  </div>
+                                  {typeof meta.rpcProxyError === 'string' && meta.rpcProxyError.length > 0 ? (
+                                    <div className="text-[10px] text-orange-300/90 truncate" title={meta.rpcProxyError}>
+                                      proxyMsg: {meta.rpcProxyError}
+                                    </div>
+                                  ) : null}
+                                  {typeof meta.rpcErrorMessage === 'string' && meta.rpcErrorMessage.length > 0 ? (
+                                    <div className="text-[10px] text-amber-300/90 truncate" title={meta.rpcErrorMessage}>
+                                      rpcMsg: {meta.rpcErrorMessage}
+                                    </div>
+                                  ) : null}
+                                  {meta.rpcServerDiagnostics?.timings ? (
+                                    <div className="text-[10px] text-slate-300/90 truncate">
+                                      rpcServer:
+                                      {' '}th {Math.round(meta.rpcServerDiagnostics.timings.therapist_ms ?? 0)}ms
+                                      {' '}| pca {Math.round(meta.rpcServerDiagnostics.timings.pca_ms ?? 0)}ms
+                                      {' '}| bed {Math.round(meta.rpcServerDiagnostics.timings.bed_ms ?? 0)}ms
+                                      {' '}| calc {Math.round(meta.rpcServerDiagnostics.timings.calc_ms ?? 0)}ms
+                                      {' '}| meta {Math.round(meta.rpcServerDiagnostics.timings.metadata_ms ?? 0)}ms
+                                    </div>
+                                  ) : null}
+                                </>
                               )
                             })()}
                             {lastSaveTiming.stages.length > 0 && (

@@ -25,6 +25,20 @@
 
 ---
 
+## [Unreleased] - 2026-03-15 (Schedule save optimization)
+
+### Added
+- **Save RPC schema fix** — Migration `20260315_fix_save_schedule_v1_legacy_leave_columns_drift.sql`: recreate `save_schedule_v1` without legacy PCA columns (`leave_comeback_time`/`leave_mode`) so RPC matches current schema; fixes error 42703.
+- **Save RPC roundtrip optimization** — Migration `20260315_optimize_save_schedule_v1_rpc_roundtrips.sql`: PCA replace wholesale inside RPC; return `updated_at` so client skips extra metadata fetch; client post-RPC PCA reconcile removed.
+- **Save server instrumentation** — Migration `20260315_optimize_save_schedule_v1_server_instrumentation.sql`: RPC returns JSONB with `updated_at`, `timings` (therapist/pca/bed/calc/metadata ms), `rows`, `metadata.changed`; metadata UPDATE only when values changed.
+- **Server-side save proxy** — `POST /api/schedules/save` calls `save_schedule_v1` from Vercel (NA); controller tries proxy first, falls back to direct Supabase RPC on proxy failure. Reduces browser↔Australia RTT for save.
+- **Save diagnostics** — RPC attempt/fallback reason, `rpcErr`/`rpcMsg`, row counts, payload KB, `rpcServer` timings, proxy yes/no and proxy error in Save timing tooltip; duplicate rpcServer line removed.
+
+### Changed
+- **Save path** — Client uses proxy-first save; diagnostics include `payloadBytes` and `rpcProxyUsed`/`rpcProxyError`.
+
+---
+
 ## [Unreleased] - 2026-03-14 (PCA runtime interpretation hardening)
 
 ### Added
