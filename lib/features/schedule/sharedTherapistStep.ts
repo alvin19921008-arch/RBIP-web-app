@@ -9,6 +9,7 @@ export type SharedTherapistStepUpdate = {
   leaveType?: LeaveType | null
   fteRemaining?: number
   team?: Team
+  sharedTherapistModeOverride?: SharedTherapistAllocationMode
   therapistTeamFTEByTeam?: Partial<Record<Team, number>>
   sharedTherapistSlotTeams?: SharedTherapistSlotTeams
 }
@@ -106,6 +107,74 @@ export function buildSharedTherapistTeamFteByTeam(args: {
   ) as Partial<Record<Team, number>>
 }
 
+export function getSharedTherapistSuggestedTeam(args: {
+  ptPerTeamByTeam: Partial<Record<Team, number>>
+  allowedTeams?: Team[]
+}): Team {
+  const candidates = (args.allowedTeams ?? TEAMS).filter((team) => TEAMS.includes(team))
+
+  return (
+    candidates
+      .map((team) => ({
+        team,
+        ptPerTeam: args.ptPerTeamByTeam[team] ?? 0,
+      }))
+      .sort((a, b) => a.ptPerTeam - b.ptPerTeam)[0]?.team ?? 'FO'
+  )
+}
+
+function buildAutoSlotMap(
+  team: Team,
+  availableSlots: Array<1 | 2 | 3 | 4>
+): SharedTherapistSlotTeams {
+  return Object.fromEntries(
+    availableSlots.map((slot) => [slot, team])
+  ) as SharedTherapistSlotTeams
+}
+
+export function normalizeSharedTherapistStep2StateForModeChange(args: {
+  targetMode: SharedTherapistAllocationMode
+  staffMode?: SharedTherapistAllocationMode | null
+  currentAssignedTeam?: Team
+  suggestedTeam: Team
+  availableFte: number
+  availableSlots: Array<1 | 2 | 3 | 4>
+  slotTeamBySlot: SharedTherapistSlotTeams
+}): {
+  allocationMode: SharedTherapistAllocationMode
+  allocationModeOverride?: SharedTherapistAllocationMode
+  assignedTeam: Team
+  mode: 'auto' | 'custom'
+  availableSlots: Array<1 | 2 | 3 | 4>
+  slotTeamBySlot: SharedTherapistSlotTeams
+} {
+  const baseMode = getSharedTherapistBaseAllocationMode({
+    shared_therapist_mode: args.staffMode ?? null,
+  })
+  const allocationModeOverride = args.targetMode === baseMode ? undefined : args.targetMode
+  const nextAvailableSlots = buildSharedTherapistSlotsFromFte(args.availableFte, 1)
+  const routedTeams = Array.from(
+    new Set(
+      toSortedSlotEntries(args.slotTeamBySlot)
+        .filter(([slot]) => args.availableSlots.includes(slot))
+        .map(([, team]) => team)
+    )
+  )
+  const teamForSingleTeam =
+    routedTeams.length === 1 ? routedTeams[0] : args.suggestedTeam
+  const teamForSlotBased = args.currentAssignedTeam ?? routedTeams[0] ?? args.suggestedTeam
+  const assignedTeam = args.targetMode === 'single-team' ? teamForSingleTeam : teamForSlotBased
+
+  return {
+    allocationMode: args.targetMode,
+    allocationModeOverride,
+    assignedTeam,
+    mode: assignedTeam === args.suggestedTeam ? 'auto' : 'custom',
+    availableSlots: nextAvailableSlots,
+    slotTeamBySlot: buildAutoSlotMap(assignedTeam, nextAvailableSlots),
+  }
+}
+
 export function mergeStep2Point3SharedTherapistOverrides(args: {
   baseOverrides: Record<string, any> | null | undefined
   updates: Record<string, SharedTherapistStepUpdate>
@@ -128,6 +197,14 @@ export function mergeStep2Point3SharedTherapistOverrides(args: {
       ...existing,
       leaveType: update.leaveType ?? base.leaveType ?? null,
       fteRemaining: typeof update.fteRemaining === 'number' ? update.fteRemaining : base.fteRemaining,
+    }
+
+    if ('sharedTherapistModeOverride' in update) {
+      if (update.sharedTherapistModeOverride === 'slot-based' || update.sharedTherapistModeOverride === 'single-team') {
+        merged.sharedTherapistModeOverride = update.sharedTherapistModeOverride
+      } else {
+        delete merged.sharedTherapistModeOverride
+      }
     }
 
     if (hasSplitMap) {

@@ -15,6 +15,13 @@
 
 ### Fixed
 - **Step 2 shared therapist drag** — Shared therapists (APPT/RPT with `team === null`) no longer show “fixed team staff” tooltip; drag-drop writes both `sharedTherapistSlotTeams` and `therapistTeamFTEByTeam` (via `buildSharedTherapistTeamFteByTeam`) so the card does not snap back; `TherapistBlock` treats only dashboard-assigned APPT/RPT as fixed-team for the warning.
+- **Step 2.3 auto target** — Auto team suggestion uses post–Step 2.2 PT-FTE totals (with overrides applied). Regression f70.
+- **Step 2.3 slot-based chips** — Removed "Customized", "Auto", "Suggested: xx" chips in slot-based mode.
+- **Step 1.1 badges** — SPT duty badge (weekday · FTE or "On duty"); special program badge theme set to blue.
+- **Step 2.3 mode switch** — Slot-based / Single-team toggle in dialog; `sharedTherapistModeOverride` persisted; state normalized on mode change. Regressions f62, f64.
+- **Team Configuration** — Shared therapists section shows `shared_therapist_mode` and Edit to open Staff Edit.
+- **Staff Edit** — "Shared therapist allocation" visible for APPT/RPT when team is unset.
+- **Vercel build** — `SharedTherapistEditDialog`: `role` cast to `'APPT'|'RPT'` after filter; `slotTeamBySlot` cast to `SharedTherapistSlotTeams` from assignment helper.
 
 ---
 

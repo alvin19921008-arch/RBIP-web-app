@@ -20,7 +20,8 @@ import {
   Search,
   Plus,
   Info,
-  User
+  User,
+  Edit2,
 } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
@@ -40,6 +41,9 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import { StaffEditDialog } from '@/components/dashboard/StaffEditDialog'
+import { SpecialProgram } from '@/types/allocation'
+import { buildSpecialProgramsFromRows } from '@/lib/utils/specialProgramConfigRows'
 
 interface TeamSettings {
   team: Team
@@ -145,6 +149,8 @@ export function TeamConfigurationPanel() {
   const [saving, setSaving] = useState(false)
   const [portionPopover, setPortionPopover] = useState<PortionPopoverState | null>(null)
   const [activeTab, setActiveTab] = useState<'teams' | 'team-merge'>('teams')
+  const [editingSharedTherapist, setEditingSharedTherapist] = useState<Staff | null>(null)
+  const [specialProgramsForEdit, setSpecialProgramsForEdit] = useState<SpecialProgram[]>([])
   const supabase = createClientComponentClient()
   const toast = useToast()
   const teamConfigCheckboxClass =
@@ -601,6 +607,53 @@ export function TeamConfigurationPanel() {
     team: null,
     activeOnly: true,
   })
+
+  // Load special programs when we have shared therapists so Edit can open StaffEditDialog with full context
+  useEffect(() => {
+    if (sharedTherapists.length === 0) return
+    let cancelled = false
+    const load = async () => {
+      try {
+        const [programsRes, configsRes] = await Promise.all([
+          supabase.from('special_programs').select('*').order('name'),
+          supabase.from('special_program_staff_configs').select('id,program_id,staff_id,config_by_weekday,created_at,updated_at'),
+        ])
+        if (cancelled) return
+        if (programsRes.data) {
+          setSpecialProgramsForEdit(
+            buildSpecialProgramsFromRows({
+              programRows: programsRes.data as any[],
+              staffConfigRows: (configsRes.data || []) as any[],
+            }) as SpecialProgram[]
+          )
+        }
+      } catch {
+        if (!cancelled) setSpecialProgramsForEdit([])
+      }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [sharedTherapists.length, supabase])
+
+  const handleSaveSharedTherapist = async (payload: import('@/lib/utils/staffEditDrafts').StaffEditDialogSavePayload) => {
+    try {
+      const response = await fetch('/api/staff/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(typeof result?.error === 'string' ? result.error : 'Failed to save staff.')
+      }
+      await loadData()
+      setEditingSharedTherapist(null)
+      showDashboardSnapshotReminderToast(toast, payload.staffId ? 'Staff updated.' : 'Staff created.')
+    } catch (err) {
+      console.error('Error saving shared therapist:', err)
+      toast.error(err instanceof Error ? err.message : 'Failed to save. Please try again.')
+    }
+  }
 
   if (loading) {
     return (
@@ -1391,15 +1444,30 @@ export function TeamConfigurationPanel() {
                     {sharedTherapists.map((therapist) => (
                       <div
                         key={therapist.id}
-                        className="flex flex-wrap items-center gap-3 bg-background p-3"
+                        className="flex flex-wrap items-center justify-between gap-3 bg-background p-3"
                       >
-                        <span className="font-medium text-foreground">{therapist.name}</span>
-                        <Badge variant="secondary" className="text-[11px] font-semibold tracking-wide uppercase">
-                          {therapist.rank}
-                        </Badge>
-                        <Badge variant="secondary" className="text-[11px]">
-                          1.0 whole day
-                        </Badge>
+                        <div className="flex flex-wrap items-center gap-3 min-w-0">
+                          <span className="font-medium text-foreground">{therapist.name}</span>
+                          <Badge variant="secondary" className="text-[11px] font-semibold tracking-wide uppercase">
+                            {therapist.rank}
+                          </Badge>
+                          <Badge variant="secondary" className="text-[11px]">
+                            1.0 whole day
+                          </Badge>
+                          <Badge variant="outline" className="text-[11px] text-muted-foreground border-border">
+                            {therapist.shared_therapist_mode === 'single-team' ? 'Single-team' : 'Slot-based'}
+                          </Badge>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                          onClick={() => setEditingSharedTherapist(therapist)}
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                          Edit
+                        </Button>
                       </div>
                     ))}
                   </div>
@@ -1418,6 +1486,15 @@ export function TeamConfigurationPanel() {
           popover={portionPopover}
           onSave={handlePortionSave}
           onCancel={() => setPortionPopover(null)}
+        />
+      )}
+
+      {editingSharedTherapist && (
+        <StaffEditDialog
+          staff={editingSharedTherapist}
+          specialPrograms={specialProgramsForEdit}
+          onSave={handleSaveSharedTherapist}
+          onCancel={() => setEditingSharedTherapist(null)}
         />
       )}
     </>

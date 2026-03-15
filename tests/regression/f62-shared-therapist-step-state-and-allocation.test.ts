@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   applySharedTherapistEditsToTherapistAllocations,
   buildSharedTherapistTeamFteByTeam,
+  normalizeSharedTherapistStep2StateForModeChange,
   mergeStep2Point3SharedTherapistOverrides,
 } from '../../lib/features/schedule/sharedTherapistStep'
 
@@ -89,6 +90,104 @@ async function main() {
       },
     },
     'Expected Step 2.3 merge to replace auto whole-team assignment with slot-based shared therapist routing'
+  )
+
+  const nextModeOverrides = mergeStep2Point3SharedTherapistOverrides({
+    baseOverrides: {
+      'shared-rpt': {
+        leaveType: null,
+        fteRemaining: 1,
+      },
+      'shared-appt': {
+        leaveType: null,
+        fteRemaining: 1,
+        sharedTherapistModeOverride: 'single-team',
+        team: 'MC',
+      },
+    } as any,
+    updates: {
+      'shared-rpt': {
+        leaveType: null,
+        fteRemaining: 1,
+        team: 'SFM',
+        sharedTherapistModeOverride: 'single-team',
+      },
+      'shared-appt': {
+        leaveType: null,
+        fteRemaining: 1,
+        team: 'SMM',
+        sharedTherapistModeOverride: undefined,
+      },
+    } as any,
+  })
+
+  assert.equal(
+    nextModeOverrides['shared-rpt']?.sharedTherapistModeOverride,
+    'single-team',
+    'Expected Step 2.3 edits to persist an explicit shared therapist mode override when the user switches mode in Step 2.3'
+  )
+
+  assert.equal(
+    'sharedTherapistModeOverride' in nextModeOverrides['shared-appt'],
+    false,
+    'Expected Step 2.3 edits to clear the shared therapist mode override when the user switches back to the dashboard default mode'
+  )
+
+  assert.deepEqual(
+    normalizeSharedTherapistStep2StateForModeChange({
+      targetMode: 'single-team',
+      staffMode: 'slot-based',
+      currentAssignedTeam: 'MC',
+      suggestedTeam: 'SFM',
+      availableFte: 1,
+      availableSlots: [1, 2, 3, 4],
+      slotTeamBySlot: {
+        1: 'MC',
+        2: 'MC',
+        3: 'SMM',
+        4: 'SMM',
+      },
+    }),
+    {
+      allocationMode: 'single-team',
+      allocationModeOverride: 'single-team',
+      assignedTeam: 'SFM',
+      mode: 'auto',
+      availableSlots: [1, 2, 3, 4],
+      slotTeamBySlot: {
+        1: 'SFM',
+        2: 'SFM',
+        3: 'SFM',
+        4: 'SFM',
+      },
+    },
+    'Expected switching Step 2.3 from slot-based to single-team to clear incompatible multi-team slot routing and fall back to the current auto team'
+  )
+
+  assert.deepEqual(
+    normalizeSharedTherapistStep2StateForModeChange({
+      targetMode: 'slot-based',
+      staffMode: 'single-team',
+      currentAssignedTeam: 'MC',
+      suggestedTeam: 'SFM',
+      availableFte: 1,
+      availableSlots: [],
+      slotTeamBySlot: {},
+    }),
+    {
+      allocationMode: 'slot-based',
+      allocationModeOverride: 'slot-based',
+      assignedTeam: 'MC',
+      mode: 'custom',
+      availableSlots: [1, 2, 3, 4],
+      slotTeamBySlot: {
+        1: 'MC',
+        2: 'MC',
+        3: 'MC',
+        4: 'MC',
+      },
+    },
+    'Expected switching Step 2.3 from single-team to slot-based to rebuild coherent whole-day slot routing from the current assigned team'
   )
 
   const nextAllocations = applySharedTherapistEditsToTherapistAllocations({

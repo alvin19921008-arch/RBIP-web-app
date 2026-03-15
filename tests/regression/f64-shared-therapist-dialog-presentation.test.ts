@@ -63,9 +63,9 @@ async function main() {
       quickSelectGroupClass: 'flex flex-wrap items-center gap-1.5',
       quickSelectLabelClass: 'text-[11px] font-medium text-muted-foreground',
       chipButtonClass:
-        'h-6 rounded-full border border-border/70 bg-muted/60 px-2 text-[10px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground',
+        'h-6 rounded-full border border-border bg-slate-100 px-2.5 text-[10px] font-medium text-slate-700 transition-colors hover:bg-slate-200 hover:border-slate-300 hover:text-slate-900 active:bg-slate-300/80 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 dark:hover:border-slate-500 dark:hover:text-slate-100 dark:active:bg-slate-600/80',
     },
-    'Expected quick select shortcuts to render as a smaller chip-like subset within the slot helper row'
+    'Expected quick select shortcuts to render as pill-shaped interactive chips within the slot helper row'
   )
 }
 

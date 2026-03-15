@@ -128,6 +128,18 @@ const RANK_BADGE_NEUTRAL_CLASS =
 const SHARED_THERAPIST_BADGE_CLASS =
   'border-gray-200 bg-gray-100 text-gray-700 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-300'
 
+/** Special program badge: blue tone (Step 1.1 and SPT dialogs). */
+const STEP1_SPECIAL_PROGRAM_BADGE_CLASS =
+  'select-none px-1 py-0.5 text-[9px] font-medium text-blue-900 border-blue-200 bg-blue-50 whitespace-nowrap dark:text-blue-200 dark:border-blue-800 dark:bg-blue-950/40'
+
+/** SPT weekday duty badge: light orange-yellow (Step 1.1 Add staff). */
+const STEP1_SPT_DUTY_BADGE_CLASS =
+  'select-none px-1 py-0.5 text-[9px] font-medium text-amber-900 border-amber-200 bg-amber-50 whitespace-nowrap dark:text-amber-200 dark:border-amber-800 dark:bg-amber-950/40'
+
+function formatWeekdayLabel(w: Weekday): string {
+  return w.charAt(0).toUpperCase() + w.slice(1)
+}
+
 const NARROW_VIEWPORT_FOOTER_CLASS =
   'sticky bottom-0 z-10 mt-4 flex-row flex-nowrap items-center justify-end gap-2 border-t border-border bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:px-0 [&>button]:shrink [&>button]:min-w-0'
 
@@ -265,6 +277,30 @@ export function Step1LeaveSetupDialog({
     })
     return map
   }, [activeStaff, specialPrograms, weekday])
+
+  /** SPT badge for Add staff: [weekday] · [FTE] or "On duty". When SPT has special program this day and no base FTE, show special program badge instead. */
+  const sptBadgeByStaffId = useMemo(() => {
+    const map = new Map<
+      string,
+      { label: string; showSpecialProgramBadge: boolean }
+    >()
+    for (const allocation of sptAllocations) {
+      const cfg = allocation.config_by_weekday?.[weekday]
+      const hasDuty =
+        (cfg && cfg.enabled !== false) ||
+        (Array.isArray(allocation.weekdays) && allocation.weekdays.includes(weekday))
+      if (!hasDuty) continue
+      const baseFte = sptBaseFteByStaffId.get(allocation.staff_id) ?? 0
+      const specialProgramInfo = therapistSpecialProgramInfoByStaffId.get(allocation.staff_id) ?? null
+      const showSpecialProgramBadge = !!(specialProgramInfo && baseFte === 0)
+      const label =
+        baseFte > 0
+          ? `${formatWeekdayLabel(weekday)} · ${baseFte} FTE`
+          : `${formatWeekdayLabel(weekday)} · On duty`
+      map.set(allocation.staff_id, { label, showSpecialProgramBadge })
+    }
+    return map
+  }, [sptAllocations, weekday, sptBaseFteByStaffId, therapistSpecialProgramInfoByStaffId])
 
   const getCapacity = (member: Staff, sptBase: number): number => {
     if (member.rank === 'SPT') return clamp(sptBase, 0, 1)
@@ -971,10 +1007,18 @@ export function Step1LeaveSetupDialog({
               </Badge>
             ) : null}
             {specialProgramInfo ? (
-              <Badge variant="outline" className="select-none px-1 py-0.5 text-[9px] font-medium text-amber-900 border-amber-200 bg-amber-50 whitespace-nowrap">
+              <Badge variant="outline" className={STEP1_SPECIAL_PROGRAM_BADGE_CLASS}>
                 {specialProgramInfo.programName} · {specialProgramInfo.slotLabel}
               </Badge>
             ) : null}
+            {member.rank === 'SPT' && (() => {
+              const sptBadge = sptBadgeByStaffId.get(row.staffId)
+              return sptBadge && !sptBadge.showSpecialProgramBadge ? (
+                <Badge variant="outline" className={STEP1_SPT_DUTY_BADGE_CLASS}>
+                  {sptBadge.label}
+                </Badge>
+              ) : null
+            })()}
           </label>
           <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeRow(row.staffId)} title="Remove from draft">
             <X className="h-3.5 w-3.5" />
@@ -1876,6 +1920,10 @@ export function Step1LeaveSetupDialog({
                                 {filteredPickers[rank].map((member) => {
                                   const exists = rowIds.has(member.id)
                                   const specialProgramInfo = therapistSpecialProgramInfoByStaffId.get(member.id) ?? null
+                                  const sptBadge = member.rank === 'SPT' ? sptBadgeByStaffId.get(member.id) : null
+                                  const showSpecialProgramBadge =
+                                    sptBadge?.showSpecialProgramBadge === true ||
+                                    (specialProgramInfo != null && sptBadge == null)
                                   return (
                                     <div
                                       key={member.id}
@@ -1891,9 +1939,13 @@ export function Step1LeaveSetupDialog({
                                           </span>
                                           <span className="text-[10px] text-muted-foreground">{member.team ?? '--'}</span>
                                         </div>
-                                        {specialProgramInfo ? (
-                                          <Badge variant="outline" className="select-none px-1 py-0.5 text-[9px] font-medium text-amber-900 border-amber-200 bg-amber-50 whitespace-nowrap">
+                                        {showSpecialProgramBadge && specialProgramInfo ? (
+                                          <Badge variant="outline" className={STEP1_SPECIAL_PROGRAM_BADGE_CLASS}>
                                             {specialProgramInfo.programName} · {specialProgramInfo.slotLabel}
+                                          </Badge>
+                                        ) : sptBadge && !sptBadge.showSpecialProgramBadge ? (
+                                          <Badge variant="outline" className={STEP1_SPT_DUTY_BADGE_CLASS}>
+                                            {sptBadge.label}
                                           </Badge>
                                         ) : null}
                                       </div>

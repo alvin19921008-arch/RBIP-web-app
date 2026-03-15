@@ -8,8 +8,11 @@ import {
   buildSharedTherapistTeamFteByTeam,
   getEffectiveSharedTherapistAllocationMode,
   getSharedTherapistBaseAllocationMode,
+  getSharedTherapistSuggestedTeam,
+  normalizeSharedTherapistStep2StateForModeChange,
   type SharedTherapistSlotTeams,
 } from '@/lib/features/schedule/sharedTherapistStep'
+import { getSharedTherapistModeControlPresentation } from '@/lib/features/schedule/sharedTherapistModeControlPresentation'
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -35,7 +38,9 @@ type SharedTherapistCardState = {
   leaveType: LeaveType | null
   availableFte: number
   availableSlots: Array<1 | 2 | 3 | 4>
+  baseAllocationMode: SharedTherapistAllocationMode
   allocationMode: SharedTherapistAllocationMode
+  allocationModeOverride?: SharedTherapistAllocationMode
   suggestedTeam: Team
   mode: 'auto' | 'custom'
   expanded: boolean
@@ -43,6 +48,8 @@ type SharedTherapistCardState = {
   slotTeamBySlot: SharedTherapistSlotTeams
   selectedSlots: Array<1 | 2 | 3 | 4>
   initial: {
+    allocationMode: SharedTherapistAllocationMode
+    allocationModeOverride?: SharedTherapistAllocationMode
     assignedTeam: Team
     mode: 'auto' | 'custom'
     slotTeamBySlot: SharedTherapistSlotTeams
@@ -129,6 +136,7 @@ export function SharedTherapistEditDialog(props: {
   onConfirm: (updates: Record<string, {
     leaveType: LeaveType | null
     fteRemaining: number
+    sharedTherapistModeOverride?: SharedTherapistAllocationMode
     team?: Team
     therapistTeamFTEByTeam?: Partial<Record<Team, number>>
     sharedTherapistSlotTeams?: SharedTherapistSlotTeams
@@ -150,21 +158,12 @@ export function SharedTherapistEditDialog(props: {
   } = props
 
   const computeSuggestedTeam = React.useCallback(
-    (staffId: string, availableFte: number): Team => {
-      const current = currentAllocationByStaffId[staffId]
-      const base: Record<Team, number> = { ...ptPerTeamByTeam }
-      Object.entries(current?.teamFteByTeam ?? {}).forEach(([team, fte]) => {
-        if (!TEAMS.includes(team as Team) || typeof fte !== 'number') return
-        base[team as Team] = Math.max(0, (base[team as Team] ?? 0) - fte)
+    (): Team => {
+      return getSharedTherapistSuggestedTeam({
+        ptPerTeamByTeam,
       })
-
-      return (
-        TEAMS
-          .map((team) => ({ team, ptAfter: (base[team] ?? 0) + availableFte }))
-          .sort((a, b) => a.ptAfter - b.ptAfter)[0]?.team ?? 'FO'
-      )
     },
-    [currentAllocationByStaffId, ptPerTeamByTeam]
+    [ptPerTeamByTeam]
   )
 
   const buildInitialCards = React.useCallback((): SharedTherapistCardState[] => {
@@ -176,11 +175,16 @@ export function SharedTherapistEditDialog(props: {
         const override = staffOverrides?.[staff.id]
         const current = currentAllocationByStaffId[staff.id]
         const availableFte = typeof override?.fteRemaining === 'number' ? override.fteRemaining : 1
+        const baseAllocationMode = getSharedTherapistBaseAllocationMode(staff)
+        const allocationModeOverride =
+          override?.sharedTherapistModeOverride === 'slot-based' || override?.sharedTherapistModeOverride === 'single-team'
+            ? override.sharedTherapistModeOverride
+            : undefined
         const allocationMode = getEffectiveSharedTherapistAllocationMode({
-          staffMode: getSharedTherapistBaseAllocationMode(staff),
-          overrideMode: override?.sharedTherapistModeOverride,
+          staffMode: baseAllocationMode,
+          overrideMode: allocationModeOverride,
         })
-        const suggestedTeam = computeSuggestedTeam(staff.id, availableFte)
+        const suggestedTeam = computeSuggestedTeam()
         const availableSlots = normalizeAvailableSlots(override?.availableSlots, availableFte)
         const existingSplitMap = override?.therapistTeamFTEByTeam
         const existingSlotMap = override?.sharedTherapistSlotTeams
@@ -209,11 +213,13 @@ export function SharedTherapistEditDialog(props: {
         return {
           staffId: staff.id,
           staffName: staff.name,
-          role: staff.rank,
+          role: staff.rank as 'APPT' | 'RPT',
           leaveType: override?.leaveType ?? null,
           availableFte,
           availableSlots,
+          baseAllocationMode,
           allocationMode,
+          allocationModeOverride,
           suggestedTeam,
           mode,
           expanded: false,
@@ -221,6 +227,8 @@ export function SharedTherapistEditDialog(props: {
           slotTeamBySlot,
           selectedSlots: [],
           initial: {
+            allocationMode,
+            allocationModeOverride,
             assignedTeam: currentAssignedTeam,
             mode,
             slotTeamBySlot: { ...slotTeamBySlot },
@@ -255,6 +263,10 @@ export function SharedTherapistEditDialog(props: {
     () => getSharedTherapistQuickSelectPresentation(),
     []
   )
+  const modeControlPresentation = React.useMemo(
+    () => getSharedTherapistModeControlPresentation(),
+    []
+  )
 
   const handleCustomize = (staffId: string) => {
     updateCard(staffId, (card) => ({
@@ -282,12 +294,40 @@ export function SharedTherapistEditDialog(props: {
   const handleReset = (staffId: string) => {
     updateCard(staffId, (card) => ({
       ...card,
+      allocationMode: card.initial.allocationMode,
+      allocationModeOverride: card.initial.allocationModeOverride,
       mode: card.initial.mode,
       expanded: false,
       assignedTeam: card.initial.assignedTeam,
       slotTeamBySlot: { ...card.initial.slotTeamBySlot },
       selectedSlots: [],
     }))
+  }
+
+  const handleModeChange = (staffId: string, targetMode: SharedTherapistAllocationMode) => {
+    updateCard(staffId, (card) => {
+      const nextState = normalizeSharedTherapistStep2StateForModeChange({
+        targetMode,
+        staffMode: card.baseAllocationMode,
+        currentAssignedTeam: card.assignedTeam,
+        suggestedTeam: card.suggestedTeam,
+        availableFte: card.availableFte,
+        availableSlots: card.availableSlots,
+        slotTeamBySlot: card.slotTeamBySlot,
+      })
+
+      return {
+        ...card,
+        allocationMode: nextState.allocationMode,
+        allocationModeOverride: nextState.allocationModeOverride,
+        assignedTeam: nextState.assignedTeam,
+        mode: nextState.mode,
+        expanded: false,
+        availableSlots: nextState.availableSlots,
+        slotTeamBySlot: nextState.slotTeamBySlot,
+        selectedSlots: [],
+      }
+    })
   }
 
   const handleAssignTeam = (staffId: string, team: Team) => {
@@ -301,7 +341,7 @@ export function SharedTherapistEditDialog(props: {
       return {
         ...card,
         mode: 'custom',
-        slotTeamBySlot: nextAssignment.slotTeamBySlot,
+        slotTeamBySlot: nextAssignment.slotTeamBySlot as SharedTherapistSlotTeams,
         selectedSlots: nextAssignment.selectedSlots,
       }
     })
@@ -311,6 +351,7 @@ export function SharedTherapistEditDialog(props: {
     const updates: Record<string, {
       leaveType: LeaveType | null
       fteRemaining: number
+      sharedTherapistModeOverride?: SharedTherapistAllocationMode
       team?: Team
       therapistTeamFTEByTeam?: Partial<Record<Team, number>>
       sharedTherapistSlotTeams?: SharedTherapistSlotTeams
@@ -321,6 +362,7 @@ export function SharedTherapistEditDialog(props: {
         updates[card.staffId] = {
           leaveType: card.leaveType,
           fteRemaining: card.availableFte,
+          sharedTherapistModeOverride: card.allocationModeOverride,
           team: card.mode === 'auto' ? card.suggestedTeam : card.assignedTeam,
         }
         return
@@ -330,6 +372,7 @@ export function SharedTherapistEditDialog(props: {
         updates[card.staffId] = {
           leaveType: card.leaveType,
           fteRemaining: card.availableFte,
+          sharedTherapistModeOverride: card.allocationModeOverride,
           team: card.suggestedTeam,
         }
         return
@@ -338,6 +381,7 @@ export function SharedTherapistEditDialog(props: {
       updates[card.staffId] = {
         leaveType: card.leaveType,
         fteRemaining: card.availableFte,
+        sharedTherapistModeOverride: card.allocationModeOverride,
         therapistTeamFTEByTeam: buildSharedTherapistTeamFteByTeam({
           slotTeamBySlot: card.slotTeamBySlot,
         }),
@@ -413,24 +457,45 @@ export function SharedTherapistEditDialog(props: {
                         <Badge variant="secondary" className="text-[11px]">
                           {formatAvailabilityLabel(card.availableFte)}
                         </Badge>
-                        <Badge variant="secondary" className="text-[11px]">
-                          {card.allocationMode === 'slot-based' ? 'Slot-based' : 'Single-team'}
-                        </Badge>
-                        {card.allocationMode === 'slot-based' ? (
-                          <>
-                            <Badge variant="secondary" className="text-[11px]">
-                              {card.mode === 'auto' ? 'Auto' : 'Customized'}
-                            </Badge>
-                            <Badge variant="secondary" className="text-[11px]">
-                              Suggested: {card.suggestedTeam}
-                            </Badge>
-                          </>
-                        ) : null}
+                        <div className="inline-flex overflow-hidden rounded border border-input" role="group" aria-label={`Shared therapist mode for ${card.staffName}`}>
+                          <button
+                            type="button"
+                            onClick={() => handleModeChange(card.staffId, 'slot-based')}
+                            className={cn(
+                              'px-2 py-0.5 text-[11px] font-medium transition-colors',
+                              card.allocationMode === 'slot-based'
+                                ? 'bg-green-600 text-white'
+                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            )}
+                          >
+                            Slot-based
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleModeChange(card.staffId, 'single-team')}
+                            className={cn(
+                              'border-l border-input px-2 py-0.5 text-[11px] font-medium transition-colors',
+                              card.allocationMode === 'single-team'
+                                ? 'bg-green-600 text-white'
+                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            )}
+                          >
+                            Single-team
+                          </button>
+                        </div>
                       </div>
 
                       <div className="text-sm text-muted-foreground">
                         Lowest projected PT-FTE after Step 2: {card.suggestedTeam}
                       </div>
+
+                      {card.allocationModeOverride ? (
+                        <div className={modeControlPresentation.metaRowClass}>
+                          <span className={modeControlPresentation.metaTextClass}>
+                            Dashboard default: {card.baseAllocationMode === 'slot-based' ? 'Slot-based' : 'Single-team'}
+                          </span>
+                        </div>
+                      ) : null}
 
                       <div className="flex flex-wrap items-center gap-2">
                         {card.allocationMode === 'single-team' ? (

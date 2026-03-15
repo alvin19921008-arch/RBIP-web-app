@@ -805,7 +805,7 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
                 <>
                   <hr className="border-border" />
                   <div className="space-y-4">
-                    {renderTeamField(false)}
+                    {renderTeamField(true)}
                     {renderSpecialProgramField()}
                   </div>
                 </>

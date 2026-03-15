@@ -1321,6 +1321,7 @@ function SchedulePageContent() {
   type SharedTherapistEditUpdate = {
     leaveType: LeaveType | null
     fteRemaining: number
+    sharedTherapistModeOverride?: import('@/types/staff').SharedTherapistAllocationMode
     team?: Team
     therapistTeamFTEByTeam?: Partial<Record<Team, number>>
     sharedTherapistSlotTeams?: SharedTherapistSlotTeams

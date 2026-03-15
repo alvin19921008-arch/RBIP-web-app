@@ -869,7 +869,7 @@ export function SptFinalEditDialog(props: {
                             </Badge>
                           )}
                           {specialProgramBadges.map((badge) => (
-                            <Badge key={`sp-${badge.programId}`} variant="outline" className="select-none px-1 py-0.5 text-[9px] font-medium text-amber-900 border-amber-200 bg-amber-50 whitespace-nowrap dark:text-amber-200 dark:border-amber-800 dark:bg-amber-950/40">
+                            <Badge key={`sp-${badge.programId}`} variant="outline" className="select-none px-1 py-0.5 text-[9px] font-medium text-blue-900 border-blue-200 bg-blue-50 whitespace-nowrap dark:text-blue-200 dark:border-blue-800 dark:bg-blue-950/40">
                               {badge.programName} · {badge.slotLabel}
                             </Badge>
                           ))}
@@ -895,7 +895,7 @@ export function SptFinalEditDialog(props: {
                               {card.teamChoice === 'AUTO' || card.teamChoice === suggestedTeam ? `${suggestedTeam} (Auto)` : card.teamChoice}
                             </Badge>
                             {specialProgramBadges.map((badge) => (
-                              <Badge key={`sp-partial-${badge.programId}`} variant="outline" className="select-none px-1 py-0.5 text-[9px] font-medium text-amber-900 border-amber-200 bg-amber-50 whitespace-nowrap dark:text-amber-200 dark:border-amber-800 dark:bg-amber-950/40">
+                              <Badge key={`sp-partial-${badge.programId}`} variant="outline" className="select-none px-1 py-0.5 text-[9px] font-medium text-blue-900 border-blue-200 bg-blue-50 whitespace-nowrap dark:text-blue-200 dark:border-blue-800 dark:bg-blue-950/40">
                                 {badge.programName} · {badge.slotLabel}
                               </Badge>
                             ))}
