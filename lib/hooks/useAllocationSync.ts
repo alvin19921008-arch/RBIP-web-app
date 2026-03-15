@@ -42,6 +42,7 @@ export interface StaffOverride {
   therapistTeamFTEByTeam?: Partial<Record<Team, number>>
   therapistTeamHalfDayByTeam?: Partial<Record<Team, 'AM' | 'PM'>>
   therapistTeamHalfDayUiByTeam?: Partial<Record<Team, 'AUTO' | 'AM' | 'PM' | 'UNSPECIFIED'>>
+  sharedTherapistSlotTeams?: Partial<Record<1 | 2 | 3 | 4, Team>>
   therapistNoAllocation?: boolean
 }
 
@@ -140,6 +141,14 @@ export function detectChanges(
 
     // Slot change
     if (JSON.stringify(curr?.availableSlots) !== JSON.stringify(prev?.availableSlots)) {
+      result.hasSlotChange = true
+      hasChange = true
+    }
+
+    // Shared therapist slot-to-team routing change
+    if (JSON.stringify(curr?.sharedTherapistSlotTeams) !== JSON.stringify(prev?.sharedTherapistSlotTeams)) {
+      result.hasTeamChange = true
+      result.hasFTEChange = true
       result.hasSlotChange = true
       hasChange = true
     }
@@ -385,6 +394,7 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
         const t = teamKey as Team
         if (!TEAMS.includes(t)) continue
         if (typeof fte !== 'number' || fte <= 0) continue
+        const sharedSlotTeams = (o as any)?.sharedTherapistSlotTeams as Partial<Record<1 | 2 | 3 | 4, Team>> | undefined
 
         const halfDayUi = (o as any)?.therapistTeamHalfDayUiByTeam?.[t] as
           | 'AUTO'
@@ -408,10 +418,10 @@ export function useAllocationSync(deps: AllocationSyncDeps) {
           fte_therapist: fte,
           fte_remaining: Math.max(0, 1 - fte),
           slot_whole: null,
-          slot1: null,
-          slot2: null,
-          slot3: null,
-          slot4: null,
+          slot1: sharedSlotTeams?.[1] === t ? t : null,
+          slot2: sharedSlotTeams?.[2] === t ? t : null,
+          slot3: sharedSlotTeams?.[3] === t ? t : null,
+          slot4: sharedSlotTeams?.[4] === t ? t : null,
           leave_type: o?.leaveType ?? null,
           special_program_ids: null,
           is_substitute_team_head: false,

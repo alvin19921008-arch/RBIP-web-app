@@ -19,6 +19,12 @@ import { getTeamBadgeClass } from '@/components/allocation/teamThemePalette'
 import { TimeIntervalSlider } from '@/components/allocation/TimeIntervalSlider'
 import { matchesStaffName } from '@/lib/utils/staffFilters'
 import {
+  getEffectiveSharedTherapistAllocationMode,
+  getSharedTherapistBaseAllocationMode,
+  normalizeSharedTherapistStep1StateForModeChange,
+} from '@/lib/features/schedule/sharedTherapistStep'
+import { getSharedTherapistModeControlPresentation } from '@/lib/features/schedule/sharedTherapistModeControlPresentation'
+import {
   getStep1TherapistSpecialProgramInfo,
   getTherapistSpecialProgramUiState,
   normalizeStep1SpecialProgramAvailabilityForSave,
@@ -28,6 +34,7 @@ import {
 type StaffOverrideLite = {
   leaveType?: LeaveType | null
   fteRemaining?: number
+  sharedTherapistModeOverride?: import('@/types/staff').SharedTherapistAllocationMode
   fteSubtraction?: number
   availableSlots?: number[]
   invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
@@ -39,6 +46,7 @@ type Step1SaveEdit = {
   staffId: string
   leaveType: LeaveType | null
   fteRemaining: number
+  sharedTherapistModeOverride?: import('@/types/staff').SharedTherapistAllocationMode
   fteSubtraction?: number
   availableSlots?: number[]
   invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
@@ -81,6 +89,8 @@ type DraftRow = {
   fteRemaining: number
   fteSubtraction: number
   sptBaseFTE: number
+  sharedTherapistBaseMode?: import('@/types/staff').SharedTherapistAllocationMode
+  sharedTherapistModeOverride?: import('@/types/staff').SharedTherapistAllocationMode
   availableSlots: number[]
   invalidSlots: InvalidSlotDraft[]
   amPmSelection: 'AM' | 'PM' | ''
@@ -114,6 +124,9 @@ const RANK_ORDER: Record<string, number> = {
 
 const RANK_BADGE_NEUTRAL_CLASS =
   'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-200'
+
+const SHARED_THERAPIST_BADGE_CLASS =
+  'border-gray-200 bg-gray-100 text-gray-700 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-300'
 
 const NARROW_VIEWPORT_FOOTER_CLASS =
   'sticky bottom-0 z-10 mt-4 flex-row flex-nowrap items-center justify-end gap-2 border-t border-border bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:px-0 [&>button]:shrink [&>button]:min-w-0'
@@ -261,9 +274,32 @@ export function Step1LeaveSetupDialog({
     return 1
   }
 
+  const isSharedTherapist = (member: Staff) =>
+    (member.rank === 'APPT' || member.rank === 'RPT') && member.team === null
+
+  const getEffectiveSharedTherapistModeForRow = (row: DraftRow) =>
+    getEffectiveSharedTherapistAllocationMode({
+      staffMode: row.sharedTherapistBaseMode,
+      overrideMode: row.sharedTherapistModeOverride,
+    })
+  const sharedTherapistModeControlPresentation = getSharedTherapistModeControlPresentation()
+
   const buildDraftRow = (member: Staff, sourceOverride: StaffOverrideLite | undefined): DraftRow => {
     const sptBaseFromConfig = member.rank === 'SPT' ? sptBaseFteByStaffId.get(member.id) ?? 0 : 1
     const baseCapacity = getCapacity(member, sptBaseFromConfig)
+    const sharedTherapistBaseMode = isSharedTherapist(member)
+      ? getSharedTherapistBaseAllocationMode(member)
+      : undefined
+    const sharedTherapistModeOverride =
+      isSharedTherapist(member) &&
+      (sourceOverride?.sharedTherapistModeOverride === 'slot-based' || sourceOverride?.sharedTherapistModeOverride === 'single-team')
+        ? sourceOverride.sharedTherapistModeOverride
+        : undefined
+    const effectiveSharedTherapistMode = getEffectiveSharedTherapistAllocationMode({
+      staffMode: sharedTherapistBaseMode,
+      overrideMode: sharedTherapistModeOverride,
+    })
+    const slotBasedSharedTherapist = isSharedTherapist(member) && effectiveSharedTherapistMode === 'slot-based'
     const rawRemaining =
       typeof sourceOverride?.fteRemaining === 'number'
         ? sourceOverride.fteRemaining
@@ -291,7 +327,7 @@ export function Step1LeaveSetupDialog({
       }
     }
 
-    const pcaLike = member.rank === 'PCA' || member.rank === 'workman'
+    const pcaLike = member.rank === 'PCA' || member.rank === 'workman' || slotBasedSharedTherapist
     const normalizedSlots = normalizeSlots(sourceOverride?.availableSlots)
     const availableSlots = pcaLike
       ? (normalizedSlots.length > 0 ? normalizedSlots : defaultSlotsFromCapacity(clampedRemaining))
@@ -318,6 +354,8 @@ export function Step1LeaveSetupDialog({
       fteRemaining: clampedRemaining,
       fteSubtraction: clampedSubtraction,
       sptBaseFTE: sptBase,
+      sharedTherapistBaseMode,
+      sharedTherapistModeOverride,
       availableSlots,
       invalidSlots,
       amPmSelection: sourceOverride?.amPmSelection ?? '',
@@ -331,12 +369,20 @@ export function Step1LeaveSetupDialog({
     if (isOnDutyLeaveType(override.leaveType)) return false
     const sptBase = member.rank === 'SPT' ? sptBaseFteByStaffId.get(member.id) ?? 0 : 1
     const capacity = getCapacity(member, sptBase)
+    const sharedTherapistBaseMode = isSharedTherapist(member)
+      ? getSharedTherapistBaseAllocationMode(member)
+      : undefined
+    const effectiveSharedTherapistMode = getEffectiveSharedTherapistAllocationMode({
+      staffMode: sharedTherapistBaseMode,
+      overrideMode: override.sharedTherapistModeOverride,
+    })
     if (typeof override.fteRemaining === 'number' && Math.abs(override.fteRemaining - capacity) > 0.0001) return true
     if (typeof override.fteSubtraction === 'number' && override.fteSubtraction > 0.0001) return true
     if (Array.isArray(override.invalidSlots) && override.invalidSlots.length > 0) return true
     if (override.amPmSelection === 'AM' || override.amPmSelection === 'PM') return true
     if (override.specialProgramAvailable !== undefined) return true
-    if (member.rank === 'PCA' || member.rank === 'workman') {
+    if (override.sharedTherapistModeOverride && override.sharedTherapistModeOverride !== sharedTherapistBaseMode) return true
+    if (member.rank === 'PCA' || member.rank === 'workman' || effectiveSharedTherapistMode === 'slot-based') {
       const defaultSlots = defaultSlotsFromCapacity(capacity)
       const currentSlots = normalizeSlots(override.availableSlots)
       if (JSON.stringify(defaultSlots) !== JSON.stringify(currentSlots)) return true
@@ -490,7 +536,11 @@ export function Step1LeaveSetupDialog({
 
   function rowToFinalEdit(row: DraftRow, member: Staff): Step1SaveEdit {
     const capacity = getCapacity(member, row.sptBaseFTE)
-    const pcaLike = member.rank === 'PCA' || member.rank === 'workman'
+    const effectiveSharedTherapistMode = getEffectiveSharedTherapistModeForRow(row)
+    const pcaLike =
+      member.rank === 'PCA' ||
+      member.rank === 'workman' ||
+      (isSharedTherapist(member) && effectiveSharedTherapistMode === 'slot-based')
     const finalLeaveType =
       row.leaveChoice === '__none__'
         ? null
@@ -525,6 +575,10 @@ export function Step1LeaveSetupDialog({
       staffId: member.id,
       leaveType: finalLeaveType,
       fteRemaining,
+      sharedTherapistModeOverride:
+        isSharedTherapist(member) && row.sharedTherapistModeOverride !== row.sharedTherapistBaseMode
+          ? row.sharedTherapistModeOverride
+          : undefined,
       fteSubtraction,
       availableSlots,
       invalidSlots,
@@ -545,7 +599,13 @@ export function Step1LeaveSetupDialog({
 
   function buildDefaultEdit(member: Staff, sptBaseFromConfig: number): Step1SaveEdit {
     const capacity = getCapacity(member, sptBaseFromConfig)
-    const pcaLike = member.rank === 'PCA' || member.rank === 'workman'
+    const sharedTherapistBaseMode = isSharedTherapist(member)
+      ? getSharedTherapistBaseAllocationMode(member)
+      : undefined
+    const pcaLike =
+      member.rank === 'PCA' ||
+      member.rank === 'workman' ||
+      (isSharedTherapist(member) && sharedTherapistBaseMode === 'slot-based')
     return {
       staffId: member.id,
       leaveType: null,
@@ -592,6 +652,7 @@ export function Step1LeaveSetupDialog({
           leaveChoice: '__none__',
           customLeaveText: '',
           fteRemaining: defaultEdit.fteRemaining,
+          sharedTherapistModeOverride: defaultEdit.sharedTherapistModeOverride,
           fteSubtraction: defaultEdit.fteSubtraction ?? 0,
           availableSlots: defaultEdit.availableSlots ?? [],
           invalidSlots: [],
@@ -619,7 +680,7 @@ export function Step1LeaveSetupDialog({
         if (leaveChoice === '__none__') {
           next.fteRemaining = capacity
           next.fteSubtraction = 0
-          if (member.rank === 'PCA' || member.rank === 'workman') {
+          if (member.rank === 'PCA' || member.rank === 'workman' || getEffectiveSharedTherapistModeForRow(next) === 'slot-based') {
             next.availableSlots = defaultSlotsFromCapacity(capacity)
             next.invalidSlots = []
           }
@@ -634,7 +695,7 @@ export function Step1LeaveSetupDialog({
             const remain = clamp(round2(mapped), 0, capacity)
             next.fteRemaining = remain
             next.fteSubtraction = clamp(round2(capacity - remain), 0, capacity)
-            if (member.rank === 'PCA' || member.rank === 'workman') {
+            if (member.rank === 'PCA' || member.rank === 'workman' || getEffectiveSharedTherapistModeForRow(next) === 'slot-based') {
               next.availableSlots = defaultSlotsFromCapacity(remain)
               next.invalidSlots = []
             }
@@ -662,6 +723,42 @@ export function Step1LeaveSetupDialog({
   const setSectionSelected = (sectionRows: DraftRow[], checked: boolean) => {
     const ids = new Set(sectionRows.map((row) => row.staffId))
     setRows((prev) => prev.map((row) => (ids.has(row.staffId) ? { ...row, selected: checked } : row)))
+  }
+
+  const applySharedTherapistModeForDay = (
+    row: DraftRow,
+    member: Staff,
+    nextModeOverride: import('@/types/staff').SharedTherapistAllocationMode | undefined
+  ) => {
+    const capacity = getCapacity(member, row.sptBaseFTE)
+    const targetMode = getEffectiveSharedTherapistAllocationMode({
+      staffMode: row.sharedTherapistBaseMode,
+      overrideMode: nextModeOverride,
+    })
+    setRow(row.staffId, (current) => {
+      const normalized = normalizeSharedTherapistStep1StateForModeChange({
+        targetMode,
+        capacity,
+        fteRemaining: current.fteRemaining,
+        fteSubtraction: current.fteSubtraction,
+        availableSlots: current.availableSlots,
+        invalidSlots: current.invalidSlots,
+        amPmSelection: current.amPmSelection || undefined,
+      })
+      syncFteInputs(row.staffId, {
+        fteRemaining: normalized.fteRemaining,
+        fteSubtraction: normalized.fteSubtraction,
+      })
+      return {
+        ...current,
+        sharedTherapistModeOverride: nextModeOverride,
+        fteRemaining: normalized.fteRemaining,
+        fteSubtraction: normalized.fteSubtraction,
+        availableSlots: normalized.availableSlots ?? [],
+        invalidSlots: normalized.invalidSlots ?? [],
+        amPmSelection: normalized.amPmSelection ?? '',
+      }
+    })
   }
 
   const handleSave = async () => {
@@ -745,11 +842,13 @@ export function Step1LeaveSetupDialog({
             const capacity = getCapacity(member, row.sptBaseFTE)
             setRow(row.staffId, (current, currentMember) => {
               const next = { ...current, leaveChoice: nextChoice }
+              const slotBasedSharedTherapist =
+                isSharedTherapist(currentMember) && getEffectiveSharedTherapistModeForRow(next) === 'slot-based'
               if (nextChoice === '__none__') {
                 next.customLeaveText = ''
                 next.fteRemaining = capacity
                 next.fteSubtraction = 0
-                if (currentMember.rank === 'PCA' || currentMember.rank === 'workman') {
+                if (currentMember.rank === 'PCA' || currentMember.rank === 'workman' || slotBasedSharedTherapist) {
                   next.availableSlots = defaultSlotsFromCapacity(capacity)
                   next.invalidSlots = []
                 }
@@ -764,7 +863,7 @@ export function Step1LeaveSetupDialog({
                   const remain = clamp(round2(mapped), 0, capacity)
                   next.fteRemaining = remain
                   next.fteSubtraction = clamp(round2(capacity - remain), 0, capacity)
-                  if (currentMember.rank === 'PCA' || currentMember.rank === 'workman') {
+                  if (currentMember.rank === 'PCA' || currentMember.rank === 'workman' || slotBasedSharedTherapist) {
                     next.availableSlots = defaultSlotsFromCapacity(remain)
                     next.invalidSlots = []
                   }
@@ -822,7 +921,14 @@ export function Step1LeaveSetupDialog({
   }
 
   const renderTherapistRow = (row: DraftRow, member: Staff) => {
-    const showAmPm = (member.rank === 'APPT' || member.rank === 'RPT') && row.fteRemaining > 0 && row.fteRemaining <= 0.5
+    const sharedTherapist = isSharedTherapist(member)
+    const effectiveSharedTherapistMode = getEffectiveSharedTherapistModeForRow(row)
+    const slotBasedSharedTherapist = sharedTherapist && effectiveSharedTherapistMode === 'slot-based'
+    const showAmPm =
+      !slotBasedSharedTherapist &&
+      (member.rank === 'APPT' || member.rank === 'RPT') &&
+      row.fteRemaining > 0 &&
+      row.fteRemaining <= 0.5
     const therapistSpecialProgramUiState = getTherapistSpecialProgramUiState({
       member,
       allStaff: activeStaff,
@@ -859,6 +965,11 @@ export function Step1LeaveSetupDialog({
                 {member.team ?? '--'}
               </Badge>
             ) : null}
+            {sharedTherapist ? (
+              <Badge variant="outline" className={cn('select-none px-1.5 py-0.5 text-[11px] font-medium', SHARED_THERAPIST_BADGE_CLASS)} title="Shared therapist">
+                Shared
+              </Badge>
+            ) : null}
             {specialProgramInfo ? (
               <Badge variant="outline" className="select-none px-1 py-0.5 text-[9px] font-medium text-amber-900 border-amber-200 bg-amber-50 whitespace-nowrap">
                 {specialProgramInfo.programName} · {specialProgramInfo.slotLabel}
@@ -873,6 +984,62 @@ export function Step1LeaveSetupDialog({
         <div className="mt-2 flex flex-wrap items-end gap-2">
           {renderLeaveTypeSelect(row, member)}
           {renderCustomLeaveInput(row)}
+
+          {sharedTherapist ? (
+            <div className={sharedTherapistModeControlPresentation.wrapperClass}>
+              <div className={sharedTherapistModeControlPresentation.topRowClass}>
+                <span className={sharedTherapistModeControlPresentation.labelClass}>Mode:</span>
+                <div className="inline-flex rounded border border-input overflow-hidden" role="group" aria-label={`Shared therapist mode for ${member.name}`}>
+                  <button
+                    type="button"
+                    onClick={() => applySharedTherapistModeForDay(row, member, 'slot-based')}
+                    className={cn(
+                      'px-2 py-1 text-xs font-medium transition-colors',
+                      effectiveSharedTherapistMode === 'slot-based'
+                        ? 'bg-green-600 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    )}
+                  >
+                    Slot-based
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applySharedTherapistModeForDay(row, member, 'single-team')}
+                    className={cn(
+                      'px-2 py-1 text-xs font-medium transition-colors border-l border-input',
+                      effectiveSharedTherapistMode === 'single-team'
+                        ? 'bg-green-600 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    )}
+                  >
+                    Single-team
+                  </button>
+                </div>
+              </div>
+
+              <div className={sharedTherapistModeControlPresentation.metaRowClass}>
+                <span className={sharedTherapistModeControlPresentation.metaTextClass}>
+                  Dashboard default: {row.sharedTherapistBaseMode === 'slot-based' ? 'Slot-based' : 'Single-team'}
+                </span>
+                {row.sharedTherapistModeOverride ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={sharedTherapistModeControlPresentation.resetButtonClass}
+                    onClick={() => applySharedTherapistModeForDay(row, member, undefined)}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Reset
+                  </Button>
+                ) : (
+                  <span className={sharedTherapistModeControlPresentation.metaTextClass}>
+                    Using dashboard default
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : null}
 
           {member.rank === 'SPT' ? (
             <div className="ml-4 flex flex-wrap items-end gap-1.5">
@@ -929,6 +1096,56 @@ export function Step1LeaveSetupDialog({
                     })
                   }}
                 />
+              </div>
+            </div>
+          ) : slotBasedSharedTherapist ? (
+            <div className="ml-4 flex flex-wrap items-end gap-2">
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">A/V slots</Label>
+                <div className="flex gap-1">
+                  {SLOT_OPTIONS.map((slot) => {
+                    const selected = row.availableSlots.includes(slot)
+                    return (
+                      <Button
+                        key={`${row.staffId}-shared-slot-${slot}`}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className={cn('h-8 min-w-8 px-2', selected && 'bg-blue-600 text-white hover:bg-blue-600 hover:text-white')}
+                        onClick={() => {
+                          setRow(row.staffId, (current) => {
+                            const has = current.availableSlots.includes(slot)
+                            const nextSlots = has
+                              ? current.availableSlots.filter((item) => item !== slot)
+                              : [...current.availableSlots, slot].sort((a, b) => a - b)
+                            const nextRemaining = clamp(round2(nextSlots.length * 0.25), 0, 1)
+                            syncFteInputs(row.staffId, {
+                              fteRemaining: nextRemaining,
+                              fteSubtraction: clamp(round2(1 - nextRemaining), 0, 1),
+                            })
+                            return {
+                              ...current,
+                              availableSlots: nextSlots,
+                              invalidSlots: [],
+                              fteRemaining: nextRemaining,
+                              fteSubtraction: clamp(round2(1 - nextRemaining), 0, 1),
+                              amPmSelection: '',
+                            }
+                          })
+                        }}
+                      >
+                        {slot}
+                      </Button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">FTE remaining</Label>
+                <div className="h-8 rounded-md border border-input bg-muted/40 px-2 text-sm leading-8">
+                  {row.fteRemaining.toFixed(2)}
+                </div>
               </div>
             </div>
           ) : (
@@ -1664,7 +1881,7 @@ export function Step1LeaveSetupDialog({
                                       key={member.id}
                                       className={cn(
                                         'flex items-center justify-between gap-2 rounded px-1 py-1',
-                                        exists ? 'bg-muted/60 ring-1 ring-muted/80' : 'hover:bg-muted/20'
+                                        exists ? 'bg-muted ring-1 ring-border' : 'hover:bg-muted/20'
                                       )}
                                     >
                                       <div className="min-w-0 flex items-center gap-2 flex-wrap">
@@ -1804,6 +2021,9 @@ export function Step1LeaveSetupDialog({
                       const showPcaDetails = isPca && finalEdit.fteRemaining > 0.0001
                       const avSlots = Array.isArray(finalEdit.availableSlots) ? finalEdit.availableSlots : []
                       const partial = Array.isArray(finalEdit.invalidSlots) ? finalEdit.invalidSlots : []
+                      const effectiveSharedMode = row.sharedTherapistModeOverride ?? row.sharedTherapistBaseMode
+                      const isSlotBasedShared = isSharedTherapist(member) && effectiveSharedMode === 'slot-based'
+                      const showSlotBasedSharedSlots = isSlotBasedShared && (avSlots.length > 0 || partial.length > 0)
                       return (
                         <div key={`preview-${row.staffId}`} className="flex items-center justify-between px-3 py-2 hover:bg-muted/30 bg-background">
                           <div className="min-w-0">
@@ -1819,22 +2039,24 @@ export function Step1LeaveSetupDialog({
                                 >
                                   Floating
                                 </Badge>
-                              ) : (
-                                member.rank === 'SPT' ? null : (
-                                  <Badge
-                                    variant="outline"
-                                    className={cn(
-                                      'select-none px-1.5 py-0.5 text-[10px] font-medium',
-                                      getTeamBadgeClass(member.team as any)
-                                    )}
-                                  >
-                                    {member.team ?? '--'}
-                                  </Badge>
-                                )
+                              ) : isSharedTherapist(member) ? (
+                                <Badge variant="outline" className={cn('select-none px-1.5 py-0.5 text-[10px] font-medium', SHARED_THERAPIST_BADGE_CLASS)} title="Shared therapist">
+                                  Shared
+                                </Badge>
+                              ) : member.rank === 'SPT' ? null : (
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    'select-none px-1.5 py-0.5 text-[10px] font-medium',
+                                    getTeamBadgeClass(member.team as any)
+                                  )}
+                                >
+                                  {member.team ?? '--'}
+                                </Badge>
                               )}
                             </div>
                             <div className="truncate text-[11px] text-muted-foreground">{leavePreview}</div>
-                            {showPcaDetails ? (
+                            {(showPcaDetails || showSlotBasedSharedSlots) ? (
                               <div className="mt-1 text-[11px] text-muted-foreground">
                                 {avSlots.length > 0 ? `Available slots: ${avSlots.join(', ')}` : 'Available slots: —'}
                                 {partial.length > 0

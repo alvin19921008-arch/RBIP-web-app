@@ -11,6 +11,7 @@ export function ScheduleDialogsLayer(props: {
   floatingPcaDialog: ReactNode
   specialProgramOverrideDialog: ReactNode
   sptFinalEditDialog: ReactNode
+  sharedTherapistEditDialog: ReactNode
   nonFloatingSubstitutionDialog: ReactNode
   calendarPopover: ReactNode
 }) {
@@ -24,6 +25,7 @@ export function ScheduleDialogsLayer(props: {
       {props.floatingPcaDialog}
       {props.specialProgramOverrideDialog}
       {props.sptFinalEditDialog}
+      {props.sharedTherapistEditDialog}
       {props.nonFloatingSubstitutionDialog}
       {props.calendarPopover}
     </>

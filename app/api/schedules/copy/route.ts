@@ -27,7 +27,7 @@ async function buildBaselineSnapshot(supabase: any): Promise<BaselineSnapshot> {
 
   const staffPromise = safeSelect(
     'staff',
-    'id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program'
+    'id,name,rank,team,shared_therapist_mode,floating,status,buffer_fte,floor_pca,special_program'
   )
 
   const [staffRes, specialProgramsRes, sptAllocationsRes, wardsRes, pcaPreferencesRes, teamSettingsRes] =

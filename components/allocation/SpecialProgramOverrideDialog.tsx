@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { buildStep2WizardStepperSteps } from '@/lib/features/schedule/step2WizardStepper'
 import { Staff, StaffRank, Team, Weekday, SpecialProgram as StaffSpecialProgram } from '@/types/staff'
 import { SpecialProgram } from '@/types/allocation'
 import { AlertCircle, CircleHelp, Edit2, ChevronDown, X } from 'lucide-react'
@@ -51,6 +52,7 @@ interface SpecialProgramOverrideDialogProps {
   }>
   weekday: Weekday
   showSubstituteStep?: boolean
+  showSharedTherapistStep?: boolean
   onConfirm: (overrides: Record<string, {
     fteRemaining?: number
     availableSlots?: number[]
@@ -100,6 +102,7 @@ export function SpecialProgramOverrideDialog({
   staffOverrides,
   weekday,
   showSubstituteStep = true,
+  showSharedTherapistStep = false,
   onConfirm,
   onSkip,
   onStaffRefresh,
@@ -1434,11 +1437,11 @@ export function SpecialProgramOverrideDialog({
   }
 
   const stepperSteps = useMemo(() => {
-    const steps: Array<{ step: '2.0' | '2.1' | '2.2'; label: string }> = [{ step: '2.0', label: 'Programs' }]
-    if (showSubstituteStep) steps.push({ step: '2.1', label: 'Substitute' })
-    steps.push({ step: '2.2', label: 'SPT' })
-    return steps
-  }, [showSubstituteStep])
+    return buildStep2WizardStepperSteps({
+      showSubstituteStep,
+      showSharedTherapistStep,
+    })
+  }, [showSharedTherapistStep, showSubstituteStep])
 
   return (
     <>

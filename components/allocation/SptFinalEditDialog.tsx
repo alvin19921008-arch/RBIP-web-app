@@ -9,7 +9,6 @@ import type { SptWeekdayComputed } from '@/lib/features/schedule/sptConfig'
 import type { StaffOverrideState, SptOnDayOverrideState } from '@/lib/features/schedule/controller/useScheduleController'
 
 import { cn } from '@/lib/utils'
-import { RBIP_WIDE_DIALOG_WIDTH_CLASS } from '@/lib/layoutWidth'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -26,6 +25,8 @@ import { formatTimeRange, getSlotTime } from '@/lib/utils/slotHelpers'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Separator } from '@/components/ui/separator'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { buildStep2WizardStepperSteps } from '@/lib/features/schedule/step2WizardStepper'
+import { getSptFinalEditDialogPresentation } from '@/lib/features/schedule/sptFinalEditDialogPresentation'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -176,6 +177,7 @@ export function SptFinalEditDialog(props: {
   onOpenChange: (open: boolean) => void
   weekday: Weekday
   showSubstituteStep?: boolean
+  showSharedTherapistStep?: boolean
 
   /** All SPT staff that can be added. */
   sptStaff: Staff[]
@@ -209,6 +211,7 @@ export function SptFinalEditDialog(props: {
     onOpenChange,
     weekday,
     showSubstituteStep = true,
+    showSharedTherapistStep = false,
     sptStaff,
     allStaff = [],
     specialPrograms = [],
@@ -646,18 +649,23 @@ export function SptFinalEditDialog(props: {
   }
 
   const stepperSteps = React.useMemo(() => {
-    const steps: Array<{ step: '2.0' | '2.1' | '2.2'; label: string }> = [{ step: '2.0', label: 'Programs' }]
-    if (showSubstituteStep) steps.push({ step: '2.1', label: 'Substitute' })
-    steps.push({ step: '2.2', label: 'SPT' })
-    return steps
-  }, [showSubstituteStep])
+    return buildStep2WizardStepperSteps({
+      showSubstituteStep,
+      showSharedTherapistStep,
+    })
+  }, [showSharedTherapistStep, showSubstituteStep])
+
+  const presentation = React.useMemo(
+    () => getSptFinalEditDialogPresentation(cards.length),
+    [cards.length]
+  )
 
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={`${RBIP_WIDE_DIALOG_WIDTH_CLASS} max-h-[90vh] flex flex-col overflow-hidden`}>
+      <DialogContent className={`${presentation.dialogWidthClass} max-h-[90vh] flex flex-col overflow-hidden`}>
         {/* Wide: stepper top-right; narrow: under instruction */}
-        <div className="absolute right-3 top-3 hidden sm:flex sm:right-4 sm:top-4 items-center gap-2">
+        <div className={presentation.desktopStepperClass}>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             {stepperSteps.map(({ step, label }, i) => (
               <React.Fragment key={step}>
@@ -670,7 +678,7 @@ export function SptFinalEditDialog(props: {
           </div>
         </div>
 
-        <DialogHeader className="space-y-3 pr-4 sm:pr-32">
+        <DialogHeader className={presentation.headerClass}>
           <DialogTitle>SPT day overrides</DialogTitle>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className="text-[11px] font-semibold tracking-wide">Step 2.2</span>
@@ -685,7 +693,7 @@ export function SptFinalEditDialog(props: {
             <span>Per-day only</span>
           </div>
           <DialogDescription>
-            <span className="block">Adjust SPT duty for this day. Dashboard weekday settings stay unchanged.</span>
+            <span className="block">Adjust SPT duty for this day. Dashboard weekday settings <span className="whitespace-nowrap">stay unchanged</span>.</span>
             <div className="mt-3 flex sm:hidden flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
               {stepperSteps.map(({ step, label }, i) => (
                 <React.Fragment key={step}>

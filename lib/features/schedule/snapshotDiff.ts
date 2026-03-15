@@ -7,6 +7,7 @@ type StaffLite = {
   name: string
   rank: StaffRank
   team: Team | null
+  shared_therapist_mode?: 'slot-based' | 'single-team' | null
   floating: boolean
   status?: 'active' | 'inactive' | 'buffer'
   buffer_fte?: number | null
@@ -201,6 +202,7 @@ export function diffBaselineSnapshot(params: {
     name: s.name,
     rank: s.rank,
     team: (s.team ?? null) as Team | null,
+    shared_therapist_mode: (s.shared_therapist_mode ?? null) as 'slot-based' | 'single-team' | null,
     floating: !!s.floating,
     status: s.status,
     buffer_fte: (s as any).buffer_fte ?? null,
@@ -212,6 +214,7 @@ export function diffBaselineSnapshot(params: {
     name: s.name,
     rank: s.rank,
     team: (s.team ?? null) as Team | null,
+    shared_therapist_mode: (s.shared_therapist_mode ?? null) as 'slot-based' | 'single-team' | null,
     floating: !!s.floating,
     status: s.status,
     buffer_fte: (s as any).buffer_fte ?? null,
@@ -243,6 +246,7 @@ export function diffBaselineSnapshot(params: {
         { key: 'name', label: 'name', a: snap.name, b: live.name },
         { key: 'rank', label: 'rank', a: snap.rank, b: live.rank },
         { key: 'team', label: 'team', a: snap.team, b: live.team },
+        { key: 'shared_therapist_mode', label: 'shared_therapist_mode', a: snap.shared_therapist_mode ?? null, b: live.shared_therapist_mode ?? null },
         { key: 'floating', label: 'floating', a: snap.floating, b: live.floating },
         { key: 'status', label: 'status', a: snap.status ?? 'active', b: live.status ?? 'active' },
         { key: 'buffer_fte', label: 'buffer_fte', a: snap.buffer_fte ?? null, b: live.buffer_fte ?? null },

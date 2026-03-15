@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Staff, StaffRank, Team, StaffStatus, SpecialProgram as StaffSpecialProgram } from '@/types/staff'
+import { Staff, StaffRank, Team, StaffStatus, SpecialProgram as StaffSpecialProgram, SharedTherapistAllocationMode } from '@/types/staff'
 import { SpecialProgram, SPTAllocation } from '@/types/allocation'
 import { TEAMS } from '@/lib/utils/types'
 import { cn } from '@/lib/utils'
@@ -180,6 +180,9 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
   const [name, setName] = useState(staff.name || '')
   const [rank, setRank] = useState<StaffRank>(staff.rank || 'PCA')
   const [team, setTeam] = useState<Team | null>(staff.team || null)
+  const [sharedTherapistMode, setSharedTherapistMode] = useState<SharedTherapistAllocationMode>(
+    staff.shared_therapist_mode === 'single-team' ? 'single-team' : 'slot-based'
+  )
   const [specialProgram, setSpecialProgram] = useState<StaffSpecialProgram[]>(staff.special_program || [])
   const [floating, setFloating] = useState<boolean>(staff.floating ?? false)
   const [floorPCA, setFloorPCA] = useState<'upper' | 'lower' | 'both' | null>(() => {
@@ -350,10 +353,12 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
 
   const isTeamRequired = () => {
     if (rank === 'SPT') return false
-    if (['APPT', 'RPT'].includes(rank)) return true
+    if (['APPT', 'RPT'].includes(rank)) return false // optional: null = shared therapist assigned per day in Step 2
     if (rank === 'PCA' && !floating) return true
     return false
   }
+
+  const isSharedTherapistConfigVisible = ['APPT', 'RPT'].includes(rank) && team === null
 
   const isFloorPCARequired = () => rank === 'PCA' && floating
 
@@ -389,6 +394,7 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
       name: name.trim(),
       rank,
       team: isTeamRequired() ? (team as Team) : rank === 'PCA' && floating ? null : team,
+      shared_therapist_mode: ['APPT', 'RPT'].includes(rank) ? sharedTherapistMode : null,
       special_program: specialProgram.length > 0 ? specialProgram : null,
       floating: rank === 'PCA' ? floating : false,
       floor_pca: floorPCAArray,
@@ -492,6 +498,28 @@ export function StaffEditDialog({ staff, specialPrograms, onSave, onCancel }: St
         <p className="mt-1 text-xs text-muted-foreground">
           Optional. Can be configured in SPT Allocations.
         </p>
+      ) : null}
+      {showHelperText && ['APPT', 'RPT'].includes(rank) ? (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Optional. Leave empty for shared therapist (assigned per day in Step 2).
+        </p>
+      ) : null}
+      {showHelperText && isSharedTherapistConfigVisible ? (
+        <div className="mt-3 space-y-1">
+          <Label>Shared therapist allocation</Label>
+          <Select value={sharedTherapistMode} onValueChange={(value) => setSharedTherapistMode(value as SharedTherapistAllocationMode)}>
+            <SelectTrigger className="mt-1">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="slot-based">Slot-based</SelectItem>
+              <SelectItem value="single-team">Single-team</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Slot-based supports slot routing in Step 2.3. Single-team behaves like a regular therapist team assignment.
+          </p>
+        </div>
       ) : null}
     </div>
   )

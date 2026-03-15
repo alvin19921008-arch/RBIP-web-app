@@ -281,7 +281,7 @@ export function BufferStaffCreateDialog({
 
   const isTeamRequired = () => {
     if (rank === 'SPT') return false
-    if (['APPT', 'RPT'].includes(rank)) return true
+    if (['APPT', 'RPT'].includes(rank)) return false // optional: null = shared therapist assigned per day in Step 2
     if (rank === 'PCA' && !floating) return true
     return false
   }
@@ -373,6 +373,11 @@ export function BufferStaffCreateDialog({
             {rank === 'SPT' && (
               <p className="text-xs text-muted-foreground mt-1">
                 Team assignment for SPT is optional and can be configured in SPT Allocations.
+              </p>
+            )}
+            {['APPT', 'RPT'].includes(rank) && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Optional. Leave empty for shared therapist (assigned per day in Step 2).
               </p>
             )}
           </div>

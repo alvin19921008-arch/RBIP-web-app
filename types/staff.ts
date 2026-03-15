@@ -4,6 +4,7 @@ export type SpecialProgram = 'CRP' | 'DRM' | 'Robotic' | 'Ortho' | 'Neuro' | 'Ca
 export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
 export type LeaveType = 'VL' | 'half day VL' | 'TIL' | 'half day TIL' | 'SDO' | 'sick leave' | 'study leave' | 'medical follow-up' | 'others' | string | null
 export type StaffStatus = 'active' | 'inactive' | 'buffer'
+export type SharedTherapistAllocationMode = 'slot-based' | 'single-team'
 
 // Mapping of leave types to default FTE remaining
 export const LEAVE_TYPE_FTE_MAP: Record<Exclude<LeaveType, null | 'others' | 'medical follow-up'>, number> = {
@@ -23,6 +24,7 @@ export interface Staff {
   rank: StaffRank
   special_program: SpecialProgram[] | null
   team: Team | null
+  shared_therapist_mode?: SharedTherapistAllocationMode | null
   floating: boolean
   floor_pca: ('upper' | 'lower')[] | null  // Floor PCA property: upper, lower, or both
   status?: StaffStatus  // Staff status: active, inactive, or buffer

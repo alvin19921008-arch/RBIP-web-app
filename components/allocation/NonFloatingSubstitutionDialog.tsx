@@ -16,6 +16,7 @@ import { PCAData } from '@/lib/algorithms/pcaAllocation'
 import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
 import { getTeamTheme } from '@/components/allocation/teamThemePalette'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { buildStep2WizardStepperSteps } from '@/lib/features/schedule/step2WizardStepper'
 
 // Step 2.1 Wizard team themes are shared via `teamThemePalette`.
 
@@ -50,6 +51,7 @@ interface NonFloatingSubstitutionDialogProps {
   onSkip: () => void
   /** Optional: show a Back button to previous Step 2 sub-step. */
   onBack?: () => void
+  showSharedTherapistStep?: boolean
 }
 
 interface AvailableFloatingPCA {
@@ -86,6 +88,7 @@ export function NonFloatingSubstitutionDialog({
   onCancel,
   onSkip,
   onBack,
+  showSharedTherapistStep = false,
 }: NonFloatingSubstitutionDialogProps) {
   const [currentTeamIndex, setCurrentTeamIndex] = useState(0)
   const [selections, setSelections] = useState<Record<string, Array<{ floatingPCAId: string; slots: number[] }>>>(
@@ -95,6 +98,14 @@ export function NonFloatingSubstitutionDialog({
   const substitutionRefs = useRef<Record<string, HTMLElement | null>>({})
   const remainingSlotsRefs = useRef<Record<string, HTMLElement | null>>({})
   const pendingScrollRef = useRef<{ type: 'remaining' | 'next'; key: string; team?: Team } | null>(null)
+  const stepperSteps = useMemo(
+    () =>
+      buildStep2WizardStepperSteps({
+        showSubstituteStep: true,
+        showSharedTherapistStep,
+      }),
+    [showSharedTherapistStep]
+  )
 
   const getSelectionKey = (team: Team, nonFloatingPCAId: string) => `${team}-${nonFloatingPCAId}`
 
@@ -409,11 +420,7 @@ export function NonFloatingSubstitutionDialog({
         {/* Wide: stepper top-right; narrow: under instruction */}
         <div className="absolute right-3 top-3 hidden sm:flex sm:right-4 sm:top-4 items-center gap-2">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            {[
-              { step: '2.0', label: 'Programs' },
-              { step: '2.1', label: 'Substitute' },
-              { step: '2.2', label: 'SPT' },
-            ].map(({ step, label }, i) => (
+            {stepperSteps.map(({ step, label }, i) => (
               <Fragment key={step}>
                 {i > 0 ? <span aria-hidden="true">·</span> : null}
                 <span className={cn('px-2.5 py-1 rounded-md', step === '2.1' && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>
@@ -434,11 +441,7 @@ export function NonFloatingSubstitutionDialog({
               Assign floating PCAs to cover missing non-floating slots.
             </span>
             <div className="mt-3 flex sm:hidden flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
-              {[
-                { step: '2.0', label: 'Programs' },
-                { step: '2.1', label: 'Substitute' },
-                { step: '2.2', label: 'SPT' },
-              ].map(({ step, label }, i) => (
+              {stepperSteps.map(({ step, label }, i) => (
                 <Fragment key={step}>
                   {i > 0 ? <span aria-hidden="true">·</span> : null}
                   <span className={cn('px-2.5 py-1 rounded-md', step === '2.1' && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>

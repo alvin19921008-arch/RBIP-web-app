@@ -161,6 +161,7 @@ export type StaffOverrideState = {
   leaveType: LeaveType | null
   fteRemaining: number
   team?: Team
+  sharedTherapistModeOverride?: import('@/types/staff').SharedTherapistAllocationMode
   fteSubtraction?: number
   availableSlots?: number[]
   // Legacy single-slot marker used by PCA allocation algorithm (derived from `invalidSlots` when present).
@@ -201,6 +202,7 @@ export type StaffOverrideState = {
    */
   therapistTeamHalfDayByTeam?: Partial<Record<Team, 'AM' | 'PM'>>
   therapistTeamHalfDayUiByTeam?: Partial<Record<Team, 'AUTO' | 'AM' | 'PM' | 'UNSPECIFIED'>>
+  sharedTherapistSlotTeams?: Partial<Record<1 | 2 | 3 | 4, Team>>
   therapistNoAllocation?: boolean
   // Staff card fill color (schedule grid only)
   cardColorByTeam?: Partial<Record<Team, string>>
@@ -1279,7 +1281,7 @@ export function useScheduleController(params: {
         fetchGlobalHeadAtCreation(supabase),
         seedAllocationNotesForNewSchedule({ supabase, date, dateStr }),
         fetchLiveTeamSettingsSnapshot(supabase).catch(() => null),
-        supabase.from('staff').select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program'),
+        supabase.from('staff').select('id,name,rank,team,shared_therapist_mode,floating,status,buffer_fte,floor_pca,special_program'),
         supabase.from('special_programs').select('id,name,staff_ids,weekdays,slots,fte_subtraction,pca_required,therapist_preference_order,pca_preference_order'),
         supabase.from('special_program_staff_configs').select('id,program_id,staff_id,config_by_weekday,created_at,updated_at'),
         supabase.from('spt_allocations').select('id,staff_id,specialty,teams,weekdays,slots,slot_modes,fte_addon,config_by_weekday,substitute_team_head,is_rbip_supervisor,active,created_at,updated_at'),
@@ -1422,7 +1424,7 @@ export function useScheduleController(params: {
             if (ids.length === 0) return []
             const result = await supabase
               .from('staff')
-              .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program')
+              .select('id,name,rank,team,shared_therapist_mode,floating,status,buffer_fte,floor_pca,special_program')
               .in('id', ids)
             return (result.data || []) as any[]
           },
@@ -2064,6 +2066,7 @@ export function useScheduleController(params: {
     staffId: string
     leaveType: LeaveType | null
     fteRemaining: number
+    sharedTherapistModeOverride?: import('@/types/staff').SharedTherapistAllocationMode
     fteSubtraction?: number
     availableSlots?: number[]
     invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
@@ -2081,6 +2084,7 @@ export function useScheduleController(params: {
       [args.staffId]: {
         leaveType: args.leaveType,
         fteRemaining: args.fteRemaining,
+        sharedTherapistModeOverride: args.sharedTherapistModeOverride,
         fteSubtraction: args.fteSubtraction,
         availableSlots: args.availableSlots,
         invalidSlots: args.invalidSlots,
@@ -2129,6 +2133,7 @@ export function useScheduleController(params: {
       nextOverrides[edit.staffId] = {
         leaveType: edit.leaveType,
         fteRemaining: edit.fteRemaining,
+        sharedTherapistModeOverride: edit.sharedTherapistModeOverride,
         fteSubtraction: edit.fteSubtraction,
         availableSlots: edit.availableSlots,
         invalidSlots: edit.invalidSlots,
@@ -2318,6 +2323,7 @@ export function useScheduleController(params: {
         delete o.therapistTeamFTEByTeam
         delete o.therapistTeamHalfDayByTeam
         delete o.therapistTeamHalfDayUiByTeam
+        delete o.sharedTherapistSlotTeams
         delete o.therapistNoAllocation
       }
 
@@ -2977,7 +2983,7 @@ export function useScheduleController(params: {
                 if (ids.length === 0) return []
                 const result = await params.supabase
                   .from('staff')
-                  .select('id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program')
+                  .select('id,name,rank,team,shared_therapist_mode,floating,status,buffer_fte,floor_pca,special_program')
                   .in('id', ids)
                 return (result.data || []) as any[]
               },

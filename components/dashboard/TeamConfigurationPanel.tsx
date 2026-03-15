@@ -596,6 +596,12 @@ export function TeamConfigurationPanel() {
     return [...selected, ...unselected]
   }
 
+  const sharedTherapists = filterStaff(staff, {
+    rank: ['APPT', 'RPT'],
+    team: null,
+    activeOnly: true,
+  })
+
   if (loading) {
     return (
       <div className="pt-6">
@@ -635,6 +641,7 @@ export function TeamConfigurationPanel() {
           </div>
 
           {activeTab === 'teams' ? (
+            <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {TEAMS.map((team) => {
               const settings = teamSettings[team]
@@ -1368,6 +1375,37 @@ export function TeamConfigurationPanel() {
                 </Card>
               )
             })}
+            </div>
+
+            {sharedTherapists.length > 0 ? (
+              <section className="space-y-3">
+                <div className="space-y-1">
+                  <h3 className="text-base font-semibold">Shared therapists</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Assigned per day in Step 2 when needed.
+                  </p>
+                </div>
+
+                <div className="overflow-hidden rounded-xl border border-border shadow-sm">
+                  <div className="divide-y lg:grid lg:grid-cols-2 lg:divide-y-0 lg:gap-px lg:bg-border">
+                    {sharedTherapists.map((therapist) => (
+                      <div
+                        key={therapist.id}
+                        className="flex flex-wrap items-center gap-3 bg-background p-3"
+                      >
+                        <span className="font-medium text-foreground">{therapist.name}</span>
+                        <Badge variant="secondary" className="text-[11px] font-semibold tracking-wide uppercase">
+                          {therapist.rank}
+                        </Badge>
+                        <Badge variant="secondary" className="text-[11px]">
+                          1.0 whole day
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            ) : null}
             </div>
           ) : (
             <TeamMergePanel />

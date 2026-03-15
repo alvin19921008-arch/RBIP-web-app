@@ -19,7 +19,7 @@ type FetchSnapshotDiffLiveInputsParams = {
 export const SNAPSHOT_DIFF_LIVE_INPUTS_DEFAULT_TTL_MS = 20_000
 
 const STAFF_SNAPSHOT_DIFF_SELECT_FIELDS =
-  'id,name,rank,team,floating,status,buffer_fte,floor_pca,special_program'
+  'id,name,rank,team,shared_therapist_mode,floating,status,buffer_fte,floor_pca,special_program'
 const TEAM_SETTINGS_SELECT_FIELDS =
   'team,display_name,merged_into,merge_label_override,merged_pca_preferences_override'
 const WARDS_SNAPSHOT_DIFF_SELECT_FIELDS =

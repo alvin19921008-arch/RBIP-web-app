@@ -3,6 +3,21 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-03-14 (Shared therapist mode + Step 2 drag)
+
+### Added
+- **Shared therapist allocation mode** — Dashboard base `staff.shared_therapist_mode` (slot-based | single-team) and per-day override in Step 1.2; immediate reset of incompatible state on mode switch; FTE normalized to nearest quarter when switching to slot-based. Migrations: `20260315_add_staff_shared_therapist_mode.sql`, `20260315_update_pull_global_snapshot_shared_therapist_mode.sql`; RPCs `save_staff_edit_dialog_v2` and `pull_global_to_snapshot_v1` include `shared_therapist_mode`. Regressions f66–f69.
+- **Step 2.3 single-team UX** — Customize = dropdown only (team picker + “Use auto” as suggested team with “(Auto)”); no expand section or separate Reset. Coverage copy: “slots x,y → team”, “whole day → team” for full-day/same-team.
+
+### Changed
+- **Step 1.2 / 1.4** — Mode control chip buttons (Slot-based / Single-team); grey “Shared” badge only in Step 1.2 and 1.4. Step 1.4 shows available-slots preview for slot-based shared therapists.
+- **Allocation sync** — `detectChanges` in `useAllocationSync` now treats `sharedTherapistSlotTeams` changes as team/FTE/slot changes so therapist allocation sync runs after shared-therapist drag.
+
+### Fixed
+- **Step 2 shared therapist drag** — Shared therapists (APPT/RPT with `team === null`) no longer show “fixed team staff” tooltip; drag-drop writes both `sharedTherapistSlotTeams` and `therapistTeamFTEByTeam` (via `buildSharedTherapistTeamFteByTeam`) so the card does not snap back; `TherapistBlock` treats only dashboard-assigned APPT/RPT as fixed-team for the warning.
+
+---
+
 ## [Unreleased] - 2026-03-14 (PCA runtime interpretation hardening)
 
 ### Added

@@ -84,6 +84,12 @@ import { buildPageStep3RuntimeState } from '@/lib/features/schedule/pageStep3Run
 import { willNeedStep21Substitution } from '@/lib/features/schedule/step2SubstitutionProjection'
 import { mergeStep2Point2StaffOverrides } from '@/lib/features/schedule/step2Point2StateMerge'
 import {
+  applySharedTherapistEditsToTherapistAllocations,
+  buildSharedTherapistTeamFteByTeam,
+  mergeStep2Point3SharedTherapistOverrides,
+  type SharedTherapistSlotTeams,
+} from '@/lib/features/schedule/sharedTherapistStep'
+import {
   mergeExtraCoverageIntoStaffOverridesForDisplay,
   stripExtraCoverageOverrides,
 } from '@/lib/features/schedule/extraCoverageVisibility'
@@ -141,6 +147,10 @@ const SptFinalEditDialog = dynamic(
   () => import('@/components/allocation/SptFinalEditDialog').then(m => m.SptFinalEditDialog),
   { ssr: false }
 )
+const SharedTherapistEditDialog = dynamic(
+  () => import('@/components/allocation/SharedTherapistEditDialog').then(m => m.SharedTherapistEditDialog),
+  { ssr: false }
+)
 const BufferStaffCreateDialog = dynamic(
   () => import('@/components/allocation/BufferStaffCreateDialog').then(m => m.BufferStaffCreateDialog),
   { ssr: false }
@@ -171,6 +181,7 @@ const prefetchStaffEditDialog = () => import('@/components/allocation/StaffEditD
 const prefetchFloatingPCAConfigDialog = () => import('@/components/allocation/FloatingPCAConfigDialog')
 const prefetchSpecialProgramOverrideDialog = () => import('@/components/allocation/SpecialProgramOverrideDialog')
 const prefetchSptFinalEditDialog = () => import('@/components/allocation/SptFinalEditDialog')
+const prefetchSharedTherapistEditDialog = () => import('@/components/allocation/SharedTherapistEditDialog')
 const prefetchNonFloatingSubstitutionDialog = () => import('@/components/allocation/NonFloatingSubstitutionDialog')
 const prefetchScheduleCalendarPopover = () => import('@/components/schedule/ScheduleCalendarPopover')
 
@@ -1307,10 +1318,31 @@ function SchedulePageContent() {
     }
   }
 
+  type SharedTherapistEditUpdate = {
+    leaveType: LeaveType | null
+    fteRemaining: number
+    team?: Team
+    therapistTeamFTEByTeam?: Partial<Record<Team, number>>
+    sharedTherapistSlotTeams?: SharedTherapistSlotTeams
+  }
+
+  type SharedTherapistDialogCurrentAllocation = {
+    teamFteByTeam: Partial<Record<Team, number>>
+    slotTeamBySlot: SharedTherapistSlotTeams
+  } | null
+
+  type SharedTherapistDialogData = {
+    sharedTherapists: Staff[]
+    staffOverrides: Record<string, any>
+    currentAllocationByStaffId: Record<string, SharedTherapistDialogCurrentAllocation>
+    ptPerTeamByTeam: Record<Team, number>
+  }
+
   type Step1BulkEditPayload = {
     staffId: string
     leaveType: LeaveType | null
     fteRemaining: number
+    sharedTherapistModeOverride?: import('@/types/staff').SharedTherapistAllocationMode
     fteSubtraction?: number
     availableSlots?: number[]
     invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
@@ -1479,6 +1511,8 @@ function SchedulePageContent() {
     setFloatingPCAConfigOpen(false)
     setShowSpecialProgramOverrideDialog(false)
     setShowSptFinalEditDialog(false)
+    setShowSharedTherapistEditDialog(false)
+    setSharedTherapistDialogData(null)
     setStaffContextMenu({
       show: false,
       position: null,
@@ -1533,6 +1567,9 @@ function SchedulePageContent() {
   // Step 2.2: SPT Final Edit Dialog state
   const [showSptFinalEditDialog, setShowSptFinalEditDialog] = useState(false)
   const sptFinalEditResolverRef = useRef<((updates: Record<string, SptFinalEditUpdate> | null) => void) | null>(null)
+  const [showSharedTherapistEditDialog, setShowSharedTherapistEditDialog] = useState(false)
+  const [sharedTherapistDialogData, setSharedTherapistDialogData] = useState<SharedTherapistDialogData | null>(null)
+  const sharedTherapistEditResolverRef = useRef<((updates: Record<string, SharedTherapistEditUpdate> | null) => void) | null>(null)
 
   // Step 2.0: If the user selects staff from the inactive pool as a special-program substitute,
   // promote them to status='buffer' so they appear on the schedule page (active/buffer pool)
@@ -4117,6 +4154,9 @@ function SchedulePageContent() {
         date: selectedDate,
       }) as any
 
+      latestStaffOverridesRef.current = nextStaffOverrides as any
+      latestTherapistAllocationsRef.current = nextTherapistAllocations as any
+
       setStaffOverrides(nextStaffOverrides)
       setTherapistAllocations(nextTherapistAllocations)
 
@@ -4130,8 +4170,150 @@ function SchedulePageContent() {
           staffOverrides: nextStaffOverrides,
         },
       })
+
+      return {
+        nextStaffOverrides,
+        nextTherapistAllocations,
+      }
     },
     [staff, bufferStaff, selectedDate, recalculateScheduleCalculations]
+  )
+
+  const sharedTherapistsForStep23 = useMemo(() => {
+    return staff.filter((s) => (s.rank === 'APPT' || s.rank === 'RPT') && s.team === null && (s.status ?? 'active') === 'active')
+  }, [staff])
+
+  const showSharedTherapistStep = useMemo(() => {
+    if (sharedTherapistsForStep23.length === 0) return false
+    if (sharedTherapistsForStep23.length === 1) {
+      const therapist = sharedTherapistsForStep23[0]
+      const fteRemaining = typeof staffOverrides?.[therapist.id]?.fteRemaining === 'number'
+        ? staffOverrides[therapist.id].fteRemaining
+        : 1
+      if (fteRemaining <= 0) return false
+    }
+    return true
+  }, [sharedTherapistsForStep23, staffOverrides])
+
+  const buildSharedTherapistDialogData = useCallback(
+    (source?: {
+      staffOverrides?: Record<string, any>
+      therapistAllocations?: Record<Team, (TherapistAllocation & { staff: Staff })[]>
+    }): SharedTherapistDialogData => {
+      const effectiveOverrides = source?.staffOverrides ?? latestStaffOverridesRef.current
+      const effectiveTherapistAllocations = source?.therapistAllocations ?? latestTherapistAllocationsRef.current
+      const sharedTherapistIds = new Set(sharedTherapistsForStep23.map((staffMember) => staffMember.id))
+      const ptPerTeamByTeam: Record<Team, number> = { FO: 0, SMM: 0, SFM: 0, CPPC: 0, MC: 0, GMC: 0, NSM: 0, DRO: 0 }
+      const currentAllocationByStaffId: Record<string, SharedTherapistDialogCurrentAllocation> = {}
+
+      for (const sharedTherapist of sharedTherapistsForStep23) {
+        currentAllocationByStaffId[sharedTherapist.id] = {
+          teamFteByTeam: {},
+          slotTeamBySlot: {},
+        }
+      }
+
+      for (const team of recalculationTeams) {
+        for (const allocation of effectiveTherapistAllocations?.[team] ?? []) {
+          ptPerTeamByTeam[team] += allocation.fte_therapist ?? 0
+          if (!sharedTherapistIds.has(allocation.staff_id)) continue
+
+          const current = currentAllocationByStaffId[allocation.staff_id] ?? {
+            teamFteByTeam: {},
+            slotTeamBySlot: {},
+          }
+          current.teamFteByTeam[team] = Number((((current.teamFteByTeam[team] ?? 0) + (allocation.fte_therapist ?? 0))).toFixed(2))
+          if (allocation.slot1 === team) current.slotTeamBySlot[1] = team
+          if (allocation.slot2 === team) current.slotTeamBySlot[2] = team
+          if (allocation.slot3 === team) current.slotTeamBySlot[3] = team
+          if (allocation.slot4 === team) current.slotTeamBySlot[4] = team
+          currentAllocationByStaffId[allocation.staff_id] = current
+        }
+      }
+
+      Object.entries(effectiveOverrides ?? {}).forEach(([staffId, override]) => {
+        if (!sharedTherapistIds.has(staffId)) return
+        const slotTeams = (override as any)?.sharedTherapistSlotTeams as SharedTherapistSlotTeams | undefined
+        if (!slotTeams || Object.keys(slotTeams).length === 0) return
+        currentAllocationByStaffId[staffId] = {
+          teamFteByTeam: buildSharedTherapistTeamFteByTeam({ slotTeamBySlot: slotTeams }),
+          slotTeamBySlot: { ...slotTeams },
+        }
+      })
+
+      return {
+        sharedTherapists: sharedTherapistsForStep23,
+        staffOverrides: effectiveOverrides,
+        currentAllocationByStaffId,
+        ptPerTeamByTeam,
+      }
+    },
+    [recalculationTeams, sharedTherapistsForStep23]
+  )
+
+  const showStep2Point3_SharedTherapistEdit = useCallback(
+    async (source?: {
+      staffOverrides?: Record<string, any>
+      therapistAllocations?: Record<Team, (TherapistAllocation & { staff: Staff })[]>
+    }): Promise<Record<string, SharedTherapistEditUpdate> | null> => {
+      if (!showSharedTherapistStep) return {}
+
+      const dialogData = buildSharedTherapistDialogData(source)
+      prefetchSharedTherapistEditDialog().catch(() => {})
+
+      return await new Promise((resolve) => {
+        const resolver = (updates: Record<string, SharedTherapistEditUpdate> | null) => {
+          resolve(updates)
+        }
+        sharedTherapistEditResolverRef.current = resolver
+        setSharedTherapistDialogData(dialogData)
+        setShowSharedTherapistEditDialog(true)
+      })
+    },
+    [buildSharedTherapistDialogData, showSharedTherapistStep]
+  )
+
+  const applyStep2Point3_SharedTherapistEdits = useCallback(
+    (updates: Record<string, SharedTherapistEditUpdate>) => {
+      const allStaffForMap = [...staff, ...bufferStaff]
+      const staffById = buildStaffByIdMap(allStaffForMap)
+      const currentStaffOverrides = latestStaffOverridesRef.current
+      const currentTherapistAllocations = latestTherapistAllocationsRef.current
+      const currentPcaAllocations = latestPcaAllocationsRef.current
+
+      const nextStaffOverrides = mergeStep2Point3SharedTherapistOverrides({
+        baseOverrides: currentStaffOverrides as any,
+        updates: updates as any,
+      })
+
+      const nextTherapistAllocations = applySharedTherapistEditsToTherapistAllocations({
+        therapistAllocations: currentTherapistAllocations as any,
+        updatesByStaffId: updates as any,
+        staffById,
+        date: selectedDate,
+      }) as any
+
+      latestStaffOverridesRef.current = nextStaffOverrides as any
+      latestTherapistAllocationsRef.current = nextTherapistAllocations as any
+
+      setStaffOverrides(nextStaffOverrides)
+      setTherapistAllocations(nextTherapistAllocations)
+
+      recalculateScheduleCalculations({
+        forceWithoutAllocations: true,
+        source: {
+          pcaAllocations: currentPcaAllocations,
+          therapistAllocations: nextTherapistAllocations,
+          staffOverrides: nextStaffOverrides,
+        },
+      })
+
+      return {
+        nextStaffOverrides,
+        nextTherapistAllocations,
+      }
+    },
+    [bufferStaff, recalculateScheduleCalculations, selectedDate, staff]
   )
 
   /**
@@ -4309,25 +4491,54 @@ function SchedulePageContent() {
                   // Allow Step 2.1 "Back" to return to Step 2.0 only when special programs are active.
                   step2WizardAllowBackToSpecialProgramsRef.current = true
 
-                  while (true) {
+                  step2RunLoop: while (true) {
                     await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides)
 
-                    const step22 = await showStep2Point2_SptFinalEdit()
-                    if (step22 === null) {
-                      // User cancelled Step 2.2 → do not show Step 2 success toast.
-                      clearBufferedStep2Toast()
-                      break
+                    step2ReviewLoop: while (true) {
+                      const step22 = await showStep2Point2_SptFinalEdit()
+                      if (step22 === null) {
+                        // User cancelled Step 2.2 → do not show Step 2 success toast.
+                        clearBufferedStep2Toast()
+                        break step2RunLoop
+                      }
+                      if (step22 && (step22 as any).__nav === 'back') {
+                        // Back from Step 2.2 → rerun Step 2 (will re-open Step 2.1 if needed)
+                        continue step2RunLoop
+                      }
+
+                      let nextStep2Point2Source:
+                        | {
+                            staffOverrides: Record<string, any>
+                            therapistAllocations: Record<Team, (TherapistAllocation & { staff: Staff })[]>
+                          }
+                        | undefined
+
+                      const hasStep22Updates = !!(step22 && Object.keys(step22).length > 0)
+                      if (hasStep22Updates) {
+                        const applied = applyStep2Point2_SptFinalEdits(step22)
+                        nextStep2Point2Source = {
+                          staffOverrides: applied.nextStaffOverrides as any,
+                          therapistAllocations: applied.nextTherapistAllocations as any,
+                        }
+                      }
+
+                      const step23 = await showStep2Point3_SharedTherapistEdit(nextStep2Point2Source)
+                      if (step23 === null) {
+                        clearBufferedStep2Toast()
+                        break step2RunLoop
+                      }
+                      if (step23 && (step23 as any).__nav === 'back') {
+                        continue step2ReviewLoop
+                      }
+
+                      const hasStep23Updates = !!(step23 && Object.keys(step23).length > 0)
+                      if (hasStep23Updates) {
+                        applyStep2Point3_SharedTherapistEdits(step23)
+                      }
+
+                      flushBufferedStep2Toast({ awaitCalculations: hasStep22Updates || hasStep23Updates })
+                      break step2RunLoop
                     }
-                    if (step22 && (step22 as any).__nav === 'back') {
-                      // Back from Step 2.2 → rerun Step 2 (will re-open Step 2.1 if needed)
-                      continue
-                    }
-                    const hasStep22Updates = !!(step22 && Object.keys(step22).length > 0)
-                    if (hasStep22Updates) {
-                      applyStep2Point2_SptFinalEdits(step22)
-                    }
-                    flushBufferedStep2Toast({ awaitCalculations: hasStep22Updates })
-                    break
                   }
                 } catch (e: any) {
                   // User cancelled Step 2.1 substitution wizard → restore and abort without toast.
@@ -4367,6 +4578,10 @@ function SchedulePageContent() {
                   console.error('Error running Step 2:', e)
                 }
                 bufferStep2SuccessToastRef.current = false
+                if (cancelled) {
+                  resolve()
+                  return
+                }
                 resolve()
               })()
             }
@@ -4394,26 +4609,55 @@ function SchedulePageContent() {
         step2WizardAllowBackToSpecialProgramsRef.current = false
         let cancelled = false
         try {
-          while (true) {
+          step2RunLoop: while (true) {
             await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides)
 
-            // Step 2.2: Final SPT edit (per-day overrides)
-            const step22 = await showStep2Point2_SptFinalEdit()
-            if (step22 === null) {
-              // User cancelled Step 2.2 → do not show Step 2 success toast.
-              clearBufferedStep2Toast()
-              cancelled = true
-              break
+            step2ReviewLoop: while (true) {
+              // Step 2.2: Final SPT edit (per-day overrides)
+              const step22 = await showStep2Point2_SptFinalEdit()
+              if (step22 === null) {
+                // User cancelled Step 2.2 → do not show Step 2 success toast.
+                clearBufferedStep2Toast()
+                cancelled = true
+                break step2RunLoop
+              }
+              if (step22 && (step22 as any).__nav === 'back') {
+                continue step2RunLoop
+              }
+
+              let nextStep2Point2Source:
+                | {
+                    staffOverrides: Record<string, any>
+                    therapistAllocations: Record<Team, (TherapistAllocation & { staff: Staff })[]>
+                  }
+                | undefined
+
+              const hasStep22Updates = !!(step22 && Object.keys(step22).length > 0)
+              if (hasStep22Updates) {
+                const applied = applyStep2Point2_SptFinalEdits(step22)
+                nextStep2Point2Source = {
+                  staffOverrides: applied.nextStaffOverrides as any,
+                  therapistAllocations: applied.nextTherapistAllocations as any,
+                }
+              }
+
+              const step23 = await showStep2Point3_SharedTherapistEdit(nextStep2Point2Source)
+              if (step23 === null) {
+                clearBufferedStep2Toast()
+                cancelled = true
+                break step2RunLoop
+              }
+              if (step23 && (step23 as any).__nav === 'back') {
+                continue step2ReviewLoop
+              }
+
+              const hasStep23Updates = !!(step23 && Object.keys(step23).length > 0)
+              if (hasStep23Updates) {
+                applyStep2Point3_SharedTherapistEdits(step23)
+              }
+              if (!cancelled) flushBufferedStep2Toast({ awaitCalculations: hasStep22Updates || hasStep23Updates })
+              break step2RunLoop
             }
-            if (step22 && (step22 as any).__nav === 'back') {
-              continue
-            }
-            const hasStep22Updates = !!(step22 && Object.keys(step22).length > 0)
-            if (hasStep22Updates) {
-              applyStep2Point2_SptFinalEdits(step22)
-            }
-            if (!cancelled) flushBufferedStep2Toast({ awaitCalculations: hasStep22Updates })
-            break
           }
         } catch (e: any) {
           if (e?.code === 'user_cancelled' || String(e?.message ?? '').includes('user_cancelled')) {
@@ -4588,6 +4832,9 @@ function SchedulePageContent() {
     specialProgramOverrideResolverRef.current = null
     setShowSptFinalEditDialog(false)
     sptFinalEditResolverRef.current = null
+    setShowSharedTherapistEditDialog(false)
+    setSharedTherapistDialogData(null)
+    sharedTherapistEditResolverRef.current = null
     setStep21RuntimeVisible(null)
     setSubstitutionWizardOpen(false)
     setSubstitutionWizardData(null)
@@ -4608,6 +4855,9 @@ function SchedulePageContent() {
     specialProgramOverrideResolverRef.current = null
     setShowSptFinalEditDialog(false)
     sptFinalEditResolverRef.current = null
+    setShowSharedTherapistEditDialog(false)
+    setSharedTherapistDialogData(null)
+    sharedTherapistEditResolverRef.current = null
     setStep21RuntimeVisible(null)
     setSubstitutionWizardOpen(false)
     setSubstitutionWizardData(null)
@@ -7512,7 +7762,8 @@ function SchedulePageContent() {
     if (!['RPT', 'SPT', 'APPT'].includes(staffMember.rank)) return
     
     const isBufferStaff = staffMember.status === 'buffer'
-    const isFixedTeamStaff = !isBufferStaff && (staffMember.rank === 'APPT' || staffMember.rank === 'RPT')
+    const isSharedTherapist = staffMember.team === null && (staffMember.rank === 'APPT' || staffMember.rank === 'RPT')
+    const isFixedTeamStaff = !isBufferStaff && !isSharedTherapist && (staffMember.rank === 'APPT' || staffMember.rank === 'RPT')
     
     // Validate: Therapist transfer is only allowed in step 2
     if (currentStep !== 'therapist-pca') {
@@ -7544,10 +7795,37 @@ function SchedulePageContent() {
       ? (staffOverrides[staffId]?.fteRemaining ?? staffMember.buffer_fte ?? 1.0)
       : (staffOverrides[staffId]?.fteRemaining ?? currentAlloc?.fte_therapist ?? 1.0)
     
-    // Update staffOverrides with new team
+    captureUndoCheckpoint('Therapist slot move')
+    
+    // Shared therapist (APPT/RPT with team === null): move slots from currentTeam to targetTeam via sharedTherapistSlotTeams
+    if (isSharedTherapist && currentTeam) {
+      const allocOnSource = therapistAllocations[currentTeam]?.find(a => a.staff_id === staffId)
+      if (!allocOnSource) return
+      const existingSlotTeams = (staffOverrides[staffId] as any)?.sharedTherapistSlotTeams as SharedTherapistSlotTeams | undefined
+      const nextSlotTeams: SharedTherapistSlotTeams = { ...(existingSlotTeams ?? {}) }
+      for (const s of [1, 2, 3, 4] as const) {
+        const slotKey = `slot${s}` as 'slot1' | 'slot2' | 'slot3' | 'slot4'
+        if ((allocOnSource as any)[slotKey] === currentTeam) nextSlotTeams[s] = targetTeam
+      }
+      const nextMap = buildSharedTherapistTeamFteByTeam({ slotTeamBySlot: nextSlotTeams })
+      const total = Object.values(nextMap).reduce((sum, v) => sum + (v ?? 0), 0)
+      setStaffOverrides(prev => ({
+        ...prev,
+        [staffId]: {
+          ...prev[staffId],
+          team: undefined,
+          therapistTeamFTEByTeam: nextMap,
+          sharedTherapistSlotTeams: nextSlotTeams,
+          leaveType: prev[staffId]?.leaveType ?? currentAlloc?.leave_type ?? null,
+          fteRemaining: prev[staffId]?.fteRemaining ?? total ?? currentFTE,
+        }
+      }))
+      return
+    }
+    
+    // Update staffOverrides with new team (buffer or fixed-team therapist)
     // For fixed-team staff (APPT, RPT), this is a staff override (does NOT change staff.team property)
     // For buffer staff, also update the staff.team in the database
-    captureUndoCheckpoint('Therapist slot move')
     setStaffOverrides(prev => ({
       ...prev,
       [staffId]: {
@@ -7559,7 +7837,6 @@ function SchedulePageContent() {
     }))
     
     // For buffer therapist, also update the staff.team in the database
-    // For fixed-team staff (APPT, RPT), do NOT change staff.team - it's only a staff override
     if (isBufferStaff) {
       updateBufferStaffTeamAction(staffId, targetTeam).then((result) => {
         if (!result.ok) return
@@ -7571,7 +7848,6 @@ function SchedulePageContent() {
     }
     
     // For fixed-team staff (APPT, RPT), the FTE is carried to target team
-    // The original team will lose PT-FTE/team when allocations are regenerated
     // This is handled by the therapist allocation algorithm respecting staffOverrides.team
   }
 
@@ -12237,6 +12513,7 @@ function SchedulePageContent() {
                 staffOverrides={staffOverrides}
                 weekday={getWeekday(selectedDate)}
                 showSubstituteStep={showStep21InStep2Stepper}
+                showSharedTherapistStep={showSharedTherapistStep}
                 onConfirm={(overrides) => {
                   const resolver = specialProgramOverrideResolverRef.current
                   if (resolver) {
@@ -12288,6 +12565,7 @@ function SchedulePageContent() {
                 sptTeamsByStaffId={sptTeamsByStaffIdForStep22}
                 staffOverrides={staffOverrides as any}
                 showSubstituteStep={showStep21InStep2Stepper}
+                showSharedTherapistStep={showSharedTherapistStep}
                 currentAllocationByStaffId={currentSptAllocationByStaffIdForStep22}
                 ptPerTeamByTeam={ptPerTeamByTeamForStep22}
                 onConfirm={(updates) => {
@@ -12317,6 +12595,56 @@ function SchedulePageContent() {
               />
             ) : null
           }
+          sharedTherapistEditDialog={
+            showSharedTherapistEditDialog && sharedTherapistDialogData ? (
+              <SharedTherapistEditDialog
+                open={showSharedTherapistEditDialog}
+                onOpenChange={(open) => {
+                  setShowSharedTherapistEditDialog(open)
+                  if (!open) {
+                    const resolver = sharedTherapistEditResolverRef.current
+                    if (resolver) {
+                      resolver(null)
+                      sharedTherapistEditResolverRef.current = null
+                    }
+                    setSharedTherapistDialogData(null)
+                  }
+                }}
+                sharedTherapists={sharedTherapistDialogData.sharedTherapists}
+                staffOverrides={sharedTherapistDialogData.staffOverrides}
+                currentAllocationByStaffId={sharedTherapistDialogData.currentAllocationByStaffId}
+                ptPerTeamByTeam={sharedTherapistDialogData.ptPerTeamByTeam}
+                showSubstituteStep={showStep21InStep2Stepper}
+                onConfirm={(updates) => {
+                  const resolver = sharedTherapistEditResolverRef.current
+                  if (resolver) {
+                    resolver(updates as any)
+                    sharedTherapistEditResolverRef.current = null
+                  }
+                  setShowSharedTherapistEditDialog(false)
+                  setSharedTherapistDialogData(null)
+                }}
+                onSkip={() => {
+                  const resolver = sharedTherapistEditResolverRef.current
+                  if (resolver) {
+                    resolver({})
+                    sharedTherapistEditResolverRef.current = null
+                  }
+                  setShowSharedTherapistEditDialog(false)
+                  setSharedTherapistDialogData(null)
+                }}
+                onBack={() => {
+                  const resolver = sharedTherapistEditResolverRef.current
+                  if (resolver) {
+                    resolver({ __nav: 'back' } as any)
+                    sharedTherapistEditResolverRef.current = null
+                  }
+                  setShowSharedTherapistEditDialog(false)
+                  setSharedTherapistDialogData(null)
+                }}
+              />
+            ) : null
+          }
           nonFloatingSubstitutionDialog={
             substitutionWizardDataForDisplay && substitutionWizardOpen ? (
               <NonFloatingSubstitutionDialog
@@ -12331,6 +12659,7 @@ function SchedulePageContent() {
                 weekday={getWeekday(selectedDate)}
                 currentAllocations={[]}
                 staffOverrides={staffOverrides}
+                showSharedTherapistStep={showSharedTherapistStep}
                 onConfirm={handleSubstitutionWizardConfirm}
                 onCancel={handleSubstitutionWizardCancel}
                 onSkip={handleSubstitutionWizardSkip}

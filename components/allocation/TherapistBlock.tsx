@@ -249,8 +249,12 @@ export const TherapistBlock = memo(function TherapistBlock({
             const canDragBufferTherapist = isBufferStaff && currentStep === 'therapist-pca'
             const isInCorrectStep = currentStep === 'therapist-pca'
             
-            // Check if this is a fixed-team staff (APPT, RPT) that can be transferred with warning
-            const isFixedTeamStaff = !isBufferStaff && (allocation.staff.rank === 'APPT' || allocation.staff.rank === 'RPT')
+            // Check if this is a fixed-team staff (APPT, RPT with a dashboard team) that can be transferred with warning.
+            // Shared therapists (APPT/RPT with team === null) are slot-based or single-team per day and are allowed to drag like SPT.
+            const isFixedTeamStaff =
+              !isBufferStaff &&
+              (allocation.staff.rank === 'APPT' || allocation.staff.rank === 'RPT') &&
+              allocation.staff.team !== null
             
             const staffCard = (
               <StaffCard
