@@ -102,15 +102,28 @@ Use this order so policy, UI intent, implementation tasks, and recovery architec
 - **Recovery md** = execution phases for the split V1/V2 rebuild.
 - **2026-04-06 plan** = granular file/test checklist once you are on a clean recovery branch.
 
-## Recommended Next Workflow
-Do this on the next laptop:
+## Recommended next workflow (any machine)
 
-1. Fetch the backup snapshot branch and keep it untouched as a reference branch.
-2. Create a fresh recovery branch from `main`.
-3. Create a fresh worktree from that clean recovery branch.
-4. Rebuild from the clean baseline using the recovery plan, not by editing this backup branch in place.
+Use the same steps whether you continue on **this computer** or **another laptop**. What matters is **where you implement**, not which keyboard you use.
 
-Suggested git flow:
+### If you are still on `backup/step3-ranked-slot-v2-snapshot`
+
+That is fine for **reading this handoff, diffing against `main`, or comparing with the messy snapshot**. It is **not** where you should do the recovery implementation long-term.
+
+- **Option A (recommended):** Add a **second worktree** checked out to a new branch from `main`, and do all recovery coding there. Leave this worktree (or branch checkout) on the backup snapshot only if you want a side-by-side reference.
+- **Option B:** In a **single** clone, `git fetch origin`, `git switch main`, `git pull`, `git switch -c fix/step3-v1-v2-recovery`, and implement there. Use `git diff main..backup/step3-ranked-slot-v2-snapshot` when you need the snapshot, without switching your working branch back to the backup for daily edits.
+
+### Steps (same on every machine)
+
+1. `git fetch origin` so `main` and `backup/step3-ranked-slot-v2-snapshot` are current.
+2. Keep the backup branch as **reference only** (no expectation that “I must stay on backup to hand off”).
+3. Create **`fix/step3-v1-v2-recovery`** (or similar) from **up-to-date `main`**.
+4. Prefer a **dedicated worktree** for that branch so you are not confused by being on snapshot while trying to edit clean recovery code.
+5. Follow `docs/superpowers/plans/2026-04-07-step3-v1-v2-recovery.md` for the actual rebuild.
+
+### Suggested git flow (recovery worktree)
+
+Adjust the path in `worktree add` to a folder that does not already exist next to your repo.
 
 ```bash
 git fetch origin
@@ -119,6 +132,8 @@ git pull
 git switch -c fix/step3-v1-v2-recovery
 git worktree add "../RBIP-duty-list-step3-recovery" fix/step3-v1-v2-recovery
 ```
+
+Open the new folder (or that worktree) in the editor and start a **new chat** there so the agent’s default context is the recovery branch, not the backup snapshot.
 
 ## Recovery Direction
 - Freeze clean V1 from `main`
@@ -133,5 +148,6 @@ git worktree add "../RBIP-duty-list-step3-recovery" fix/step3-v1-v2-recovery
 - Do not commit `.env.local`
 - Keep the backup branch available for reference and diff comparison
 
-## Short Brief For The Next Agent
-The current Step 3 V2 attempt is preserved as a backup snapshot because V1 and V2 became entangled inside the same wizard. The next task is not to polish the snapshot, but to restart from clean `main`, freeze legacy V1, and rebuild V2 as a separate standalone flow according to `docs/superpowers/plans/2026-04-07-step3-v1-v2-recovery.md`.
+## Short brief for the next agent or chat
+
+The Step 3 V2 attempt is preserved on `backup/step3-ranked-slot-v2-snapshot` because V1 and V2 became entangled in one wizard. The task is **not** to polish that snapshot branch, but to implement on a **new branch from `main`** per `docs/superpowers/plans/2026-04-07-step3-v1-v2-recovery.md`. Prefer opening the recovery worktree (or `fix/...` branch) in a **new chat** so context is not anchored to the snapshot checkout.
