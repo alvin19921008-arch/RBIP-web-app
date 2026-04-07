@@ -2046,8 +2046,8 @@ export function Step1LeaveSetupDialog({
 
           {wizardStep === '1.4' ? (
             <div className="space-y-3">
-              {rows.filter((r) => r.leaveChoice !== '__none__').length === 0 ? (
-                <p className="py-10 text-center text-sm text-muted-foreground">No leave entries in draft.</p>
+              {rows.length === 0 ? (
+                <p className="py-10 text-center text-sm text-muted-foreground">No staff in draft.</p>
               ) : (
                 <div className="rounded-md border border-border overflow-hidden divide-y divide-border lg:divide-y-0 lg:grid lg:grid-cols-2 lg:gap-px lg:bg-border">
                   {rows
@@ -2060,12 +2060,13 @@ export function Step1LeaveSetupDialog({
                       if (rankOrder !== 0) return rankOrder
                       return memberA.name.localeCompare(memberB.name)
                     })
-                    .filter((row) => row.leaveChoice !== '__none__')
                     .map((row) => {
                       const member = staffById.get(row.staffId)
                       if (!member) return null
                       const leavePreview =
-                        row.leaveChoice === 'others'
+                        row.leaveChoice === '__none__'
+                          ? 'On duty'
+                          : row.leaveChoice === 'others'
                           ? (row.customLeaveText.trim() || 'others')
                           : row.leaveChoice
                       const finalEdit = rowToFinalEdit(row, member)
