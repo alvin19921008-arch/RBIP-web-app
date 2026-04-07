@@ -113,10 +113,20 @@ export function TeamReservationCard({
         {/* Reserved Slots Section */}
         {hasReservation && reservation && (
           <div className="w-full mt-1 pt-1 border-t border-blue-200 dark:border-blue-800">
+            {reservation.attentionReason && (
+              <div className="mb-1 rounded bg-amber-100 px-1.5 py-1 text-[10px] font-medium text-amber-900 dark:bg-amber-900/40 dark:text-amber-100">
+                Needs attention
+              </div>
+            )}
             {/* Slot Time - Bold, no "Slot X" text */}
             <div className="text-xs font-bold text-center mb-1">
               {SLOT_TIMES[reservation.slot]}
             </div>
+            {reservation.recommendedPcaName ? (
+              <div className="mb-1 text-[10px] text-muted-foreground text-center">
+                Recommended: {reservation.recommendedPcaName}
+              </div>
+            ) : null}
             
             {/* PCA Checkboxes */}
             <div className="space-y-1">

@@ -21,15 +21,13 @@ import {
   computeAdjacentSlotReservations,
   TeamReservations,
   SlotAssignment,
-  PCASlotReservations,
   AdjacentSlotReservations,
-  AdjacentSlotInfo,
 } from '@/lib/utils/reservationLogic'
 import { 
-  allocateFloatingPCA_v2,
+  allocateFloatingPCAByEngine,
+  FloatingPCAEngineVersion,
   FloatingPCAAllocationResultV2,
 } from '@/lib/algorithms/pcaAllocation'
-import { AllocationTracker } from '@/types/schedule'
 import { Staff } from '@/types/staff'
 import {
   recordAssignment,
@@ -54,13 +52,6 @@ import {
 } from '@dnd-kit/sortable'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import {
-  RemountOnOpenDetails,
-  SvgViewer,
-  Step3StandardModeExplainerSvg,
-  Step3BalancedModeExplainerSvg,
-} from '@/components/allocation/Step3ModeExplainerAnimated'
-import {
-  buildProjectedExtraSlotsTooltipLines,
   buildStep31PreviewExtraCoverageOptions,
   countProjectedExtraSlots,
 } from '@/lib/features/schedule/step31ProjectedExtraSlots'
@@ -202,11 +193,15 @@ export function FloatingPCAConfigDialog({
   // State: current team order (for display and saving)
   const [teamOrder, setTeamOrder] = useState<Team[]>([])
 
-  // Step 3.4: allocation mode (Standard vs Balanced)
+  // Step 3.4: allocation mode (legacy V1 only; V2 runs ranked standard path)
   const [allocationMode, setAllocationMode] = useState<'standard' | 'balanced'>('standard')
+  // Engine selector: default to V2, allow manual opt-in to legacy V1.
+  const [allocationEngine, setAllocationEngine] = useState<FloatingPCAEngineVersion>('v2')
   // How strict Step 3.4 should honor manually selected preferences.
   const [preferenceProtectionMode, setPreferenceProtectionMode] = useState<'exclusive' | 'share'>('exclusive')
   const [allocationMethodExpanded, setAllocationMethodExpanded] = useState(false)
+  const isV1Engine = allocationEngine === 'v1'
+  const effectiveAllocationMode: 'standard' | 'balanced' = isV1Engine ? allocationMode : 'standard'
   // Scarcity config (global head): treat threshold as "shortage slots" (0.25 FTE per slot)
   const [scarcityShortageSlotsThreshold, setScarcityShortageSlotsThreshold] = useState<number>(2)
   const [scarcityBehavior, setScarcityBehavior] = useState<'remind_only' | 'off'>('off')
@@ -370,15 +365,6 @@ export function FloatingPCAConfigDialog({
   }, [activeTeams, roundedPendingByTeam, floatingPCAs, existingAllocations, staffOverrides])
 
   const shortageSlots = Math.max(0, scarcityMetrics.neededSlots - scarcityMetrics.availableSlots)
-  const hasExcessFloatingSlots = scarcityMetrics.availableSlots > scarcityMetrics.neededSlots
-  const projectedExtraSlotsTooltipLines = useMemo(
-    () =>
-      buildProjectedExtraSlotsTooltipLines({
-        neededSlots: scarcityMetrics.neededSlots,
-        availableSlots: scarcityMetrics.availableSlots,
-      }),
-    [scarcityMetrics.neededSlots, scarcityMetrics.availableSlots]
-  )
 
   const scarcityTriggered =
     scarcityBehavior !== 'off' &&
@@ -391,7 +377,7 @@ export function FloatingPCAConfigDialog({
     if (scarcityTriggered && scarcityDismissed) {
       setScarcityDismissed(false)
     }
-  }, [scarcityTriggered])
+  }, [scarcityTriggered, scarcityDismissed])
 
   // Step 3.1 preview: run BOTH standard + balanced (dry-run) and summarize risks.
   useEffect(() => {
@@ -423,7 +409,8 @@ export function FloatingPCAConfigDialog({
         .map((p) => `${p.id}:${(p.fte_pca ?? 0).toFixed(2)}:${Array.isArray(p.availableSlots) ? p.availableSlots.join('') : ''}`)
         .join('|')
       const preferenceModeKey = preferenceProtectionMode
-      return `${orderKey}__${pendingKey}__${allocKey}__${poolKey}__${preferenceModeKey}`
+      const engineKey = allocationEngine
+      return `${orderKey}__${pendingKey}__${allocKey}__${poolKey}__${preferenceModeKey}__${engineKey}`
     })()
 
     if (hash === previewLastHashRef.current) return
@@ -441,7 +428,9 @@ export function FloatingPCAConfigDialog({
       const balancedAllocations = existingAllocations.map((a) => ({ ...a }))
 
       const [standardRes, balancedRes] = await Promise.all([
-        allocateFloatingPCA_v2(buildStep31PreviewExtraCoverageOptions({
+        allocateFloatingPCAByEngine({
+          engine: allocationEngine,
+          ...buildStep31PreviewExtraCoverageOptions({
           mode: 'standard',
           teamOrder,
           currentPendingFTE: standardPending,
@@ -452,8 +441,10 @@ export function FloatingPCAConfigDialog({
           preferenceSelectionMode: 'selected_only',
           preferenceProtectionMode,
           selectedPreferenceAssignments: [],
-        })),
-        allocateFloatingPCA_v2(buildStep31PreviewExtraCoverageOptions({
+        })}),
+        allocateFloatingPCAByEngine({
+          engine: allocationEngine,
+          ...buildStep31PreviewExtraCoverageOptions({
           mode: 'balanced',
           teamOrder,
           currentPendingFTE: balancedPending,
@@ -461,7 +452,7 @@ export function FloatingPCAConfigDialog({
           pcaPool: floatingPCAs,
           pcaPreferences,
           specialPrograms,
-        })),
+        })}),
       ])
 
       if (runId !== previewRunIdRef.current) return
@@ -517,7 +508,6 @@ export function FloatingPCAConfigDialog({
     return () => {
       cancelPreviewWork()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     open,
     bufferPCAConfirmed,
@@ -529,13 +519,24 @@ export function FloatingPCAConfigDialog({
     floatingPCAs,
     pcaPreferences,
     specialPrograms,
+    allocationEngine,
     preferenceProtectionMode,
     cancelPreviewWork,
   ])
   
   // Step 3.2: reservations computed from Step 3.1 output
   const [teamReservations, setTeamReservations] = useState<TeamReservations | null>(null)
-  const [pcaSlotReservations, setPCASlotReservations] = useState<PCASlotReservations>({})
+  const [step32Summary, setStep32Summary] = useState<{
+    teamsChecked: number
+    needsAttentionTeams: Team[]
+    autoContinueTeams: Team[]
+    gymRiskTeams: Team[]
+  }>({
+    teamsChecked: 0,
+    needsAttentionTeams: [],
+    autoContinueTeams: [],
+    gymRiskTeams: [],
+  })
   
   // Step 3.2: user selections for slot assignments
   const [slotSelections, setSlotSelections] = useState<SlotAssignment[]>([])
@@ -588,9 +589,6 @@ export function FloatingPCAConfigDialog({
         // Remove duplicates
         const uniqueAssignedSlots = Array.from(new Set(assignedSlots))
         
-        // Calculate remaining FTE
-        const assignedFTE = uniqueAssignedSlots.length * 0.25
-        const remainingFTE = Math.max(0, baseFTE - assignedFTE)
         const assignedCount = uniqueAssignedSlots.length
         const remainingSlots = Math.max(0, totalSlots - assignedCount)
         
@@ -716,7 +714,12 @@ export function FloatingPCAConfigDialog({
       // Reset to step 3.1 (after Step 3.0 is confirmed)
       setSlotSelections([])
       setTeamReservations(null)
-      setPCASlotReservations({})
+      setStep32Summary({
+        teamsChecked: 0,
+        needsAttentionTeams: [],
+        autoContinueTeams: [],
+        gymRiskTeams: [],
+      })
       
       // Reset Step 3.3 state
       setStep32Assignments([])
@@ -742,8 +745,6 @@ export function FloatingPCAConfigDialog({
       const sorted = sortTeamsByPendingFTE(activeTeams, rounded, activeTeams)
       setTeamOrder(sorted)
     }
-    // We intentionally initialize once per open session to avoid starving Step 3.1 preview.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, bufferPCAConfirmed, activeTeams, initialPendingFTE, existingAllocations])
   
   // Compute tie groups from current adjusted FTE
@@ -768,12 +769,6 @@ export function FloatingPCAConfigDialog({
     
     return info
   }, [activeTeams, tieGroups])
-  
-  // Check if step 3.2 should be skipped (no reservations available)
-  const hasAnyReservations = useMemo(() => {
-    if (!teamReservations) return false
-    return activeTeams.some(team => teamReservations[team] !== null)
-  }, [activeTeams, teamReservations])
   
   // DnD sensors
   const sensors = useSensors(
@@ -948,10 +943,10 @@ export function FloatingPCAConfigDialog({
       showStep33: adjacent.hasAnyAdjacentReservations,
       next,
       nextLabel:
-        next === '3.2' ? 'Continue to 3.2' : next === '3.3' ? 'Continue to 3.3' : 'Run final allocation',
+        next === '3.2' ? 'Continue to 3.2' : next === '3.3' ? 'Continue to 3.3' : 'Continue to 3.4 review',
       tooltip:
         next === 'final'
-          ? 'No Step 3.2 / 3.3 actions available today; continuing will run the final allocation and close this dialog.'
+          ? 'No Step 3.2 / 3.3 actions available today; continuing will open Step 3.4 review.'
           : null,
     }
   }, [evaluateStep31Path])
@@ -961,16 +956,16 @@ export function FloatingPCAConfigDialog({
     return {
       showStep33: adjacent.hasAnyAdjacentReservations,
       next,
-      nextLabel: next === '3.3' ? 'Assign & Continue' : 'Run final allocation',
-      skipLabel: next === '3.3' ? 'Skip to 3.3' : 'Run final allocation',
+      nextLabel: next === '3.3' ? 'Assign & Continue' : 'Continue to 3.4 review',
+      skipLabel: next === '3.3' ? 'Skip to 3.3' : 'Continue to 3.4 review',
       tooltip:
         next === 'final'
-          ? 'No Step 3.3 adjacent-slot actions available after Step 3.2 selections; continuing will run the final allocation and close this dialog.'
+          ? 'No Step 3.3 adjacent-slot actions available after Step 3.2 selections; continuing will open Step 3.4 review.'
           : null,
       skipTooltip:
         next === '3.3'
           ? 'Skip Step 3.2 reservations and continue to Step 3.3 adjacent-slot actions.'
-          : 'No Step 3.3 adjacent-slot actions available; skipping will run the final allocation and close this dialog.',
+          : 'No Step 3.3 adjacent-slot actions available; skipping will open Step 3.4 review.',
     }
   }, [evaluateStep32Path, slotSelections])
   
@@ -987,7 +982,7 @@ export function FloatingPCAConfigDialog({
     const { reservations, adjacent, next } = evaluateStep31Path()
     
     setTeamReservations(reservations.teamReservations)
-    setPCASlotReservations(reservations.pcaSlotReservations)
+    setStep32Summary(reservations.summary)
     setSlotSelections([])
     
     if (next === '3.2') {
@@ -1001,10 +996,20 @@ export function FloatingPCAConfigDialog({
       return
     }
 
-    // No 3.2/3.3 actions available -> run final directly.
+    // No 3.2/3.3 actions available -> open 3.4 review directly.
     setStep32Assignments([])
     setStep33Selections([])
-    setTimeout(() => handleFinalSave(), 0)
+    setTimeout(
+      () =>
+        openStep34Review({
+          mode: effectiveAllocationMode,
+          basePendingFTE: { ...adjustedFTE },
+          baseAllocations: [...existingAllocations],
+          step32Assignments: [],
+          step33Assignments: [],
+        }),
+      0
+    )
   }
   
   // Handle going back from Step 3.2 to Step 3.1
@@ -1044,8 +1049,18 @@ export function FloatingPCAConfigDialog({
     setStep33Selections([])
     
     if (next === 'final') {
-      // Finalize with 3.2 assignments only - run final algorithm
-      setTimeout(() => handleFinalSave(), 0)
+      // Finalize with 3.2 assignments only - move to 3.4 review
+      setTimeout(
+        () =>
+          openStep34Review({
+            mode: effectiveAllocationMode,
+            basePendingFTE: execution.updatedPendingFTE,
+            baseAllocations: execution.updatedAllocations,
+            step32Assignments: [...slotSelections],
+            step33Assignments: [],
+          }),
+        0
+      )
     } else {
       setCurrentMiniStep('3.3')
     }
@@ -1075,14 +1090,29 @@ export function FloatingPCAConfigDialog({
   
   // State: algorithm running indicator
   const [isRunningAlgorithm, setIsRunningAlgorithm] = useState(false)
-  
-  const runFinalAlgorithm = async (params: {
+  const [step34PreviewResult, setStep34PreviewResult] = useState<FloatingPCAAllocationResultV2 | null>(null)
+  const [step34SelectedTeam, setStep34SelectedTeam] = useState<Team | null>(null)
+  const [step34Context, setStep34Context] = useState<{
+    mode: 'standard' | 'balanced'
+    step32Assignments: SlotAssignment[]
+    step33Assignments: SlotAssignment[]
+  } | null>(null)
+
+  const getOrdinalSuffix = (value: number): string => {
+    if (value % 100 >= 11 && value % 100 <= 13) return 'th'
+    if (value % 10 === 1) return 'st'
+    if (value % 10 === 2) return 'nd'
+    if (value % 10 === 3) return 'rd'
+    return 'th'
+  }
+
+  const computeFinalAlgorithm = async (params: {
     mode: 'standard' | 'balanced'
     basePendingFTE: Record<Team, number>
     baseAllocations: PCAAllocation[]
     step32Assignments: SlotAssignment[]
     step33Assignments: SlotAssignment[]
-  }) => {
+  }): Promise<FloatingPCAAllocationResultV2> => {
     const {
       mode,
       basePendingFTE,
@@ -1105,7 +1135,8 @@ export function FloatingPCAConfigDialog({
       finalAllocations = result.updatedAllocations
     }
 
-    const algorithmResult = await allocateFloatingPCA_v2({
+    const algorithmResult = await allocateFloatingPCAByEngine({
+      engine: allocationEngine,
       mode,
       teamOrder: teamOrder,
       currentPendingFTE: finalPendingFTE,
@@ -1184,20 +1215,54 @@ export function FloatingPCAConfigDialog({
     }
 
     finalizeTrackerSummary(algorithmResult.tracker)
-    onSave(algorithmResult, teamOrder, step32Assignments, step33Assignments)
+    return algorithmResult
   }
 
-  // Handle final save from Step 3.3 (runs the full floating PCA algorithm v2).
-  const handleFinalSave = async (modeOverride?: 'standard' | 'balanced') => {
+  const openStep34Review = async (params: {
+    mode: 'standard' | 'balanced'
+    basePendingFTE: Record<Team, number>
+    baseAllocations: PCAAllocation[]
+    step32Assignments: SlotAssignment[]
+    step33Assignments: SlotAssignment[]
+  }) => {
+    const result = await computeFinalAlgorithm(params)
+    setStep34PreviewResult(result)
+    setStep34Context({
+      mode: params.mode,
+      step32Assignments: params.step32Assignments,
+      step33Assignments: params.step33Assignments,
+    })
+    setStep34SelectedTeam(teamOrder[0] ?? null)
+    setCurrentMiniStep('3.4')
+  }
+
+  const handleConfirmStep34 = async () => {
+    if (step34PreviewResult && step34Context) {
+      onSave(
+        step34PreviewResult,
+        teamOrder,
+        step34Context.step32Assignments,
+        step34Context.step33Assignments
+      )
+      return
+    }
+
+    // Fallback safety net: if preview state is missing, recompute and save.
     setIsRunningAlgorithm(true)
     try {
-      await runFinalAlgorithm({
-        mode: modeOverride ?? allocationMode,
-        basePendingFTE: currentPendingFTE,
-        baseAllocations: updatedAllocations,
+      const fallbackContext = step34Context ?? {
+        mode: effectiveAllocationMode,
         step32Assignments,
         step33Assignments: step33Selections,
+      }
+      const result = await computeFinalAlgorithm({
+        mode: fallbackContext.mode,
+        basePendingFTE: currentPendingFTE,
+        baseAllocations: updatedAllocations,
+        step32Assignments: fallbackContext.step32Assignments,
+        step33Assignments: fallbackContext.step33Assignments,
       })
+      onSave(result, teamOrder, fallbackContext.step32Assignments, fallbackContext.step33Assignments)
     } catch (error) {
       console.error('Error running floating PCA algorithm:', error)
     } finally {
@@ -1209,7 +1274,7 @@ export function FloatingPCAConfigDialog({
   const handleRunBalancedNow = async () => {
     setIsRunningAlgorithm(true)
     try {
-      await runFinalAlgorithm({
+      await openStep34Review({
         mode: 'balanced',
         basePendingFTE: { ...adjustedFTE },
         baseAllocations: [...existingAllocations],
@@ -1232,18 +1297,30 @@ export function FloatingPCAConfigDialog({
       setStep33Selections([])
       setCurrentMiniStep('3.3')
     } else {
-      // No adjacent slots - skip directly to final algorithm
+      // No adjacent slots - skip directly to 3.4 review
       setStep32Assignments([])
       setStep33Selections([])
-      handleFinalSave()
+      openStep34Review({
+        mode: effectiveAllocationMode,
+        basePendingFTE: currentPendingFTE,
+        baseAllocations: updatedAllocations,
+        step32Assignments: [],
+        step33Assignments: [],
+      })
     }
   }
   
   // Handle skip assignments in Step 3.3
   const handleSkipStep33 = () => {
-    // Skip 3.3 and run final algorithm with only 3.2 assignments
+    // Skip 3.3 and continue to 3.4 review with only 3.2 assignments.
     setStep33Selections([])
-    handleFinalSave()
+    openStep34Review({
+      mode: effectiveAllocationMode,
+      basePendingFTE: currentPendingFTE,
+      baseAllocations: updatedAllocations,
+      step32Assignments,
+      step33Assignments: [],
+    })
   }
   
   // Handle reset to original values
@@ -1252,6 +1329,126 @@ export function FloatingPCAConfigDialog({
     // Re-sort teams by original values
     const sorted = sortTeamsByPendingFTE(activeTeams, originalRoundedFTE, activeTeams)
     setTeamOrder(sorted)
+  }
+
+  const renderStep34 = () => {
+    const tracker = step34PreviewResult?.tracker
+    const selectedTeam = step34SelectedTeam ?? teamOrder[0] ?? null
+    const selectedLog = selectedTeam && tracker ? tracker[selectedTeam] : null
+    const rankedBoxes = selectedTeam
+      ? (() => {
+          const pref = getTeamPreferenceInfo(selectedTeam, pcaPreferences)
+          const labels: Array<{ slot: number; label: string }> = []
+          pref.rankedSlots.forEach((slot, index) => {
+            labels.push({ slot, label: `${index + 1}${getOrdinalSuffix(index + 1)} choice` })
+          })
+          pref.unrankedNonGymSlots.forEach((slot) => labels.push({ slot, label: 'Other' }))
+          if (pref.gymSlot) labels.push({ slot: pref.gymSlot, label: 'Gym' })
+          return labels
+        })()
+      : []
+
+    return (
+      <>
+        <DialogDescription>
+          Final review before save.
+          <span className="mt-1 block text-xs">Select a team to inspect ranked-slot outcomes in plain language.</span>
+        </DialogDescription>
+
+        <div className="space-y-3 py-4">
+          <div className="flex flex-wrap gap-2">
+            {teamOrder.map((team) => {
+              const active = team === selectedTeam
+              return (
+                <button
+                  key={team}
+                  type="button"
+                  onClick={() => setStep34SelectedTeam(team)}
+                  className={cn(
+                    'rounded-md border px-2.5 py-1 text-xs transition-colors',
+                    active ? 'bg-blue-600 text-white border-blue-600' : 'bg-background text-foreground border-border hover:bg-muted'
+                  )}
+                >
+                  {team}
+                </button>
+              )
+            })}
+          </div>
+
+          {selectedTeam && selectedLog ? (
+            <div className="relative rounded-lg border bg-muted/20 p-3">
+              <div className="mb-2 text-sm font-semibold">{selectedTeam} details</div>
+              <div className="mb-2 flex flex-wrap gap-2 text-[11px]">
+                <Badge variant="outline">
+                  {selectedLog.summary.pendingMet ? 'Pending met' : 'Pending not fully met'}
+                </Badge>
+                <Badge variant="outline">
+                  Highest choice fulfilled:{' '}
+                  {typeof selectedLog.summary.highestRankedSlotFulfilled === 'number'
+                    ? `${selectedLog.summary.highestRankedSlotFulfilled}${getOrdinalSuffix(selectedLog.summary.highestRankedSlotFulfilled)}`
+                    : 'none'}
+                </Badge>
+                <Badge variant="outline">
+                  {selectedLog.summary.preferredPCAUsed ? 'Preferred PCA used' : 'Preferred PCA not used'}
+                </Badge>
+                <Badge variant="outline">
+                  {selectedLog.summary.gymUsedAsLastResort ? 'Gym used (last resort)' : 'Gym avoided'}
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {rankedBoxes.map(({ slot, label }) => {
+                  const match = selectedLog.assignments.find((assignment) => assignment.slot === slot)
+                  const note =
+                    !match
+                      ? 'Unused'
+                      : match.pcaSelectionTier === 'preferred'
+                        ? `Preferred PCA: ${match.pcaName}`
+                        : match.pcaSelectionTier === 'floor'
+                          ? `Floor PCA: ${match.pcaName}`
+                          : `PCA: ${match.pcaName}`
+                  return (
+                    <div key={`${selectedTeam}-${slot}`} className="rounded border bg-background px-2 py-1.5 text-xs">
+                      <div className="font-medium">{label}</div>
+                      <div className="text-muted-foreground">{slot}</div>
+                      <div className="text-foreground">{note}</div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div className="pointer-events-none absolute -bottom-2 left-6 h-3 w-3 rotate-45 border-r border-b bg-muted/20" />
+            </div>
+          ) : (
+            <div className="rounded border border-dashed p-3 text-sm text-muted-foreground">
+              No preview available. Go back and run Step 3.1-3.3 flow.
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="sticky bottom-0 z-10 mt-4 flex-row flex-wrap items-center gap-2 border-t bg-background/95 px-1 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:justify-between sm:px-0">
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (step34Context?.step33Assignments?.length) {
+                setCurrentMiniStep('3.3')
+              } else if (step34Context?.step32Assignments?.length) {
+                setCurrentMiniStep('3.2')
+              } else {
+                setCurrentMiniStep('3.1')
+              }
+            }}
+            className="mr-auto max-w-full whitespace-normal"
+          >
+            <ArrowLeft className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Back</span>
+          </Button>
+          <Button onClick={handleConfirmStep34} disabled={isRunningAlgorithm} className="max-w-full whitespace-normal">
+            Save & Complete
+          </Button>
+        </DialogFooter>
+      </>
+    )
   }
 
   // Render Step 3.0 content (Buffer PCA detection and confirmation)
@@ -1548,344 +1745,167 @@ export function FloatingPCAConfigDialog({
       </div>
 
       <div className="rounded-xl border bg-background p-4">
-        <button
-          type="button"
-          className="w-full flex items-center justify-between gap-2 text-left"
-          onClick={() => setAllocationMethodExpanded((prev) => !prev)}
-          aria-expanded={allocationMethodExpanded}
-        >
+        <div className="mb-4 rounded-lg border border-border/70 bg-muted/20 p-3">
           <div className="text-[11px] uppercase tracking-wider font-bold text-muted-foreground">
-            Allocation method (Step 3.4)
+            Allocation engine
           </div>
-          <div className="flex items-center gap-2 min-w-0">
-            {!allocationMethodExpanded && (
-              <div className="flex items-center gap-1.5 min-w-0">
-                <span className="text-xs text-muted-foreground shrink-0">
-                  {allocationMode === 'standard' ? 'Standard (keeps 3.2/3.3)' : 'Balanced (take turns)'}
-                </span>
-                {step31Preview.status === 'loading' ? (
-                  <span className="text-[11px] text-muted-foreground/60 shrink-0">·  computing…</span>
-                ) : step31Preview.status === 'ready' ? (
-                  allocationMode === 'standard' ? (
-                    <>
-                      {step31Preview.standardZeroTeams.length === 0 ? (
-                        <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0">· 0-slot teams: nil</span>
-                      ) : (
-                        <span className="text-[11px] text-amber-600 dark:text-amber-400 truncate">
-                          · 0-slot teams: {step31Preview.standardZeroTeams.join(', ')}
-                        </span>
-                      )}
-                      {step31Preview.standardProjectedExtraSlots > 0 ? (
-                        <Tooltip
-                          content={
-                            <div className="space-y-0.5">
-                              <div>{projectedExtraSlotsTooltipLines[0]}</div>
-                              <div>{projectedExtraSlotsTooltipLines[1]}</div>
-                            </div>
-                          }
-                          side="top"
-                          zIndex={120000}
-                          className="whitespace-normal max-w-[260px]"
-                        >
-                          <span className="text-[11px] text-purple-700 dark:text-purple-300 shrink-0">
-                            · projected extra slots: {step31Preview.standardProjectedExtraSlots}
-                          </span>
-                        </Tooltip>
-                      ) : null}
-                    </>
-                  ) : (
-                    <>
-                      {step31Preview.balancedShortTeams.length === 0 ? (
-                        <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0">· short teams: nil</span>
-                      ) : (
-                        <span className="text-[11px] text-amber-600 dark:text-amber-400 truncate">
-                          · short teams: {step31Preview.balancedShortTeams.join(', ')}
-                        </span>
-                      )}
-                      {step31Preview.balancedProjectedExtraSlots > 0 ? (
-                        <Tooltip
-                          content={
-                            <div className="space-y-0.5">
-                              <div>{projectedExtraSlotsTooltipLines[0]}</div>
-                              <div>{projectedExtraSlotsTooltipLines[1]}</div>
-                            </div>
-                          }
-                          side="top"
-                          zIndex={120000}
-                          className="whitespace-normal max-w-[260px]"
-                        >
-                          <span className="text-[11px] text-purple-700 dark:text-purple-300 shrink-0">
-                            · projected extra slots: {step31Preview.balancedProjectedExtraSlots}
-                          </span>
-                        </Tooltip>
-                      ) : null}
-                    </>
-                  )
-                ) : null}
-              </div>
-            )}
-            {allocationMethodExpanded ? (
-              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            )}
-          </div>
-        </button>
-
-        {allocationMethodExpanded && (
-        <div className="space-y-1 mt-4" role="radiogroup" aria-label="Allocation method">
-          <div
-            role="radio"
-            aria-checked={allocationMode === 'standard'}
-            tabIndex={0}
-            onClick={() => setAllocationMode('standard')}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                setAllocationMode('standard')
-              }
-            }}
-            className={cn(
-              'relative pl-4 pr-3 py-3 text-left transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border-l-2',
-              allocationMode === 'standard'
-                ? 'border-l-primary bg-slate-50/40'
-                : 'border-l-transparent hover:bg-slate-50/30'
-            )}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold text-foreground">Standard</div>
-                <div className="text-xs text-muted-foreground">Manual-friendly (keeps Step 3.2/3.3)</div>
-
-                <div className="mt-2 text-sm text-foreground">
-                  {step31Preview.status === 'loading' ? (
-                    <span className="text-muted-foreground">Preview: calculating…</span>
-                  ) : step31Preview.status === 'idle' ? (
-                    <span className="text-muted-foreground">Preview: preparing…</span>
-                  ) : step31Preview.status === 'error' ? (
-                    <span className="text-muted-foreground">Preview: unavailable</span>
-                  ) : (
-                    <>
-                      Teams with 0 floating PCA (if run now):{' '}
-                      <span className="font-semibold">{step31Preview.standardZeroTeams.length}</span>
-                    </>
-                  )}
-                </div>
-                {step31Preview.status === 'ready' && step31Preview.standardZeroTeams.length > 0 ? (
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    {step31Preview.standardZeroTeams.slice(0, 4).join(', ')}
-                    {step31Preview.standardZeroTeams.length > 4 ? ` +${step31Preview.standardZeroTeams.length - 4}` : ''}
-                  </div>
-                ) : null}
-
-                <RemountOnOpenDetails
-                  className="mt-2 text-xs text-muted-foreground"
-                  summaryClassName="cursor-pointer select-none font-medium text-foreground/90"
-                  summary="Pros & cons"
-                  showChevron
-                >
-                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_220px] lg:grid-cols-[minmax(0,1fr)_240px] xl:grid-cols-[minmax(0,1fr)_260px] gap-3 items-start">
-                    <ul className="list-disc pl-5 space-y-1">
-                      <li>
-                        <span className="font-medium text-foreground">Pros</span>: continue to Step 3.2/3.3 so you can pick preferred/adjacent slots.
-                      </li>
-                      <li>
-                        <span className="font-medium text-foreground">Cons</span>: under tight manpower, a high-need team can end up with near-zero floating slots.
-                      </li>
-                      <li>
-                        {hasExcessFloatingSlots ? (
-                          <>
-                            <span className="font-medium text-foreground">May happen</span>: if no other workable slot exists, a team&apos;s gym slot might still be assigned.
-                          </>
-                        ) : (
-                          <>
-                            <span className="font-medium text-foreground">Usually enforced</span>: avoid the team&apos;s gym slot.
-                          </>
-                        )}
-                      </li>
-                    </ul>
-                    <div className="hidden sm:block w-[220px] lg:w-[240px] xl:w-[260px]">
-                      <SvgViewer
-                        label="Standard allocation flow"
-                        className="bg-background/60"
-                        thumbnailClassName="p-2"
-                        render={() => <Step3StandardModeExplainerSvg className="w-full h-auto" />}
-                      />
-                    </div>
-                  </div>
-                </RemountOnOpenDetails>
-              </div>
-            </div>
-
-            {/* Strictness settings - flat indented area */}
-            <div
+          <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Allocation engine">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={allocationEngine === 'v2'}
+              onClick={() => setAllocationEngine('v2')}
               className={cn(
-                'transition-all duration-300 ease-in-out overflow-hidden',
-                allocationMode === 'standard' ? 'mt-3 max-h-64 opacity-100' : 'max-h-0 opacity-0'
+                'rounded-md border px-2.5 py-1.5 text-xs transition-colors',
+                allocationEngine === 'v2'
+                  ? 'border-blue-600 bg-blue-600 text-white'
+                  : 'border-border bg-background text-foreground hover:bg-muted'
               )}
             >
-              <div className="pl-3 border-l border-border">
-                <div className="text-[11px] uppercase tracking-wider font-bold text-muted-foreground">
-                  How strict to honor preferred picks?
-                </div>
-                <div className="mt-0.5 text-[11px] text-muted-foreground">
-                  <span className="font-medium text-foreground">Preferred</span> = Step 3.2 picks: preferred PCA, preferred slots, or both.
-                </div>
-                <div className="mt-1 text-[11px] text-muted-foreground">
-                  Applies to Standard mode after Step 3.2/3.3 selections.
-                </div>
-
-                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Preference protection strictness">
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={preferenceProtectionMode === 'exclusive'}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setPreferenceProtectionMode('exclusive')
-                    }}
-                    className={cn(
-                      'rounded border px-3 py-2 text-left text-xs transition-all duration-200',
-                      preferenceProtectionMode === 'exclusive'
-                        ? 'border-primary bg-white'
-                        : 'border-border bg-background hover:bg-slate-50/60'
-                    )}
-                  >
-                    <div className="font-semibold text-foreground">Strict (default) - Exclusive</div>
-                    <div
-                      className={cn(
-                        'text-muted-foreground overflow-hidden transition-all duration-200 text-[11px]',
-                        preferenceProtectionMode === 'exclusive'
-                          ? 'max-h-16 opacity-100 mt-1'
-                          : 'max-h-0 opacity-0'
-                      )}
-                    >
-                      Hold <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-normal border-border bg-muted/40">ALL a/v slots</Badge> from <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-normal border-border bg-muted/40">preferred PCA</Badge> for that team.
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={preferenceProtectionMode === 'share'}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setPreferenceProtectionMode('share')
-                    }}
-                    className={cn(
-                      'rounded border px-3 py-2 text-left text-xs transition-all duration-200',
-                      preferenceProtectionMode === 'share'
-                        ? 'border-primary bg-white'
-                        : 'border-border bg-background hover:bg-slate-50/60'
-                    )}
-                  >
-                    <div className="font-semibold text-foreground">Flexible sharing - Slot-only</div>
-                    <div
-                      className={cn(
-                        'text-muted-foreground overflow-hidden transition-all duration-200 text-[11px]',
-                        preferenceProtectionMode === 'share'
-                          ? 'max-h-16 opacity-100 mt-1'
-                          : 'max-h-0 opacity-0'
-                      )}
-                    >
-                      Keep only <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-normal border-border bg-muted/40">selected slots</Badge>; remaining slots can be shared.
-                    </div>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Divider between options */}
-          <div className="h-px bg-border my-2" />
-
-          <div
-            role="radio"
-            aria-checked={allocationMode === 'balanced'}
-            tabIndex={0}
-            onClick={() => setAllocationMode('balanced')}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                setAllocationMode('balanced')
-              }
-            }}
-            className={cn(
-              'relative pl-4 pr-3 py-3 text-left transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border-l-2',
-              allocationMode === 'balanced'
-                ? 'border-l-primary bg-slate-50/40'
-                : 'border-l-transparent hover:bg-slate-50/30'
-            )}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold text-foreground">Balanced (take turns)</div>
-                <div className="text-xs text-muted-foreground">Fairness-first (skips Step 3.2/3.3)</div>
-
-                <div className="mt-2 text-sm text-foreground">
-                  {step31Preview.status === 'loading' ? (
-                    <span className="text-muted-foreground">Preview: calculating…</span>
-                  ) : step31Preview.status === 'idle' ? (
-                    <span className="text-muted-foreground">Preview: preparing…</span>
-                  ) : step31Preview.status === 'error' ? (
-                    <span className="text-muted-foreground">Preview: unavailable</span>
-                  ) : (
-                    <>
-                      Teams still short after allocation (if run now):{' '}
-                      <span className="font-semibold">{step31Preview.balancedShortTeams.length}</span>
-                    </>
-                  )}
-                </div>
-                {step31Preview.status === 'ready' && step31Preview.balancedShortTeams.length > 0 ? (
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    {step31Preview.balancedShortTeams.slice(0, 4).join(', ')}
-                    {step31Preview.balancedShortTeams.length > 4 ? ` +${step31Preview.balancedShortTeams.length - 4}` : ''}
-                  </div>
-                ) : null}
-
-                <RemountOnOpenDetails
-                  className="mt-2 text-xs text-muted-foreground"
-                  summaryClassName="cursor-pointer select-none font-medium text-foreground/90"
-                  summary="Pros & cons"
-                  showChevron
-                >
-                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_220px] lg:grid-cols-[minmax(0,1fr)_240px] xl:grid-cols-[minmax(0,1fr)_260px] gap-3 items-start">
-                    <ul className="list-disc pl-5 space-y-1">
-                      <li>
-                        <span className="font-medium text-foreground">Pros</span>: gives teams turns (1 slot at a time) to reduce “0-slot” outcomes.
-                      </li>
-                      <li>
-                        <span className="font-medium text-foreground">Cons</span>: skips Step 3.2/3.3 (no preferred/adjacent manual picking).
-                      </li>
-                      <li>
-                        {hasExcessFloatingSlots ? (
-                          <>
-                            <span className="font-medium text-foreground">May happen</span>: if no other workable slot exists, a team&apos;s gym slot might still be assigned.
-                          </>
-                        ) : (
-                          <>
-                            <span className="font-medium text-foreground">Usually enforced</span>: avoid the team&apos;s gym slot.
-                          </>
-                        )}
-                      </li>
-                      <li>
-                        <span className="font-medium text-foreground">May relax</span>: floor matching and “reserved preferred PCA of other teams” if needed.
-                      </li>
-                    </ul>
-                    <div className="hidden sm:block w-[220px] lg:w-[240px] xl:w-[260px]">
-                      <SvgViewer
-                        label="Balanced allocation flow"
-                        className="bg-background/60"
-                        thumbnailClassName="p-2"
-                        render={() => <Step3BalancedModeExplainerSvg className="w-full h-auto" />}
-                      />
-                    </div>
-                  </div>
-                </RemountOnOpenDetails>
-              </div>
-            </div>
+              V2 (default)
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={allocationEngine === 'v1'}
+              onClick={() => setAllocationEngine('v1')}
+              className={cn(
+                'rounded-md border px-2.5 py-1.5 text-xs transition-colors',
+                allocationEngine === 'v1'
+                  ? 'border-blue-600 bg-blue-600 text-white'
+                  : 'border-border bg-background text-foreground hover:bg-muted'
+              )}
+            >
+              V1 (manual legacy)
+            </button>
           </div>
         </div>
+
+        {isV1Engine ? (
+          <>
+            <button
+              type="button"
+              className="w-full flex items-center justify-between gap-2 text-left"
+              onClick={() => setAllocationMethodExpanded((prev) => !prev)}
+              aria-expanded={allocationMethodExpanded}
+            >
+              <div className="text-[11px] uppercase tracking-wider font-bold text-muted-foreground">
+                Allocation method (legacy V1)
+              </div>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-xs text-muted-foreground shrink-0">
+                  V1 · {allocationMode === 'standard' ? 'Standard (keeps 3.2/3.3)' : 'Balanced (take turns)'}
+                </span>
+                {allocationMethodExpanded ? (
+                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                )}
+              </div>
+            </button>
+
+            {allocationMethodExpanded && (
+              <div className="space-y-1 mt-4" role="radiogroup" aria-label="Allocation method">
+                <div
+                  role="radio"
+                  aria-checked={allocationMode === 'standard'}
+                  tabIndex={0}
+                  onClick={() => setAllocationMode('standard')}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setAllocationMode('standard')
+                    }
+                  }}
+                  className={cn(
+                    'relative pl-4 pr-3 py-3 text-left transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border-l-2',
+                    allocationMode === 'standard'
+                      ? 'border-l-primary bg-slate-50/40'
+                      : 'border-l-transparent hover:bg-slate-50/30'
+                  )}
+                >
+                  <div className="text-sm font-semibold text-foreground">Standard</div>
+                  <div className="text-xs text-muted-foreground">Manual-friendly (keeps Step 3.2/3.3)</div>
+                </div>
+                <div className="h-px bg-border my-2" />
+                <div
+                  role="radio"
+                  aria-checked={allocationMode === 'balanced'}
+                  tabIndex={0}
+                  onClick={() => setAllocationMode('balanced')}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setAllocationMode('balanced')
+                    }
+                  }}
+                  className={cn(
+                    'relative pl-4 pr-3 py-3 text-left transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border-l-2',
+                    allocationMode === 'balanced'
+                      ? 'border-l-primary bg-slate-50/40'
+                      : 'border-l-transparent hover:bg-slate-50/30'
+                  )}
+                >
+                  <div className="text-sm font-semibold text-foreground">Balanced (take turns)</div>
+                  <div className="text-xs text-muted-foreground">Fairness-first (legacy V1 behavior)</div>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="rounded-lg border border-border/70 bg-muted/20 p-3 space-y-2">
+            <div className="text-[11px] uppercase tracking-wider font-bold text-muted-foreground">
+              Step 3.4 (V2 ranked)
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Slot-first ladder runs in final review: <span className="font-medium text-foreground">1st choice → Other → Gym (last resort)</span>.
+            </div>
+            {step31Preview.status === 'ready' ? (
+              <div className="text-xs text-muted-foreground">
+                Preview: 0-slot teams (if run now):{' '}
+                <span className="font-medium text-foreground">{step31Preview.standardZeroTeams.length}</span>
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground">
+                Preview: {step31Preview.status === 'loading' ? 'calculating…' : step31Preview.status === 'error' ? 'unavailable' : 'preparing…'}
+              </div>
+            )}
+            <div className="pt-1">
+              <div className="text-[11px] uppercase tracking-wider font-bold text-muted-foreground mb-1">
+                Preferred pick strictness
+              </div>
+              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Preference protection strictness">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={preferenceProtectionMode === 'exclusive'}
+                  onClick={() => setPreferenceProtectionMode('exclusive')}
+                  className={cn(
+                    'rounded border px-2.5 py-1 text-xs transition-colors',
+                    preferenceProtectionMode === 'exclusive'
+                      ? 'border-blue-600 bg-blue-600 text-white'
+                      : 'border-border bg-background text-foreground hover:bg-muted'
+                  )}
+                >
+                  Strict
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={preferenceProtectionMode === 'share'}
+                  onClick={() => setPreferenceProtectionMode('share')}
+                  className={cn(
+                    'rounded border px-2.5 py-1 text-xs transition-colors',
+                    preferenceProtectionMode === 'share'
+                      ? 'border-blue-600 bg-blue-600 text-white'
+                      : 'border-border bg-background text-foreground hover:bg-muted'
+                  )}
+                >
+                  Flexible
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
       
@@ -1897,7 +1917,7 @@ export function FloatingPCAConfigDialog({
           <Button variant="outline" onClick={onCancel} className="max-w-full whitespace-normal">
             Cancel
           </Button>
-          {allocationMode === 'balanced' ? (
+          {isV1Engine && allocationMode === 'balanced' ? (
             <Button
               type="button"
               onClick={handleRunBalancedNow}
@@ -1931,13 +1951,19 @@ export function FloatingPCAConfigDialog({
   const renderStep32 = () => (
     <>
       <DialogDescription>
-        Reserve preferred PCA/slot pairs (optional).
+        Review ranked-slot exceptions (optional).
         <span className="mt-1 block text-xs">
-          Each PCA slot can be reserved once. Skip to keep all slots available for the next step/final run.
+          Focus on teams that need attention; teams in "Auto-continue" can move forward without manual picks.
         </span>
       </DialogDescription>
       
       <div className="py-4">
+        <div className="mb-3 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">Summary:</span>{' '}
+          {step32Summary.teamsChecked} checked, {step32Summary.needsAttentionTeams.length} needs attention,{' '}
+          {step32Summary.autoContinueTeams.length} auto-continue
+          {step32Summary.gymRiskTeams.length > 0 ? `, ${step32Summary.gymRiskTeams.length} gym risk` : ''}
+        </div>
         <div className="mb-2 text-sm font-medium text-muted-foreground">Team Order:</div>
         <div className="flex flex-nowrap gap-1.5 justify-center items-center overflow-x-auto">
           {teamOrder.map((team, index) => (
@@ -2053,7 +2079,19 @@ export function FloatingPCAConfigDialog({
           >
             {isMobileViewport ? 'Skip' : 'Skip Assignments'}
           </Button>
-          <Button onClick={() => handleFinalSave('standard')} disabled={isRunningAlgorithm} className="max-w-full whitespace-normal">
+          <Button
+            onClick={() =>
+              openStep34Review({
+                mode: 'standard',
+                basePendingFTE: currentPendingFTE,
+                baseAllocations: updatedAllocations,
+                step32Assignments,
+                step33Assignments: step33Selections,
+              })
+            }
+            disabled={isRunningAlgorithm}
+            className="max-w-full whitespace-normal"
+          >
             {isMobileViewport ? 'Assign' : 'Complete (Standard)'}
           </Button>
         </div>
@@ -2070,10 +2108,15 @@ export function FloatingPCAConfigDialog({
             <div className="absolute right-3 top-3 hidden sm:flex sm:right-4 sm:top-4 items-center gap-2">
               {(() => {
                 const steps: Array<{ id: MiniStep; label: string }> = [{ id: '3.1', label: '3.1 Adjust' }]
-                const showStep32 = step31Flow.showStep32 || currentMiniStep === '3.2' || currentMiniStep === '3.3'
-                const showStep33 = currentMiniStep === '3.3' ? true : currentMiniStep === '3.2' ? step32Flow.showStep33 : step31Flow.showStep33
-                if (showStep32) steps.push({ id: '3.2', label: '3.2 Preferred' })
+                const showStep32 = step31Flow.showStep32 || ['3.2', '3.3', '3.4'].includes(currentMiniStep)
+                const showStep33 = currentMiniStep === '3.3' || currentMiniStep === '3.4'
+                  ? true
+                  : currentMiniStep === '3.2'
+                    ? step32Flow.showStep33
+                    : step31Flow.showStep33
+                if (showStep32) steps.push({ id: '3.2', label: '3.2 Exceptions' })
                 if (showStep33) steps.push({ id: '3.3', label: '3.3 Adjacent' })
+                if (currentMiniStep === '3.4') steps.push({ id: '3.4', label: '3.4 Review' })
                 return steps.map((s, i) => (
                   <Fragment key={s.id}>
                     {i > 0 ? <span aria-hidden="true">·</span> : null}
@@ -2094,9 +2137,11 @@ export function FloatingPCAConfigDialog({
               {currentMiniStep === '3.1'
                 ? ' · Adjust'
                 : currentMiniStep === '3.2'
-                  ? ' · Preferred'
+                  ? ' · Exceptions'
                   : currentMiniStep === '3.3'
                     ? ' · Adjacent'
+                  : currentMiniStep === '3.4'
+                    ? ' · Review'
                     : currentMiniStep === '3.0'
                       ? ' · Manual pre-assign'
                       : ''}
@@ -2105,10 +2150,15 @@ export function FloatingPCAConfigDialog({
               <div className="mt-3 flex sm:hidden flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
                 {(() => {
                   const steps: Array<{ id: MiniStep; label: string }> = [{ id: '3.1', label: '3.1 Adjust' }]
-                  const show32 = step31Flow.showStep32 || currentMiniStep === '3.2' || currentMiniStep === '3.3'
-                  const show33 = currentMiniStep === '3.3' ? true : currentMiniStep === '3.2' ? step32Flow.showStep33 : step31Flow.showStep33
-                  if (show32) steps.push({ id: '3.2', label: '3.2 Preferred' })
+                  const show32 = step31Flow.showStep32 || ['3.2', '3.3', '3.4'].includes(currentMiniStep)
+                  const show33 = currentMiniStep === '3.3' || currentMiniStep === '3.4'
+                    ? true
+                    : currentMiniStep === '3.2'
+                      ? step32Flow.showStep33
+                      : step31Flow.showStep33
+                  if (show32) steps.push({ id: '3.2', label: '3.2 Exceptions' })
                   if (show33) steps.push({ id: '3.3', label: '3.3 Adjacent' })
+                  if (currentMiniStep === '3.4') steps.push({ id: '3.4', label: '3.4 Review' })
                   return steps.map((s, i) => (
                     <Fragment key={s.id}>
                       {i > 0 ? <span aria-hidden="true">·</span> : null}
@@ -2128,6 +2178,7 @@ export function FloatingPCAConfigDialog({
           {currentMiniStep === '3.1' && renderStep31()}
           {currentMiniStep === '3.2' && renderStep32()}
           {currentMiniStep === '3.3' && renderStep33()}
+          {currentMiniStep === '3.4' && renderStep34()}
         </div>
       </DialogContent>
     </Dialog>

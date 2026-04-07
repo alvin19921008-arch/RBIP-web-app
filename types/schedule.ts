@@ -168,6 +168,13 @@ export interface SlotAssignmentLog {
   amPmBalanceAchieved?: boolean   // Was AM/PM balance achieved?
   gymSlotAvoided?: boolean        // Was gym slot avoided (if applicable)?
   overlapSlot?: boolean           // Was this slot already assigned to another PCA?
+
+  // Ranked-slot Step 3.4 diagnostics (V2)
+  fulfilledSlotRank?: number | null
+  slotSelectionPhase?: 'ranked-unused' | 'unranked-unused' | 'ranked-duplicate' | 'gym-last-resort'
+  pcaSelectionTier?: 'preferred' | 'floor' | 'non-floor'
+  usedContinuity?: boolean
+  duplicateSlot?: boolean
 }
 
 /**
@@ -190,8 +197,15 @@ export interface TeamAllocationLog {
     nonFloorPCAsUsed: number
     amPmBalanced: boolean
     gymSlotUsed: boolean  // true if gym slot was assigned despite avoidance
+    pendingMet?: boolean
+    highestRankedSlotFulfilled?: number | null
+    usedUnrankedSlot?: boolean
+    usedDuplicateFloatingSlot?: boolean
+    gymUsedAsLastResort?: boolean
+    preferredPCAUsed?: boolean
     fulfilledByBuffer?: boolean     // true if team's pending was wholly fulfilled by buffer assignments
     allocationMode?: 'standard' | 'balanced' // Which Step 3.4 mode produced this tracker
+    allocationEngine?: 'v1' | 'v2' // Which allocator engine produced this tracker
   }
 }
 

@@ -3170,9 +3170,16 @@ function getWeekday(date: Date): 'mon' | 'tue' | 'wed' | 'thu' | 'fri' {
 
 // Step 3.4 floating allocation lives in pcaAllocationFloating.ts
 export {
+  allocateFloatingPCA_v1,
   allocateFloatingPCA_v2,
   type FloatingPCAAllocationMode,
   type FloatingPCAAllocationContextV2,
   type FloatingPCAAllocationResultV2,
 } from './pcaAllocationFloating'
+
+export {
+  allocateFloatingPCAByEngine,
+  type FloatingPCAEngineVersion,
+  type FloatingPCAAllocationContextWithEngine,
+} from './pcaAllocationFloatingEngine'
 

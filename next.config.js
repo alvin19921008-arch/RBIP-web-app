@@ -8,6 +8,11 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ['lucide-react'],
   },
+  // Nested git worktrees (e.g. .worktrees/<branch>/) sit under another copy of the
+  // repo; without this, Turbopack picks the parent package-lock.json as root.
+  turbopack: {
+    root: __dirname,
+  },
 }
 
 module.exports = withBundleAnalyzer(nextConfig)

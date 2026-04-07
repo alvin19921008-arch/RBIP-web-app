@@ -645,8 +645,15 @@ export function createEmptyTracker(): AllocationTracker {
         nonFloorPCAsUsed: 0,
         amPmBalanced: false,
         gymSlotUsed: false,
+        pendingMet: false,
+        highestRankedSlotFulfilled: null,
+        usedUnrankedSlot: false,
+        usedDuplicateFloatingSlot: false,
+        gymUsedAsLastResort: false,
+        preferredPCAUsed: false,
         fulfilledByBuffer: false,
         allocationMode: undefined,
+        allocationEngine: undefined,
       },
     }
   }
@@ -697,6 +704,30 @@ export function finalizeTrackerSummary(tracker: AllocationTracker): void {
     const hasAM = slots.some(s => AM_SLOTS.includes(s))
     const hasPM = slots.some(s => PM_SLOTS.includes(s))
     teamLog.summary.amPmBalanced = hasAM && hasPM
+
+    const rankedFulfilled = teamLog.assignments
+      .map((assignment) => assignment.fulfilledSlotRank)
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    teamLog.summary.highestRankedSlotFulfilled =
+      rankedFulfilled.length > 0 ? Math.min(...rankedFulfilled) : null
+
+    teamLog.summary.usedUnrankedSlot = teamLog.assignments.some(
+      (assignment) => assignment.slotSelectionPhase === 'unranked-unused'
+    )
+    teamLog.summary.usedDuplicateFloatingSlot = teamLog.assignments.some(
+      (assignment) =>
+        assignment.slotSelectionPhase === 'ranked-duplicate' ||
+        assignment.duplicateSlot === true
+    )
+    teamLog.summary.gymUsedAsLastResort = teamLog.assignments.some(
+      (assignment) => assignment.slotSelectionPhase === 'gym-last-resort'
+    )
+    teamLog.summary.preferredPCAUsed =
+      teamLog.summary.preferredPCAsUsed > 0 ||
+      teamLog.assignments.some(
+        (assignment) =>
+          assignment.pcaSelectionTier === 'preferred' || assignment.wasPreferredPCA === true
+      )
   }
 }
 
@@ -736,6 +767,13 @@ export interface TeamPreferenceInfo {
   hasPreferredPCA: boolean
   hasPreferredSlot: boolean
   preferredPCAIds: string[]
+  rankedSlots: number[]
+  unrankedNonGymSlots: number[]
+  duplicateRankOrder: number[]
+  /**
+   * Deprecated alias retained for V1 compatibility.
+   * Use `rankedSlots[0] ?? null` for ranked-slot flows.
+   */
   preferredSlot: number | null
   teamFloor: 'upper' | 'lower' | null
   gymSlot: number | null
@@ -755,10 +793,27 @@ export function getTeamPreferenceInfo(
   pcaPreferences: PCAPreference[]
 ): TeamPreferenceInfo {
   const pref = pcaPreferences.find(p => p.team === team)
-  
+
+  const rankedSlots = Array.from(
+    new Set((pref?.preferred_slots ?? []).filter((slot) => ALL_SLOTS.includes(slot)))
+  )
+  const gymSlot = pref?.gym_schedule ?? null
+  const avoidGym = pref?.avoid_gym_schedule ?? false
+
+  const unrankedNonGymSlots = ALL_SLOTS.filter((slot) => {
+    if (rankedSlots.includes(slot)) return false
+    if (avoidGym && gymSlot === slot) return false
+    return true
+  })
+
+  const duplicateRankOrder = [
+    ...rankedSlots.filter((slot) => !(avoidGym && gymSlot === slot)),
+    ...unrankedNonGymSlots,
+  ]
+
   const hasPreferredPCA = (pref?.preferred_pca_ids?.length || 0) > 0
-  const hasPreferredSlot = (pref?.preferred_slots?.length || 0) > 0
-  
+  const hasPreferredSlot = rankedSlots.length > 0
+
   let condition: 'A' | 'B' | 'C' | 'D'
   if (hasPreferredPCA && hasPreferredSlot) {
     condition = 'A'
@@ -775,10 +830,13 @@ export function getTeamPreferenceInfo(
     hasPreferredPCA,
     hasPreferredSlot,
     preferredPCAIds: pref?.preferred_pca_ids || [],
-    preferredSlot: pref?.preferred_slots?.[0] ?? null,
+    rankedSlots,
+    unrankedNonGymSlots,
+    duplicateRankOrder,
+    preferredSlot: rankedSlots[0] ?? null,
     teamFloor: pref?.floor_pca_selection ?? null,
-    gymSlot: pref?.gym_schedule ?? null,
-    avoidGym: pref?.avoid_gym_schedule ?? false,
+    gymSlot,
+    avoidGym,
     condition,
   }
 }

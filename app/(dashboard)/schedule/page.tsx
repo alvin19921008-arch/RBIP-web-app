@@ -10302,7 +10302,7 @@ function SchedulePageContent() {
               const floatingPCAs = floatingPCAsForStep3
               const baseExistingAllocations = existingAllocationsForStep3
 
-              const { allocateFloatingPCA_v2 } = await import('@/lib/algorithms/pcaAllocation')
+              const { allocateFloatingPCAByEngine } = await import('@/lib/algorithms/pcaAllocation')
               const {
                 computeReservations,
                 computeAdjacentSlotReservations,
@@ -10446,7 +10446,8 @@ function SchedulePageContent() {
                 }
               }
 
-              const result = await allocateFloatingPCA_v2({
+              const result = await allocateFloatingPCAByEngine({
+                engine: 'v2',
                 teamOrder,
                 currentPendingFTE: currentPending,
                 existingAllocations: currentAllocations as any,

@@ -30,6 +30,13 @@ export interface TeamReservation {
   slot: number  // The preferred slot (1-4)
   pcaIds: string[]  // Preferred PCA IDs that have this slot available
   pcaNames: Record<string, string>  // Map of pcaId -> name for display
+  rankedChoices?: Array<{ slot: number; rank: number; label: string }>
+  otherSlots?: number[]
+  gymSlot?: number | null
+  attentionReason?: 'preferred-pca-misses-highest-feasible-rank'
+  recommendedPcaId?: string
+  recommendedPcaName?: string
+  preferredPcaMayStillHelpLater?: boolean
 }
 
 // Map of team -> reservation info (null if no reservation)
@@ -66,6 +73,12 @@ export interface ReservationResult {
   teamReservations: TeamReservations
   pcaSlotReservations: PCASlotReservations
   hasAnyReservations: boolean
+  summary: {
+    teamsChecked: number
+    needsAttentionTeams: Team[]
+    autoContinueTeams: Team[]
+    gymRiskTeams: Team[]
+  }
 }
 
 /**
@@ -94,6 +107,12 @@ export function computeReservations(
     FO: null, SMM: null, SFM: null, CPPC: null, MC: null, GMC: null, NSM: null, DRO: null
   }
   const pcaSlotReservations: PCASlotReservations = {}
+  const summary = {
+    teamsChecked: 0,
+    needsAttentionTeams: [] as Team[],
+    autoContinueTeams: [] as Team[],
+    gymRiskTeams: [] as Team[],
+  }
 
   const floatingPcaById = new Map<string, PCAData>()
   floatingPCAs.forEach((pca) => {
@@ -106,20 +125,32 @@ export function computeReservations(
   for (const pref of pcaPreferences) {
     const team = pref.team
     
-    // Skip if no preferred PCA OR no preferred slot (need BOTH)
-    if (!pref.preferred_pca_ids || pref.preferred_pca_ids.length === 0) continue
+    // Skip if no ranked slots
     if (!pref.preferred_slots || pref.preferred_slots.length === 0) continue
     
     // Skip if team's adjusted pendingFTE <= 0
     const pendingFTE = roundToNearestQuarterWithMidpoint(adjustedPendingFTE[team] || 0)
     if (pendingFTE <= 0) continue
-    
-    const preferredSlot = pref.preferred_slots[0]  // Only 1 slot allowed per UI constraint
-    const reservedPCAIds: string[] = []
-    const pcaNames: Record<string, string> = {}
 
-    const eligiblePreferredIds = new Set(
-      findAvailablePCAs({
+    summary.teamsChecked += 1
+
+    const rankedSlots = Array.from(
+      new Set((pref.preferred_slots ?? []).filter((slot): slot is 1 | 2 | 3 | 4 => slot >= 1 && slot <= 4))
+    )
+    const rankedChoices = rankedSlots.map((slot, index) => ({
+      slot,
+      rank: index + 1,
+      label: `${index + 1}${index + 1 === 1 ? 'st' : index + 1 === 2 ? 'nd' : index + 1 === 3 ? 'rd' : 'th'} choice`,
+    }))
+    const gymSlot = pref.gym_schedule ?? null
+    const avoidGym = pref.avoid_gym_schedule ?? false
+    const otherSlots = [1, 2, 3, 4].filter((slot) => !rankedSlots.includes(slot) && (!avoidGym || slot !== gymSlot))
+
+    let selectedSlot: number | null = null
+    let feasibleCandidatesForSelectedSlot: PCAData[] = []
+    for (const rankedSlot of rankedSlots) {
+      if (avoidGym && gymSlot === rankedSlot) continue
+      const candidates = findAvailablePCAs({
         pcaPool: floatingPCAs,
         team,
         teamFloor: null,
@@ -127,50 +158,100 @@ export function computeReservations(
         excludePreferredOfOtherTeams: false,
         preferredPCAIdsOfOtherTeams: new Map(),
         pendingFTEPerTeam: adjustedPendingFTE,
-        requiredSlot: preferredSlot,
+        requiredSlot: rankedSlot,
         existingAllocations,
         gymSlot: null,
         avoidGym: false,
         staffOverrides,
-      }).map((pca) => pca.id)
-    )
+      })
+      if (candidates.length > 0) {
+        selectedSlot = rankedSlot
+        feasibleCandidatesForSelectedSlot = candidates
+        break
+      }
+    }
 
-    // Preserve the original preferred-PCA order from the team preference record.
-    for (const pcaId of pref.preferred_pca_ids) {
-      if (!eligiblePreferredIds.has(pcaId)) continue
+    if (selectedSlot == null) {
+      summary.autoContinueTeams.push(team)
+      continue
+    }
 
-      const pca = floatingPcaById.get(pcaId)
-      if (!pca) continue
+    const preferredIds = pref.preferred_pca_ids ?? []
+    const preferredCandidateIds = feasibleCandidatesForSelectedSlot
+      .map((candidate) => candidate.id)
+      .filter((id) => preferredIds.includes(id))
 
-      reservedPCAIds.push(pcaId)
-      pcaNames[pcaId] = pca.name
+    const pcaNames: Record<string, string> = {}
+    feasibleCandidatesForSelectedSlot.forEach((candidate) => {
+      pcaNames[candidate.id] = candidate.name
+    })
 
+    const needsAttention = preferredCandidateIds.length === 0 && preferredIds.length > 0
+    const recommendedCandidate = (() => {
+      if (!needsAttention) return null
+      const sameFloor = feasibleCandidatesForSelectedSlot.find((candidate) => {
+        if (!pref.floor_pca_selection) return false
+        const floors = (candidate as any).floor_pca as Array<'upper' | 'lower'> | undefined
+        return Array.isArray(floors) && floors.includes(pref.floor_pca_selection)
+      })
+      return sameFloor ?? feasibleCandidatesForSelectedSlot[0] ?? null
+    })()
+
+    const preferredPcaMayStillHelpLater = preferredIds.some((preferredId) => {
+      const pca = floatingPcaById.get(preferredId)
+      if (!pca || !Array.isArray(pca.availableSlots)) return false
+      return rankedSlots.some((slot) => slot !== selectedSlot && pca.availableSlots!.includes(slot))
+    })
+
+    const reservationPcaIds =
+      preferredCandidateIds.length > 0
+        ? preferredCandidateIds
+        : recommendedCandidate
+          ? [recommendedCandidate.id]
+          : feasibleCandidatesForSelectedSlot.map((candidate) => candidate.id)
+
+    if (needsAttention) {
+      summary.needsAttentionTeams.push(team)
+    } else {
+      summary.autoContinueTeams.push(team)
+    }
+
+    if (avoidGym && gymSlot != null && selectedSlot === gymSlot) {
+      summary.gymRiskTeams.push(team)
+    }
+
+    teamReservations[team] = {
+      slot: selectedSlot,
+      pcaIds: reservationPcaIds,
+      pcaNames,
+      rankedChoices,
+      otherSlots,
+      gymSlot,
+      attentionReason: needsAttention ? 'preferred-pca-misses-highest-feasible-rank' : undefined,
+      recommendedPcaId: recommendedCandidate?.id,
+      recommendedPcaName: recommendedCandidate?.name,
+      preferredPcaMayStillHelpLater: needsAttention ? preferredPcaMayStillHelpLater : undefined,
+    }
+
+    for (const pcaId of reservationPcaIds) {
       if (!pcaSlotReservations[pcaId]) {
         pcaSlotReservations[pcaId] = {}
       }
-      if (!pcaSlotReservations[pcaId][preferredSlot]) {
-        pcaSlotReservations[pcaId][preferredSlot] = []
+      if (!pcaSlotReservations[pcaId][selectedSlot]) {
+        pcaSlotReservations[pcaId][selectedSlot] = []
       }
-      pcaSlotReservations[pcaId][preferredSlot].push(team)
-    }
-    
-    // If any PCAs are available for this slot, create reservation
-    if (reservedPCAIds.length > 0) {
-      teamReservations[team] = {
-        slot: preferredSlot,
-        pcaIds: reservedPCAIds,
-        pcaNames,
-      }
+      pcaSlotReservations[pcaId][selectedSlot].push(team)
     }
   }
   
   // Check if there are any reservations
-  const hasAnyReservations = TEAMS.some(team => teamReservations[team] !== null)
+  const hasAnyReservations = summary.needsAttentionTeams.length > 0
   
   return {
     teamReservations,
     pcaSlotReservations,
     hasAnyReservations,
+    summary,
   }
 }
 

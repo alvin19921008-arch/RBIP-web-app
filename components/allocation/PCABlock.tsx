@@ -1206,6 +1206,14 @@ export const PCABlock = memo(function PCABlock({
                   default: return ''
                 }
               }
+
+              const getOrdinalSuffix = (value: number): string => {
+                if (value % 100 >= 11 && value % 100 <= 13) return 'th'
+                if (value % 10 === 1) return 'st'
+                if (value % 10 === 2) return 'nd'
+                if (value % 10 === 3) return 'rd'
+                return 'th'
+              }
               
               // Determine tooltip position (left for DRO and rightmost teams to prevent truncation)
               const showOnLeft = team === 'DRO' || ['NSM', 'GMC', 'MC'].includes(team)
@@ -1224,9 +1232,18 @@ export const PCABlock = memo(function PCABlock({
                           Allocation Tracking - {team}
                         </div>
 
-                        {hasAllocationAssignments && allocationLog?.summary?.allocationMode && (
-                          <div className="text-[10px] text-gray-300">
-                            Mode: {allocationLog.summary.allocationMode === 'balanced' ? 'Balanced (take turns)' : 'Standard'}
+                        {hasAllocationAssignments && (
+                          <div className="space-y-0.5 text-[10px] text-gray-300">
+                            {allocationLog?.summary?.allocationEngine ? (
+                              <div>
+                                Engine: {allocationLog.summary.allocationEngine === 'v2' ? 'V2 (default)' : 'V1 (legacy)'}
+                              </div>
+                            ) : null}
+                            {allocationLog?.summary?.allocationMode ? (
+                              <div>
+                                Mode: {allocationLog.summary.allocationMode === 'balanced' ? 'Balanced (take turns)' : 'Standard'}
+                              </div>
+                            ) : null}
                           </div>
                         )}
                         
@@ -1322,8 +1339,18 @@ export const PCABlock = memo(function PCABlock({
                               {slotAssignments.map(({ slot, assignment }) => (
                                 <div key={slot} className="text-[10px] pl-4">
                                   slot {slot} (
-                                  {assignment.assignedIn === 'step34' 
-                                    ? `C${assignment.cycle}${assignment.condition ? `-${getConditionDescription(assignment.condition)}` : ''}` 
+                                  {assignment.assignedIn === 'step34'
+                                    ? (
+                                        assignment.slotSelectionPhase === 'ranked-unused'
+                                          ? 'ranked choice'
+                                          : assignment.slotSelectionPhase === 'unranked-unused'
+                                            ? 'other slot'
+                                            : assignment.slotSelectionPhase === 'ranked-duplicate'
+                                              ? 'ranked duplicate'
+                                              : assignment.slotSelectionPhase === 'gym-last-resort'
+                                                ? 'gym last resort'
+                                                : `C${assignment.cycle}${assignment.condition ? `-${getConditionDescription(assignment.condition)}` : ''}`
+                                      )
                                     : assignment.assignedIn === 'step32' 
                                     ? 'From step 3.2'
                                     : assignment.assignedIn === 'step33'
@@ -1331,6 +1358,17 @@ export const PCABlock = memo(function PCABlock({
                                     : assignment.assignedIn === 'step30'
                                     ? 'From step 3.0'
                                     : assignment.assignedIn}
+                                  {typeof assignment.fulfilledSlotRank === 'number'
+                                    ? `, ${assignment.fulfilledSlotRank}${getOrdinalSuffix(assignment.fulfilledSlotRank)} choice`
+                                    : ''}
+                                  {assignment.pcaSelectionTier === 'preferred'
+                                    ? ', preferred PCA'
+                                    : assignment.pcaSelectionTier === 'floor'
+                                      ? ', floor PCA'
+                                      : assignment.pcaSelectionTier === 'non-floor'
+                                        ? ', non-floor PCA'
+                                        : ''}
+                                  {assignment.usedContinuity ? ', continuity' : ''}
                                   {assignment.wasPreferredPCA && assignment.wasPreferredSlot ? ', ★PCA, ★Slot' :
                                    assignment.wasPreferredSlot ? ', ★Slot' :
                                    assignment.wasPreferredPCA ? ', ★PCA' : ''}
@@ -1348,10 +1386,20 @@ export const PCABlock = memo(function PCABlock({
                         
                         {/* Constraint Status */}
                         {hasAllocationAssignments && (
-                          <div className="text-[10px] border-t border-gray-700 pt-1 text-gray-400">
-                            AM/PM: {allocationLog.summary.amPmBalanced ? '✓ Balanced' : '○ Not balanced'}
-                            {' | '}
-                            Gym: {allocationLog.summary.gymSlotUsed ? '⚠ Used' : '✓ Avoided'}
+                          <div className="space-y-0.5 text-[10px] border-t border-gray-700 pt-1 text-gray-300">
+                            <div>
+                              {allocationLog.summary.pendingMet ? 'Pending met' : 'Pending not fully met'}
+                            </div>
+                            <div>
+                              Highest choice fulfilled:{' '}
+                              {typeof allocationLog.summary.highestRankedSlotFulfilled === 'number'
+                                ? `${allocationLog.summary.highestRankedSlotFulfilled}${getOrdinalSuffix(allocationLog.summary.highestRankedSlotFulfilled)}`
+                                : 'none'}
+                            </div>
+                            <div>{allocationLog.summary.usedUnrankedSlot ? 'Used other slot' : 'No other slot used'}</div>
+                            <div>{allocationLog.summary.usedDuplicateFloatingSlot ? 'Used duplicate floating slot' : 'No duplicate floating slot'}</div>
+                            <div>{allocationLog.summary.gymUsedAsLastResort ? 'Gym used as last resort' : 'Gym avoided'}</div>
+                            <div>{allocationLog.summary.preferredPCAUsed ? 'Preferred PCA used' : 'Preferred PCA not used'}</div>
                           </div>
                         )}
                       </div>

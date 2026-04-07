@@ -298,7 +298,7 @@ export function PCAPreferencePanel() {
                           }).join(', ') || 'None' : 'None'}</span>
                       </p>
                       <p>
-                        Preferred slot: <span className="text-foreground">{mainTeamPref?.preferred_slots && mainTeamPref.preferred_slots.length > 0 ? getSlotTime(mainTeamPref.preferred_slots[0]) : 'None'}</span>
+                        Ranked slots: <span className="text-foreground">{mainTeamPref?.preferred_slots && mainTeamPref.preferred_slots.length > 0 ? mainTeamPref.preferred_slots.map((slot, index) => `${index + 1}. ${getSlotTime(slot)}`).join(' → ') : 'None'}</span>
                       </p>
                     </div>
 
@@ -384,7 +384,7 @@ export function PCAPreferencePanel() {
                         })()}
                       {pref.preferred_slots && pref.preferred_slots.length > 0 && (
                         <p className="text-sm text-black">
-                          Preferred slot: {getSlotTime(pref.preferred_slots[0])}
+                          Ranked slots: {pref.preferred_slots.map((slot, index) => `${index + 1}. ${getSlotTime(slot)}`).join(' → ')}
                         </p>
                       )}
                       {pref.gym_schedule && (
@@ -567,10 +567,6 @@ function PCAPreferenceForm({
       toast.warning('Maximum 2 preferred PCAs allowed')
       return
     }
-    if (preferredSlots.length > 1) {
-      toast.warning('Maximum 1 preferred slot allowed')
-      return
-    }
     onSave({
       team: preference.team,
       preferred_pca_ids: preferredPCA,
@@ -621,12 +617,20 @@ function PCAPreferenceForm({
     })
   }
 
-  const handleSlotChange = (slot: number) => {
-    if (preferredSlots.includes(slot)) {
-      setPreferredSlots([])
-    } else {
-      setPreferredSlots([slot])
-    }
+  const toggleRankedSlot = (slot: number) => {
+    setPreferredSlots((prev) =>
+      prev.includes(slot) ? prev.filter((value) => value !== slot) : [...prev, slot]
+    )
+  }
+
+  const moveRankedSlot = (slot: number, direction: 'up' | 'down') => {
+    const index = preferredSlots.indexOf(slot)
+    if (index < 0) return
+    const next = [...preferredSlots]
+    const swapIndex = direction === 'up' ? index - 1 : index + 1
+    if (swapIndex < 0 || swapIndex >= next.length) return
+    ;[next[index], next[swapIndex]] = [next[swapIndex], next[index]]
+    setPreferredSlots(next)
   }
 
   const eligiblePCAs = staff.filter(s => {
@@ -840,24 +844,60 @@ function PCAPreferenceForm({
 
       <section>
         <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-          Preferred Slot (1 only)
+          Ranked Slots
         </h4>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {[1, 2, 3, 4].map((slot) => (
             <button
               key={slot}
               type="button"
-              onClick={() => handleSlotChange(slot)}
+              onClick={() => toggleRankedSlot(slot)}
               className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
                 preferredSlots.includes(slot)
                   ? 'bg-blue-600 text-white'
                   : 'bg-muted text-muted-foreground hover:bg-muted/80'
               }`}
             >
-              {getSlotLabel(slot)}
+              {preferredSlots.includes(slot)
+                ? `${preferredSlots.indexOf(slot) + 1}. ${getSlotLabel(slot)}`
+                : getSlotLabel(slot)}
             </button>
           ))}
         </div>
+        {preferredSlots.length > 0 ? (
+          <div className="mt-3 rounded-md bg-muted/30 p-3 space-y-2">
+            {preferredSlots.map((slot, idx) => (
+              <div key={slot} className="flex items-center justify-between rounded border bg-background px-2 py-1.5">
+                <span className="text-sm">
+                  {idx + 1}. {getSlotTime(slot)}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => moveRankedSlot(slot, 'up')}
+                    className="rounded p-1 hover:bg-muted disabled:opacity-40"
+                    disabled={idx === 0}
+                    aria-label={`Move ${getSlotTime(slot)} up`}
+                  >
+                    <MoveUp className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveRankedSlot(slot, 'down')}
+                    className="rounded p-1 hover:bg-muted disabled:opacity-40"
+                    disabled={idx === preferredSlots.length - 1}
+                    aria-label={`Move ${getSlotTime(slot)} down`}
+                  >
+                    <MoveDown className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <p className="text-xs text-muted-foreground mt-2">
+          Click to add/remove slots, then use arrows to set priority: 1st choice → 2nd choice.
+        </p>
       </section>
 
       <hr className="border-border" />
