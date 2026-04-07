@@ -5,6 +5,7 @@ const withBundleAnalyzer = require('@next/bundle-analyzer')({
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Avoid `turbopack.root` here: with a parent lockfile it can hang compiling /schedule. Use `npm run dev:webpack` if needed.
   experimental: {
     optimizePackageImports: ['lucide-react'],
   },

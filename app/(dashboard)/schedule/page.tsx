@@ -80,6 +80,12 @@ import {
   describeStep3BootstrapDelta,
   type Step3BootstrapSummary,
 } from '@/lib/features/schedule/step3Bootstrap'
+import {
+  closeStep3DialogSurface,
+  openStep3EntrySurface,
+  openStep3FlowSurface,
+  type Step3DialogSurface,
+} from '@/lib/features/schedule/step3DialogFlow'
 import { buildPageStep3RuntimeState } from '@/lib/features/schedule/pageStep3Runtime'
 import { willNeedStep21Substitution } from '@/lib/features/schedule/step2SubstitutionProjection'
 import { mergeStep2Point2StaffOverrides } from '@/lib/features/schedule/step2Point2StateMerge'
@@ -127,8 +133,16 @@ const Step1LeaveSetupDialog = dynamic(
   () => import('@/components/allocation/Step1LeaveSetupDialog').then((m) => m.Step1LeaveSetupDialog),
   { ssr: false }
 )
-const FloatingPCAConfigDialog = dynamic(
-  () => import('@/components/allocation/FloatingPCAConfigDialog').then(m => m.FloatingPCAConfigDialog),
+const FloatingPCAEntryDialog = dynamic(
+  () => import('@/components/allocation/FloatingPCAEntryDialog').then(m => m.FloatingPCAEntryDialog),
+  { ssr: false }
+)
+const FloatingPCAConfigDialogV1 = dynamic(
+  () => import('@/components/allocation/FloatingPCAConfigDialogV1').then(m => m.FloatingPCAConfigDialogV1),
+  { ssr: false }
+)
+const FloatingPCAConfigDialogV2 = dynamic(
+  () => import('@/components/allocation/FloatingPCAConfigDialogV2').then(m => m.FloatingPCAConfigDialogV2),
   { ssr: false }
 )
 const NonFloatingSubstitutionDialog = dynamic(
@@ -178,7 +192,9 @@ const PCADedicatedScheduleTable = dynamic(
 
 const prefetchScheduleCopyWizard = () => import('@/components/allocation/ScheduleCopyWizard')
 const prefetchStaffEditDialog = () => import('@/components/allocation/StaffEditDialog')
-const prefetchFloatingPCAConfigDialog = () => import('@/components/allocation/FloatingPCAConfigDialog')
+const prefetchFloatingPCAEntryDialog = () => import('@/components/allocation/FloatingPCAEntryDialog')
+const prefetchFloatingPCAConfigDialogV1 = () => import('@/components/allocation/FloatingPCAConfigDialogV1')
+const prefetchFloatingPCAConfigDialogV2 = () => import('@/components/allocation/FloatingPCAConfigDialogV2')
 const prefetchSpecialProgramOverrideDialog = () => import('@/components/allocation/SpecialProgramOverrideDialog')
 const prefetchSptFinalEditDialog = () => import('@/components/allocation/SptFinalEditDialog')
 const prefetchSharedTherapistEditDialog = () => import('@/components/allocation/SharedTherapistEditDialog')
@@ -1509,7 +1525,7 @@ function SchedulePageContent() {
     setSavedSetupPopoverOpen(false)
     setEditingStaffId(null)
     setEditingBedTeam(null)
-    setFloatingPCAConfigOpen(false)
+    closeAllStep3Dialogs()
     setShowSpecialProgramOverrideDialog(false)
     setShowSptFinalEditDialog(false)
     setShowSharedTherapistEditDialog(false)
@@ -1545,8 +1561,15 @@ function SchedulePageContent() {
     })
   }, [isViewingMode])
 
-  // Step 3.1: Floating PCA Configuration Dialog state
-  const [floatingPCAConfigOpen, setFloatingPCAConfigOpen] = useState(false)
+  // Step 3 entry: launcher + isolated flow surfaces
+  const [step3DialogSurface, setStep3DialogSurface] = useState<Step3DialogSurface>(closeStep3DialogSurface())
+  const floatingPCAEntryOpen = step3DialogSurface === 'entry'
+  const floatingPCAConfigV1Open = step3DialogSurface === 'v1-legacy'
+  const floatingPCAConfigV2Open = step3DialogSurface === 'v2-ranked'
+  const closeAllStep3Dialogs = () => setStep3DialogSurface(closeStep3DialogSurface())
+  const openStep3EntryDialog = () => setStep3DialogSurface(openStep3EntrySurface())
+  const openStep3V1Dialog = () => setStep3DialogSurface(openStep3FlowSurface('v1-legacy'))
+  const openStep3V2Dialog = () => setStep3DialogSurface(openStep3FlowSurface('v2-ranked'))
   
   // Step 2.0: Special Program Override Dialog state
   const [showSpecialProgramOverrideDialog, setShowSpecialProgramOverrideDialog] = useState(false)
@@ -4687,8 +4710,9 @@ function SchedulePageContent() {
         clearStep3AllocationsPreserveStep2()
 
         // Step 3.1: Open the configuration dialog instead of running algo directly
-        prefetchFloatingPCAConfigDialog().catch(() => {})
-        setFloatingPCAConfigOpen(true)
+        prefetchFloatingPCAEntryDialog().catch(() => {})
+        prefetchFloatingPCAConfigDialogV1().catch(() => {})
+        openStep3EntryDialog()
         break
       case 'bed-relieving':
         calculateStep4_BedRelieving()
@@ -4811,7 +4835,7 @@ function SchedulePageContent() {
 
   const clearStep3StateOnly = () => {
     // Step 3 wizard state + tracking
-    setFloatingPCAConfigOpen(false)
+    closeAllStep3Dialogs()
     setAdjustedPendingFTE(null)
     setTeamAllocationOrder(null)
     setAllocationTracker(null)
@@ -4840,7 +4864,7 @@ function SchedulePageContent() {
     setSubstitutionWizardOpen(false)
     setSubstitutionWizardData(null)
     substitutionWizardResolverRef.current = null
-    setFloatingPCAConfigOpen(false)
+    closeAllStep3Dialogs()
 
     // Clear page-local Step 3 UI state
     setAdjustedPendingFTE(null)
@@ -4863,7 +4887,7 @@ function SchedulePageContent() {
     setSubstitutionWizardOpen(false)
     setSubstitutionWizardData(null)
     substitutionWizardResolverRef.current = null
-    setFloatingPCAConfigOpen(false)
+    closeAllStep3Dialogs()
 
     // Clear page-local Step 3 UI state
     setAdjustedPendingFTE(null)
@@ -4958,7 +4982,7 @@ function SchedulePageContent() {
     setTeamAllocationOrder(teamOrder)
     
     // Close the dialog
-    setFloatingPCAConfigOpen(false)
+    closeAllStep3Dialogs()
     
     // Store the allocation tracker
     setAllocationTracker(result.tracker)
@@ -5075,7 +5099,7 @@ function SchedulePageContent() {
    * Handle cancel from FloatingPCAConfigDialog
    */
   const handleFloatingPCAConfigCancel = () => {
-    setFloatingPCAConfigOpen(false)
+    closeAllStep3Dialogs()
   }
 
   /**
@@ -10516,7 +10540,7 @@ function SchedulePageContent() {
               }
               goToStep('floating-pca' as any)
               setDevLeaveSimOpen(false)
-              setFloatingPCAConfigOpen(true)
+              openStep3EntryDialog()
             }}
             runStep4={async () => {
               await runStep4BedRelieving({ toast: showActionToast })
@@ -12594,21 +12618,50 @@ function SchedulePageContent() {
             ) : null
           }
           floatingPcaDialog={
-            floatingPCAConfigOpen ? (
-              <FloatingPCAConfigDialog
-                open={floatingPCAConfigOpen}
-                teams={visibleTeams}
-                weekday={getWeekday(selectedDate)}
-                initialPendingFTE={pendingPCAFTEForStep3Dialog}
-                pcaPreferences={pcaPreferences}
-                floatingPCAs={floatingPCAsForStep3}
-                existingAllocations={existingAllocationsForStep3Dialog}
-                specialPrograms={specialPrograms}
-                bufferStaff={bufferStaff}
-                staffOverrides={staffOverrides}
-                onSave={handleFloatingPCAConfigSave}
-                onCancel={handleFloatingPCAConfigCancel}
-              />
+            floatingPCAEntryOpen || floatingPCAConfigV1Open || floatingPCAConfigV2Open ? (
+              <>
+                <FloatingPCAEntryDialog
+                  open={floatingPCAEntryOpen}
+                  v2Enabled
+                  onSelectV1={() => {
+                    prefetchFloatingPCAConfigDialogV1().catch(() => {})
+                    openStep3V1Dialog()
+                  }}
+                  onSelectV2={() => {
+                    prefetchFloatingPCAConfigDialogV2().catch(() => {})
+                    openStep3V2Dialog()
+                  }}
+                  onCancel={handleFloatingPCAConfigCancel}
+                />
+                <FloatingPCAConfigDialogV1
+                  open={floatingPCAConfigV1Open}
+                  teams={visibleTeams}
+                  weekday={getWeekday(selectedDate)}
+                  initialPendingFTE={pendingPCAFTEForStep3Dialog}
+                  pcaPreferences={pcaPreferences}
+                  floatingPCAs={floatingPCAsForStep3}
+                  existingAllocations={existingAllocationsForStep3Dialog}
+                  specialPrograms={specialPrograms}
+                  bufferStaff={bufferStaff}
+                  staffOverrides={staffOverrides}
+                  onSave={handleFloatingPCAConfigSave}
+                  onCancel={handleFloatingPCAConfigCancel}
+                />
+                <FloatingPCAConfigDialogV2
+                  open={floatingPCAConfigV2Open}
+                  teams={visibleTeams}
+                  weekday={getWeekday(selectedDate)}
+                  initialPendingFTE={pendingPCAFTEForStep3Dialog}
+                  pcaPreferences={pcaPreferences}
+                  floatingPCAs={floatingPCAsForStep3}
+                  existingAllocations={existingAllocationsForStep3Dialog}
+                  specialPrograms={specialPrograms}
+                  bufferStaff={bufferStaff}
+                  staffOverrides={staffOverrides}
+                  onSave={handleFloatingPCAConfigSave}
+                  onCancel={handleFloatingPCAConfigCancel}
+                />
+              </>
             ) : null
           }
           specialProgramOverrideDialog={

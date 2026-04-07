@@ -23,8 +23,10 @@ import {
   getAvailableSlotsForTeam,
   assignSlotIfValid,
   isFloorPCAForTeam,
+  getTeamSlotsFromAllocation,
   type TeamPreferenceInfo,
 } from '@/lib/utils/floatingPCAHelpers'
+import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 
 export type FloatingPCAAllocationMode = 'standard' | 'balanced'
 
@@ -1598,6 +1600,439 @@ async function processCycle3Cleanup(
       // After assigning, check if PCA is exhausted
       if (allocation.fte_remaining <= 0) break
     }
+  }
+}
+
+type RankedSlotSelectionPhase =
+  | 'ranked-unused'
+  | 'unranked-unused'
+  | 'ranked-duplicate'
+  | 'gym-last-resort'
+
+type RankedPcaTier = 'preferred' | 'floor' | 'non-floor'
+
+type RankedTarget = {
+  phase: RankedSlotSelectionPhase
+  slot: 1 | 2 | 3 | 4
+  futureSlots: Array<1 | 2 | 3 | 4>
+}
+
+function toValidRankedSlot(value: number): 1 | 2 | 3 | 4 | null {
+  if (value === 1 || value === 2 || value === 3 || value === 4) return value
+  return null
+}
+
+function buildRankedSlotCount(team: Team, allocations: PCAAllocation[]): Map<1 | 2 | 3 | 4, number> {
+  const counts = new Map<1 | 2 | 3 | 4, number>([
+    [1, 0],
+    [2, 0],
+    [3, 0],
+    [4, 0],
+  ])
+  const existingSlots = getTeamExistingSlots(team, allocations)
+  for (const value of existingSlots) {
+    const slot = toValidRankedSlot(value)
+    if (!slot) continue
+    counts.set(slot, (counts.get(slot) ?? 0) + 1)
+  }
+  return counts
+}
+
+function getRankTierForPca(pca: PCAData, pref: TeamPreferenceInfo): RankedPcaTier {
+  if (pref.preferredPCAIds.includes(pca.id)) return 'preferred'
+  if (isFloorPCAForTeam(pca as PCAData & { floor_pca?: ('upper' | 'lower')[] | null }, pref.teamFloor)) {
+    return 'floor'
+  }
+  return 'non-floor'
+}
+
+function getRankTierWeight(tier: RankedPcaTier): number {
+  if (tier === 'preferred') return 0
+  if (tier === 'floor') return 1
+  return 2
+}
+
+function findRankedTargets(args: {
+  team: Team
+  pref: TeamPreferenceInfo
+  allocations: PCAAllocation[]
+}): RankedTarget[] {
+  const { team, pref, allocations } = args
+  const slotCounts = buildRankedSlotCount(team, allocations)
+  const isUsed = (slot: number): boolean => {
+    const validSlot = toValidRankedSlot(slot)
+    if (!validSlot) return false
+    return (slotCounts.get(validSlot) ?? 0) > 0
+  }
+  const isGym = (slot: number): boolean => pref.gymSlot != null && slot === pref.gymSlot
+
+  const rankedUnused = pref.rankedSlots
+    .filter((slot) => !isUsed(slot))
+    .filter((slot) => !(pref.avoidGym && isGym(slot)))
+    .map((slot) => toValidRankedSlot(slot))
+    .filter((slot): slot is 1 | 2 | 3 | 4 => slot != null)
+
+  const unrankedUnused = pref.unrankedNonGymSlots
+    .filter((slot) => !isUsed(slot))
+    .map((slot) => toValidRankedSlot(slot))
+    .filter((slot): slot is 1 | 2 | 3 | 4 => slot != null)
+
+  const rankedDuplicates = pref.duplicateRankOrder
+    .filter((slot) => isUsed(slot))
+    .map((slot) => toValidRankedSlot(slot))
+    .filter((slot): slot is 1 | 2 | 3 | 4 => slot != null)
+
+  const gymLastResort =
+    pref.avoidGym && pref.gymSlot != null && toValidRankedSlot(pref.gymSlot) != null
+      ? [toValidRankedSlot(pref.gymSlot)!]
+      : []
+
+  const phases: Array<{ phase: RankedSlotSelectionPhase; slots: Array<1 | 2 | 3 | 4> }> = [
+    { phase: 'ranked-unused', slots: rankedUnused },
+    { phase: 'unranked-unused', slots: unrankedUnused },
+    { phase: 'ranked-duplicate', slots: rankedDuplicates },
+    { phase: 'gym-last-resort', slots: gymLastResort },
+  ]
+
+  const flattened = phases.flatMap(({ slots }) => slots)
+  let offset = 0
+  const targets: RankedTarget[] = []
+  for (const bucket of phases) {
+    for (let i = 0; i < bucket.slots.length; i += 1) {
+      const slot = bucket.slots[i]
+      const futureSlots = flattened.slice(offset + i + 1)
+      targets.push({
+        phase: bucket.phase,
+        slot,
+        futureSlots,
+      })
+    }
+    offset += bucket.slots.length
+  }
+  return targets
+}
+
+function pickRankedCandidateForTarget(args: {
+  team: Team
+  target: RankedTarget
+  pref: TeamPreferenceInfo
+  allocations: PCAAllocation[]
+  pendingFTE: Record<Team, number>
+  pcaPool: PCAData[]
+}): {
+  pca: PCAData
+  tier: RankedPcaTier
+  usedContinuity: boolean
+} | null {
+  const { team, target, pref, allocations, pendingFTE, pcaPool } = args
+  const avoidGym = target.phase === 'gym-last-resort' ? false : pref.avoidGym
+  const gymSlot = pref.gymSlot ?? null
+
+  const candidates = findAvailablePCAs({
+    pcaPool,
+    team,
+    teamFloor: pref.teamFloor,
+    floorMatch: 'any',
+    excludePreferredOfOtherTeams: false,
+    preferredPCAIdsOfOtherTeams: new Map<string, Team[]>(),
+    pendingFTEPerTeam: pendingFTE,
+    requiredSlot: target.slot,
+    existingAllocations: allocations,
+    gymSlot,
+    avoidGym,
+  })
+
+  if (candidates.length === 0) return null
+
+  const scored = candidates.map((pca) => {
+    const allocation = getOrCreateAllocation(
+      pca.id,
+      pca.name,
+      pca.fte_pca,
+      pca.leave_type,
+      team,
+      allocations
+    )
+    const teamSlotsForPca = getTeamSlotsFromAllocation(allocation, team)
+    const usedContinuity = teamSlotsForPca.length > 0
+
+    const pcaAvailableSlots = Array.isArray(pca.availableSlots)
+      ? pca.availableSlots.filter((slot): slot is 1 | 2 | 3 | 4 => slot === 1 || slot === 2 || slot === 3 || slot === 4)
+      : null
+    const baseAvailable = getAvailableSlotsForTeam(allocation, gymSlot, avoidGym)
+    const usableAvailable = pcaAvailableSlots
+      ? baseAvailable.filter((slot) => pcaAvailableSlots.includes(slot as 1 | 2 | 3 | 4))
+      : baseAvailable
+    const canContinue = target.futureSlots.some((slot) => usableAvailable.includes(slot))
+    const tier = getRankTierForPca(pca, pref)
+    const remainingFte = allocation.fte_remaining ?? pca.fte_pca
+
+    return {
+      pca,
+      tier,
+      usedContinuity,
+      canContinue,
+      remainingFte,
+    }
+  })
+
+  scored.sort((a, b) => {
+    if (a.canContinue !== b.canContinue) return a.canContinue ? -1 : 1
+    if (a.usedContinuity !== b.usedContinuity) return a.usedContinuity ? -1 : 1
+    const tierDiff = getRankTierWeight(a.tier) - getRankTierWeight(b.tier)
+    if (tierDiff !== 0) return tierDiff
+    if (b.remainingFte !== a.remainingFte) return b.remainingFte - a.remainingFte
+    return String(a.pca.id).localeCompare(String(b.pca.id))
+  })
+
+  const winner = scored[0]
+  if (!winner) return null
+
+  return {
+    pca: winner.pca,
+    tier: winner.tier,
+    usedContinuity: winner.usedContinuity,
+  }
+}
+
+export async function allocateFloatingPCA_rankedV2(
+  context: FloatingPCAAllocationContextV2
+): Promise<FloatingPCAAllocationResultV2> {
+  const {
+    teamOrder,
+    currentPendingFTE: initialPendingFTE,
+    existingAllocations,
+    pcaPool,
+    pcaPreferences,
+    extraCoverageMode = 'none',
+    preferenceSelectionMode = 'legacy',
+    selectedPreferenceAssignments = [],
+  } = context
+
+  const allocations = existingAllocations.map((allocation) => ({ ...allocation }))
+  const pendingFTE = { ...initialPendingFTE }
+  const tracker = createEmptyTracker()
+  const extraCoverageByStaffId: Record<string, Array<1 | 2 | 3 | 4>> = {}
+
+  for (const team of TEAMS) {
+    tracker[team].summary.allocationMode = 'standard'
+  }
+
+  const allocationOrderMap = new Map<Team, number>()
+  teamOrder.forEach((team, index) => {
+    allocationOrderMap.set(team, index + 1)
+  })
+
+  const recordAssignmentWithOrder = (team: Team, log: Parameters<typeof recordAssignment>[2]) => {
+    recordAssignment(tracker, team, {
+      ...log,
+      allocationOrder: allocationOrderMap.get(team),
+    })
+  }
+
+  const useSelectionDrivenPreferences = preferenceSelectionMode === 'selected_only'
+  const selectedStep32Assignments = selectedPreferenceAssignments.filter(
+    (assignment) => assignment.source !== 'step33'
+  )
+  const effectivePreferences = useSelectionDrivenPreferences
+    ? buildSelectionDrivenPreferences(
+        pcaPreferences,
+        selectedStep32Assignments.map((assignment) => ({
+          team: assignment.team,
+          pcaId: assignment.pcaId,
+        }))
+      )
+    : pcaPreferences
+
+  const teamPrefs: Record<Team, TeamPreferenceInfo> = {} as Record<Team, TeamPreferenceInfo>
+  for (const team of TEAMS) {
+    teamPrefs[team] = getTeamPreferenceInfo(team, effectivePreferences)
+  }
+
+  for (const team of teamOrder) {
+    while (roundToNearestQuarterWithMidpoint(pendingFTE[team] ?? 0) >= 0.25) {
+      const pref = teamPrefs[team]
+      const targets = findRankedTargets({
+        team,
+        pref,
+        allocations,
+      })
+      if (targets.length === 0) break
+
+      let winner:
+        | {
+            pca: PCAData
+            tier: RankedPcaTier
+            usedContinuity: boolean
+          }
+        | null = null
+      let target: RankedTarget | null = null
+
+      for (const candidateTarget of targets) {
+        const candidateWinner = pickRankedCandidateForTarget({
+          team,
+          target: candidateTarget,
+          pref,
+          allocations,
+          pendingFTE,
+          pcaPool,
+        })
+        if (candidateWinner) {
+          winner = candidateWinner
+          target = candidateTarget
+          break
+        }
+      }
+
+      if (!winner || !target) break
+
+      const allocation = getOrCreateAllocation(
+        winner.pca.id,
+        winner.pca.name,
+        winner.pca.fte_pca,
+        winner.pca.leave_type,
+        team,
+        allocations
+      )
+
+      const avoidGym = target.phase === 'gym-last-resort' ? false : pref.avoidGym
+      const result = assignOneSlotAndUpdatePending({
+        pca: winner.pca,
+        allocation,
+        team,
+        teamExistingSlots: getTeamExistingSlots(team, allocations),
+        gymSlot: pref.gymSlot ?? null,
+        avoidGym,
+        preferredSlot: target.slot,
+        pendingFTEByTeam: pendingFTE,
+        context: 'Cleanup pass → one slot at a time',
+      })
+
+      if (result.slotsAssigned.length === 0) break
+
+      const assignedSlot = result.slotsAssigned[0] as 1 | 2 | 3 | 4
+      const rankIndex = pref.rankedSlots.indexOf(assignedSlot)
+
+      recordAssignmentWithOrder(team, {
+        slot: assignedSlot,
+        pcaId: winner.pca.id,
+        pcaName: winner.pca.name,
+        assignedIn: 'step34',
+        cycle: 1,
+        wasPreferredSlot: assignedSlot === (pref.preferredSlot ?? -1),
+        wasPreferredPCA: winner.tier === 'preferred',
+        wasFloorPCA: winner.tier === 'floor' ? true : winner.tier === 'non-floor' ? false : undefined,
+        amPmBalanceAchieved: result.amPmBalanced,
+        gymSlotAvoided: pref.gymSlot != null ? assignedSlot !== pref.gymSlot : undefined,
+        fulfilledSlotRank: rankIndex >= 0 ? rankIndex + 1 : null,
+        slotSelectionPhase: target.phase,
+        pcaSelectionTier: winner.tier,
+        usedContinuity: winner.usedContinuity,
+        duplicateSlot: target.phase === 'ranked-duplicate',
+      })
+    }
+  }
+
+  const applyExtraCoverageRoundRobin = () => {
+    if (extraCoverageMode !== 'round-robin-team-order') return
+
+    const allSatisfied = TEAMS.every(
+      (team) => roundToNearestQuarterWithMidpoint(pendingFTE[team] ?? 0) < 0.25
+    )
+    if (!allSatisfied) return
+
+    const zeroPending = TEAMS.reduce((record, team) => {
+      record[team] = 0
+      return record
+    }, {} as Record<Team, number>)
+
+    let madeProgress = true
+    while (madeProgress) {
+      madeProgress = false
+      for (const team of teamOrder) {
+        const pref = teamPrefs[team]
+        const candidates = findAvailablePCAs({
+          pcaPool,
+          team,
+          teamFloor: pref.teamFloor,
+          floorMatch: 'any',
+          excludePreferredOfOtherTeams: false,
+          preferredPCAIdsOfOtherTeams: new Map<string, Team[]>(),
+          pendingFTEPerTeam: zeroPending,
+          existingAllocations: allocations,
+          gymSlot: pref.gymSlot ?? null,
+          avoidGym: pref.avoidGym ?? false,
+        })
+
+        if (candidates.length === 0) continue
+
+        const winner = [...candidates].sort((a, b) => {
+          const aAllocation = allocations.find((allocation) => allocation.staff_id === a.id)
+          const bAllocation = allocations.find((allocation) => allocation.staff_id === b.id)
+          const aFte = aAllocation?.fte_remaining ?? a.fte_pca
+          const bFte = bAllocation?.fte_remaining ?? b.fte_pca
+          if (bFte !== aFte) return bFte - aFte
+          return String(a.id).localeCompare(String(b.id))
+        })[0]
+
+        const allocation = getOrCreateAllocation(
+          winner.id,
+          winner.name,
+          winner.fte_pca,
+          winner.leave_type,
+          team,
+          allocations
+        )
+
+        const extraResult = assignSlotsToTeam({
+          pca: winner,
+          allocation,
+          team,
+          pendingFTE: 0.25,
+          teamExistingSlots: getTeamExistingSlots(team, allocations),
+          gymSlot: pref.gymSlot ?? null,
+          avoidGym: pref.avoidGym ?? false,
+        })
+
+        if (extraResult.slotsAssigned.length === 0) continue
+
+        madeProgress = true
+        for (const slot of extraResult.slotsAssigned) {
+          if (slot === 1 || slot === 2 || slot === 3 || slot === 4) {
+            const existing = extraCoverageByStaffId[winner.id] ?? []
+            existing.push(slot)
+            extraCoverageByStaffId[winner.id] = existing
+          }
+          recordAssignmentWithOrder(team, {
+            slot,
+            pcaId: winner.id,
+            pcaName: winner.name,
+            assignedIn: 'step34',
+            cycle: 3,
+            assignmentTag: 'extra',
+            wasFloorPCA: isFloorPCAForTeam(winner as PCAData & { floor_pca?: ('upper' | 'lower')[] | null }, pref.teamFloor),
+          })
+        }
+      }
+    }
+  }
+
+  applyExtraCoverageRoundRobin()
+  applyInvalidSlotPairingForDisplay(allocations, pcaPool)
+
+  for (const team of TEAMS) {
+    tracker[team].summary.pendingMet =
+      roundToNearestQuarterWithMidpoint(pendingFTE[team] ?? 0) < 0.25
+  }
+  finalizeTrackerSummary(tracker)
+
+  return {
+    allocations,
+    pendingPCAFTEPerTeam: pendingFTE,
+    tracker,
+    extraCoverageByStaffId:
+      Object.keys(extraCoverageByStaffId).length > 0 ? extraCoverageByStaffId : undefined,
+    errors: undefined,
   }
 }
 
