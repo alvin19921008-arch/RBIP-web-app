@@ -31,13 +31,76 @@ Main problems:
 - `app/(dashboard)/schedule/page.tsx` contains duplicated Step 3 orchestration
 - save/runtime behavior risks cross-contaminating V1 and V2 assumptions
 
-## Approved Source Of Truth
-Use these files as the authority for the recovery:
-- `docs/superpowers/plans/2026-04-06-floating-pca-ranked-slot-step3.md`
-- `docs/superpowers/specs/2026-04-06-floating-pca-ranked-slot-allocation-design.md`
-- `docs/superpowers/specs/2026-04-06-floating-pca-step3-ui-design.md`
-- `.superpowers/brainstorm/96515-1775525468/content/step3-family-preview-v2.html`
-- `docs/superpowers/plans/2026-04-07-step3-v1-v2-recovery.md`
+## Approved source documents (read order and purpose)
+
+Use this order so policy, UI intent, implementation tasks, and recovery architecture stay separate. **Do not** paste all files into context at once; open the one that matches the current task.
+
+### 1. Recovery architecture (start here for “what to build first”)
+
+**File:** `docs/superpowers/plans/2026-04-07-step3-v1-v2-recovery.md`
+
+**What it is:** High-level recovery plan: freeze V1 from `main`, put V1/V2 choice before Step 3.1, split wizards, rebuild V2 Step 3.4 to match preview.
+
+**When to read:** Before writing code on a clean branch from `main`.
+
+**Not for:** Allocator math details or pixel-perfect UI copy (use specs below).
+
+---
+
+### 2. Original implementation task list (after recovery direction is clear)
+
+**File:** `docs/superpowers/plans/2026-04-06-floating-pca-ranked-slot-step3.md`
+
+**What it is:** Step-by-step implementation plan (Tasks 1–6): which files to touch, regression test names, guardrails, file map.
+
+**When to read:** When executing ranked-slot features on the recovery branch; use it as a checklist, but **reconcile** with the recovery plan if they conflict (recovery wins on V1/V2 split and launcher placement).
+
+**Not for:** Replacing the recovery plan’s “clean main + split flows” sequence.
+
+---
+
+### 3. Allocator and tracker policy (behavioral source of truth)
+
+**File:** `docs/superpowers/specs/2026-04-06-floating-pca-ranked-slot-allocation-design.md`
+
+**What it is:** Slot-first ladder, pending-first rules, duplicate/gym last resort, tracker/diagnostic fields, scenario table.
+
+**When to read:** When changing `allocateFloatingPCA_v2`, helpers, or `types/schedule.ts` tracker fields.
+
+**Not for:** React layout or dashboard form labels.
+
+---
+
+### 4. Step 3 and dashboard UI intent (copy and flow)
+
+**File:** `docs/superpowers/specs/2026-04-06-floating-pca-step3-ui-design.md`
+
+**What it is:** Approved UI direction: Step 3.2 exception-first flow, Step 3.4 plain-language review, ranked-slot dashboard entry, tone and structure.
+
+**When to read:** When building or refactoring `FloatingPCAConfigDialog*`, `TeamReservationCard`, `PCAPreferencePanel`, Step 3.4 review components.
+
+**Not for:** Implementing HTML from the brainstorm file literally in production.
+
+---
+
+### 5. Visual reference only (layout mock, not production)
+
+**File:** `.superpowers/brainstorm/96515-1775525468/content/step3-family-preview-v2.html`
+
+**What it is:** Static HTML mock for spacing, strip layout, connected detail block, and “why this happened” panel—**reference only**.
+
+**When to read:** When matching React/Tailwind to the agreed look; implement with existing RBIP components, not by copying raw HTML into the app.
+
+**Not for:** Treating as executable spec or as the only wording authority (use the UI spec for copy).
+
+---
+
+### For AI agents
+
+- **One task, one primary doc:** e.g. allocator change → allocation design spec; Step 3.4 UI → UI spec + HTML mock glance.
+- **This handoff** = situation + branch safety + read order.
+- **Recovery md** = execution phases for the split V1/V2 rebuild.
+- **2026-04-06 plan** = granular file/test checklist once you are on a clean recovery branch.
 
 ## Recommended Next Workflow
 Do this on the next laptop:

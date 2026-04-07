@@ -4,11 +4,39 @@ Status: approved recovery direction
 
 Date: 2026-04-07
 
-Depends on:
-- `docs/superpowers/plans/2026-04-06-floating-pca-ranked-slot-step3.md`
-- `docs/superpowers/specs/2026-04-06-floating-pca-ranked-slot-allocation-design.md`
-- `docs/superpowers/specs/2026-04-06-floating-pca-step3-ui-design.md`
-- `.superpowers/brainstorm/96515-1775525468/content/step3-family-preview-v2.html`
+## Related documents (what each is for)
+
+Read in this order when planning or implementing; do not load every file into context for every step.
+
+### `docs/superpowers/plans/2026-04-07-step3-v2-messy-snapshot-handoff.md`
+
+**Purpose:** Explains why `backup/step3-ranked-slot-v2-snapshot` exists, what went wrong, and safe git workflow for the next machine.
+
+**Use when:** Onboarding or handing off; deciding whether you are on reference snapshot vs clean recovery branch.
+
+### `docs/superpowers/plans/2026-04-06-floating-pca-ranked-slot-step3.md`
+
+**Purpose:** Original ranked-slot implementation plan (Tasks 1–6), file map, regression and smoke test names.
+
+**Use when:** Executing feature work on a **clean** branch after recovery boundaries are in place; reconcile with this recovery doc if steps conflict.
+
+### `docs/superpowers/specs/2026-04-06-floating-pca-ranked-slot-allocation-design.md`
+
+**Purpose:** Allocator policy: ranked slot ladder, pending-first, continuity, duplicate/gym rules, tracker semantics.
+
+**Use when:** Editing `pcaAllocationFloating.ts`, `floatingPCAHelpers.ts`, or allocation-related types/tests.
+
+### `docs/superpowers/specs/2026-04-06-floating-pca-step3-ui-design.md`
+
+**Purpose:** Product UI and copy for Step 3 family and dashboard ranked slots (exception step, final review, plain language).
+
+**Use when:** Editing Step 3 dialogs, cards, or `PCAPreferencePanel`; wording and flow authority over the HTML mock.
+
+### `.superpowers/brainstorm/96515-1775525468/content/step3-family-preview-v2.html`
+
+**Purpose:** Visual/layout reference only (static mock in browser).
+
+**Use when:** Matching layout of strips, detail block, and explanation panel; reimplement in React with project components.
 
 ## Goal
 Restore a clean, untouched V1 Step 3 from `main`, then rebuild V2 as a separate ranked-slot workflow that matches the approved design and does not contaminate V1 state, navigation, or save behavior.
