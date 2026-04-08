@@ -1,7 +1,16 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, ArrowRight, GripVertical, AlertTriangle, CheckCircle2, Info } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  AlertCircle,
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  GripVertical,
+  Info,
+  XCircle,
+} from 'lucide-react'
 import {
   DndContext,
   PointerSensor,
@@ -47,6 +56,10 @@ import type { FloatingPCAConfigDialogV1Props } from './FloatingPCAConfigDialogV1
 type FloatingPCAConfigDialogV2Props = FloatingPCAConfigDialogV1Props
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
+
+/** Badges on the light-blue Step 3.4 detail panel: high contrast vs panel tint. */
+const STEP34_DETAIL_BADGE_CLASS =
+  'border-blue-400/90 bg-white font-semibold text-blue-950 shadow-sm hover:bg-white dark:border-blue-500 dark:bg-blue-950/70 dark:text-blue-50 dark:hover:bg-blue-950/80'
 
 type Step32Decision = 'system' | 'keep-preferred' | 'skip'
 type Step33Decision = 'use' | 'skip'
@@ -186,6 +199,19 @@ function formatTeamList(teams: Team[]): string {
   return `${teams.slice(0, 2).join(', ')} +${teams.length - 2}`
 }
 
+function getStep34PendingVisualStatus(
+  team: Team,
+  result: FloatingPCAAllocationResultV2,
+  adjustedNeed: number
+): 'met' | 'partial' | 'unmet' {
+  const need = roundToNearestQuarterWithMidpoint(adjustedNeed)
+  if (need < 0.25) return 'met'
+  const remaining = roundToNearestQuarterWithMidpoint(result.pendingPCAFTEPerTeam[team] ?? 0)
+  if (remaining < 0.25) return 'met'
+  if (remaining < need) return 'partial'
+  return 'unmet'
+}
+
 export function FloatingPCAConfigDialogV2({
   open,
   teams = TEAMS,
@@ -196,6 +222,8 @@ export function FloatingPCAConfigDialogV2({
   existingAllocations,
   specialPrograms,
   staffOverrides = {},
+  step31AssignedByTeam,
+  step31TeamTargets,
   onSave,
   onCancel,
 }: FloatingPCAConfigDialogV2Props) {
@@ -216,6 +244,14 @@ export function FloatingPCAConfigDialogV2({
   const [step34PreviewResult, setStep34PreviewResult] = useState<FloatingPCAAllocationResultV2 | null>(null)
   const [step34SelectedTeam, setStep34SelectedTeam] = useState<Team | null>(null)
   const [step34Loading, setStep34Loading] = useState(false)
+  const step34DetailPanelRef = useRef<HTMLDivElement | null>(null)
+  const step34TeamButtonRefs = useRef<Map<Team, HTMLButtonElement>>(new Map())
+  const [step34DetailBeakCenterX, setStep34DetailBeakCenterX] = useState<number | null>(null)
+  const v2TeamLaneMeasureRef = useRef<HTMLDivElement | null>(null)
+  const v2Step34SlotsRowMeasureRef = useRef<HTMLDivElement | null>(null)
+  const v2DialogHeaderTitleRef = useRef<HTMLDivElement | null>(null)
+  const v2DialogHeaderStepperRef = useRef<HTMLDivElement | null>(null)
+  const [dialogFitWidthPx, setDialogFitWidthPx] = useState(0)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
 
@@ -524,6 +560,31 @@ export function FloatingPCAConfigDialogV2({
     void runStep34Preview()
   }, [currentStep, open, runStep34Preview])
 
+  useLayoutEffect(() => {
+    if (currentStep !== '3.4' || step34Loading || !selectedStep34Team || !step34PreviewResult) {
+      setStep34DetailBeakCenterX(null)
+      return
+    }
+
+    const updateBeak = () => {
+      const detail = step34DetailPanelRef.current
+      const btn = step34TeamButtonRefs.current.get(selectedStep34Team)
+      if (!detail || !btn) {
+        setStep34DetailBeakCenterX(null)
+        return
+      }
+      const detailRect = detail.getBoundingClientRect()
+      const btnRect = btn.getBoundingClientRect()
+      const center = btnRect.left + btnRect.width / 2 - detailRect.left
+      const clamped = Math.min(Math.max(center, 24), Math.max(detailRect.width - 24, 24))
+      setStep34DetailBeakCenterX(clamped)
+    }
+
+    updateBeak()
+    window.addEventListener('resize', updateBeak)
+    return () => window.removeEventListener('resize', updateBeak)
+  }, [currentStep, step34Loading, selectedStep34Team, step34PreviewResult, teamOrder])
+
   const selectedStep34Detail = useMemo(() => {
     if (!step34PreviewResult || !selectedStep34Team) return null
     return buildStep34TeamDetailViewModel({
@@ -532,6 +593,61 @@ export function FloatingPCAConfigDialogV2({
       pcaPreferences,
     })
   }, [pcaPreferences, selectedStep34Team, step34PreviewResult])
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setDialogFitWidthPx(0)
+      return
+    }
+
+    const measure = () => {
+      const laneEl = v2TeamLaneMeasureRef.current
+      const titleEl = v2DialogHeaderTitleRef.current
+      const stepperEl = v2DialogHeaderStepperRef.current
+      // `inline-flex` lane: offsetWidth = intrinsic card row width (not stretched to viewport).
+      const laneW = laneEl?.offsetWidth ?? 0
+      const headerW =
+        (titleEl?.offsetWidth ?? 0) + (stepperEl?.offsetWidth ?? 0) + 24
+      let detailW = 0
+      if (currentStep === '3.4') {
+        const slotsRow = v2Step34SlotsRowMeasureRef.current
+        const slotsW = slotsRow?.offsetWidth ?? 0
+        if (slotsW > 0) {
+          detailW = slotsW + 40
+        }
+      }
+      const innerContent = Math.max(laneW, headerW, detailW, 280)
+      const horizontalChrome = 56
+      const padded = innerContent + horizontalChrome
+      const vw = typeof window !== 'undefined' ? window.innerWidth : 1280
+      const capped = Math.min(vw - 24, padded)
+      setDialogFitWidthPx(Math.max(340, Math.round(capped)))
+    }
+
+    measure()
+    window.addEventListener('resize', measure)
+    const raf1 = requestAnimationFrame(() => {
+      measure()
+      requestAnimationFrame(measure)
+    })
+    return () => {
+      window.removeEventListener('resize', measure)
+      cancelAnimationFrame(raf1)
+    }
+  }, [
+    open,
+    currentStep,
+    teamOrder,
+    adjustedFTE,
+    step31Preview,
+    reservationPreview,
+    adjacentPreview,
+    flaggedTeams,
+    step34Loading,
+    step34PreviewResult,
+    selectedStep34Detail,
+    visibleSteps,
+  ])
 
   const renderStep31 = () => (
     <div className="space-y-4">
@@ -549,8 +665,21 @@ export function FloatingPCAConfigDialogV2({
         </p>
       </div>
 
-      <div className="rounded-xl border bg-background p-4">
-        <div className="text-sm font-semibold text-foreground">Scarcity preview</div>
+      <div
+        className={cn(
+          'rounded-xl border bg-background p-4',
+          step31Preview.status === 'ready' &&
+            (step31Preview.standardZeroTeams.length > 0 || step31Preview.balancedShortTeams.length > 0) &&
+            'border-amber-200/90 bg-amber-50/25 dark:border-amber-900/50 dark:bg-amber-950/25'
+        )}
+      >
+        <div className="flex items-center gap-2">
+          {step31Preview.status === 'ready' &&
+          (step31Preview.standardZeroTeams.length > 0 || step31Preview.balancedShortTeams.length > 0) ? (
+            <AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-600" aria-hidden />
+          ) : null}
+          <div className="text-sm font-semibold text-foreground">Scarcity preview</div>
+        </div>
         <div className="mt-2 space-y-1 text-sm text-muted-foreground">
           {step31Preview.status === 'loading' ? (
             <div>Calculating Step 3 preview…</div>
@@ -565,42 +694,43 @@ export function FloatingPCAConfigDialogV2({
             <div>Preview is preparing…</div>
           )}
         </div>
-        {step31Preview.status === 'ready' &&
-        (step31Preview.standardZeroTeams.length > 0 || step31Preview.balancedShortTeams.length > 0) ? (
-          <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-sm text-amber-900">
-            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" />
-            <div>
-              <div className="font-medium">Watch teams with either no slot coverage or remaining shortfall.</div>
-              <div className="mt-1 text-xs text-amber-800">
-                Ranked V2 keeps this as a preview only, not as a user-facing engine switch.
-              </div>
-            </div>
-          </div>
-        ) : null}
       </div>
 
-      <div className="py-2">
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={teamOrder} strategy={horizontalListSortingStrategy}>
-            <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto py-2">
-              {teamOrder.map((team, index) => (
-                <div key={team} className="flex items-center gap-1.5">
-                  <TeamPendingCard
-                    team={team}
-                    pendingFTE={adjustedFTE[team] || 0}
-                    originalPendingFTE={originalRoundedFTE[team] || 0}
-                    maxValue={originalRoundedFTE[team] || 0}
-                    tieGroupIndex={teamTieInfo[team]?.groupIndex ?? null}
-                    isTied={teamTieInfo[team]?.isTied ?? false}
-                    onValueChange={handleValueChange}
-                    orderPosition={index + 1}
-                  />
-                  {index < teamOrder.length - 1 ? <ArrowRight className="h-4 w-4 text-muted-foreground" /> : null}
-                </div>
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
+      <div className="flex justify-center py-2">
+        <div className="max-w-full overflow-x-auto">
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={teamOrder} strategy={horizontalListSortingStrategy}>
+              <div
+                ref={v2TeamLaneMeasureRef}
+                className="inline-flex flex-nowrap items-center gap-1.5 py-1"
+              >
+                {teamOrder.map((team, index) => (
+                  <div key={team} className="flex items-center gap-1.5">
+                    <TeamPendingCard
+                      team={team}
+                      pendingFTE={adjustedFTE[team] || 0}
+                      originalPendingFTE={originalRoundedFTE[team] || 0}
+                      maxValue={originalRoundedFTE[team] || 0}
+                      tieGroupIndex={teamTieInfo[team]?.groupIndex ?? null}
+                      isTied={teamTieInfo[team]?.isTied ?? false}
+                      onValueChange={handleValueChange}
+                      orderPosition={index + 1}
+                      avgPcaPerTeam={
+                        step31TeamTargets ? step31TeamTargets[team] ?? null : null
+                      }
+                      assignedFromSlotsFTE={
+                        step31AssignedByTeam ? step31AssignedByTeam[team] ?? 0 : null
+                      }
+                    />
+                    {index < teamOrder.length - 1 ? (
+                      <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+        </div>
       </div>
     </div>
   )
@@ -616,7 +746,12 @@ export function FloatingPCAConfigDialogV2({
         </span>
       </div>
 
-      <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
+      <div className="flex justify-center pb-1">
+        <div className="max-w-full overflow-x-auto">
+          <div
+            ref={v2TeamLaneMeasureRef}
+            className="inline-flex flex-nowrap items-center gap-2"
+          >
         {teamOrder.map((team, index) => {
           const isFlagged = flaggedTeams.includes(team)
           const isSelected = selectedStep32Team === team
@@ -654,6 +789,8 @@ export function FloatingPCAConfigDialogV2({
             </button>
           )
         })}
+          </div>
+        </div>
       </div>
 
       {selectedReservation && selectedStep32Team ? (
@@ -731,7 +868,12 @@ export function FloatingPCAConfigDialogV2({
         <span>Gray means no adjacent help. Green means there is adjacent help to review.</span>
       </div>
 
-      <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
+      <div className="flex justify-center pb-1">
+        <div className="max-w-full overflow-x-auto">
+          <div
+            ref={v2TeamLaneMeasureRef}
+            className="inline-flex flex-nowrap items-center gap-2"
+          >
         {teamOrder.map((team, index) => {
           const hasAdjacent = adjacentTeams.includes(team)
           const isSelected = selectedStep33Team === team
@@ -764,6 +906,8 @@ export function FloatingPCAConfigDialogV2({
             </button>
           )
         })}
+          </div>
+        </div>
       </div>
 
       {selectedStep33Team ? (
@@ -855,28 +999,63 @@ export function FloatingPCAConfigDialogV2({
         Keep the selected team in focus to understand how Slots 1 to 4 were handled.
       </div>
 
-      <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
+      <div className="flex justify-center pb-1">
+        <div className="max-w-full overflow-x-auto">
+          <div
+            ref={v2TeamLaneMeasureRef}
+            className="inline-flex flex-nowrap items-center gap-1.5"
+          >
         {teamOrder.map((team, index) => {
           const isSelected = selectedStep34Team === team
-          const pendingMet = step34PreviewResult?.tracker[team]?.summary.pendingMet
+          const adjustedNeed = adjustedFTE[team] || 0
+          const pendingVisual =
+            step34PreviewResult != null
+              ? getStep34PendingVisualStatus(team, step34PreviewResult, adjustedNeed)
+              : 'met'
+          const hadNoPendingNeed = roundToNearestQuarterWithMidpoint(adjustedNeed) < 0.25
+          const StatusIcon =
+            pendingVisual === 'met' ? CheckCircle2 : pendingVisual === 'partial' ? AlertCircle : XCircle
+          const statusIconClass =
+            pendingVisual === 'met'
+              ? 'text-emerald-600'
+              : pendingVisual === 'partial'
+                ? 'text-amber-600'
+                : 'text-red-600'
+          const statusLabel =
+            pendingVisual === 'met' && hadNoPendingNeed
+              ? 'No pending'
+              : pendingVisual === 'met'
+                ? 'Met'
+                : pendingVisual === 'partial'
+                  ? 'Partially met'
+                  : 'Not met'
           return (
             <button
               key={team}
               type="button"
+              ref={(node) => {
+                if (node) step34TeamButtonRefs.current.set(team, node)
+                else step34TeamButtonRefs.current.delete(team)
+              }}
               onClick={() => setStep34SelectedTeam(team)}
               className={cn(
-                'min-w-[118px] rounded-xl border px-3 py-2 text-left text-sm transition-colors',
+                'min-w-[84px] max-w-[104px] shrink-0 rounded-lg border px-2 py-1.5 text-left text-xs transition-colors',
                 isSelected
-                  ? 'border-primary bg-primary/10 text-foreground ring-2 ring-primary/40'
+                  ? 'border-sky-600 bg-sky-50 text-foreground shadow-sm ring-2 ring-sky-400/45 dark:border-sky-500 dark:bg-sky-950/45 dark:text-sky-50 dark:ring-sky-500/35'
                   : 'border-border bg-background text-muted-foreground hover:bg-muted/20'
               )}
             >
-              <div className="text-[11px] text-muted-foreground">{getOrderLabel(index + 1)}</div>
-              <div className="font-semibold">{team}</div>
-              <div className="mt-1 text-[11px] leading-4">{pendingMet ? 'Pending met' : 'Pending not fully met'}</div>
+              <div className="text-[10px] text-muted-foreground">{getOrderLabel(index + 1)}</div>
+              <div className="font-semibold leading-tight">{team}</div>
+              <div className="mt-1 flex items-center gap-1 text-[10px] font-medium leading-tight">
+                <StatusIcon className={cn('h-3.5 w-3.5 flex-shrink-0', statusIconClass)} aria-hidden />
+                <span>{statusLabel}</span>
+              </div>
             </button>
           )
         })}
+          </div>
+        </div>
       </div>
 
       {step34Loading ? (
@@ -884,7 +1063,10 @@ export function FloatingPCAConfigDialogV2({
           Building the ranked-slot review...
         </div>
       ) : selectedStep34Detail ? (
-        <div className="relative rounded-2xl border border-blue-200 bg-blue-50/40 p-4 shadow-sm dark:bg-blue-950/10">
+        <div
+          ref={step34DetailPanelRef}
+          className="relative rounded-2xl border border-blue-200 bg-blue-50/40 p-4 shadow-sm dark:bg-blue-950/10"
+        >
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
               <div className="text-sm font-semibold text-blue-900 dark:text-blue-100">{`${selectedStep34Detail.team} details`}</div>
@@ -892,48 +1074,62 @@ export function FloatingPCAConfigDialogV2({
                 These results belong to the selected team above.
               </div>
             </div>
-            <Badge variant="secondary">{selectedStep34Detail.summaryPills[0]?.label}</Badge>
+            <Badge variant="outline" className={STEP34_DETAIL_BADGE_CLASS}>
+              {selectedStep34Detail.summaryPills[0]?.label}
+            </Badge>
           </div>
 
           <div className="mb-3 flex flex-wrap items-center gap-2">
             {selectedStep34Detail.summaryPills.slice(1).map((pill) => (
               <Badge
                 key={`${selectedStep34Detail.team}-${pill.label}`}
-                variant={pill.tone === 'muted' ? 'outline' : 'secondary'}
+                variant="outline"
+                className={STEP34_DETAIL_BADGE_CLASS}
               >
                 {pill.label}
               </Badge>
             ))}
           </div>
 
-          <div className="flex flex-nowrap items-stretch gap-2 overflow-x-auto pb-1">
+          <div className="overflow-x-auto pb-1">
+            <div
+              ref={v2Step34SlotsRowMeasureRef}
+              className="inline-flex flex-nowrap items-stretch gap-2"
+            >
             {selectedStep34Detail.slotCards.map((card, index) => (
               <div key={`${selectedStep34Detail.team}-${card.slot}`} className="flex items-center gap-2">
-                <div className="min-w-[126px] rounded-xl border bg-background p-3">
-                  <div className="text-xs font-semibold text-muted-foreground">{card.label}</div>
-                  <div className="mt-2 inline-flex rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                <div className="min-w-[108px] max-w-[140px] shrink-0 rounded-xl border bg-background p-2.5">
+                  <div className="text-[11px] font-semibold text-muted-foreground">{card.label}</div>
+                  <div className="mt-1.5 inline-flex rounded-md bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
                     {card.timeRange}
                   </div>
-                  <div className="mt-2 text-sm font-semibold text-foreground">{card.resultLabel}</div>
-                  <div className="mt-1 text-xs text-muted-foreground">{card.detailLabel}</div>
+                  <div className="mt-1.5 text-xs font-semibold leading-snug text-foreground">{card.resultLabel}</div>
+                  <div className="mt-1 text-[11px] leading-snug text-muted-foreground">{card.detailLabel}</div>
                 </div>
                 {index < selectedStep34Detail.slotCards.length - 1 ? (
                   <ArrowRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
                 ) : null}
               </div>
             ))}
+            </div>
           </div>
 
           <div className="mt-4 rounded-xl border bg-background p-4">
             <div className="text-sm font-semibold text-foreground">Why this happened</div>
-            <ul className="mt-2 space-y-2 pl-5 text-sm text-muted-foreground">
+            <ul className="mt-2 list-outside list-disc space-y-2 pl-5 text-sm text-muted-foreground marker:text-muted-foreground">
               {selectedStep34Detail.reasons.map((reason) => (
-                <li key={reason}>{reason}</li>
+                <li key={reason} className="pl-1">
+                  {reason}
+                </li>
               ))}
             </ul>
           </div>
 
-          <div className="pointer-events-none absolute -top-1 left-8 h-4 w-4 rotate-45 border-l border-t border-blue-200 bg-blue-50/80 dark:bg-blue-950/20" />
+          <div
+            className="pointer-events-none absolute -top-1 z-10 h-4 w-4 -translate-x-1/2 rotate-45 border-l border-t border-blue-200 bg-blue-50/80 dark:border-blue-800 dark:bg-blue-950/40"
+            style={{ left: step34DetailBeakCenterX ?? 32 }}
+            aria-hidden
+          />
         </div>
       ) : (
         <div className="rounded-xl border bg-background p-4 text-sm text-muted-foreground">
@@ -945,25 +1141,47 @@ export function FloatingPCAConfigDialogV2({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onCancel()}>
-      <DialogContent className="flex w-[calc(100vw-16px)] max-w-2xl flex-col overflow-hidden sm:w-full">
-        <DialogHeader className="gap-3 border-b pb-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-1">
-            <DialogTitle>Floating PCA allocation</DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground">{`Step ${currentStep} · ${stepLabel(currentStep)}`}</DialogDescription>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground sm:justify-end">
-            {visibleSteps.map((step, index) => (
-              <div key={step} className="flex items-center gap-2">
-                {index > 0 ? <span className="text-slate-400">•</span> : null}
-                <span
-                  className={cn(
-                    currentStep === step ? 'rounded-full bg-slate-100 px-3 py-1 font-semibold text-foreground dark:bg-slate-700' : ''
-                  )}
-                >
-                  {getStepDisplayLabel(step)}
-                </span>
+      <DialogContent
+        className="relative flex w-auto max-w-[min(96vw,calc(100vw-16px))] flex-col overflow-hidden sm:w-auto"
+        style={
+          open && dialogFitWidthPx > 0
+            ? {
+                width: `${dialogFitWidthPx}px`,
+                maxWidth: 'min(96vw, calc(100vw - 16px))',
+              }
+            : undefined
+        }
+      >
+        <DialogHeader className="gap-3 border-b pb-3 text-left sm:text-left">
+          <div className="flex w-full min-w-0 flex-row items-start justify-between gap-4">
+            <div className="min-w-0 shrink">
+              <div
+                ref={v2DialogHeaderTitleRef}
+                className="inline-block w-max max-w-full space-y-1 text-left"
+              >
+                <DialogTitle>Floating PCA allocation</DialogTitle>
+                <DialogDescription className="text-xs text-muted-foreground">{`Step ${currentStep} · ${stepLabel(currentStep)}`}</DialogDescription>
               </div>
-            ))}
+            </div>
+            <div
+              ref={v2DialogHeaderStepperRef}
+              className="flex shrink-0 flex-wrap items-center justify-end gap-2 text-xs font-medium text-muted-foreground"
+            >
+              {visibleSteps.map((step, index) => (
+                <div key={step} className="flex items-center gap-2">
+                  {index > 0 ? <span className="text-slate-400">•</span> : null}
+                  <span
+                    className={cn(
+                      currentStep === step
+                        ? 'rounded-full bg-slate-100 px-3 py-1 font-semibold text-foreground dark:bg-slate-700'
+                        : ''
+                    )}
+                  >
+                    {getStepDisplayLabel(step)}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </DialogHeader>
 

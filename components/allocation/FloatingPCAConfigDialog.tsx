@@ -84,6 +84,10 @@ interface FloatingPCAConfigDialogProps {
     substitutionFor?: { nonFloatingPCAId: string; nonFloatingPCAName: string; team: Team; slots: number[] }
     [key: string]: any
   }>  // Staff overrides including substitution info (for excluding substitution slots in Step 3.2)
+  /** PCA FTE already on team from Step 2 slot assignments (Step 3.1 card breakdown). */
+  step31AssignedByTeam?: Record<Team, number>
+  /** Target average PCA/team (matches dashboard “Avg PCA/team”); shown as Avg on Step 3.1 cards. */
+  step31TeamTargets?: Record<Team, number>
   onSave: (
     result: FloatingPCAAllocationResultV2,
     teamOrder: Team[],
@@ -174,6 +178,8 @@ export function FloatingPCAConfigDialog({
   specialPrograms,
   bufferStaff = [],
   staffOverrides = {},
+  step31AssignedByTeam: _step31AssignedByTeam,
+  step31TeamTargets: _step31TeamTargets,
   onSave,
   onCancel,
 }: FloatingPCAConfigDialogProps) {

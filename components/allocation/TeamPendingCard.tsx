@@ -25,6 +25,10 @@ interface TeamPendingCardProps {
   isTied: boolean               // Whether this team is in a tie-breaker group (enables drag)
   onValueChange: (team: Team, newValue: number) => void
   isDragging?: boolean
+  /** Target average PCA/team (dashboard “Avg PCA/team” / Step 3 bootstrap target). */
+  avgPcaPerTeam?: number | null
+  /** PCA FTE already on team from Step 2 slots (optional breakdown row). */
+  assignedFromSlotsFTE?: number | null
   assignedFTE?: number  // Optional: FTE assigned from buffer floating PCA (for display)
   orderPosition?: number  // Optional: position in the order (1-based) for displaying ordinal number
 }
@@ -48,6 +52,8 @@ export function TeamPendingCard({
   isTied,
   onValueChange,
   isDragging = false,
+  avgPcaPerTeam,
+  assignedFromSlotsFTE,
   assignedFTE,
   orderPosition,
 }: TeamPendingCardProps) {
@@ -101,46 +107,64 @@ export function TeamPendingCard({
     >
       <Card
         className={cn(
-          'w-20',
+          'w-[7.25rem] shrink-0',
           colorScheme ? `${colorScheme.border} ${colorScheme.bg} border-2` : 'border',
           isBeingDragged && 'shadow-lg ring-2 ring-primary'
         )}
       >
-        <CardContent className="p-1.5 flex flex-col items-center gap-0.5">
+        <CardContent className="flex flex-col items-stretch gap-0.5 p-1.5">
           {/* Order Position (ordinal number) */}
           {orderPosition !== undefined && (
-            <div className="text-[9px] text-muted-foreground leading-tight">
-              {orderPosition}{getOrdinalSuffix(orderPosition)}
+            <div className="text-center text-[9px] leading-tight text-muted-foreground">
+              {orderPosition}
+              {getOrdinalSuffix(orderPosition)}
             </div>
           )}
-          
+
           {/* Team Name */}
-          <div className={cn(
-            'text-xs font-bold leading-tight',
-            colorScheme?.text
-          )}>
+          <div
+            className={cn('text-center text-xs font-bold leading-tight', colorScheme?.text)}
+          >
             {team}
           </div>
 
-          {/* Pending FTE Value */}
-          <div className="text-base font-mono font-semibold tabular-nums leading-tight">
+          {/* Pending FTE Value (rounded queue target) */}
+          <div className="text-center text-base font-mono font-semibold tabular-nums leading-tight">
             {pendingFTE.toFixed(2)}
           </div>
-          
-          {/* Unadjusted Value */}
-          <div className="text-[10px] text-muted-foreground leading-tight whitespace-nowrap">
-            Unadjusted {originalPendingFTE.toFixed(2)}
+
+          <div className="space-y-0.5 border-t border-border/60 pt-1 text-[8px] leading-tight text-muted-foreground">
+            {avgPcaPerTeam != null && !Number.isNaN(avgPcaPerTeam) ? (
+              <div className="flex justify-between gap-1 tabular-nums">
+                <span className="text-muted-foreground/90">Avg</span>
+                <span className="font-medium text-foreground">{avgPcaPerTeam.toFixed(2)}</span>
+              </div>
+            ) : null}
+            <div className="flex justify-between gap-1 tabular-nums">
+              <span className="text-muted-foreground/90">Rounded</span>
+              <span className="font-medium text-foreground">{pendingFTE.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between gap-1 tabular-nums">
+              <span className="text-muted-foreground/90">Assigned</span>
+              <span className="font-medium text-foreground">
+                {assignedFromSlotsFTE != null ? assignedFromSlotsFTE.toFixed(2) : '—'}
+              </span>
+            </div>
+            <div className="flex justify-between gap-1 tabular-nums">
+              <span className="text-muted-foreground/90">Pending</span>
+              <span className="font-medium text-foreground">{pendingFTE.toFixed(2)}</span>
+            </div>
           </div>
-          
+
           {/* Assigned Value (if buffer PCA assigned) */}
           {assignedFTE !== undefined && assignedFTE > 0 && (
-            <div className="text-[10px] text-muted-foreground leading-tight whitespace-nowrap">
-              Assigned: {assignedFTE.toFixed(2)}
+            <div className="text-center text-[9px] leading-tight text-muted-foreground">
+              Buffer +{assignedFTE.toFixed(2)}
             </div>
           )}
 
           {/* Increment/Decrement Buttons */}
-          <div className="flex items-center gap-0.5">
+          <div className="flex items-center justify-center gap-0.5">
             <Button
               variant="outline"
               size="icon"
@@ -167,7 +191,7 @@ export function TeamPendingCard({
               {...attributes}
               {...listeners}
               className={cn(
-                'touch-none cursor-grab active:cursor-grabbing p-0.5 rounded hover:bg-accent',
+                'flex touch-none cursor-grab justify-center active:cursor-grabbing rounded p-0.5 hover:bg-accent',
                 colorScheme?.text || 'text-muted-foreground'
               )}
             >

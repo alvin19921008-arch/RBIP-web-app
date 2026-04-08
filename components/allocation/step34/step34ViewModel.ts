@@ -33,18 +33,15 @@ function getTimeRange(slot: 1 | 2 | 3 | 4): string {
   return '1500-1630'
 }
 
-function getOrdinalLabel(rank: number): string {
-  if (rank === 1) return '1st choice'
-  if (rank === 2) return '2nd choice'
-  if (rank === 3) return '3rd choice'
-  return `${rank}th choice`
-}
-
 function getOrdinalShortLabel(rank: number): string {
   if (rank === 1) return '1st'
   if (rank === 2) return '2nd'
   if (rank === 3) return '3rd'
   return `${rank}th`
+}
+
+function getRankedSlotTileLabel(rank: number): string {
+  return `Ranked slot ${getOrdinalShortLabel(rank)}`
 }
 
 function buildSlotLabel(args: {
@@ -55,53 +52,62 @@ function buildSlotLabel(args: {
   const { slot, rankedSlots, gymSlot } = args
   const rankedIndex = rankedSlots.indexOf(slot)
   if (rankedIndex >= 0) {
-    return { label: getOrdinalLabel(rankedIndex + 1), category: 'ranked' }
+    return { label: getRankedSlotTileLabel(rankedIndex + 1), category: 'ranked' }
   }
   if (gymSlot === slot) {
-    return { label: 'Gym', category: 'gym' }
+    return { label: 'Gym slot', category: 'gym' }
   }
-  return { label: 'Other', category: 'other' }
+  return { label: 'Unranked slot', category: 'other' }
+}
+
+function displayPcaName(assignment: SlotAssignmentLog): string {
+  const name = assignment.pcaName?.trim()
+  return name && name.length > 0 ? name : 'PCA'
 }
 
 function buildAssignmentResultLabel(assignment: SlotAssignmentLog): string {
+  const who = displayPcaName(assignment)
   if (assignment.slotSelectionPhase === 'gym-last-resort') {
-    return 'Gym last resort'
+    return `Gym last resort · ${who}`
   }
   if (assignment.pcaSelectionTier === 'preferred') {
-    return `Preferred PCA ${assignment.pcaName}`
+    return `Preferred PCA ${who}`
   }
   if (assignment.pcaSelectionTier === 'floor') {
-    return 'Floor PCA fallback'
+    return `Floor PCA · ${who}`
   }
   if (assignment.slotSelectionPhase === 'unranked-unused') {
-    return 'Other slot used'
+    return `Unranked slot · ${who}`
   }
   if (assignment.slotSelectionPhase === 'ranked-duplicate') {
-    return 'Duplicate fallback'
+    return `Duplicate coverage · ${who}`
   }
-  return `Available PCA ${assignment.pcaName}`
+  return `Available PCA ${who}`
 }
 
 function buildAssignmentDetailLabel(assignment: SlotAssignmentLog): string {
+  const who = displayPcaName(assignment)
   if (assignment.slotSelectionPhase === 'gym-last-resort') {
-    return 'Gym used only as last resort'
+    return `Gym used only as last resort (${who})`
   }
   if (assignment.slotSelectionPhase === 'ranked-duplicate' || assignment.duplicateSlot) {
-    return 'Duplicate floating coverage became necessary'
+    return `Duplicate floating coverage became necessary (${who})`
   }
   if (assignment.slotSelectionPhase === 'unranked-unused') {
-    return 'Used an unranked slot before duplicating another slot'
+    return `Used an unranked slot with ${who} before duplicating another slot`
   }
   if (assignment.pcaSelectionTier === 'preferred') {
-    return 'Preferred PCA used'
+    return `Preferred PCA ${who} used`
   }
   if (assignment.pcaSelectionTier === 'floor') {
-    return assignment.usedContinuity ? 'Floor PCA fallback with continuity' : 'Floor PCA fallback'
+    return assignment.usedContinuity
+      ? `Floor PCA ${who} with continuity`
+      : `Floor PCA ${who}`
   }
   if (assignment.usedContinuity) {
-    return 'Continued with the same PCA across useful slots'
+    return `Continued with ${who} across useful slots`
   }
-  return 'Unused ranked path was available'
+  return `Unused ranked path was available (${who})`
 }
 
 function buildReasons(args: {
@@ -123,7 +129,7 @@ function buildReasons(args: {
           : topRankCard.assignment.pcaName
     reasons.push(`${topRankCard.label} ${topRankCard.timeRange} was handled first by ${actor}.`)
   } else if (rankedSlots.length > 0) {
-    reasons.push(`${getOrdinalLabel(1)} stayed unfilled in the final review path.`)
+    reasons.push(`${getRankedSlotTileLabel(1)} stayed unfilled in the final review path.`)
   }
 
   const laterRankCard = slotCards.find(
@@ -213,8 +219,8 @@ export function buildStep34TeamDetailViewModel(args: {
     {
       label:
         typeof teamLog.summary.highestRankedSlotFulfilled === 'number'
-          ? `Highest choice fulfilled: ${getOrdinalShortLabel(teamLog.summary.highestRankedSlotFulfilled)}`
-          : 'Highest choice fulfilled: none',
+          ? `Highest ranked slot fulfilled: ${getOrdinalShortLabel(teamLog.summary.highestRankedSlotFulfilled)}`
+          : 'Highest ranked slot fulfilled: none',
     },
     {
       label: teamLog.summary.preferredPCAUsed ? 'Preferred PCA used' : 'Preferred PCA not used',

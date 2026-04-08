@@ -7,27 +7,51 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { PCAPreference } from '@/types/allocation'
 import { Staff, Team } from '@/types/staff'
-import { TEAMS } from '@/lib/utils/types'
-import { getSlotLabel, getSlotTime } from '@/lib/utils/slotHelpers'
+import { getSlotLabel } from '@/lib/utils/slotHelpers'
+import { RankedSlotPreferencesEditor } from '@/components/dashboard/RankedSlotPreferencesEditor'
 import { FloorPCAMappingPanel } from '@/components/dashboard/FloorPCAMappingPanel'
 import { useToast } from '@/components/ui/toast-context'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAccessControl } from '@/lib/access/useAccessControl'
-import { ArrowRight, Users, GitMerge, ExternalLink, MoveUp, MoveDown, X } from 'lucide-react'
+import { ArrowRight, Users, GitMerge, MoveUp, MoveDown, X } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { 
   computeMergedIntoMap, 
   getTeamMergeStatus, 
   computeDisplayNames,
-  TeamMergeStatus 
 } from '@/lib/utils/teamMergeHelpers'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 type TeamSettingsRow = {
   team: Team
   display_name: string | null
   merged_into: Team | null
+}
+
+function normalizeRankedSlots(raw: number[] | null | undefined): number[] {
+  const seen = new Set<number>()
+  const out: number[] = []
+  for (const s of raw ?? []) {
+    if (typeof s === 'number' && s >= 1 && s <= 4 && !seen.has(s)) {
+      seen.add(s)
+      out.push(s)
+    }
+  }
+  return out
+}
+
+function rankedSlotsSummaryLine(slots: number[] | null | undefined): string {
+  const n = normalizeRankedSlots(slots)
+  if (n.length === 0) return 'None'
+  return n.map((s) => getSlotLabel(s)).join(' → ')
 }
 
 export function PCAPreferencePanel() {
@@ -203,11 +227,6 @@ export function PCAPreferencePanel() {
     }
   }
 
-  // Get preference for a team (used for merged-away teams to show inherited values)
-  const getPreferenceForTeam = (targetTeam: Team) => {
-    return preferences.find(p => p.team === targetTeam)
-  }
-
   return (
     <div className="pt-6 space-y-4">
         {loading ? (
@@ -240,6 +259,7 @@ export function PCAPreferencePanel() {
                       </Button>
                     </div>
                     <PCAPreferenceForm
+                      key={`${editingPreference.team}-${editingPreference.id ?? 'new'}`}
                       preference={editingPreference}
                       staff={staff}
                       onSave={handleSave}
@@ -251,7 +271,6 @@ export function PCAPreferencePanel() {
 
               // Render merged-away team card (muted, read-only)
               if (isMergedAway && mergeStatus.mainTeam) {
-                const mainTeamPref = getPreferenceForTeam(mergeStatus.mainTeam)
                 const mainTeamDisplayName = displayNames[mergeStatus.mainTeam] || mergeStatus.mainTeam
 
                 return (
@@ -260,56 +279,32 @@ export function PCAPreferencePanel() {
                     data-team-card={team}
                     className="p-4 bg-muted/30 border-muted"
                   >
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h4 className="font-semibold text-lg text-muted-foreground">{displayName}</h4>
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal text-muted-foreground flex items-center gap-1">
-                          <GitMerge className="w-3 h-3" />
-                          Merged into {mainTeamDisplayName}
-                        </Badge>
-                      </div>
-                      <Badge variant="secondary" className="text-[10px]">
-                        Follows {mainTeamDisplayName}
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <h4 className="font-semibold text-lg text-muted-foreground">{displayName}</h4>
+                      <Badge variant="outline" className="flex items-center gap-1 px-1.5 py-0 text-[10px] font-normal text-muted-foreground">
+                        <GitMerge className="h-3 w-3" />
+                        Follows canonical team: {mainTeamDisplayName}
                       </Badge>
                     </div>
 
-                    {/* Info banner */}
-                    <div className="bg-background/50 rounded-md p-3 mb-3 border border-dashed">
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <GitMerge className="w-4 h-4" />
-                        <span>This team's PCA preferences are managed by <strong>{mainTeamDisplayName}</strong></span>
+                    <div className="mb-3 rounded-md border border-dashed bg-background/50 p-3">
+                      <div className="flex items-start gap-2 text-sm text-muted-foreground">
+                        <GitMerge className="mt-0.5 h-4 w-4 shrink-0" />
+                        <span>
+                          PCA preferences for this team use the same settings as{' '}
+                          <strong className="text-foreground">{mainTeamDisplayName}</strong>. Edit them on the
+                          canonical team&apos;s card.
+                        </span>
                       </div>
                     </div>
 
-                    {/* Read-only display of inherited preferences */}
-                    <div className="space-y-1.5 text-sm text-muted-foreground">
-                      <p>
-                        Floor PCA: <span className="text-foreground">{mainTeamPref?.floor_pca_selection ? (mainTeamPref.floor_pca_selection === 'upper' ? 'Upper' : 'Lower') : 'None'}</span>
-                      </p>
-                      <p>
-                        Preferred PCA: <span className="text-foreground">{mainTeamPref?.preferred_pca_ids && mainTeamPref.preferred_pca_ids.length > 0 ? mainTeamPref.preferred_pca_ids
-                          .filter((id: string) => {
-                            const pca = staff.find(s => s.id === id)
-                            return pca && (pca.status ?? 'active') !== 'inactive'
-                          })
-                          .map((id: string) => {
-                            const pca = staff.find(s => s.id === id)
-                            return pca ? pca.name : id
-                          }).join(', ') || 'None' : 'None'}</span>
-                      </p>
-                      <p>
-                        Preferred slot: <span className="text-foreground">{mainTeamPref?.preferred_slots && mainTeamPref.preferred_slots.length > 0 ? getSlotTime(mainTeamPref.preferred_slots[0]) : 'None'}</span>
-                      </p>
-                    </div>
-
-                    {/* Action to view main team */}
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="mt-3 text-xs w-full text-muted-foreground hover:text-foreground"
+                      className="w-full text-xs text-muted-foreground hover:text-foreground"
                       onClick={() => scrollToTeam(mergeStatus.mainTeam!)}
                     >
-                      View {mainTeamDisplayName} Preferences <ArrowRight className="w-3 h-3 ml-1" />
+                      Open {mainTeamDisplayName} preferences <ArrowRight className="ml-1 h-3 w-3" />
                     </Button>
                   </Card>
                 )
@@ -382,19 +377,15 @@ export function PCAPreferencePanel() {
                             </p>
                           )
                         })()}
-                      {pref.preferred_slots && pref.preferred_slots.length > 0 && (
-                        <p className="text-sm text-black">
-                          Preferred slot: {getSlotTime(pref.preferred_slots[0])}
-                        </p>
-                      )}
-                      {pref.gym_schedule && (
-                        <p className="text-sm text-black">
-                          Gym schedule: {getSlotTime(pref.gym_schedule)}
-                        </p>
-                      )}
+                      <p className="text-sm text-black">
+                        Ranked: {rankedSlotsSummaryLine(pref.preferred_slots)}
+                      </p>
+                      <p className="text-sm text-black">
+                        Gym: {pref.gym_schedule ? getSlotLabel(pref.gym_schedule) : 'None'}
+                      </p>
                       {pref.avoid_gym_schedule !== undefined && (
                         <p className="text-sm text-black">
-                          Avoid gym schedule: {pref.avoid_gym_schedule ? 'Yes' : 'No'}
+                          Avoid gym: {pref.avoid_gym_schedule ? 'Yes' : 'No'}
                         </p>
                       )}
                     </div>
@@ -553,7 +544,9 @@ function PCAPreferenceForm({
 }) {
   const toast = useToast()
   const [preferredPCA, setPreferredPCA] = useState<string[]>(preference.preferred_pca_ids || [])
-  const [preferredSlots, setPreferredSlots] = useState<number[]>(preference.preferred_slots || [])
+  const [preferredSlots, setPreferredSlots] = useState<number[]>(() =>
+    normalizeRankedSlots(preference.preferred_slots || [])
+  )
   const [gymSchedule, setGymSchedule] = useState<number | null>(preference.gym_schedule ?? null)
   const [avoidGymSchedule, setAvoidGymSchedule] = useState<boolean>(preference.avoid_gym_schedule ?? true)
   const [floorPCASelection, setFloorPCASelection] = useState<'upper' | 'lower' | null>(preference.floor_pca_selection ?? null)
@@ -567,14 +560,19 @@ function PCAPreferenceForm({
       toast.warning('Maximum 2 preferred PCAs allowed')
       return
     }
-    if (preferredSlots.length > 1) {
-      toast.warning('Maximum 1 preferred slot allowed')
+    if (preferredSlots.length > 4) {
+      toast.warning('Maximum 4 ranked slots allowed')
+      return
+    }
+    const unique = new Set(preferredSlots)
+    if (unique.size !== preferredSlots.length) {
+      toast.warning('Duplicate ranked slots', 'Each interval can only appear once in the rank.')
       return
     }
     onSave({
       team: preference.team,
       preferred_pca_ids: preferredPCA,
-      preferred_slots: preferredSlots,
+      preferred_slots: normalizeRankedSlots(preferredSlots),
       gym_schedule: gymSchedule,
       avoid_gym_schedule: avoidGymSchedule,
       floor_pca_selection: floorPCASelection,
@@ -619,14 +617,6 @@ function PCAPreferenceForm({
       }
       return next
     })
-  }
-
-  const handleSlotChange = (slot: number) => {
-    if (preferredSlots.includes(slot)) {
-      setPreferredSlots([])
-    } else {
-      setPreferredSlots([slot])
-    }
   }
 
   const eligiblePCAs = staff.filter(s => {
@@ -840,24 +830,22 @@ function PCAPreferenceForm({
 
       <section>
         <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-          Preferred Slot (1 only)
+          Rank the preferred slots
         </h4>
-        <div className="flex gap-2">
-          {[1, 2, 3, 4].map((slot) => (
-            <button
-              key={slot}
-              type="button"
-              onClick={() => handleSlotChange(slot)}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                preferredSlots.includes(slot)
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-muted text-muted-foreground hover:bg-muted/80'
-              }`}
-            >
-              {getSlotLabel(slot)}
-            </button>
-          ))}
-        </div>
+        <p className="mb-3 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">Top = most important</span> when floating PCAs are placed.
+          <span className="font-medium text-foreground"> Ranked slots</span> get higher priority first;{' '}
+          <span className="font-medium text-foreground">unranked slots</span> are used after that if the day still
+          needs them.
+          <br />
+          Add only the slots you want ranked.
+        </p>
+        <RankedSlotPreferencesEditor
+          rankedSlots={preferredSlots}
+          onRankedSlotsChange={setPreferredSlots}
+          gymSchedule={gymSchedule}
+          avoidGymSchedule={avoidGymSchedule}
+        />
       </section>
 
       <hr className="border-border" />
@@ -866,19 +854,23 @@ function PCAPreferenceForm({
         <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
           Gym Schedule
         </h4>
-        <div className="flex items-center gap-2">
-          <select
-            value={gymSchedule || ''}
-            onChange={(e) => setGymSchedule(e.target.value ? parseInt(e.target.value) : null)}
-            className="px-3 py-1.5 border rounded-md bg-background text-sm"
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={gymSchedule == null ? 'none' : String(gymSchedule)}
+            onValueChange={(v) => setGymSchedule(v === 'none' ? null : Number(v))}
           >
-            <option value="">No gym schedule</option>
-            {[1, 2, 3, 4].map((slot) => (
-              <option key={slot} value={slot}>
-                {getSlotTime(slot)}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="h-10 w-[min(100%,12rem)]">
+              <SelectValue placeholder="No gym schedule" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">No gym schedule</SelectItem>
+              {[1, 2, 3, 4].map((slot) => (
+                <SelectItem key={slot} value={String(slot)}>
+                  {getSlotLabel(slot)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <div className="inline-flex rounded-md border border-input overflow-hidden">
             <button
               type="button"
@@ -905,9 +897,9 @@ function PCAPreferenceForm({
           </div>
         </div>
         <p className="text-xs text-muted-foreground mt-2">
-          {avoidGymSchedule 
-            ? "Floating PCA will avoid this team's gym schedule slot"
-            : "Floating PCA can be assigned to this team's gym schedule slot"}
+          {avoidGymSchedule
+            ? "Floating PCA will avoid this team's gym interval when other paths exist."
+            : 'Floating PCA can be assigned to this team’s gym interval.'}
         </p>
       </section>
 

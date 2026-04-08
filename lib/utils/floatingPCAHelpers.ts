@@ -761,6 +761,39 @@ export function buildPreferredPCAMap(
 // Get Team Preference Info
 // ============================================================================
 
+/**
+ * Coerce dashboard/DB `preferred_slots` to integers 1–4, preserve first-seen order, dedupe.
+ * JSON/Postgres sometimes yields numeric strings; `ALL_SLOTS.includes("1")` is false and would
+ * drop the whole rank list.
+ */
+function normalizePreferredSlotsRankOrder(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<number>()
+  const out: number[] = []
+  for (const item of raw) {
+    if (item == null || item === '') continue
+    const n =
+      typeof item === 'number' && Number.isFinite(item)
+        ? Math.trunc(item)
+        : Number.parseInt(String(item), 10)
+    if (!Number.isFinite(n) || n < 1 || n > 4) continue
+    if (seen.has(n)) continue
+    seen.add(n)
+    out.push(n)
+  }
+  return out
+}
+
+function normalizeGymScheduleSlot(raw: unknown): number | null {
+  if (raw == null || raw === '') return null
+  const n =
+    typeof raw === 'number' && Number.isFinite(raw)
+      ? Math.trunc(raw)
+      : Number.parseInt(String(raw), 10)
+  if (!Number.isFinite(n) || n < 1 || n > 4) return null
+  return n
+}
+
 export interface TeamPreferenceInfo {
   team: Team
   hasPreferredPCA: boolean
@@ -793,10 +826,8 @@ export function getTeamPreferenceInfo(
 ): TeamPreferenceInfo {
   const pref = pcaPreferences.find(p => p.team === team)
 
-  const rankedSlots = Array.from(
-    new Set((pref?.preferred_slots ?? []).filter((slot) => ALL_SLOTS.includes(slot)))
-  )
-  const gymSlot = pref?.gym_schedule ?? null
+  const rankedSlots = normalizePreferredSlotsRankOrder(pref?.preferred_slots)
+  const gymSlot = normalizeGymScheduleSlot(pref?.gym_schedule ?? null)
   const avoidGym = pref?.avoid_gym_schedule ?? false
 
   const unrankedNonGymSlots = ALL_SLOTS.filter((slot) => {

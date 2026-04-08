@@ -22,6 +22,17 @@ async function main() {
   assert.equal(info.gymSlot, 4)
   assert.equal(info.avoidGym, true)
   assert.equal(info.preferredSlot, 1)
+
+  // JSON/DB may return numeric strings; helpers must still recognize ranked order and gym slot.
+  const prefStringy = {
+    ...pref,
+    preferred_slots: ['2', '1'] as unknown as number[],
+    gym_schedule: '4' as unknown as number,
+  }
+  const infoStringy = getTeamPreferenceInfo('FO', [prefStringy as PCAPreference])
+  assert.deepEqual(infoStringy.rankedSlots, [2, 1])
+  assert.equal(infoStringy.gymSlot, 4)
+  assert.deepEqual(infoStringy.unrankedNonGymSlots, [3])
 }
 
 main().catch((error) => {

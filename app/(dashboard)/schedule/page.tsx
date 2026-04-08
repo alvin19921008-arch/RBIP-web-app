@@ -12644,6 +12644,8 @@ function SchedulePageContent() {
                   specialPrograms={specialPrograms}
                   bufferStaff={bufferStaff}
                   staffOverrides={staffOverrides}
+                  step31AssignedByTeam={step3BootstrapSummary.existingAssignedByTeam}
+                  step31TeamTargets={step3BootstrapSummary.teamTargets}
                   onSave={handleFloatingPCAConfigSave}
                   onCancel={handleFloatingPCAConfigCancel}
                 />
@@ -12658,6 +12660,8 @@ function SchedulePageContent() {
                   specialPrograms={specialPrograms}
                   bufferStaff={bufferStaff}
                   staffOverrides={staffOverrides}
+                  step31AssignedByTeam={step3BootstrapSummary.existingAssignedByTeam}
+                  step31TeamTargets={step3BootstrapSummary.teamTargets}
                   onSave={handleFloatingPCAConfigSave}
                   onCancel={handleFloatingPCAConfigCancel}
                 />
