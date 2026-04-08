@@ -1,5 +1,6 @@
 import type { FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
 import { getTeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
+import { getSubstitutionSlotsForTeam } from '@/lib/utils/substitutionFor'
 import type { PCAPreference } from '@/types/allocation'
 import type { SlotAssignmentLog, TeamAllocationLog } from '@/types/schedule'
 import type { Team } from '@/types/staff'
@@ -41,7 +42,7 @@ function getOrdinalShortLabel(rank: number): string {
 }
 
 function getRankedSlotTileLabel(rank: number): string {
-  return `Ranked slot ${getOrdinalShortLabel(rank)}`
+  return `${getOrdinalShortLabel(rank)} ranked slot`
 }
 
 function buildSlotLabel(args: {
@@ -65,6 +66,84 @@ function displayPcaName(assignment: SlotAssignmentLog): string {
   return name && name.length > 0 ? name : 'PCA'
 }
 
+function dedupeAssignmentsByPcaId(logs: SlotAssignmentLog[]): SlotAssignmentLog[] {
+  const seen = new Set<string>()
+  const out: SlotAssignmentLog[] = []
+  logs.forEach((log, i) => {
+    const id = log.pcaId?.trim() || log.pcaName?.trim() || `row-${i}`
+    if (seen.has(id)) return
+    seen.add(id)
+    out.push(log)
+  })
+  return out
+}
+
+/**
+ * Step 3.4 "duplicate floating" is about stacking multiple floating PCAs on the same slot.
+ * Non-floating coverage (Step 2, special programs, etc.) must not inflate that count.
+ * A floating PCA substituting for a non-floating PCA on this team/slot is treated as
+ * non-floating in nature for this metric (see staffOverrides substitution markers).
+ */
+function isPcaSubstitutingNonFloatingOnSlotForTeam(args: {
+  staffOverrides: Record<string, any> | undefined
+  pcaId: string | undefined
+  team: Team
+  slot: 1 | 2 | 3 | 4
+}): boolean {
+  const { staffOverrides, pcaId, team, slot } = args
+  if (!pcaId || !staffOverrides) return false
+  const slots = getSubstitutionSlotsForTeam(staffOverrides[pcaId], team)
+  return slots.includes(slot)
+}
+
+function getQualifyingStep34LogsForDuplicateFloating(args: {
+  team: Team
+  slot: 1 | 2 | 3 | 4
+  logsForSlot: SlotAssignmentLog[]
+  staffOverrides?: Record<string, any>
+}): SlotAssignmentLog[] {
+  const step34 = args.logsForSlot.filter((e) => e.assignedIn === 'step34')
+  const counting = step34.filter(
+    (e) =>
+      !isPcaSubstitutingNonFloatingOnSlotForTeam({
+        staffOverrides: args.staffOverrides,
+        pcaId: e.pcaId,
+        team: args.team,
+        slot: args.slot,
+      })
+  )
+  return dedupeAssignmentsByPcaId(counting)
+}
+
+const DUPLICATE_FLOATING_REASON_SUFFIX =
+  'only after every other usable slot was tried but without available floating PCA'
+
+function buildDuplicateFloatingReasonLines(args: {
+  team: Team
+  teamLog: TeamAllocationLog
+  rankedSlots: number[]
+  gymSlot: number | null
+  staffOverrides?: Record<string, any>
+}): string[] {
+  const { team, teamLog, rankedSlots, gymSlot, staffOverrides } = args
+  const lines: string[] = []
+  for (const slot of [1, 2, 3, 4] as const) {
+    const logsForSlot = teamLog.assignments.filter((a) => a.slot === slot)
+    const qualifying = getQualifyingStep34LogsForDuplicateFloating({
+      team,
+      slot,
+      logsForSlot,
+      staffOverrides,
+    })
+    if (qualifying.length < 2) continue
+    const meta = buildSlotLabel({ slot, rankedSlots, gymSlot })
+    lines.push(
+      `${qualifying.length} floating PCAs were assigned to ${meta.label} (${getTimeRange(slot)}), ${DUPLICATE_FLOATING_REASON_SUFFIX}.`
+    )
+  }
+  return lines
+}
+
 function buildAssignmentResultLabel(assignment: SlotAssignmentLog): string {
   const who = displayPcaName(assignment)
   if (assignment.slotSelectionPhase === 'gym-last-resort') {
@@ -79,20 +158,62 @@ function buildAssignmentResultLabel(assignment: SlotAssignmentLog): string {
   if (assignment.slotSelectionPhase === 'unranked-unused') {
     return `Unranked slot · ${who}`
   }
-  if (assignment.slotSelectionPhase === 'ranked-duplicate') {
-    return `Duplicate coverage · ${who}`
-  }
   return `Available PCA ${who}`
 }
 
-function buildAssignmentDetailLabel(assignment: SlotAssignmentLog): string {
+function buildAssignmentResultLabelForSlot(
+  primary: SlotAssignmentLog,
+  allForSlot: SlotAssignmentLog[],
+  team: Team,
+  staffOverrides?: Record<string, any>
+): string {
+  const slot = primary.slot as 1 | 2 | 3 | 4
+  const qualifying = getQualifyingStep34LogsForDuplicateFloating({
+    team,
+    slot,
+    logsForSlot: allForSlot,
+    staffOverrides,
+  })
+  if (qualifying.length >= 2) {
+    return `Duplicate floating coverage · ${qualifying.map(displayPcaName).join(' · ')}`
+  }
+  if (primary.slotSelectionPhase === 'ranked-duplicate' || primary.duplicateSlot === true) {
+    return displayPcaName(primary)
+  }
+  return buildAssignmentResultLabel(primary)
+}
+
+function buildAssignmentDetailLabel(
+  assignment: SlotAssignmentLog,
+  allForSlot: SlotAssignmentLog[],
+  team: Team,
+  staffOverrides?: Record<string, any>
+): string {
   const who = displayPcaName(assignment)
+  const slot = assignment.slot as 1 | 2 | 3 | 4
+  const qualifying = getQualifyingStep34LogsForDuplicateFloating({
+    team,
+    slot,
+    logsForSlot: allForSlot,
+    staffOverrides,
+  })
+
   if (assignment.slotSelectionPhase === 'gym-last-resort') {
     return `Gym used only as last resort (${who})`
   }
-  if (assignment.slotSelectionPhase === 'ranked-duplicate' || assignment.duplicateSlot) {
-    return `Duplicate floating coverage became necessary (${who})`
+
+  const algorithmSaysStacked =
+    assignment.slotSelectionPhase === 'ranked-duplicate' ||
+    assignment.duplicateSlot === true
+
+  if (qualifying.length >= 2) {
+    return `${qualifying.length} floating PCAs were assigned to this slot.`
   }
+
+  if (algorithmSaysStacked) {
+    return 'To fulfill pending FTE.'
+  }
+
   if (assignment.slotSelectionPhase === 'unranked-unused') {
     return `Used an unranked slot with ${who} before duplicating another slot`
   }
@@ -111,12 +232,14 @@ function buildAssignmentDetailLabel(assignment: SlotAssignmentLog): string {
 }
 
 function buildReasons(args: {
+  team: Team
   teamLog: TeamAllocationLog
   slotCards: Step34SlotCardViewModel[]
   rankedSlots: number[]
   gymSlot: number | null
+  staffOverrides?: Record<string, any>
 }): string[] {
-  const { teamLog, slotCards, rankedSlots, gymSlot } = args
+  const { team, teamLog, slotCards, rankedSlots, gymSlot, staffOverrides } = args
   const reasons: string[] = []
 
   const topRankCard = slotCards.find((card) => card.assignment?.fulfilledSlotRank === 1)
@@ -129,7 +252,14 @@ function buildReasons(args: {
           : topRankCard.assignment.pcaName
     reasons.push(`${topRankCard.label} ${topRankCard.timeRange} was handled first by ${actor}.`)
   } else if (rankedSlots.length > 0) {
-    reasons.push(`${getRankedSlotTileLabel(1)} stayed unfilled in the final review path.`)
+    const first = rankedSlots[0]
+    if (first === 1 || first === 2 || first === 3 || first === 4) {
+      reasons.push(
+        `${getRankedSlotTileLabel(1)} (${getTimeRange(first)}) stayed unfilled in the final review path.`
+      )
+    } else {
+      reasons.push(`${getRankedSlotTileLabel(1)} stayed unfilled in the final review path.`)
+    }
   }
 
   const laterRankCard = slotCards.find(
@@ -145,14 +275,22 @@ function buildReasons(args: {
     reasons.push('System used another useful slot before duplicating a slot.')
   }
 
-  if (teamLog.summary.usedDuplicateFloatingSlot) {
-    reasons.push('Duplicate floating coverage was used only after useful unused slots were exhausted.')
+  for (const line of buildDuplicateFloatingReasonLines({
+    team,
+    teamLog,
+    rankedSlots,
+    gymSlot,
+    staffOverrides,
+  })) {
+    reasons.push(line)
   }
 
   if (teamLog.summary.gymUsedAsLastResort) {
     reasons.push('Gym was used only because no non-gym path remained.')
-  } else if (gymSlot != null) {
-    reasons.push('Gym was avoided because a non-gym path remained.')
+  } else if (gymSlot === 1 || gymSlot === 2 || gymSlot === 3 || gymSlot === 4) {
+    reasons.push(
+      `Gym slot (${getTimeRange(gymSlot)}) was not used because pending could still be covered using other slots first.`
+    )
   }
 
   if (teamLog.summary.preferredPCAUsed) {
@@ -175,8 +313,9 @@ export function buildStep34TeamDetailViewModel(args: {
   team: Team
   result: FloatingPCAAllocationResultV2
   pcaPreferences: PCAPreference[]
+  staffOverrides?: Record<string, any>
 }): Step34TeamDetailViewModel {
-  const { team, result, pcaPreferences } = args
+  const { team, result, pcaPreferences, staffOverrides } = args
   const teamLog = result.tracker[team]
   const pref = getTeamPreferenceInfo(team, pcaPreferences)
 
@@ -186,9 +325,15 @@ export function buildStep34TeamDetailViewModel(args: {
       rankedSlots: pref.rankedSlots,
       gymSlot: pref.gymSlot,
     })
-    const assignment = teamLog.assignments.find((entry) => entry.slot === slot) ?? null
+    const logsForSlot = teamLog.assignments.filter((entry) => entry.slot === slot)
+    const step34ForSlot = logsForSlot.filter((e) => e.assignedIn === 'step34')
+    const primary =
+      [...step34ForSlot].reverse().find((e) => e.slotSelectionPhase === 'ranked-duplicate' || e.duplicateSlot) ??
+      step34ForSlot[step34ForSlot.length - 1] ??
+      logsForSlot[logsForSlot.length - 1] ??
+      null
 
-    if (!assignment) {
+    if (!primary) {
       return {
         slot,
         timeRange: getTimeRange(slot),
@@ -205,9 +350,9 @@ export function buildStep34TeamDetailViewModel(args: {
       timeRange: getTimeRange(slot),
       label: meta.label,
       category: meta.category,
-      resultLabel: buildAssignmentResultLabel(assignment),
-      detailLabel: buildAssignmentDetailLabel(assignment),
-      assignment,
+      resultLabel: buildAssignmentResultLabelForSlot(primary, logsForSlot, team, staffOverrides),
+      detailLabel: buildAssignmentDetailLabel(primary, logsForSlot, team, staffOverrides),
+      assignment: primary,
     }
   })
 
@@ -237,10 +382,12 @@ export function buildStep34TeamDetailViewModel(args: {
     summaryPills,
     slotCards,
     reasons: buildReasons({
+      team,
       teamLog,
       slotCards,
       rankedSlots: pref.rankedSlots,
       gymSlot: pref.gymSlot,
+      staffOverrides,
     }),
   }
 }

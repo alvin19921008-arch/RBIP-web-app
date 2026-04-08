@@ -134,6 +134,17 @@ function getSlotTime(slot: number): string {
   return '1500-1630'
 }
 
+/** Step 3.3: one workplace-style line for special-program PCA + adjacent slot (avoids duplicating list + panel copy). */
+function formatAdjacentSpecialProgramSentence(option: {
+  pcaName: string
+  specialProgramName: string
+  specialProgramSlot: number
+  adjacentSlot: number
+}): string {
+  const program = option.specialProgramName?.trim() || 'special program'
+  return `${option.pcaName} covers ${program} at ${getSlotTime(option.specialProgramSlot)}, and is also available at adjacent slot ${getSlotTime(option.adjacentSlot)}.`
+}
+
 function emptyTeamRecord(value = 0): Record<Team, number> {
   return {
     FO: value,
@@ -591,8 +602,9 @@ export function FloatingPCAConfigDialogV2({
       team: selectedStep34Team,
       result: step34PreviewResult,
       pcaPreferences,
+      staffOverrides,
     })
-  }, [pcaPreferences, selectedStep34Team, step34PreviewResult])
+  }, [pcaPreferences, selectedStep34Team, staffOverrides, step34PreviewResult])
 
   useLayoutEffect(() => {
     if (!open) {
@@ -865,7 +877,9 @@ export function FloatingPCAConfigDialogV2({
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Info className="h-4 w-4 text-violet-600" />
-        <span>Gray means no adjacent help. Green means there is adjacent help to review.</span>
+        <span>
+          {`Gray: no adjacent slot tied to a special program. Green: a special program's adjacent slot to review.`}
+        </span>
       </div>
 
       <div className="flex justify-center pb-1">
@@ -891,18 +905,24 @@ export function FloatingPCAConfigDialogV2({
             >
               <div className="text-[11px] text-muted-foreground">{getOrderLabel(index + 1)}</div>
               <div className="font-semibold">{team}</div>
-              <div className="mt-1 text-[11px] leading-4">
-                {hasAdjacent ? `${adjacentPreview.adjacentReservations[team].length} adjacent option(s)` : 'No reserved or adjacent slots'}
-              </div>
-              <div className="mt-2 text-[11px] font-medium leading-4">
-                {hasAdjacent
-                  ? decision === 'use'
-                    ? 'Using adjacent help'
-                    : decision === 'skip'
-                      ? 'Skipping adjacent help'
-                      : 'Adjacent help available'
-                  : 'No adjacent help'}
-              </div>
+              {hasAdjacent ? (
+                <>
+                  <div className="mt-1 text-[11px] leading-4">
+                    {`${adjacentPreview.adjacentReservations[team].length} adjacent slot(s)`}
+                  </div>
+                  <div className="mt-2 text-[11px] font-medium leading-4">
+                    {decision === 'use'
+                      ? 'Will assign adjacent slot'
+                      : decision === 'skip'
+                        ? 'Will skip adjacent slot'
+                        : 'Adjacent slot available'}
+                  </div>
+                </>
+              ) : (
+                <div className="mt-1 text-[11px] font-medium leading-4 text-muted-foreground">
+                  No adjacent slot
+                </div>
+              )}
             </button>
           )
         })}
@@ -915,54 +935,38 @@ export function FloatingPCAConfigDialogV2({
           <div className="flex flex-wrap items-center gap-2">
             <div className="text-sm font-semibold text-foreground">{selectedStep33Team}</div>
             <Badge variant="outline">{`Pending ${adjustedFTE[selectedStep33Team].toFixed(2)}`}</Badge>
-            <Badge>{`${selectedAdjacentOptions.length} adjacent option(s)`}</Badge>
+            <Badge>{`${selectedAdjacentOptions.length} adjacent slot(s)`}</Badge>
           </div>
 
           {selectedAdjacentOptions.length > 0 ? (
-            <div className="space-y-2">
+            <>
               <div className="text-sm font-semibold text-foreground">{`${selectedStep33Team} review`}</div>
-              {selectedAdjacentOptions.map((option) => {
-                const optionKey = getAdjacentOptionKey(option)
-                const isChosen = selectedAdjacentOption != null && getAdjacentOptionKey(selectedAdjacentOption) === optionKey
-                return (
-                  <button
-                    key={`${option.pcaId}-${option.adjacentSlot}`}
-                    type="button"
-                    onClick={() =>
-                      setStep33SelectedOptionByTeam((prev) => ({
-                        ...prev,
-                        [selectedStep33Team]: optionKey,
-                      }))
-                    }
-                    className={cn(
-                      'w-full rounded-lg border bg-muted/20 p-3 text-left text-sm transition-colors',
-                      isChosen && 'border-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/30'
-                    )}
-                  >
-                    <div className="font-medium text-foreground">{option.pcaName}</div>
-                    <div className="mt-1 text-muted-foreground">
-                      {`${option.specialProgramName} covers ${getSlotTime(option.specialProgramSlot)}, so ${getSlotTime(option.adjacentSlot)} is also available.`}
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          ) : (
-            <div className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
-              No adjacent help is needed for this team in the current V2 path.
-            </div>
-          )}
-
-          {selectedAdjacentOptions.length > 0 ? (
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4 dark:bg-emerald-950/20">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-200">
-                {`${selectedStep33Team} review`}
+              <div className="space-y-2">
+                {selectedAdjacentOptions.map((option) => {
+                  const optionKey = getAdjacentOptionKey(option)
+                  const isChosen =
+                    selectedAdjacentOption != null && getAdjacentOptionKey(selectedAdjacentOption) === optionKey
+                  return (
+                    <button
+                      key={`${option.pcaId}-${option.adjacentSlot}`}
+                      type="button"
+                      onClick={() =>
+                        setStep33SelectedOptionByTeam((prev) => ({
+                          ...prev,
+                          [selectedStep33Team]: optionKey,
+                        }))
+                      }
+                      className={cn(
+                        'w-full rounded-lg border bg-muted/20 p-3 text-left text-sm text-muted-foreground transition-colors',
+                        isChosen && 'border-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/30'
+                      )}
+                    >
+                      {formatAdjacentSpecialProgramSentence(option)}
+                    </button>
+                  )
+                })}
               </div>
-              <div className="mt-2 space-y-1 text-sm text-muted-foreground">
-                <div>{`A special-program PCA can also help at ${selectedAdjacentOption ? getSlotTime(selectedAdjacentOption.adjacentSlot) : 'this adjacent slot'}.`}</div>
-                <div>This reduces pressure on the final floating allocation.</div>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 border-t border-emerald-200/70 pt-4 dark:border-emerald-900/50">
                 <Button
                   variant={step33Decisions[selectedStep33Team] === 'use' ? 'default' : 'outline'}
                   onClick={() =>
@@ -972,7 +976,7 @@ export function FloatingPCAConfigDialogV2({
                     }))
                   }
                 >
-                  Use adjacent help
+                  Assign adjacent slot
                 </Button>
                 <Button
                   variant={step33Decisions[selectedStep33Team] === 'skip' ? 'default' : 'outline'}
@@ -983,11 +987,15 @@ export function FloatingPCAConfigDialogV2({
                     }))
                   }
                 >
-                  Skip adjacent help
+                  Skip adjacent slot
                 </Button>
               </div>
+            </>
+          ) : (
+            <div className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
+              No adjacent special-program slot applies for this team in the current path.
             </div>
-          ) : null}
+          )}
         </div>
       ) : null}
     </div>
@@ -1114,8 +1122,8 @@ export function FloatingPCAConfigDialogV2({
             </div>
           </div>
 
-          <div className="mt-4 rounded-xl border bg-background p-4">
-            <div className="text-sm font-semibold text-foreground">Why this happened</div>
+          <div className="mt-4 border-t border-blue-200/70 pt-4 dark:border-blue-800/50">
+            <div className="text-sm font-semibold text-blue-900 dark:text-blue-100">Why this happened</div>
             <ul className="mt-2 list-outside list-disc space-y-2 pl-5 text-sm text-muted-foreground marker:text-muted-foreground">
               {selectedStep34Detail.reasons.map((reason) => (
                 <li key={reason} className="pl-1">
