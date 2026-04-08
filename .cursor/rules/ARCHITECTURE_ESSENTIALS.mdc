@@ -12,7 +12,7 @@ alwaysApply: true
 
 1. **Database Type Safety (CRITICAL)**: Always use `lib/db/types.ts` utilities (`toDbLeaveType`, `programNamesToIds`, `normalizeFTE`) - TypeScript types are WIDER than database enums
 2. **staffOverrides is Single Source of Truth**: All staff modifications must update `staffOverrides`; algorithms read from it
-3. **Never Recalculate `average_pca_per_team` After Step 1**: It's a target value that persists through Steps 2-4
+3. **`average_pca_per_team` Can Change During Step 2**: It is a derived target that may change when Step 2 changes therapist distribution (Step 2.2/2.3) or special-program capacity (Step 2.0). Once Step 3/4 have been completed, any Step 2 change that alters this target must mark Steps 3/4 as **out of date** and require a rerun.
 4. **Bed Relieving Calculations**: Use `totalBedsEffectiveAllTeams` (after SHS/students deductions) consistently - using raw `totalBedsAllTeams` creates impossible positive global sums
 5. **Pending FTE Update Safety**: Always use `assignOneSlotAndUpdatePending()` for one-slot calls and `assignUpToPendingAndUpdatePending()` for global pending calls - never manually update `pendingFTE[team]` after calling wrappers
 6. **TypeScript Strict Mode**: Use `createEmptyTeamRecord<T>()` for Record initialization, guard clauses instead of `!`, `PromiseLike<any>[]` for Supabase queries in `Promise.all()`
@@ -42,7 +42,7 @@ alwaysApply: true
 
 ## Allocation Workflow (5 Steps)
 
-1. **Step 1**: Leave & FTE management → updates `staffOverrides`, calculates `average_pca_per_team` (target, persists through Steps 2-4)
+1. **Step 1**: Leave & FTE management → updates `staffOverrides`, calculates initial `average_pca_per_team` target
 2. **Step 2**: Therapist & Non-Floating PCA
    - **2.0**: Special Program Overrides Dialog
    - **Algorithm**: Therapist → Non-floating PCA → Special program PCA (except DRM) → Non-floating substitution
