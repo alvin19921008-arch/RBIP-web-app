@@ -11,6 +11,7 @@ import type {
   PCAAllocation,
   ScheduleCalculations,
   ScheduleStepId,
+  StepStatus,
   SnapshotHealthReport,
   StaffStatusOverridesById,
   StaffStatusOverrideEntry,
@@ -231,7 +232,7 @@ type UndoSnapshot = {
   bedAllocations: BedAllocation[]
   calculations: Record<Team, ScheduleCalculations | null>
   currentStep: string
-  stepStatus: Record<string, 'pending' | 'completed' | 'modified'>
+  stepStatus: Record<string, StepStatus>
   initializedSteps: Set<string>
   step2Result: any
   hasSavedAllocations: boolean
@@ -293,7 +294,7 @@ type ScheduleDomainState = {
 
   // Workflow / snapshot domain state
   currentStep: string
-  stepStatus: Record<string, 'pending' | 'completed' | 'modified'>
+  stepStatus: Record<string, StepStatus>
   initializedSteps: Set<string>
   pendingPCAFTEPerTeam: Record<Team, number>
 
@@ -2820,12 +2821,19 @@ export function useScheduleController(params: {
       calcRowsCount = calcRows.length
 
       const completedStepsForWorkflow = ALLOCATION_STEPS
-        .filter((step: any) => stepStatus[step.id] === 'completed')
+        .filter((step: any) => {
+          const status = stepStatus[step.id]
+          return status === 'completed' || status === 'outdated'
+        })
         .map((step: any) => step.id) as WorkflowState['completedSteps']
+      const outdatedStepsForWorkflow = ALLOCATION_STEPS
+        .filter((step: any) => stepStatus[step.id] === 'outdated')
+        .map((step: any) => step.id) as WorkflowState['outdatedSteps']
 
       const workflowStateToSave: WorkflowState = {
         currentStep: currentStep as WorkflowState['currentStep'],
         completedSteps: completedStepsForWorkflow,
+        outdatedSteps: outdatedStepsForWorkflow,
       }
       try {
         const therapistBytes = JSON.stringify(therapistRows).length

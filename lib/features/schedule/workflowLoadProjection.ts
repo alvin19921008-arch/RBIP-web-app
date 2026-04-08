@@ -1,11 +1,8 @@
-import type { WorkflowState } from '@/types/schedule'
-import type { ScheduleStepId } from '@/types/schedule'
-
-type StepState = 'pending' | 'completed' | 'modified'
+import type { WorkflowState, ScheduleStepId, StepStatus } from '@/types/schedule'
 
 const STEP_IDS: ScheduleStepId[] = ['leave-fte', 'therapist-pca', 'floating-pca', 'bed-relieving', 'review']
 
-function emptyStepStatus(): Record<ScheduleStepId, StepState> {
+function emptyStepStatus(): Record<ScheduleStepId, StepStatus> {
   return {
     'leave-fte': 'pending',
     'therapist-pca': 'pending',
@@ -24,7 +21,7 @@ function sanitizeStepIds(ids: string[] | null | undefined): ScheduleStepId[] {
   return Array.from(unique)
 }
 
-function inferCurrentStepFromStatus(stepStatus: Record<ScheduleStepId, StepState>): ScheduleStepId {
+function inferCurrentStepFromStatus(stepStatus: Record<ScheduleStepId, StepStatus>): ScheduleStepId {
   if (stepStatus['bed-relieving'] === 'completed') return 'review'
   if (stepStatus['floating-pca'] === 'completed') return 'bed-relieving'
   if (stepStatus['therapist-pca'] === 'completed') return 'floating-pca'
@@ -40,17 +37,21 @@ export function projectLoadStepGating(args: {
   hasPCAData: boolean
   hasBedData: boolean
 }): {
-  stepStatus: Record<ScheduleStepId, StepState>
+  stepStatus: Record<ScheduleStepId, StepStatus>
   initializedStepsToApply: ScheduleStepId[]
   currentStepToApply: ScheduleStepId
 } {
   const workflowCompletedSteps = sanitizeStepIds(args.workflowState?.completedSteps as string[] | undefined)
+  const workflowOutdatedSteps = sanitizeStepIds(args.workflowState?.outdatedSteps as string[] | undefined)
   const hasExplicitWorkflow = !!args.workflowState && Array.isArray(args.workflowState.completedSteps)
 
   if (hasExplicitWorkflow) {
     const stepStatus = emptyStepStatus()
     workflowCompletedSteps.forEach((stepId) => {
       stepStatus[stepId] = 'completed'
+    })
+    workflowOutdatedSteps.forEach((stepId) => {
+      if (stepStatus[stepId] === 'completed') stepStatus[stepId] = 'outdated'
     })
     const currentStepFromWorkflow = (args.workflowState?.currentStep ?? null) as string | null
     const currentStepToApply = (STEP_IDS as string[]).includes(currentStepFromWorkflow || '')

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, Circle, ChevronRight, ChevronLeft, AlertCircle, HelpCircle, FilePenLine } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -17,7 +17,9 @@ interface Step {
 interface StepIndicatorProps {
   steps: Step[]
   currentStep: string
-  stepStatus: Record<string, 'pending' | 'completed' | 'modified'>
+  stepStatus: Record<string, 'pending' | 'completed' | 'modified' | 'outdated'>
+  /** Optional: visually emphasize specific steps (e.g. last upstream change impacted them). */
+  attentionStepIds?: string[]
   onStepClick?: (stepId: string) => void
   canNavigateToStep?: (stepId: string) => boolean
   onNext?: () => void
@@ -39,12 +41,15 @@ interface StepIndicatorProps {
   isAlgorithmRunning?: boolean
   onOpenLeaveSetup?: () => void
   leaveSetupPulseKey?: number
+  /** Rendered below the centered step description (e.g. Step 2 downstream reminder). */
+  belowDescriptionSlot?: ReactNode
 }
 
 export function StepIndicator({
   steps,
   currentStep,
   stepStatus,
+  attentionStepIds,
   onStepClick,
   canNavigateToStep,
   onNext,
@@ -64,9 +69,11 @@ export function StepIndicator({
   isAlgorithmRunning,
   onOpenLeaveSetup,
   leaveSetupPulseKey,
+  belowDescriptionSlot,
 }: StepIndicatorProps) {
   const currentStepIndex = steps.findIndex(s => s.id === currentStep)
   const currentStepData = steps[currentStepIndex]
+  const attentionSet = new Set(attentionStepIds || [])
   const canClear = ['leave-fte', 'therapist-pca', 'floating-pca', 'bed-relieving'].includes(currentStep)
   const canInitialize = !!onInitialize && ['therapist-pca', 'floating-pca', 'bed-relieving'].includes(currentStep)
   const canResetBaseline =
@@ -123,6 +130,7 @@ export function StepIndicator({
                 const isCurrent = step.id === currentStep
                 const isPast = index < currentStepIndex
                 const canNavigate = canNavigateToStep ? canNavigateToStep(step.id) : true
+                const isAttention = attentionSet.has(step.id) && status === 'outdated'
 
                 const showCheck = status === 'completed'
                 const circleBase =
@@ -130,7 +138,7 @@ export function StepIndicator({
                 const circleSize = isCurrent ? "w-7 h-7 text-xs" : "w-6 h-6 text-[11px]"
                 const circleStyle = showCheck
                   ? "bg-emerald-500 border-emerald-500 text-white"
-                  : status === 'modified'
+                  : status === 'modified' || status === 'outdated'
                     ? "bg-yellow-50 dark:bg-yellow-950/30 border-yellow-400 text-yellow-700 dark:text-yellow-300"
                     : isCurrent
                       ? "bg-amber-500 border-amber-500 text-white ring-4 ring-amber-500/20 dark:ring-amber-500/25 shadow-sm"
@@ -140,7 +148,7 @@ export function StepIndicator({
                   ? "text-slate-900 dark:text-slate-50 font-semibold"
                   : isPast
                     ? "text-emerald-700 dark:text-emerald-400"
-                    : status === 'modified'
+                    : status === 'modified' || status === 'outdated'
                       ? "text-yellow-700 dark:text-yellow-300"
                       : "text-slate-600 dark:text-slate-300"
 
@@ -157,6 +165,8 @@ export function StepIndicator({
                         "group inline-flex items-center gap-2 rounded-md px-2 py-1 transition-colors rbip-hover-scale",
                         "focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-slate-900",
                         isCurrent ? "bg-amber-50 dark:bg-amber-950/20" : "hover:bg-slate-50 dark:hover:bg-slate-800/40",
+                        isAttention &&
+                          "ring-2 ring-amber-400/70 ring-offset-2 ring-offset-white dark:ring-offset-slate-900 shadow-sm",
                         !canNavigate &&
                           "opacity-50 cursor-not-allowed hover:bg-transparent dark:hover:bg-transparent hover:scale-100 active:scale-100"
                       )}
@@ -239,7 +249,7 @@ export function StepIndicator({
                   </div>
                   <div className="flex items-center gap-2">
                     <AlertCircle className="h-3 w-3 text-yellow-600 dark:text-yellow-400" />
-                    <span>Modified</span>
+                    <span>Out of date</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
@@ -270,6 +280,10 @@ export function StepIndicator({
                 {currentStepData?.description ?? currentStepData?.title ?? ''}
               </span>
             </div>
+
+            {belowDescriptionSlot ? (
+              <div className="w-full max-w-2xl flex justify-center px-1">{belowDescriptionSlot}</div>
+            ) : null}
 
             {(canClear || canInitialize || canOpenLeaveSetup) ? (
               <div className="flex items-center justify-center gap-2 flex-wrap">
@@ -405,7 +419,7 @@ export function StepIndicatorCompact({
                 "w-2 h-2 rounded-full transition-all",
                 isCurrent && "w-3 h-3 bg-amber-500",
                 !isCurrent && status === 'completed' && "bg-emerald-500",
-                !isCurrent && status === 'modified' && "bg-yellow-500",
+                !isCurrent && (status === 'modified' || status === 'outdated') && "bg-yellow-500",
                 !isCurrent && status === 'pending' && "bg-slate-600"
               )}
             />

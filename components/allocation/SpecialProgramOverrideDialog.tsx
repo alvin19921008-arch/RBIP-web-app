@@ -20,6 +20,7 @@ import { SpecialProgramSubstitutionDialog } from '@/components/allocation/Specia
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { HorizontalCardCarousel } from '@/components/ui/horizontal-card-carousel'
 import { helpMedia } from '@/lib/help/helpMedia'
+import type { Step2DownstreamImpact } from '@/components/allocation/Step2DialogReminder'
 import {
   getPrimaryConfiguredTherapistForWeekday,
 } from '@/lib/utils/specialProgramConfigRows'
@@ -53,6 +54,7 @@ interface SpecialProgramOverrideDialogProps {
   weekday: Weekday
   showSubstituteStep?: boolean
   showSharedTherapistStep?: boolean
+  downstreamImpact?: Step2DownstreamImpact | null
   onConfirm: (overrides: Record<string, {
     fteRemaining?: number
     availableSlots?: number[]
@@ -103,6 +105,7 @@ export function SpecialProgramOverrideDialog({
   weekday,
   showSubstituteStep = true,
   showSharedTherapistStep = false,
+  downstreamImpact,
   onConfirm,
   onSkip,
   onStaffRefresh,
@@ -1538,7 +1541,6 @@ export function SpecialProgramOverrideDialog({
                 </div>
               </div>
           </DialogHeader>
-
           <div className="py-4">
             {activePrograms.length === 0 ? (
               <div className="text-center text-muted-foreground py-8">

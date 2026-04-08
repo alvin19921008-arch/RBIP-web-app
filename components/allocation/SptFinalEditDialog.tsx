@@ -27,6 +27,7 @@ import { Separator } from '@/components/ui/separator'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { buildStep2WizardStepperSteps } from '@/lib/features/schedule/step2WizardStepper'
 import { getSptFinalEditDialogPresentation } from '@/lib/features/schedule/sptFinalEditDialogPresentation'
+import type { Step2DownstreamImpact } from '@/components/allocation/Step2DialogReminder'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -178,6 +179,7 @@ export function SptFinalEditDialog(props: {
   weekday: Weekday
   showSubstituteStep?: boolean
   showSharedTherapistStep?: boolean
+  downstreamImpact?: Step2DownstreamImpact | null
 
   /** All SPT staff that can be added. */
   sptStaff: Staff[]
@@ -212,6 +214,7 @@ export function SptFinalEditDialog(props: {
     weekday,
     showSubstituteStep = true,
     showSharedTherapistStep = false,
+    downstreamImpact,
     sptStaff,
     allStaff = [],
     specialPrograms = [],
@@ -706,7 +709,6 @@ export function SptFinalEditDialog(props: {
             </div>
           </DialogDescription>
         </DialogHeader>
-
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain py-4 flex flex-col">
           {cards.length === 0 ? (
             <div className="text-center text-muted-foreground py-8">

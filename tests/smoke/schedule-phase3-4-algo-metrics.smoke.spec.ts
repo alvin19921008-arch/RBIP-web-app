@@ -60,6 +60,22 @@ async function runLeaveSimAction(page: Page, actionName: RegExp): Promise<void> 
   await waitForScheduleReady(page)
 }
 
+async function saveScheduleChanges(page: Page) {
+  const saveScheduleButton = page.getByRole('button', { name: 'Save Schedule' }).first()
+  await expect(saveScheduleButton).toBeVisible()
+  await saveScheduleButton.click()
+
+  await expect
+    .poll(
+      async () => {
+        const savedButton = page.getByRole('button', { name: 'Saved' }).first()
+        return (await savedButton.isVisible().catch(() => false)) ? 'saved' : 'pending'
+      },
+      { timeout: 15000 }
+    )
+    .toBe('saved')
+}
+
 test.describe('Schedule Phase 3.4 algorithm smoke', () => {
   test('step 2 -> step 3 auto-run @smoke', async ({ page }) => {
     await ensureAuthenticated(page)
@@ -69,6 +85,32 @@ test.describe('Schedule Phase 3.4 algorithm smoke', () => {
     await runLeaveSimAction(page, /^Run Step 2$/i)
     await runLeaveSimAction(page, /^Run Step 3/i)
     await expect(page.getByRole('button', { name: /Floating PCA/i }).first()).toBeVisible()
+  })
+
+  test('saved step 3 can re-open after reload without forcing step 2 rerun @smoke', async ({ page }) => {
+    await ensureAuthenticated(page)
+
+    await page.goto(`${appBaseURL}/schedule`, { waitUntil: 'domcontentloaded' })
+    await waitForScheduleReady(page)
+    await runLeaveSimAction(page, /^Run Step 2$/i)
+    await runLeaveSimAction(page, /^Run Step 3/i)
+    await saveScheduleChanges(page)
+
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await waitForScheduleReady(page)
+
+    const floatingStepButton = page.getByRole('button', { name: /Floating PCA/i }).first()
+    await expect(floatingStepButton).toBeVisible()
+    await floatingStepButton.click()
+
+    const startStep3Button = page
+      .getByRole('button', { name: /^(Re-run Algorithm|Initialize Algorithm)$/ })
+      .first()
+    await expect(startStep3Button).toBeVisible()
+    await startStep3Button.click()
+
+    await expect(page.getByRole('heading', { name: 'Floating PCA allocation' })).toBeVisible()
+    await expect(page.getByText('Step 2 must be completed before Step 3.')).toHaveCount(0)
   })
 })
 

@@ -3,6 +3,16 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-04-09 (Step 2 → Step 3/4 invalidation + single reminder)
+
+### Added
+- **Step 2 downstream impact** — `step2DownstreamImpact` contract (special programs, substitution, SPT/shared-therapist edits, main rerun) merged with fingerprint checks on finalize; one reminder surface in `StepIndicator` (dialog-level duplicates removed). Smoke: `step2-downstream-impact.smoke.spec.ts`.
+
+### Fixed
+- **Workflow save/load** — Persist `completedSteps` so steps marked `outdated` stay re-openable after reload; `projectLoadStepGating` applies `outdatedSteps` from saved workflow. `PCADedicatedScheduleTable` accepts `outdated` step status.
+
+---
+
 ## [Unreleased] - 2026-03-14 (Shared therapist mode + Step 2 drag)
 
 ### Added

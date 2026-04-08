@@ -17,6 +17,7 @@ import { getSlotTime, formatTimeRange } from '@/lib/utils/slotHelpers'
 import { getTeamTheme } from '@/components/allocation/teamThemePalette'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { buildStep2WizardStepperSteps } from '@/lib/features/schedule/step2WizardStepper'
+import type { Step2DownstreamImpact } from '@/components/allocation/Step2DialogReminder'
 
 // Step 2.1 Wizard team themes are shared via `teamThemePalette`.
 
@@ -52,6 +53,7 @@ interface NonFloatingSubstitutionDialogProps {
   /** Optional: show a Back button to previous Step 2 sub-step. */
   onBack?: () => void
   showSharedTherapistStep?: boolean
+  downstreamImpact?: Step2DownstreamImpact | null
 }
 
 interface AvailableFloatingPCA {
@@ -89,6 +91,7 @@ export function NonFloatingSubstitutionDialog({
   onSkip,
   onBack,
   showSharedTherapistStep = false,
+  downstreamImpact,
 }: NonFloatingSubstitutionDialogProps) {
   const [currentTeamIndex, setCurrentTeamIndex] = useState(0)
   const [selections, setSelections] = useState<Record<string, Array<{ floatingPCAId: string; slots: number[] }>>>(
@@ -452,7 +455,6 @@ export function NonFloatingSubstitutionDialog({
             </div>
           </DialogDescription>
         </DialogHeader>
-
         {/* Navigation - only show for wizard mode; kept outside overflow-auto so pulse box-shadow is not clipped */}
         {isWizardMode && (
           <>

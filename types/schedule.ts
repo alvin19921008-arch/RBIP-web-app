@@ -224,9 +224,12 @@ export type ScheduleStepId =
   | 'bed-relieving'
   | 'review'
 
+export type StepStatus = 'pending' | 'completed' | 'modified' | 'outdated'
+
 export interface WorkflowState {
   currentStep?: ScheduleStepId
   completedSteps?: ScheduleStepId[]
+  outdatedSteps?: ScheduleStepId[]
 }
 
 /**

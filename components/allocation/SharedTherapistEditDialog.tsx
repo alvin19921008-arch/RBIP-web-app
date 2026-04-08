@@ -27,6 +27,7 @@ import {
   getSharedTherapistQuickSelectPresentation,
   toggleSharedTherapistSelectedSlot,
 } from '@/lib/features/schedule/sharedTherapistDialogPresentation'
+import type { Step2DownstreamImpact } from '@/components/allocation/Step2DialogReminder'
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 const SLOT_KEYS: Array<1 | 2 | 3 | 4> = [1, 2, 3, 4]
@@ -133,6 +134,7 @@ export function SharedTherapistEditDialog(props: {
   currentAllocationByStaffId: Record<string, CurrentAllocation>
   ptPerTeamByTeam: Record<Team, number>
   showSubstituteStep?: boolean
+  downstreamImpact?: Step2DownstreamImpact | null
   onConfirm: (updates: Record<string, {
     leaveType: LeaveType | null
     fteRemaining: number
@@ -152,6 +154,7 @@ export function SharedTherapistEditDialog(props: {
     currentAllocationByStaffId,
     ptPerTeamByTeam,
     showSubstituteStep = true,
+    downstreamImpact,
     onConfirm,
     onSkip,
     onBack,
@@ -429,7 +432,6 @@ export function SharedTherapistEditDialog(props: {
             </div>
           </DialogDescription>
         </DialogHeader>
-
         <div className="flex-1 min-h-0 overflow-y-auto py-4">
           {cards.length === 0 ? (
             <div className="py-10 text-center text-sm text-muted-foreground">

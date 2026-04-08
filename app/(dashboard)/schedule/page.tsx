@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useRef, Fragment, useCallback, useTransition, Suspense, useMemo, Profiler, useOptimistic, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { useState, useEffect, useLayoutEffect, useRef, Fragment, useCallback, useTransition, Suspense, useMemo, Profiler, useOptimistic, type ReactNode } from 'react'
+import { createPortal, flushSync } from 'react-dom'
 import {
   DndContext,
   DragOverlay,
@@ -88,6 +88,10 @@ import {
 } from '@/lib/features/schedule/step3DialogFlow'
 import { buildPageStep3RuntimeState } from '@/lib/features/schedule/pageStep3Runtime'
 import { willNeedStep21Substitution } from '@/lib/features/schedule/step2SubstitutionProjection'
+import {
+  evaluateStep2DownstreamImpact,
+  type Step2ImpactKind,
+} from '@/lib/features/schedule/step2DownstreamImpact'
 import { mergeStep2Point2StaffOverrides } from '@/lib/features/schedule/step2Point2StateMerge'
 import {
   applySharedTherapistEditsToTherapistAllocations,
@@ -102,7 +106,6 @@ import {
 import { deriveExtraCoverageByStaffId } from '@/lib/features/schedule/extraCoverageRuntime'
 import { buildDisplayPcaAllocationsByTeam } from '@/lib/features/schedule/pcaDisplayProjection'
 import { projectBedRelievingNotesForDisplay } from '@/lib/features/schedule/bedRelievingDisplayProjection'
-import { flushSync } from 'react-dom'
 import {
   buildStaffByIdMap,
   groupTherapistAllocationsByTeam,
@@ -115,6 +118,118 @@ import { computeBedsDesignatedByTeam, computeBedsForRelieving, formatWardLabel }
 import { getSptWeekdayConfigMap } from '@/lib/features/schedule/sptConfig'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { Step2DialogReminder } from '@/components/allocation/Step2DialogReminder'
+type Step3DependencyFingerprint = {
+  teamTargetsByTeam: Record<Team, number>
+  existingAssignedByTeam: Record<Team, number>
+  reservedSpecialProgramPcaFte: number
+  floatingPcas: Array<{
+    id: string
+    ftePca: number
+    availableSlots: number[]
+    invalidSlot: 1 | 2 | 3 | 4 | null
+    team: Team | null
+    floorPca: string[]
+  }>
+  existingAllocations: Array<{
+    staffId: string
+    slot1: Team | null
+    slot2: Team | null
+    slot3: Team | null
+    slot4: Team | null
+    invalidSlot: 1 | 2 | 3 | 4 | null
+    specialProgramIds: string[]
+    isFloating: boolean
+  }>
+}
+
+type Step2FinalizeContext = {
+  kind: Step2ImpactKind
+  explicitStep3Change?: boolean
+  explicitStep4Change?: boolean
+}
+
+const DEFAULT_STEP2_FINALIZE_CONTEXT: Step2FinalizeContext = {
+  kind: 'main-rerun',
+  explicitStep3Change: false,
+  explicitStep4Change: false,
+}
+
+function jsonFingerprint(value: unknown): string {
+  return JSON.stringify(value)
+}
+
+function buildPtPerTeamFingerprint(args: {
+  therapistAllocations: Record<Team, (TherapistAllocation & { staff: Staff })[]>
+  teams?: Team[]
+}): Record<Team, number> {
+  const teams = args.teams ?? TEAMS
+  const out = createEmptyTeamRecord<number>(0)
+  teams.forEach((team) => {
+    out[team] = Number(
+      (args.therapistAllocations[team] || [])
+        .reduce((sum, allocation) => sum + (allocation.fte_therapist ?? 0), 0)
+        .toFixed(2)
+    )
+  })
+  return out
+}
+
+function buildStep3DependencyFingerprint(args: {
+  visibleTeams: Team[]
+  teamTargetsByTeam: Record<Team, number>
+  existingAssignedByTeam: Record<Team, number>
+  reservedSpecialProgramPcaFte: number
+  floatingPCAs: PCAData[]
+  existingAllocations: PCAAllocation[]
+  staffById: Map<string, Staff>
+}): Step3DependencyFingerprint {
+  const teamTargetsByTeam = createEmptyTeamRecord<number>(0)
+  const existingAssignedByTeam = createEmptyTeamRecord<number>(0)
+  for (const team of args.visibleTeams) {
+    teamTargetsByTeam[team] = Number((args.teamTargetsByTeam[team] ?? 0).toFixed(2))
+    existingAssignedByTeam[team] = Number((args.existingAssignedByTeam[team] ?? 0).toFixed(2))
+  }
+
+  return {
+    teamTargetsByTeam,
+    existingAssignedByTeam,
+    reservedSpecialProgramPcaFte: Number(args.reservedSpecialProgramPcaFte.toFixed(2)),
+    floatingPcas: [...args.floatingPCAs]
+      .map((pca) => ({
+        id: pca.id,
+        ftePca: Number((pca.fte_pca ?? 0).toFixed(2)),
+        availableSlots: [...(Array.isArray(pca.availableSlots) ? pca.availableSlots : [1, 2, 3, 4])].sort((a, b) => a - b),
+        invalidSlot:
+          pca.invalidSlot === 1 || pca.invalidSlot === 2 || pca.invalidSlot === 3 || pca.invalidSlot === 4
+            ? (pca.invalidSlot as 1 | 2 | 3 | 4)
+            : null,
+        team: (pca.team as Team | null) ?? null,
+        floorPca: Array.isArray(pca.floor_pca) ? [...pca.floor_pca].sort() : [],
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    existingAllocations: [...args.existingAllocations]
+      .map((allocation) => ({
+        staffId: allocation.staff_id,
+        slot1: (allocation.slot1 as Team | null) ?? null,
+        slot2: (allocation.slot2 as Team | null) ?? null,
+        slot3: (allocation.slot3 as Team | null) ?? null,
+        slot4: (allocation.slot4 as Team | null) ?? null,
+        invalidSlot:
+          (allocation as any).invalid_slot === 1 ||
+          (allocation as any).invalid_slot === 2 ||
+          (allocation as any).invalid_slot === 3 ||
+          (allocation as any).invalid_slot === 4
+            ? ((allocation as any).invalid_slot as 1 | 2 | 3 | 4)
+            : null,
+        specialProgramIds: Array.isArray((allocation as any).special_program_ids)
+          ? [...((allocation as any).special_program_ids as string[])].sort()
+          : [],
+        isFloating: !!args.staffById.get(allocation.staff_id)?.floating,
+      }))
+      .sort((a, b) => a.staffId.localeCompare(b.staffId)),
+  }
+}
 import type { PCAData, FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
 import type { BedAllocationContext } from '@/lib/algorithms/bedAllocation'
 import type { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation'
@@ -841,10 +956,23 @@ function SchedulePageContent() {
   const latestStaffOverridesRef = useRef(staffOverrides)
   const latestTherapistAllocationsRef = useRef(therapistAllocations)
   const latestPcaAllocationsRef = useRef(pcaAllocations)
+  const latestStepStatusRef = useRef(stepStatus)
+  const latestStep3DependencyFingerprintRef = useRef<string>('')
+  const latestStep4DependencyFingerprintRef = useRef<string>('')
+  const step2FingerprintBaselineRef = useRef<{ step3: string; step4: string } | null>(null)
+  const step2FinalizeContextRef = useRef<Step2FinalizeContext>(DEFAULT_STEP2_FINALIZE_CONTEXT)
+  const [step2DownstreamImpact, setStep2DownstreamImpact] = useState<{
+    step3Outdated: boolean
+    step4Outdated: boolean
+  } | null>(null)
 
   useEffect(() => {
     latestStaffOverridesRef.current = staffOverrides
   }, [staffOverrides])
+
+  useLayoutEffect(() => {
+    latestStepStatusRef.current = stepStatus
+  }, [stepStatus])
 
   useEffect(() => {
     latestTherapistAllocationsRef.current = therapistAllocations
@@ -853,6 +981,114 @@ function SchedulePageContent() {
   useEffect(() => {
     latestPcaAllocationsRef.current = pcaAllocations
   }, [pcaAllocations])
+
+  useEffect(() => {
+    setStep2DownstreamImpact((prev) => {
+      if (!prev) return prev
+      const step3StillOutdated = !!prev.step3Outdated && stepStatus['floating-pca'] === 'outdated'
+      const step4StillOutdated = !!prev.step4Outdated && stepStatus['bed-relieving'] === 'outdated'
+      if (!step3StillOutdated && !step4StillOutdated) return null
+      if (step3StillOutdated === prev.step3Outdated && step4StillOutdated === prev.step4Outdated) return prev
+      return { step3Outdated: step3StillOutdated, step4Outdated: step4StillOutdated }
+    })
+  }, [stepStatus])
+
+  const markDependentStepsOutOfDate = useCallback(
+    (args: { step3Changed: boolean; step4Changed: boolean }) => {
+      if (!args.step3Changed && !args.step4Changed) return
+      setStepStatus((prev) => {
+        let changed = false
+        const next = { ...(prev as any) }
+        if (args.step3Changed && next['floating-pca'] === 'completed') {
+          next['floating-pca'] = 'outdated'
+          changed = true
+        }
+        if (args.step4Changed && next['bed-relieving'] === 'completed') {
+          next['bed-relieving'] = 'outdated'
+          changed = true
+        }
+        return changed ? next : prev
+      })
+    },
+    [setStepStatus]
+  )
+
+  const getSpecialProgramFinalizeContext = useCallback(
+    (overrides?: Record<string, { specialProgramOverrides?: SpecialProgramOverrideEntry[] }> | null): Step2FinalizeContext => {
+      let explicitStep3Change = false
+      let explicitStep4Change = false
+
+      Object.values(overrides ?? {}).forEach((override) => {
+        const entries = Array.isArray(override?.specialProgramOverrides) ? override.specialProgramOverrides : []
+        if (entries.length === 0) return
+        explicitStep3Change = true
+        if (
+          entries.some((entry) => {
+            const therapistFTESubtraction = typeof entry?.therapistFTESubtraction === 'number'
+              ? entry.therapistFTESubtraction
+              : Number(entry?.therapistFTESubtraction ?? 0)
+            return !!entry?.therapistId || Number.isFinite(therapistFTESubtraction) && Math.abs(therapistFTESubtraction) > 0.001
+          })
+        ) {
+          explicitStep4Change = true
+        }
+      })
+
+      return {
+        kind: 'special-programs',
+        explicitStep3Change,
+        explicitStep4Change,
+      }
+    },
+    []
+  )
+
+  const captureStep2DependencyBaseline = useCallback((context?: Step2FinalizeContext) => {
+    step2FinalizeContextRef.current = context ?? DEFAULT_STEP2_FINALIZE_CONTEXT
+    step2FingerprintBaselineRef.current = {
+      step3: latestStep3DependencyFingerprintRef.current,
+      step4: latestStep4DependencyFingerprintRef.current,
+    }
+  }, [])
+
+  const finalizeStep2DependencyChanges = useCallback(() => {
+    const baseline = step2FingerprintBaselineRef.current
+    step2FingerprintBaselineRef.current = null
+    const finalizeContext = step2FinalizeContextRef.current
+    step2FinalizeContextRef.current = DEFAULT_STEP2_FINALIZE_CONTEXT
+    if (!baseline) return
+    const fingerprintStep3Changed = baseline.step3 !== latestStep3DependencyFingerprintRef.current
+    const fingerprintStep4Changed = baseline.step4 !== latestStep4DependencyFingerprintRef.current
+    const { step3Changed, step4Changed } = evaluateStep2DownstreamImpact({
+      kind: finalizeContext.kind,
+      step3FingerprintChanged: fingerprintStep3Changed,
+      step4FingerprintChanged: fingerprintStep4Changed,
+      // Current Step 3 targets are still derived from live PT distribution in this page.
+      step3TargetsDependOnPtDistribution: true,
+      explicitStep3Change: !!finalizeContext.explicitStep3Change,
+      explicitStep4Change: !!finalizeContext.explicitStep4Change,
+    })
+
+    const status = latestStepStatusRef.current as any
+    const step3Outdated = step3Changed && status?.['floating-pca'] === 'completed'
+    const step4Outdated = step4Changed && status?.['bed-relieving'] === 'completed'
+
+    markDependentStepsOutOfDate({ step3Changed, step4Changed })
+
+    if (step3Outdated || step4Outdated) {
+      setStep2DownstreamImpact({ step3Outdated, step4Outdated })
+    }
+  }, [markDependentStepsOutOfDate])
+
+  /** Defer past React commit/layout so dependency fingerprint refs match post–Step 2 state. */
+  const scheduleFinalizeStep2DependencyChanges = useCallback(() => {
+    const run = () => finalizeStep2DependencyChanges()
+    if (typeof window !== 'undefined') {
+      window.setTimeout(run, 0)
+    } else {
+      queueMicrotask(run)
+    }
+  }, [finalizeStep2DependencyChanges])
 
   const [teamSettingsRows, setTeamSettingsRows] = useState<TeamSettingsMergeRow[]>([])
   const [activeDragStaffForOverlay, setActiveDragStaffForOverlay] = useState<Staff | null>(null)
@@ -1682,6 +1918,7 @@ function SchedulePageContent() {
           }
         })
 
+        captureStep2DependencyBaseline(getSpecialProgramFinalizeContext(overridesFromDialog as any))
         setStaffOverrides(mergedOverrides)
 
         // RESET Step 2-related data when initializing the algorithm (shared helper).
@@ -1709,6 +1946,7 @@ function SchedulePageContent() {
             applyStep2Point2_SptFinalEdits(step22)
           }
           flushBufferedStep2Toast({ awaitCalculations: hasStep22Updates })
+          scheduleFinalizeStep2DependencyChanges()
           break
         }
       } catch (e) {
@@ -4143,6 +4381,10 @@ function SchedulePageContent() {
 
   const applyStep2Point2_SptFinalEdits = useCallback(
     (updates: Record<string, SptFinalEditUpdate>) => {
+      captureStep2DependencyBaseline({
+        kind: 'spt-final-edits',
+        explicitStep4Change: true,
+      })
       const allStaffForMap = [...staff, ...bufferStaff]
       const staffById = buildStaffByIdMap(allStaffForMap)
       const currentStaffOverrides = latestStaffOverridesRef.current
@@ -4181,26 +4423,30 @@ function SchedulePageContent() {
       latestStaffOverridesRef.current = nextStaffOverrides as any
       latestTherapistAllocationsRef.current = nextTherapistAllocations as any
 
-      setStaffOverrides(nextStaffOverrides)
-      setTherapistAllocations(nextTherapistAllocations)
-
-      // Recompute calculations from the exact post-edit snapshot so the Step 2 -> Step 3 handoff
-      // and its toast do not depend on async state timing.
-      recalculateScheduleCalculations({
-        forceWithoutAllocations: true,
-        source: {
-          pcaAllocations: currentPcaAllocations,
-          therapistAllocations: nextTherapistAllocations,
-          staffOverrides: nextStaffOverrides,
-        },
+      // Flush so dependency fingerprints (useMemo + useLayoutEffect ref sync) match this snapshot
+      // before finalizeStep2DependencyChanges; queueMicrotask can run before React commits.
+      flushSync(() => {
+        setStaffOverrides(nextStaffOverrides)
+        setTherapistAllocations(nextTherapistAllocations)
+        // Recompute calculations from the exact post-edit snapshot so the Step 2 -> Step 3 handoff
+        // and its toast do not depend on async state timing.
+        recalculateScheduleCalculations({
+          forceWithoutAllocations: true,
+          source: {
+            pcaAllocations: currentPcaAllocations,
+            therapistAllocations: nextTherapistAllocations,
+            staffOverrides: nextStaffOverrides,
+          },
+        })
       })
+      finalizeStep2DependencyChanges()
 
       return {
         nextStaffOverrides,
         nextTherapistAllocations,
       }
     },
-    [staff, bufferStaff, selectedDate, recalculateScheduleCalculations]
+    [staff, bufferStaff, selectedDate, recalculateScheduleCalculations, captureStep2DependencyBaseline, finalizeStep2DependencyChanges]
   )
 
   const sharedTherapistsForStep23 = useMemo(() => {
@@ -4299,6 +4545,10 @@ function SchedulePageContent() {
 
   const applyStep2Point3_SharedTherapistEdits = useCallback(
     (updates: Record<string, SharedTherapistEditUpdate>) => {
+      captureStep2DependencyBaseline({
+        kind: 'shared-therapist-edits',
+        explicitStep4Change: true,
+      })
       const allStaffForMap = [...staff, ...bufferStaff]
       const staffById = buildStaffByIdMap(allStaffForMap)
       const currentStaffOverrides = latestStaffOverridesRef.current
@@ -4320,24 +4570,26 @@ function SchedulePageContent() {
       latestStaffOverridesRef.current = nextStaffOverrides as any
       latestTherapistAllocationsRef.current = nextTherapistAllocations as any
 
-      setStaffOverrides(nextStaffOverrides)
-      setTherapistAllocations(nextTherapistAllocations)
-
-      recalculateScheduleCalculations({
-        forceWithoutAllocations: true,
-        source: {
-          pcaAllocations: currentPcaAllocations,
-          therapistAllocations: nextTherapistAllocations,
-          staffOverrides: nextStaffOverrides,
-        },
+      flushSync(() => {
+        setStaffOverrides(nextStaffOverrides)
+        setTherapistAllocations(nextTherapistAllocations)
+        recalculateScheduleCalculations({
+          forceWithoutAllocations: true,
+          source: {
+            pcaAllocations: currentPcaAllocations,
+            therapistAllocations: nextTherapistAllocations,
+            staffOverrides: nextStaffOverrides,
+          },
+        })
       })
+      finalizeStep2DependencyChanges()
 
       return {
         nextStaffOverrides,
         nextTherapistAllocations,
       }
     },
-    [bufferStaff, recalculateScheduleCalculations, selectedDate, staff]
+    [bufferStaff, recalculateScheduleCalculations, selectedDate, staff, captureStep2DependencyBaseline, finalizeStep2DependencyChanges]
   )
 
   /**
@@ -4498,6 +4750,7 @@ function SchedulePageContent() {
               
               
               // Continue with Step 2 algorithm
+              captureStep2DependencyBaseline(getSpecialProgramFinalizeContext(overrides))
               setStaffOverrides(mergedOverrides)
               
               // RESET Step 2-related data when initializing the algorithm (shared helper)
@@ -4561,6 +4814,7 @@ function SchedulePageContent() {
                       }
 
                       flushBufferedStep2Toast({ awaitCalculations: hasStep22Updates || hasStep23Updates })
+                      scheduleFinalizeStep2DependencyChanges()
                       break step2RunLoop
                     }
                   }
@@ -4621,6 +4875,9 @@ function SchedulePageContent() {
         
         // No active special programs - proceed directly to Step 2 algorithm
         // RESET Step 2-related data when initializing the algorithm (shared helper)
+        captureStep2DependencyBaseline({
+          kind: 'main-rerun',
+        })
         const cleanedOverrides = resetStep2OverridesForAlgoEntry({
           staffOverrides,
           allStaff: [...staff, ...bufferStaff],
@@ -4679,7 +4936,10 @@ function SchedulePageContent() {
               if (hasStep23Updates) {
                 applyStep2Point3_SharedTherapistEdits(step23)
               }
-              if (!cancelled) flushBufferedStep2Toast({ awaitCalculations: hasStep22Updates || hasStep23Updates })
+              if (!cancelled) {
+                flushBufferedStep2Toast({ awaitCalculations: hasStep22Updates || hasStep23Updates })
+                scheduleFinalizeStep2DependencyChanges()
+              }
               break step2RunLoop
             }
           }
@@ -4698,7 +4958,7 @@ function SchedulePageContent() {
         // Step 3.1: Recalculate pending FTE with proper rounding timing
         // For teams with buffer floating PCA: round avg FIRST, then subtract assignments
         // For teams without buffer floating PCA: round avg, then subtract non-floating only
-        if (!step2Result) {
+        if (stepStatus['therapist-pca'] === 'pending') {
           showActionToast('Step 2 must be completed before Step 3.', 'warning')
           return
         }
@@ -5617,6 +5877,49 @@ function SchedulePageContent() {
     })
     return out
   }, [visibleTeams, existingAssignedValidForStep3Dialog, specialProgramAssignedForStep3Dialog])
+
+  const staffByIdForStepDependencies = useMemo(
+    () => buildStaffByIdMap([...staff, ...bufferStaff]),
+    [staff, bufferStaff]
+  )
+
+  const step3DependencyFingerprint = useMemo(
+    () =>
+      buildStep3DependencyFingerprint({
+        visibleTeams,
+        teamTargetsByTeam: targetAverageForStep3Dialog,
+        existingAssignedByTeam: existingAssignedForCapForStep3Dialog,
+        reservedSpecialProgramPcaFte: reservedSpecialProgramPcaFteForStep3,
+        floatingPCAs: floatingPCAsForStep3,
+        existingAllocations: existingAllocationsForStep3Dialog,
+        staffById: staffByIdForStepDependencies,
+      }),
+    [
+      visibleTeams,
+      targetAverageForStep3Dialog,
+      existingAssignedForCapForStep3Dialog,
+      reservedSpecialProgramPcaFteForStep3,
+      floatingPCAsForStep3,
+      existingAllocationsForStep3Dialog,
+      staffByIdForStepDependencies,
+    ]
+  )
+
+  const step4DependencyFingerprint = useMemo(
+    () => buildPtPerTeamFingerprint({ therapistAllocations }),
+    [therapistAllocations]
+  )
+
+  // Keep refs in sync during commit (useLayoutEffect), not after paint (useEffect).
+  // Step 2 apply paths use flushSync + synchronous finalize so fingerprint refs match the post-edit
+  // snapshot; queueMicrotask alone can run before React commits, leaving stale refs and empty deltas.
+  useLayoutEffect(() => {
+    latestStep3DependencyFingerprintRef.current = jsonFingerprint(step3DependencyFingerprint)
+  }, [step3DependencyFingerprint])
+
+  useLayoutEffect(() => {
+    latestStep4DependencyFingerprintRef.current = jsonFingerprint(step4DependencyFingerprint)
+  }, [step4DependencyFingerprint])
 
   const step3BootstrapSummary = useMemo(
     () =>
@@ -10552,9 +10855,10 @@ function SchedulePageContent() {
         ) : null}
 
         {/* Step Indicator with Navigation */}
+        {/* shrink-0: split-mode flex column + flex-1 main can otherwise shrink this strip. */}
         <div
           className={cn(
-            'vt-mode-anim',
+            'vt-mode-anim shrink-0',
             'overflow-hidden transition-[max-height,opacity,transform,margin] duration-300 ease-in-out',
             isViewingMode
               ? 'max-h-0 opacity-0 -translate-y-2 mb-0 pointer-events-none'
@@ -10568,6 +10872,12 @@ function SchedulePageContent() {
             steps={ALLOCATION_STEPS}
             currentStep={currentStep}
             stepStatus={stepStatus}
+            attentionStepIds={(() => {
+              const ids: string[] = []
+              if (step2DownstreamImpact?.step3Outdated) ids.push('floating-pca')
+              if (step2DownstreamImpact?.step4Outdated) ids.push('bed-relieving')
+              return ids
+            })()}
             userRole={userRole}
             canResetToBaseline={access.can('schedule.tools.reset-to-baseline')}
             onResetToBaseline={resetToBaseline}
@@ -10617,6 +10927,12 @@ function SchedulePageContent() {
             isLoading={loading || isUiTransitionPending}
             isAlgorithmRunning={loading}
             leaveSetupPulseKey={leaveSetupPulseKey}
+            belowDescriptionSlot={
+              <Step2DialogReminder
+                impact={step2DownstreamImpact}
+                className="mt-0 w-full text-center text-sm leading-snug"
+              />
+            }
           />
         </div>
 
@@ -12689,6 +13005,7 @@ function SchedulePageContent() {
                 weekday={getWeekday(selectedDate)}
                 showSubstituteStep={showStep21InStep2Stepper}
                 showSharedTherapistStep={showSharedTherapistStep}
+                downstreamImpact={step2DownstreamImpact}
                 onConfirm={(overrides) => {
                   const resolver = specialProgramOverrideResolverRef.current
                   if (resolver) {
@@ -12741,6 +13058,7 @@ function SchedulePageContent() {
                 staffOverrides={staffOverrides as any}
                 showSubstituteStep={showStep21InStep2Stepper}
                 showSharedTherapistStep={showSharedTherapistStep}
+                downstreamImpact={step2DownstreamImpact}
                 currentAllocationByStaffId={currentSptAllocationByStaffIdForStep22}
                 ptPerTeamByTeam={ptPerTeamByTeamForStep22}
                 onConfirm={(updates) => {
@@ -12790,6 +13108,7 @@ function SchedulePageContent() {
                 currentAllocationByStaffId={sharedTherapistDialogData.currentAllocationByStaffId}
                 ptPerTeamByTeam={sharedTherapistDialogData.ptPerTeamByTeam}
                 showSubstituteStep={showStep21InStep2Stepper}
+                downstreamImpact={step2DownstreamImpact}
                 onConfirm={(updates) => {
                   const resolver = sharedTherapistEditResolverRef.current
                   if (resolver) {
@@ -12835,6 +13154,7 @@ function SchedulePageContent() {
                 currentAllocations={[]}
                 staffOverrides={staffOverrides}
                 showSharedTherapistStep={showSharedTherapistStep}
+                downstreamImpact={step2DownstreamImpact}
                 onConfirm={handleSubstitutionWizardConfirm}
                 onCancel={handleSubstitutionWizardCancel}
                 onSkip={handleSubstitutionWizardSkip}

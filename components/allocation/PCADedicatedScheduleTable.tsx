@@ -2,7 +2,7 @@
 
 import React, { useMemo, useRef, useState, useEffect, useCallback } from 'react'
 import type { Team, LeaveType } from '@/types/staff'
-import type { PCAAllocation } from '@/types/schedule'
+import type { PCAAllocation, StepStatus as ScheduleStepStatus } from '@/types/schedule'
 import type { Staff } from '@/types/staff'
 import type { SpecialProgram } from '@/types/allocation'
 import { Button } from '@/components/ui/button'
@@ -40,7 +40,7 @@ type StaffOverridesLike = Record<
   }
 >
 
-type StepStatus = Record<string, 'pending' | 'completed' | 'modified'>
+type StepStatus = Record<string, ScheduleStepStatus>
 
 interface PCADedicatedScheduleTableProps {
   allPCAStaff: Staff[] // should include buffer PCAs too
