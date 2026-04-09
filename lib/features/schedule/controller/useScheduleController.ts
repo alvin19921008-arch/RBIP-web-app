@@ -733,11 +733,30 @@ export function useScheduleController(params: {
 
   const canUseDraftCache = params.controllerRole !== 'ref' && params.preserveUnsavedAcrossDateSwitch !== false
   const allocationNotesDirty = !jsonDeepEqual(allocationNotesDoc ?? null, savedAllocationNotesDoc ?? null)
+  const workflowCompletedStepsForState = ALLOCATION_STEPS
+    .filter((step: any) => {
+      const status = stepStatus[step.id]
+      return status === 'completed' || status === 'modified' || status === 'outdated'
+    })
+    .map((step: any) => step.id) as WorkflowState['completedSteps']
+  const workflowOutdatedStepsForState = ALLOCATION_STEPS
+    .filter((step: any) => stepStatus[step.id] === 'outdated')
+    .map((step: any) => step.id) as WorkflowState['outdatedSteps']
+  const savedWorkflowCompletedSteps = Array.isArray(persistedWorkflowState?.completedSteps)
+    ? [...persistedWorkflowState.completedSteps].sort()
+    : []
+  const savedWorkflowOutdatedSteps = Array.isArray(persistedWorkflowState?.outdatedSteps)
+    ? [...persistedWorkflowState.outdatedSteps].sort()
+    : []
+  const workflowDirty =
+    JSON.stringify([...workflowCompletedStepsForState].sort()) !== JSON.stringify(savedWorkflowCompletedSteps) ||
+    JSON.stringify([...workflowOutdatedStepsForState].sort()) !== JSON.stringify(savedWorkflowOutdatedSteps)
   const draftDirtyReasons: string[] = []
   if (staffOverridesVersion !== savedOverridesVersion) draftDirtyReasons.push('staffOverrides')
   if (bedCountsOverridesVersion !== savedBedCountsOverridesVersion) draftDirtyReasons.push('bedCounts')
   if (bedRelievingNotesVersion !== savedBedRelievingNotesVersion) draftDirtyReasons.push('bedRelievingNotes')
   if (allocationNotesDirty) draftDirtyReasons.push('allocationNotes')
+  if (workflowDirty) draftDirtyReasons.push('workflow')
   const hasDirtyDraftState = draftDirtyReasons.length > 0
 
   const flushDraftForDateIfDirty = (args: {
@@ -758,12 +777,10 @@ export function useScheduleController(params: {
       return false
     }
 
-    const completedSteps: ScheduleStepId[] = Object.entries(stepStatus || {})
-      .filter(([, v]) => v === 'completed')
-      .map(([k]) => k as ScheduleStepId)
     const workflowStateForCache: WorkflowState = {
       currentStep: (currentStep as any) ?? 'leave-fte',
-      completedSteps,
+      completedSteps: workflowCompletedStepsForState,
+      outdatedSteps: workflowOutdatedStepsForState,
     }
 
     const draft: DraftScheduleData = {
@@ -1737,7 +1754,6 @@ export function useScheduleController(params: {
         hasPCAData,
         hasBedData,
       })
-
       if (hasPCAData) {
         applySavedAllocationsFromDb({
           therapistAllocs: resultAny.therapistAllocs,
@@ -2820,20 +2836,10 @@ export function useScheduleController(params: {
       bedRowsCount = bedRows.length
       calcRowsCount = calcRows.length
 
-      const completedStepsForWorkflow = ALLOCATION_STEPS
-        .filter((step: any) => {
-          const status = stepStatus[step.id]
-          return status === 'completed' || status === 'outdated'
-        })
-        .map((step: any) => step.id) as WorkflowState['completedSteps']
-      const outdatedStepsForWorkflow = ALLOCATION_STEPS
-        .filter((step: any) => stepStatus[step.id] === 'outdated')
-        .map((step: any) => step.id) as WorkflowState['outdatedSteps']
-
       const workflowStateToSave: WorkflowState = {
         currentStep: currentStep as WorkflowState['currentStep'],
-        completedSteps: completedStepsForWorkflow,
-        outdatedSteps: outdatedStepsForWorkflow,
+        completedSteps: workflowCompletedStepsForState,
+        outdatedSteps: workflowOutdatedStepsForState,
       }
       try {
         const therapistBytes = JSON.stringify(therapistRows).length

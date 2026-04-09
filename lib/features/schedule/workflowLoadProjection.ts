@@ -22,10 +22,10 @@ function sanitizeStepIds(ids: string[] | null | undefined): ScheduleStepId[] {
 }
 
 function inferCurrentStepFromStatus(stepStatus: Record<ScheduleStepId, StepStatus>): ScheduleStepId {
-  if (stepStatus['bed-relieving'] === 'completed') return 'review'
-  if (stepStatus['floating-pca'] === 'completed') return 'bed-relieving'
-  if (stepStatus['therapist-pca'] === 'completed') return 'floating-pca'
-  if (stepStatus['leave-fte'] === 'completed') return 'therapist-pca'
+  if (stepStatus['bed-relieving'] !== 'pending') return 'review'
+  if (stepStatus['floating-pca'] !== 'pending') return 'bed-relieving'
+  if (stepStatus['therapist-pca'] !== 'pending') return 'floating-pca'
+  if (stepStatus['leave-fte'] !== 'pending') return 'therapist-pca'
   return 'leave-fte'
 }
 
@@ -74,6 +74,7 @@ export function projectLoadStepGating(args: {
   const stepStatus = emptyStepStatus()
   if (args.hasLeaveData) stepStatus['leave-fte'] = 'completed'
   if (args.hasTherapistData || args.hasPCAData) stepStatus['therapist-pca'] = 'completed'
+  if (args.hasPCAData || args.hasBedData) stepStatus['floating-pca'] = 'completed'
   if (args.hasBedData) stepStatus['bed-relieving'] = 'completed'
 
   const initializedStepsFromLoaded = sanitizeStepIds(args.initializedStepsFromLoaded)
@@ -82,6 +83,7 @@ export function projectLoadStepGating(args: {
       ? initializedStepsFromLoaded
       : ([
           ...(stepStatus['therapist-pca'] === 'completed' ? (['therapist-pca'] as ScheduleStepId[]) : []),
+          ...(stepStatus['floating-pca'] === 'completed' ? (['floating-pca'] as ScheduleStepId[]) : []),
           ...(stepStatus['bed-relieving'] === 'completed' ? (['bed-relieving'] as ScheduleStepId[]) : []),
         ] as ScheduleStepId[])
 

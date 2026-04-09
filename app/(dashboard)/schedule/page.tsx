@@ -5715,6 +5715,37 @@ function SchedulePageContent() {
     }
   }
 
+  // Check if there are unsaved changes (staff overrides or bed edits)
+  const workflowDirty = useMemo(() => {
+    const currentCompletedSteps = ALLOCATION_STEPS
+      .filter((step) => {
+        const status = stepStatus[step.id]
+        return status === 'completed' || status === 'modified' || status === 'outdated'
+      })
+      .map((step) => step.id)
+      .sort()
+
+    const currentOutdatedSteps = ALLOCATION_STEPS
+      .filter((step) => stepStatus[step.id] === 'outdated')
+      .map((step) => step.id)
+      .sort()
+
+    if (!persistedWorkflowState) {
+      return currentStep !== 'leave-fte' || currentCompletedSteps.length > 0 || currentOutdatedSteps.length > 0
+    }
+
+    const savedCompletedSteps = Array.isArray(persistedWorkflowState.completedSteps)
+      ? [...persistedWorkflowState.completedSteps].sort()
+      : []
+    const savedOutdatedSteps = Array.isArray(persistedWorkflowState.outdatedSteps)
+      ? [...persistedWorkflowState.outdatedSteps].sort()
+      : []
+
+    return (
+      JSON.stringify(currentCompletedSteps) !== JSON.stringify(savedCompletedSteps) ||
+      JSON.stringify(currentOutdatedSteps) !== JSON.stringify(savedOutdatedSteps)
+    )
+  }, [currentStep, persistedWorkflowState, stepStatus])
 
   // Check if there are unsaved changes (staff overrides or bed edits)
   const hasUnsavedChanges = useMemo(
@@ -5722,7 +5753,8 @@ function SchedulePageContent() {
       staffOverridesVersion !== savedOverridesVersion ||
       bedCountsOverridesVersion !== savedBedCountsOverridesVersion ||
       bedRelievingNotesVersion !== savedBedRelievingNotesVersion ||
-      JSON.stringify(allocationNotesDoc ?? null) !== JSON.stringify(savedAllocationNotesDoc ?? null),
+      JSON.stringify(allocationNotesDoc ?? null) !== JSON.stringify(savedAllocationNotesDoc ?? null) ||
+      workflowDirty,
     [
       staffOverridesVersion,
       savedOverridesVersion,
@@ -5732,6 +5764,7 @@ function SchedulePageContent() {
       savedBedRelievingNotesVersion,
       allocationNotesDoc,
       savedAllocationNotesDoc,
+      workflowDirty,
     ]
   )
 

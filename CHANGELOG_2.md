@@ -3,6 +3,18 @@
 # This file tracks only the newer phase of changes starting 2026-02-08.
 # For older historical reference (project overview / architecture notes / earlier phases), see `CHANGELOG.md`.
 
+## [Unreleased] - 2026-04-09 (Step 4 save + workflow dirty + load projection)
+
+### Fixed
+- **Step 4 rerun without manual bed edits** — `hasUnsavedChanges` on the schedule page now treats workflow drift as dirty when in-memory step completion (e.g. `bed-relieving` → `completed`) does not match `persistedWorkflowState.completedSteps`, so `Save Schedule` enables after re-running the bed algorithm and persists bed rows + `workflow_state`.
+- **Premature “dirty” on Step 4 navigation** — Workflow dirty detection compares only completed/outdated step sets to the last saved workflow, not `currentStep` alone, so opening Step 4 without running the algorithm no longer forces the save button green.
+- **Save workflow metadata** — `useScheduleController` builds `workflowStateToSave.completedSteps` from steps in `completed` / `modified` / `outdated`; draft cache `workflow` dirty reasons align; `outdatedSteps` still saved separately.
+
+### Changed
+- **`projectLoadStepGating` fallback** — When there is no explicit saved workflow, mark `floating-pca` completed if PCA or bed allocation data exists; `inferCurrentStepFromStatus` advances using any non-`pending` progressed step so reload does not land on Step 3 while bed data exists.
+
+---
+
 ## [Unreleased] - 2026-04-09 (Step 2 → Step 3/4 invalidation + single reminder)
 
 ### Added
