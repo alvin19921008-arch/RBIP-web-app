@@ -733,15 +733,13 @@ export function useScheduleController(params: {
 
   const canUseDraftCache = params.controllerRole !== 'ref' && params.preserveUnsavedAcrossDateSwitch !== false
   const allocationNotesDirty = !jsonDeepEqual(allocationNotesDoc ?? null, savedAllocationNotesDoc ?? null)
-  const workflowCompletedStepsForState = ALLOCATION_STEPS
-    .filter((step: any) => {
-      const status = stepStatus[step.id]
-      return status === 'completed' || status === 'modified' || status === 'outdated'
-    })
-    .map((step: any) => step.id) as WorkflowState['completedSteps']
-  const workflowOutdatedStepsForState = ALLOCATION_STEPS
-    .filter((step: any) => stepStatus[step.id] === 'outdated')
-    .map((step: any) => step.id) as WorkflowState['outdatedSteps']
+  const workflowCompletedStepsForState: ScheduleStepId[] = ALLOCATION_STEPS.filter((step: any) => {
+    const status = stepStatus[step.id]
+    return status === 'completed' || status === 'modified' || status === 'outdated'
+  }).map((step: any) => step.id as ScheduleStepId)
+  const workflowOutdatedStepsForState: ScheduleStepId[] = ALLOCATION_STEPS.filter(
+    (step: any) => stepStatus[step.id] === 'outdated'
+  ).map((step: any) => step.id as ScheduleStepId)
   const savedWorkflowCompletedSteps = Array.isArray(persistedWorkflowState?.completedSteps)
     ? [...persistedWorkflowState.completedSteps].sort()
     : []
