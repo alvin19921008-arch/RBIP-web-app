@@ -1,5 +1,7 @@
 'use client'
 
+import type { ReactNode } from 'react'
+
 import { cn } from '@/lib/utils'
 
 export type Step2DownstreamImpact = {
@@ -7,11 +9,16 @@ export type Step2DownstreamImpact = {
   step4Outdated: boolean
 }
 
-function buildMessage(impact: Step2DownstreamImpact): string {
+function renderMessage(impact: Step2DownstreamImpact): ReactNode {
   const step3 = !!impact.step3Outdated
   const step4 = !!impact.step4Outdated
   if (step3 && step4) {
-    return 'This Step 2 change made Step 3 (Floating PCA) and Step 4 (Bed relieving) out of date. Re-run downstream steps before saving.'
+    return (
+      <span className="flex flex-col gap-0.5">
+        <span>This Step 2 change made Step 3 (Floating PCA) and Step 4 (Bed relieving) out of date.</span>
+        <span>Re-run downstream steps before saving.</span>
+      </span>
+    )
   }
   if (step3) {
     return 'This Step 2 change made Step 3 (Floating PCA) out of date. Re-run Step 3 before saving.'
@@ -35,7 +42,7 @@ export function Step2DialogReminder(props: {
       )}
       role="note"
     >
-      {buildMessage(impact)}
+      {renderMessage(impact)}
     </div>
   )
 }

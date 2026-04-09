@@ -16,6 +16,7 @@ type ToastState = {
   actions?: React.ReactNode
   progress?: ActionToastProgress
   persistUntilDismissed?: boolean
+  dismissOnOutsideClick?: boolean
   pauseOnHover?: boolean
   open: boolean
 }
@@ -31,6 +32,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const isPausedRef = React.useRef(false)
   const shouldPauseOnHoverRef = React.useRef(false)
   const shouldTrackDurationProgressRef = React.useRef(false)
+  const toastContainerRef = React.useRef<HTMLDivElement | null>(null)
   const [toast, setToast] = React.useState<ToastState | null>(null)
 
   const clearCountdownTimers = React.useCallback(() => {
@@ -105,6 +107,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       durationMs,
       actions,
       persistUntilDismissed,
+      dismissOnOutsideClick,
       progress,
       showDurationProgress,
       pauseOnHover,
@@ -123,6 +126,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         variant,
         actions,
         persistUntilDismissed,
+        dismissOnOutsideClick,
         progress: initialProgress,
         pauseOnHover,
         open: true,
@@ -143,19 +147,86 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         }, resolvedDurationMs)
         startProgressInterval(id)
       }
+
+      return id
     },
     [clearCountdownTimers, startProgressInterval]
   )
 
+  const update = React.useCallback(
+    (
+      id: number,
+      patch: Partial<Omit<ToastInput, 'durationMs'>>,
+      options?: { durationMs?: number; persistUntilDismissed?: boolean }
+    ) => {
+      setToast((prev) => {
+        if (!prev || prev.id !== id) return prev
+        const nextPersist =
+          typeof options?.persistUntilDismissed === 'boolean'
+            ? options.persistUntilDismissed
+            : typeof patch.persistUntilDismissed === 'boolean'
+              ? patch.persistUntilDismissed
+              : prev.persistUntilDismissed
+        return { ...prev, ...patch, persistUntilDismissed: nextPersist }
+      })
+
+      if (typeof options?.persistUntilDismissed === 'boolean') {
+        if (options.persistUntilDismissed) {
+          clearCountdownTimers()
+          activeToastIdRef.current = id
+          shouldTrackDurationProgressRef.current = false
+          shouldPauseOnHoverRef.current = false
+          isPausedRef.current = false
+          remainingMsRef.current = 0
+          totalDurationMsRef.current = 0
+          countdownStartedAtMsRef.current = 0
+          return
+        }
+
+        const resolvedDurationMs = Math.max(1, options.durationMs ?? DEFAULT_DURATION_MS)
+        clearCountdownTimers()
+        activeToastIdRef.current = id
+        shouldTrackDurationProgressRef.current = false
+        shouldPauseOnHoverRef.current = false
+        isPausedRef.current = false
+        totalDurationMsRef.current = resolvedDurationMs
+        remainingMsRef.current = resolvedDurationMs
+        countdownStartedAtMsRef.current = Date.now()
+        timerRef.current = window.setTimeout(() => {
+          setToast(prev => (prev && prev.id === id ? { ...prev, open: false } : prev))
+        }, resolvedDurationMs)
+      }
+    },
+    [clearCountdownTimers]
+  )
+
+  React.useEffect(() => {
+    if (!toast?.open) return
+    if (!toast.dismissOnOutsideClick) return
+
+    const onMouseDown = (e: MouseEvent) => {
+      const container = toastContainerRef.current
+      if (!container) return
+      if (container.contains(e.target as Node)) return
+      dismiss()
+    }
+
+    document.addEventListener('mousedown', onMouseDown)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+    }
+  }, [toast?.open, toast?.dismissOnOutsideClick, dismiss])
+
   const api = React.useMemo<ToastApi>(
     () => ({
       show,
+      update,
       dismiss,
       success: (title, description, durationMs) => show({ title, description, variant: 'success', durationMs }),
       warning: (title, description, durationMs) => show({ title, description, variant: 'warning', durationMs }),
       error: (title, description, durationMs) => show({ title, description, variant: 'error', durationMs }),
     }),
-    [dismiss, show]
+    [dismiss, show, update]
   )
 
   React.useEffect(() => {
@@ -169,30 +240,32 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       {children}
       {toast ? (
         <div className="fixed right-4 top-4 z-[9999] pointer-events-none">
-          <ActionToast
-            key={toast.id}
-            title={toast.title}
-            description={toast.description}
-            actions={toast.actions}
-            progress={toast.progress}
-            variant={toast.variant}
-            open={toast.open}
-            onClose={api.dismiss}
-            onHoverPauseChange={(paused) => {
-              if (!toast.pauseOnHover || toast.persistUntilDismissed) return
-              setCountdownPaused(paused)
-            }}
-            onExited={() => {
-              setToast(prev => (prev && prev.id === toast.id ? null : prev))
-              if (activeToastIdRef.current === toast.id) {
-                clearCountdownTimers()
-                activeToastIdRef.current = null
-                shouldTrackDurationProgressRef.current = false
-                shouldPauseOnHoverRef.current = false
-                isPausedRef.current = false
-              }
-            }}
-          />
+          <div ref={toastContainerRef} className="pointer-events-auto">
+            <ActionToast
+              key={toast.id}
+              title={toast.title}
+              description={toast.description}
+              actions={toast.actions}
+              progress={toast.progress}
+              variant={toast.variant}
+              open={toast.open}
+              onClose={api.dismiss}
+              onHoverPauseChange={(paused) => {
+                if (!toast.pauseOnHover || toast.persistUntilDismissed) return
+                setCountdownPaused(paused)
+              }}
+              onExited={() => {
+                setToast(prev => (prev && prev.id === toast.id ? null : prev))
+                if (activeToastIdRef.current === toast.id) {
+                  clearCountdownTimers()
+                  activeToastIdRef.current = null
+                  shouldTrackDurationProgressRef.current = false
+                  shouldPauseOnHoverRef.current = false
+                  isPausedRef.current = false
+                }
+              }}
+            />
+          </div>
         </div>
       ) : null}
     </ToastContext.Provider>

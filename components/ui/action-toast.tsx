@@ -152,8 +152,11 @@ export function ActionToast({
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/60">
                 {progress.kind === 'determinate' ? (
                   <div
-                    className={cn('h-full', styles.bar)}
-                    style={{ width: `${Math.round(clamp01(progress.value) * 100)}%` }}
+                    className={cn(
+                      'h-full transition-[width] duration-100 ease-linear motion-reduce:transition-none',
+                      styles.bar
+                    )}
+                    style={{ width: `${clamp01(progress.value) * 100}%` }}
                   />
                 ) : (
                   <div className={cn('h-full w-1/3 rbip-progress-indeterminate', styles.bar)} />

@@ -47,8 +47,8 @@ import { PCACalculationBlock } from '@/components/allocation/PCACalculationBlock
 import { SummaryColumn } from '@/components/allocation/SummaryColumn'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ActionToast } from '@/components/ui/action-toast'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
+import { useToast } from '@/components/ui/toast-context'
 import { StepIndicator } from '@/components/allocation/StepIndicator'
 import { PcaAllocationLegendPopover } from '@/components/allocation/PcaAllocationLegendPopover'
 import dynamic from 'next/dynamic'
@@ -374,7 +374,6 @@ import {
   preparePCAAllocationForDb,
 } from '@/lib/db/types'
 import { useAllocationSync } from '@/lib/hooks/useAllocationSync'
-import { useActionToast } from '@/lib/hooks/useActionToast'
 import { useResizeObservedHeight } from '@/lib/hooks/useResizeObservedHeight'
 import { useScheduleDateParam } from '@/lib/hooks/useScheduleDateParam'
 import { resetStep2OverridesForAlgoEntry } from '@/lib/features/schedule/stepReset'
@@ -1405,15 +1404,41 @@ function SchedulePageContent() {
   const [userRole, setUserRole] = useState<'developer' | 'admin' | 'user'>('user')
   const [helpDialogOpen, setHelpDialogOpen] = useState(false)
   const [devLeaveSimOpen, setDevLeaveSimOpen] = useState(false)
-  const {
-    actionToast,
-    actionToastContainerRef,
-    showActionToast,
-    updateActionToast,
-    dismissActionToast,
-    handleToastExited,
-    handleHoverPauseChange,
-  } = useActionToast()
+  const toastApi = useToast()
+  const lastShownToastRef = useRef<{ id: number; title: string } | null>(null)
+  const showActionToast = useCallback(
+    (
+      title: string,
+      variant: any = 'success',
+      description?: string,
+      options?: {
+        durationMs?: number
+        actions?: ReactNode
+        progress?: import('@/components/ui/action-toast').ActionToastProgress
+        persistUntilDismissed?: boolean
+        dismissOnOutsideClick?: boolean
+        showDurationProgress?: boolean
+        pauseOnHover?: boolean
+      }
+    ) => {
+      const id = toastApi.show({
+        title,
+        description,
+        variant,
+        ...options,
+      } as any)
+      lastShownToastRef.current = { id, title }
+      return id
+    },
+    [toastApi]
+  )
+  const updateActionToast = useCallback(
+    (id: number, patch: any, options?: { durationMs?: number; persistUntilDismissed?: boolean }) => {
+      toastApi.update(id, patch, options)
+    },
+    [toastApi]
+  )
+  const dismissActionToast = useCallback(() => toastApi.dismiss(), [toastApi])
   const [exportPngLayerOpen, setExportPngLayerOpen] = useState(false)
   const [exportingPng, setExportingPng] = useState(false)
   const [isLikelyMobileDevice, setIsLikelyMobileDevice] = useState(false)
@@ -5967,13 +5992,13 @@ function SchedulePageContent() {
   }, [step3BootstrapSummary])
 
   const startBufferedStep2ToastSession = useCallback(() => {
-    if (actionToast?.title === 'Step 2 allocation completed.') {
-      dismissActionToast()
+    if (lastShownToastRef.current?.title === 'Step 2 allocation completed.') {
+      toastApi.dismiss()
     }
     captureStep3BootstrapBaseline()
     bufferStep2SuccessToastRef.current = true
     clearBufferedStep2Toast()
-  }, [actionToast?.title, captureStep3BootstrapBaseline, clearBufferedStep2Toast, dismissActionToast])
+  }, [toastApi, captureStep3BootstrapBaseline, clearBufferedStep2Toast])
 
   useEffect(() => {
     if (bufferedStep2ToastFlushVersion === 0) return
@@ -10026,24 +10051,6 @@ function SchedulePageContent() {
           isSplitMode && 'h-[calc(100vh-64px)] flex flex-col min-h-0 overflow-hidden'
         )}
       >
-        {actionToast && (
-          <div ref={actionToastContainerRef} className="fixed right-4 top-4 z-[9999]">
-            <ActionToast
-              key={actionToast.id}
-              title={actionToast.title}
-              description={actionToast.description}
-              actions={actionToast.actions}
-              progress={actionToast.progress}
-              variant={actionToast.variant}
-              open={actionToast.open}
-              onClose={dismissActionToast}
-              onExited={() => {
-                handleToastExited(actionToast.id)
-              }}
-              onHoverPauseChange={actionToast.pauseOnHover ? handleHoverPauseChange : undefined}
-            />
-          </div>
-        )}
         {exportPngLayerOpen ? (
           <div
             aria-hidden={true}

@@ -13,6 +13,14 @@
 
 ---
 
+## [Unreleased] - 2026-04-09 (Step 3 V2 floating PCA engine — dialog)
+
+### Changed
+- **Step 3.3 (V2)** — `FloatingPCAConfigDialogV2`: workplace wording for special-program *adjacent slots* (replacing “adjacent help”); shared one-line PCA/program/adjacent description; single review section (option pick + assign/skip); legend and gray team pills deduped (“No adjacent slot” once).
+- **Step 3.4 (V2 preview)** — `step34ViewModel` + dialog `staffOverrides`: duplicate-floating copy and “why” reasons use **distinct qualifying Step 3.4 floaters per slot** only; slots where a floater is substituting for non-floating are excluded from that count; tighter result/detail strings (names vs muted line). Tracker flags unchanged—presentation-only semantics.
+
+---
+
 ## [Unreleased] - 2026-03-14 (Shared therapist mode + Step 2 drag)
 
 ### Added
