@@ -39,7 +39,7 @@ async function openLeaveSimRunTab(page: Page) {
   const panelHeading = page.getByRole('heading', { name: 'Developer Leave Simulation (seeded)' }).first()
   await expect(panelHeading).toBeVisible()
   await page.getByRole('button', { name: 'Run steps' }).click()
-  await expect(page.getByRole('button', { name: /Run Step 2/i })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Run Step 2/i })).toBeVisible()
 }
 
 async function runLeaveSimAction(page: Page, actionName: RegExp): Promise<void> {
@@ -82,7 +82,7 @@ test.describe('Schedule Phase 3.4 algorithm smoke', () => {
 
     await page.goto(`${appBaseURL}/schedule`, { waitUntil: 'domcontentloaded' })
     await waitForScheduleReady(page)
-    await runLeaveSimAction(page, /^Run Step 2$/i)
+    await runLeaveSimAction(page, /^Run Step 2/i)
     await runLeaveSimAction(page, /^Run Step 3/i)
     await expect(page.getByRole('button', { name: /Floating PCA/i }).first()).toBeVisible()
   })
@@ -92,7 +92,7 @@ test.describe('Schedule Phase 3.4 algorithm smoke', () => {
 
     await page.goto(`${appBaseURL}/schedule`, { waitUntil: 'domcontentloaded' })
     await waitForScheduleReady(page)
-    await runLeaveSimAction(page, /^Run Step 2$/i)
+    await runLeaveSimAction(page, /^Run Step 2/i)
     await runLeaveSimAction(page, /^Run Step 3/i)
     await saveScheduleChanges(page)
 

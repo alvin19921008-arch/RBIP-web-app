@@ -20,6 +20,7 @@ import { formatDateForInput } from '@/lib/features/schedule/date'
 import { serializeDevLeaveSimBundle, parseDevLeaveSimBundle } from '@/lib/dev/leaveSim/bundle'
 import { getSptWeekdayConfigMap } from '@/lib/features/schedule/sptConfig'
 import { generateDevLeaveSimDraft } from '@/lib/dev/leaveSim/generator'
+import { sampleLeaveSimQuotas } from '@/lib/dev/leaveSim/sampleLeaveSimQuotas'
 import {
   ALL_SLOTS,
   clampNumber,
@@ -31,6 +32,79 @@ import {
   type DevLeaveSimStaffPatch,
 } from '@/lib/dev/leaveSim/types'
 import { runDevLeaveSimInvariants, type DevLeaveSimInvariantReport } from '@/lib/dev/leaveSim/invariants'
+import { TEAMS } from '@/lib/features/schedule/constants'
+
+export type LeaveSimStepMode = 'automatic' | 'interactive'
+
+function buildStep3HarnessTeamOrder(args: {
+  visibleTeams: Team[]
+  pendingPerTeam: Partial<Record<Team, number>> | undefined
+}): { teamOrder: Team[]; pendingForV1: Record<Team, number> } {
+  const runtimeTeams = args.visibleTeams.length > 0 ? args.visibleTeams : TEAMS
+  const pendingForV1 = {} as Record<Team, number>
+  for (const t of TEAMS) {
+    const raw = args.pendingPerTeam?.[t]
+    const n = typeof raw === 'number' && Number.isFinite(raw) ? raw : 0
+    pendingForV1[t] = runtimeTeams.includes(t) ? n : 0
+  }
+  const teamOrder = [...runtimeTeams].sort((a, b) => {
+    const d = (pendingForV1[b] || 0) - (pendingForV1[a] || 0)
+    if (d !== 0) return d
+    return runtimeTeams.indexOf(a) - runtimeTeams.indexOf(b)
+  })
+  return { teamOrder, pendingForV1 }
+}
+
+function MiniStepModePicker(props: {
+  value: LeaveSimStepMode
+  onChange: (next: LeaveSimStepMode) => void
+  disabled?: boolean
+}) {
+  return (
+    <div className="inline-flex shrink-0 rounded-md border border-border bg-background p-0.5">
+      <button
+        type="button"
+        disabled={props.disabled}
+        className={cn(
+          'rounded px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-50',
+          props.value === 'automatic' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'
+        )}
+        onClick={() => props.onChange('automatic')}
+      >
+        Automatic
+      </button>
+      <button
+        type="button"
+        disabled={props.disabled}
+        className={cn(
+          'rounded px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-50',
+          props.value === 'interactive' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'
+        )}
+        onClick={() => props.onChange('interactive')}
+      >
+        Interactive
+      </button>
+    </div>
+  )
+}
+
+function MiniStepRow(props: {
+  title: string
+  helper: string
+  value: LeaveSimStepMode
+  onChange: (next: LeaveSimStepMode) => void
+  disabled?: boolean
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-border/70 bg-muted/15 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0 pr-2">
+        <div className="text-xs font-medium text-foreground">{props.title}</div>
+        <p className="mt-0.5 text-[11px] text-muted-foreground leading-snug">{props.helper}</p>
+      </div>
+      <MiniStepModePicker value={props.value} onChange={props.onChange} disabled={props.disabled} />
+    </div>
+  )
+}
 
 const LEAVE_TYPE_OPTIONS: LeaveType[] = [
   null,
@@ -155,20 +229,28 @@ export function DevLeaveSimPanel(props: {
 
   recalculateScheduleCalculations: () => void
 
+  /** Used to show Step 2.3 row only when the real Step 2 stepper would include it. */
+  showSharedTherapistStep?: boolean
+  /** Latest pending PCA FTE per team (for V1 headless + harness copy). */
+  pendingPCAFTEPerTeam?: Partial<Record<Team, number>>
+  visibleTeams?: Team[]
+
   runStep2: (args: { cleanedOverrides?: any; toast?: (title: string, variant?: any, description?: string) => void }) => Promise<any>
-  /** Optional: run Step 2 with auto substep controls (2.0/2.1). */
-  runStep2Auto?: (args: { autoStep20: boolean; autoStep21: boolean; autoStep22: boolean }) => Promise<void>
-  runStep3: (args: { onTieBreak?: (params: { teams: Team[]; pendingFTE: number; tieBreakKey: string }) => Promise<Team> }) => Promise<void>
   /**
-   * Optional: run Step 3 using the same v2 engine as `FloatingPCAConfigDialog`.
-   * When provided, the sim runner will prefer this over the legacy Step 3 runner.
+   * Harness Step 2 runner. Flag names follow legacy controller wiring:
+   * - autoStep21: automatic Step 2.0 (keep overrides / hybrid) vs interactive dialog
+   * - autoStep20: automatic Step 2.1 substitutions vs interactive wizard
+   * - autoStep22: automatic Step 2.2 (no SPT final edit dialog)
+   * - autoStep23: automatic Step 2.3 (no shared-therapist dialog)
    */
-  runStep3V2Auto?: (args: {
-    autoStep32: boolean
-    autoStep33: boolean
-    bufferPreAssignRatio: number
-    mode: 'standard' | 'balanced'
+  runStep2Auto?: (args: { autoStep20: boolean; autoStep21: boolean; autoStep22: boolean; autoStep23: boolean }) => Promise<void>
+  runStep3: (args: {
+    onTieBreak?: (params: { teams: Team[]; pendingFTE: number; tieBreakKey: string }) => Promise<Team>
+    userTeamOrder?: Team[]
+    userAdjustedPendingFTE?: Record<Team, number>
   }) => Promise<void>
+  /** Headless Step 3 v2 pass (Floating PCA v2 allocator), standard mode only in harness. */
+  runStep3V2Auto?: (args: { autoStep32: boolean; autoStep33: boolean; bufferPreAssignRatio: number }) => Promise<void>
   /** Optional: open the actual Step 3 wizard UI (3.0→3.4). */
   openStep3Wizard?: () => void
   runStep4: () => Promise<void>
@@ -185,12 +267,16 @@ export function DevLeaveSimPanel(props: {
   const [report, setReport] = useState<DevLeaveSimInvariantReport | null>(null)
   const [clearTieBreakDecisions, setClearTieBreakDecisions] = useState(true)
   const [isRunningSteps, setIsRunningSteps] = useState(false)
-  const [step2Auto20, setStep2Auto20] = useState(true)
-  const [step2Auto21, setStep2Auto21] = useState(true)
-  const [step2Auto22, setStep2Auto22] = useState(true)
-  const [step3Auto32, setStep3Auto32] = useState(true)
-  const [step3Auto33, setStep3Auto33] = useState(true)
-  const [step3AllocationMode, setStep3AllocationMode] = useState<'standard' | 'balanced'>('standard')
+  const [step2Mode20, setStep2Mode20] = useState<LeaveSimStepMode>('automatic')
+  const [step2Mode21, setStep2Mode21] = useState<LeaveSimStepMode>('automatic')
+  const [step2Mode22, setStep2Mode22] = useState<LeaveSimStepMode>('automatic')
+  const [step2Mode23, setStep2Mode23] = useState<LeaveSimStepMode>('automatic')
+  const [step3Engine, setStep3Engine] = useState<'v2' | 'v1'>('v2')
+  /** V1 on-schedule wizard only (standard vs balanced). Headless V1 run ignores this. */
+  const [step3V1WizardAllocationMode, setStep3V1WizardAllocationMode] = useState<'standard' | 'balanced'>('standard')
+  const [step3Mode30, setStep3Mode30] = useState<LeaveSimStepMode>('automatic')
+  const [step3Mode32, setStep3Mode32] = useState<LeaveSimStepMode>('automatic')
+  const [step3Mode33, setStep3Mode33] = useState<LeaveSimStepMode>('automatic')
   // 0..1 ratio of buffer PCA slots to pre-assign in "Step 3.0" (before 3.1).
   const [step30BufferPreAssignRatio, setStep30BufferPreAssignRatio] = useState(0)
   const [pipelinePhase, setPipelinePhase] = useState<null | 'step2' | 'step3' | 'step4' | 'invariants'>(null)
@@ -267,13 +353,34 @@ export function DevLeaveSimPanel(props: {
       if (parsed?.draft) setDraft(parsed.draft)
       if (parsed?.appliedOriginalsByStaffId) setAppliedOriginalsByStaffId(parsed.appliedOriginalsByStaffId)
       if (parsed?.activeTab === 'edit' || parsed?.activeTab === 'run' || parsed?.activeTab === 'bundle') setActiveTab(parsed.activeTab)
-      if (typeof parsed?.step2Auto20 === 'boolean') setStep2Auto20(parsed.step2Auto20)
-      if (typeof parsed?.step2Auto21 === 'boolean') setStep2Auto21(parsed.step2Auto21)
-      if (typeof parsed?.step2Auto22 === 'boolean') setStep2Auto22(parsed.step2Auto22)
-      if (typeof parsed?.step3Auto32 === 'boolean') setStep3Auto32(parsed.step3Auto32)
-      if (typeof parsed?.step3Auto33 === 'boolean') setStep3Auto33(parsed.step3Auto33)
-      if (parsed?.step3AllocationMode === 'standard' || parsed?.step3AllocationMode === 'balanced') {
-        setStep3AllocationMode(parsed.step3AllocationMode)
+      const asMode = (v: unknown): LeaveSimStepMode | null =>
+        v === 'automatic' || v === 'interactive' ? v : null
+      if (asMode(parsed?.step2Mode20)) setStep2Mode20(asMode(parsed.step2Mode20)!)
+      if (asMode(parsed?.step2Mode21)) setStep2Mode21(asMode(parsed.step2Mode21)!)
+      if (asMode(parsed?.step2Mode22)) setStep2Mode22(asMode(parsed.step2Mode22)!)
+      if (asMode(parsed?.step2Mode23)) setStep2Mode23(asMode(parsed.step2Mode23)!)
+      if (parsed?.step3Engine === 'v1' || parsed?.step3Engine === 'v2') setStep3Engine(parsed.step3Engine)
+      if (parsed?.step3V1WizardAllocationMode === 'standard' || parsed?.step3V1WizardAllocationMode === 'balanced') {
+        setStep3V1WizardAllocationMode(parsed.step3V1WizardAllocationMode)
+      }
+      if (asMode(parsed?.step3Mode30)) setStep3Mode30(asMode(parsed.step3Mode30)!)
+      if (asMode(parsed?.step3Mode32)) setStep3Mode32(asMode(parsed.step3Mode32)!)
+      if (asMode(parsed?.step3Mode33)) setStep3Mode33(asMode(parsed.step3Mode33)!)
+      // Legacy booleans (pre–Apr 2026 harness layout)
+      if (!asMode(parsed?.step2Mode20) && typeof parsed?.step2Auto21 === 'boolean') {
+        setStep2Mode20(parsed.step2Auto21 ? 'automatic' : 'interactive')
+      }
+      if (!asMode(parsed?.step2Mode21) && typeof parsed?.step2Auto20 === 'boolean') {
+        setStep2Mode21(parsed.step2Auto20 ? 'automatic' : 'interactive')
+      }
+      if (!asMode(parsed?.step2Mode22) && typeof parsed?.step2Auto22 === 'boolean') {
+        setStep2Mode22(parsed.step2Auto22 ? 'automatic' : 'interactive')
+      }
+      if (!asMode(parsed?.step3Mode32) && typeof parsed?.step3Auto32 === 'boolean') {
+        setStep3Mode32(parsed.step3Auto32 ? 'automatic' : 'interactive')
+      }
+      if (!asMode(parsed?.step3Mode33) && typeof parsed?.step3Auto33 === 'boolean') {
+        setStep3Mode33(parsed.step3Auto33 ? 'automatic' : 'interactive')
       }
       if (typeof parsed?.step30BufferPreAssignRatio === 'number') {
         const n = Math.max(0, Math.min(1, parsed.step30BufferPreAssignRatio))
@@ -299,12 +406,15 @@ export function DevLeaveSimPanel(props: {
           appliedOriginalsByStaffId,
           activeTab,
           report,
-          step2Auto20,
-          step2Auto21,
-          step2Auto22,
-          step3Auto32,
-          step3Auto33,
-          step3AllocationMode,
+          step2Mode20,
+          step2Mode21,
+          step2Mode22,
+          step2Mode23,
+          step3Engine,
+          step3V1WizardAllocationMode,
+          step3Mode30,
+          step3Mode32,
+          step3Mode33,
           step30BufferPreAssignRatio,
         })
       )
@@ -319,12 +429,15 @@ export function DevLeaveSimPanel(props: {
     appliedOriginalsByStaffId,
     activeTab,
     report,
-    step2Auto20,
-    step2Auto21,
-    step2Auto22,
-    step3Auto32,
-    step3Auto33,
-    step3AllocationMode,
+    step2Mode20,
+    step2Mode21,
+    step2Mode22,
+    step2Mode23,
+    step3Engine,
+    step3V1WizardAllocationMode,
+    step3Mode30,
+    step3Mode32,
+    step3Mode33,
     step30BufferPreAssignRatio,
   ])
 
@@ -333,6 +446,21 @@ export function DevLeaveSimPanel(props: {
     for (const p of draft?.patches ?? []) set.add(p.staffId)
     return set
   }, [draft])
+
+  /**
+   * Parent schedule state updates often during Steps 2–4 (pending FTE, visible teams, etc.).
+   * Those values must NOT be in the pipeline `useEffect` deps: re-running the effect cancels the
+   * in-flight async runner, restarts steps, and can cascade into Radix Select ref/update loops.
+   * Read the latest values from this ref inside the pipeline instead.
+   */
+  const harnessPipelineInputRef = useRef({
+    visibleTeams: props.visibleTeams,
+    pendingPCAFTEPerTeam: props.pendingPCAFTEPerTeam,
+    touchedStaffIds,
+  })
+  harnessPipelineInputRef.current.visibleTeams = props.visibleTeams
+  harnessPipelineInputRef.current.pendingPCAFTEPerTeam = props.pendingPCAFTEPerTeam
+  harnessPipelineInputRef.current.touchedStaffIds = touchedStaffIds
 
   const generate = () => {
     const normalizedTherapistCount = Math.floor(
@@ -382,28 +510,16 @@ export function DevLeaveSimPanel(props: {
   }
 
   const randomizeCountsAndSeed = () => {
-    // Randomize the quotas in a visible way (so dev can still tweak before generating).
+    // New master seed + deterministic quota draw (separate PRNG stream from draft generation).
     const nextSeed = String(Date.now())
-    const therapistMin = Math.max(0, config.plannedTherapistMin)
-    const therapistMax = Math.max(therapistMin, config.plannedTherapistMax)
-    const therapistCount = therapistMin + Math.floor(Math.random() * (therapistMax - therapistMin + 1))
-    const pcaMin = Math.max(0, config.plannedPcaFteBudgetMin)
-    const pcaMax = Math.max(pcaMin, config.plannedPcaFteBudgetMax)
-    const pcaBudgetChoices = [0, 0.5, 1.0, 1.5, 2.0].filter((v) => v >= pcaMin && v <= pcaMax)
-    const pcaBudget = pcaBudgetChoices.length > 0 ? (pcaBudgetChoices[Math.floor(Math.random() * pcaBudgetChoices.length)] ?? pcaMin) : pcaMin
-    const sickMin = Math.max(0, config.sickCountMin)
-    const sickMax = Math.max(sickMin, config.sickCountMax)
-    const sick = sickMin + Math.floor(Math.random() * (sickMax - sickMin + 1))
-    const urgentMin = Math.max(0, config.urgentCountMin)
-    const urgentMax = Math.max(urgentMin, config.urgentCountMax)
-    const urgent = urgentMin + Math.floor(Math.random() * (urgentMax - urgentMin + 1))
+    const q = sampleLeaveSimQuotas({ config, masterSeed: nextSeed })
     const next: DevLeaveSimConfig = {
       ...config,
       seed: nextSeed,
-      plannedTherapistCount: therapistCount,
-      plannedPcaFteBudget: pcaBudget,
-      sickCount: sick,
-      urgentCount: urgent,
+      plannedTherapistCount: q.plannedTherapistCount,
+      plannedPcaFteBudget: q.plannedPcaFteBudget,
+      sickCount: q.sickCount,
+      urgentCount: q.urgentCount,
     }
     setConfig(next)
     syncInputsFromConfig(next)
@@ -514,12 +630,16 @@ export function DevLeaveSimPanel(props: {
     const run = async () => {
       try {
         if (pipelinePhase === 'step2') {
-          if (clearTieBreakDecisions) props.setTieBreakDecisions({})
           props.clearDomainFromStep('therapist-pca')
           props.goToStep('therapist-pca')
           props.recalculateScheduleCalculations()
           if (props.runStep2Auto) {
-            await props.runStep2Auto({ autoStep20: step2Auto20, autoStep21: step2Auto21, autoStep22: step2Auto22 })
+            await props.runStep2Auto({
+              autoStep20: step2Mode21 === 'automatic',
+              autoStep21: step2Mode20 === 'automatic',
+              autoStep22: step2Mode22 === 'automatic',
+              autoStep23: step2Mode23 === 'automatic',
+            })
           } else {
             await props.runStep2({ cleanedOverrides: undefined })
           }
@@ -528,22 +648,31 @@ export function DevLeaveSimPanel(props: {
         }
 
         if (pipelinePhase === 'step3') {
+          if (clearTieBreakDecisions) props.setTieBreakDecisions({})
           props.clearDomainFromStep('floating-pca')
           props.goToStep('floating-pca')
-          if (props.runStep3V2Auto) {
-            const effectiveAuto32 = step3AllocationMode === 'balanced' ? false : step3Auto32
-            const effectiveAuto33 = step3AllocationMode === 'balanced' ? false : step3Auto33
-            await props.runStep3V2Auto({
-              autoStep32: effectiveAuto32,
-              autoStep33: effectiveAuto33,
-              bufferPreAssignRatio: step30BufferPreAssignRatio,
-              mode: step3AllocationMode,
-            })
+          if (step3Engine === 'v2') {
+            if (props.runStep3V2Auto) {
+              const bufferRatio = step3Mode30 === 'automatic' ? step30BufferPreAssignRatio : 0
+              await props.runStep3V2Auto({
+                autoStep32: step3Mode32 === 'automatic',
+                autoStep33: step3Mode33 === 'automatic',
+                bufferPreAssignRatio: bufferRatio,
+              })
+            } else {
+              await props.runStep3({
+                onTieBreak: async ({ teams }) => [...teams].sort()[0]!,
+              })
+            }
           } else {
+            const { teamOrder, pendingForV1 } = buildStep3HarnessTeamOrder({
+              visibleTeams: harnessPipelineInputRef.current.visibleTeams ?? TEAMS,
+              pendingPerTeam: harnessPipelineInputRef.current.pendingPCAFTEPerTeam,
+            })
             await props.runStep3({
-              onTieBreak: async ({ teams }) => {
-                return [...teams].sort()[0]!
-              },
+              onTieBreak: async ({ teams }) => [...teams].sort()[0]!,
+              userTeamOrder: teamOrder,
+              userAdjustedPendingFTE: pendingForV1,
             })
           }
           if (!cancelled) setPipelinePhase('step4')
@@ -565,7 +694,7 @@ export function DevLeaveSimPanel(props: {
             therapistAllocationsByTeam: props.therapistAllocationsByTeam,
             pcaAllocationsByTeam: props.pcaAllocationsByTeam,
             calculationsByTeam: props.calculationsByTeam,
-            touchedStaffIds,
+            touchedStaffIds: harnessPipelineInputRef.current.touchedStaffIds,
           })
           setReport(rep)
           setIsRunningSteps(false)
@@ -588,14 +717,15 @@ export function DevLeaveSimPanel(props: {
     pipelinePhase,
     props.userRole,
     clearTieBreakDecisions,
-    step2Auto20,
-    step2Auto21,
-    step2Auto22,
-    step3Auto32,
-    step3Auto33,
-    step3AllocationMode,
+    step2Mode20,
+    step2Mode21,
+    step2Mode22,
+    step2Mode23,
+    step3Engine,
+    step3Mode30,
+    step3Mode32,
+    step3Mode33,
     step30BufferPreAssignRatio,
-    touchedStaffIds,
   ])
 
   const runAllSteps = () => {
@@ -950,214 +1080,306 @@ export function DevLeaveSimPanel(props: {
 
           </div>
         ) : activeTab === 'run' ? (
-          <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="space-y-3">
-              <div className="rounded-md border border-border p-3 space-y-2">
-                <div className="text-sm font-medium">Step 2 auto options</div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <Tooltip side="bottom" content="Auto-handle Step 2.1 non-floating PCA substitution decisions (no dialog).">
-                      <Label className="text-xs cursor-default">Auto 2.1 (substitution)</Label>
-                    </Tooltip>
-                    <Switch checked={step2Auto20} onCheckedChange={setStep2Auto20} />
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <Tooltip side="bottom" content="Auto-skip Step 2.0 special program override wizard and proceed with existing program config.">
-                      <Label className="text-xs cursor-default">Auto 2.0 (special programs)</Label>
-                    </Tooltip>
-                    <Switch checked={step2Auto21} onCheckedChange={setStep2Auto21} />
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <Tooltip
-                      side="bottom"
-                      content="Auto-skip Step 2.2 SPT Final Edit dialog and proceed with the current SPT setup/overrides."
-                    >
-                      <Label className="text-xs cursor-default">Auto 2.2 (SPT final edit)</Label>
-                    </Tooltip>
-                    <Switch checked={step2Auto22} onCheckedChange={setStep2Auto22} />
-                  </div>
-                </div>
+          <div className="mt-4 space-y-4">
+            <div className="rounded-md border border-border bg-card/30 p-4 space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Step 2 · Therapist and non-floating PCA</h3>
+                <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                  <span className="font-medium text-foreground">Automatic</span> resolves without that mini-step dialog when
+                  possible. <span className="font-medium text-foreground">Interactive</span> opens the real dialog.
+                </p>
               </div>
-
-              <div className="rounded-md border border-border p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <Tooltip side="bottom" content="Clear persisted tie-break decisions before running Step 3 to avoid steering from older tests.">
-                    <Label className="text-xs cursor-default">Clear tie-break decisions</Label>
-                  </Tooltip>
-                  <Switch checked={clearTieBreakDecisions} onCheckedChange={setClearTieBreakDecisions} />
-                </div>
-
-                <div className="rounded-md border border-border p-2 space-y-2">
-                  <div className="text-xs font-medium">Step 3 auto options</div>
-                  <div className="space-y-1">
-                    <Tooltip
-                      side="bottom"
-                      content="Standard runs 3.2/3.3 reservations (if enabled) before 3.4. Balanced runs 3.4 directly (skips 3.2 and 3.3)."
-                    >
-                      <Label className="text-xs cursor-default">Step 3.4 allocation mode</Label>
-                    </Tooltip>
-                    <Select value={step3AllocationMode} onValueChange={(v) => setStep3AllocationMode(v as any)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="standard">standard</SelectItem>
-                        <SelectItem value="balanced">balanced (skip 3.2/3.3)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <Tooltip side="bottom" content="Auto-apply Step 3.2 preferred-slot reservations (greedy, conflict-safe).">
-                        <Label className="text-xs cursor-default">Auto 3.2 (preferred)</Label>
-                      </Tooltip>
-                      <Switch
-                        checked={step3Auto32}
-                        onCheckedChange={setStep3Auto32}
-                        disabled={step3AllocationMode === 'balanced'}
-                      />
-                    </div>
-                    <div className="flex items-center justify-between gap-2">
-                      <Tooltip side="bottom" content="Auto-apply Step 3.3 adjacent-slot reservations (from special program assignments).">
-                        <Label className="text-xs cursor-default">Auto 3.3 (adjacent)</Label>
-                      </Tooltip>
-                      <Switch
-                        checked={step3Auto33}
-                        onCheckedChange={setStep3Auto33}
-                        disabled={step3AllocationMode === 'balanced'}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <Tooltip
-                      side="bottom"
-                      content="Simulate Step 3.0 by pre-assigning some buffer-floating PCA slots before Step 3.1. 0% means let Step 3.4 handle all buffer slots."
-                    >
-                      <Label className="text-xs cursor-default">Auto 3.0 buffer pre-assign</Label>
-                    </Tooltip>
-                    <Select
-                      value={String(step30BufferPreAssignRatio)}
-                      onValueChange={(v) => {
-                        const n = Math.max(0, Math.min(1, parseFloat(String(v))))
-                        setStep30BufferPreAssignRatio(Number.isFinite(n) ? n : 0)
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="0">0% (none)</SelectItem>
-                        <SelectItem value="0.25">25%</SelectItem>
-                        <SelectItem value="0.5">50%</SelectItem>
-                        <SelectItem value="0.75">75%</SelectItem>
-                        <SelectItem value="1">100% (all)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 pt-1 flex-wrap">
-                  <Button variant="default" onClick={runAllSteps} disabled={isRunningSteps}>
-                    Run pipeline (Steps 2–4) + invariants
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={isRunningSteps}
-                    onClick={async () => {
-                      if (props.userRole !== 'developer') return
-                      setIsRunningSteps(true)
-                      try {
-                        props.clearDomainFromStep('therapist-pca')
-                        props.goToStep('therapist-pca')
-                        props.recalculateScheduleCalculations()
-                        if (props.runStep2Auto) {
-                          await props.runStep2Auto({ autoStep20: step2Auto20, autoStep21: step2Auto21, autoStep22: step2Auto22 })
-                        } else {
-                          await props.runStep2({})
-                        }
-                      } finally {
-                        setIsRunningSteps(false)
-                        props.onOpenChange(false)
-                      }
-                    }}
-                  >
-                    Run Step 2
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={isRunningSteps}
-                    onClick={async () => {
-                      if (props.userRole !== 'developer') return
-                      setIsRunningSteps(true)
-                      try {
-                        props.clearDomainFromStep('floating-pca')
-                        props.goToStep('floating-pca')
-                        if (props.runStep3V2Auto) {
-                          const effectiveAuto32 = step3AllocationMode === 'balanced' ? false : step3Auto32
-                          const effectiveAuto33 = step3AllocationMode === 'balanced' ? false : step3Auto33
-                          await props.runStep3V2Auto({
-                            autoStep32: effectiveAuto32,
-                            autoStep33: effectiveAuto33,
-                            bufferPreAssignRatio: step30BufferPreAssignRatio,
-                            mode: step3AllocationMode,
-                          })
-                        } else {
-                          await props.runStep3({
-                            onTieBreak: async ({ teams }) => [...teams].sort()[0]!,
-                          })
-                        }
-                      } finally {
-                        setIsRunningSteps(false)
-                        props.onOpenChange(false)
-                      }
-                    }}
-                  >
-                    Run Step 3{props.runStep3V2Auto ? ' (auto)' : ''}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={isRunningSteps}
-                    onClick={async () => {
-                      if (props.userRole !== 'developer') return
-                      setIsRunningSteps(true)
-                      try {
-                        props.clearDomainFromStep('bed-relieving')
-                        props.goToStep('bed-relieving')
-                        await props.runStep4()
-                      } finally {
-                        setIsRunningSteps(false)
-                        props.onOpenChange(false)
-                      }
-                    }}
-                  >
-                    Run Step 4
-                  </Button>
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  Run actions will close this dialog so you can review allocations immediately.
-                </div>
+              <div className="space-y-2">
+                <MiniStepRow
+                  title="Step 2.0 · Special programs"
+                  helper="Automatic: keep current program overrides when nothing forces the override dialog. Interactive: review programs when any are active on this weekday."
+                  value={step2Mode20}
+                  onChange={setStep2Mode20}
+                />
+                <MiniStepRow
+                  title="Step 2.1 · Non-floating substitutions"
+                  helper="Automatic: pick substitute floaters with a deterministic heuristic. Interactive: use the substitution wizard."
+                  value={step2Mode21}
+                  onChange={setStep2Mode21}
+                />
+                <MiniStepRow
+                  title="Step 2.2 · SPT final edit"
+                  helper="Automatic: keep therapist/SPT outputs after Step 2.1 (no extra SPT dialog)."
+                  value={step2Mode22}
+                  onChange={setStep2Mode22}
+                />
+                {props.showSharedTherapistStep ? (
+                  <MiniStepRow
+                    title="Step 2.3 · Shared therapist"
+                    helper="Automatic: skip shared-therapist edits. Interactive: open the Shared Therapist dialog when applicable."
+                    value={step2Mode23}
+                    onChange={setStep2Mode23}
+                  />
+                ) : null}
               </div>
             </div>
 
-            <div className="space-y-3">
-              {report ? (
-                <div className={cn('rounded-md border p-3 text-xs', report.ok ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50')}>
-                  <div className="font-medium">{report.ok ? 'Invariants: PASS' : 'Invariants: FAIL'}</div>
-                  {!report.ok ? (
-                    <div className="mt-1 space-y-1">
-                      {report.issues.slice(0, 12).map((x, idx) => (
-                        <div key={`inv-${idx}`}>{x}</div>
-                      ))}
-                      {report.issues.length > 12 ? <div>…and {report.issues.length - 12} more</div> : null}
+            <div className="rounded-md border border-border bg-card/30 p-4 space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Step 3 · Floating PCA harness</h3>
+                <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                  Pick the headless engine for runs from this dialog. Use the on-schedule wizard when you need full 3.0–3.4
+                  interaction.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-md border border-border/70 bg-muted/15 px-3 py-2.5">
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-foreground">Engine</div>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground leading-snug">
+                    V2 (default, matches Floating PCA v2) or legacy V1 headless allocator.
+                  </p>
+                </div>
+                <div className="inline-flex shrink-0 rounded-md border border-border bg-background p-0.5">
+                  <button
+                    type="button"
+                    className={cn(
+                      'rounded px-2.5 py-1 text-[11px] font-medium transition-colors',
+                      step3Engine === 'v2' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'
+                    )}
+                    onClick={() => setStep3Engine('v2')}
+                  >
+                    V2
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(
+                      'rounded px-2.5 py-1 text-[11px] font-medium transition-colors',
+                      step3Engine === 'v1' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'
+                    )}
+                    onClick={() => setStep3Engine('v1')}
+                  >
+                    V1
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-start justify-between gap-3 rounded-md border border-dashed border-border/80 px-3 py-2">
+                <div className="min-w-0">
+                  <Tooltip
+                    side="bottom"
+                    content="Clears saved tie-break picks before Step 3 so older tests cannot steer outcomes."
+                  >
+                    <div className="inline-flex">
+                      <span className="text-xs font-medium cursor-default">Clear tie-break memory before Step 3</span>
+                    </div>
+                  </Tooltip>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground leading-snug">
+                    Applies to pipeline + Step 3 buttons (not Step 2).
+                  </p>
+                </div>
+                <Switch checked={clearTieBreakDecisions} onCheckedChange={setClearTieBreakDecisions} />
+              </div>
+
+              {step3Engine === 'v1' ? (
+                <div className="space-y-2 rounded-md border border-border/70 bg-muted/10 px-3 py-2">
+                  <Label className="text-xs font-medium">V1 wizard · allocation style (on-schedule UI)</Label>
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    Standard keeps 3.2/3.3 preference passes; Balanced jumps straight to the main allocator. Applies when you
+                    open the Step 3 V1 wizard on the schedule. The harness headless V1 run still uses the legacy allocator
+                    entry point with recomputed team order.
+                  </p>
+                  <Select
+                    value={step3V1WizardAllocationMode}
+                    onValueChange={(v) => setStep3V1WizardAllocationMode(v as 'standard' | 'balanced')}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="standard">Standard (3.2 / 3.3 then allocate)</SelectItem>
+                      <SelectItem value="balanced">Balanced (skip 3.2 / 3.3 in wizard)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+
+              {step3Engine === 'v2' ? (
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-foreground">Headless V2 mini-steps</div>
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    Step 3.1 always uses latest pending FTE and recomputes team order (highest pending first) before the v2
+                    allocator. Choose Interactive when you want to finish that part in the schedule wizard instead.
+                  </p>
+                  <MiniStepRow
+                    title="Step 3.0 · Buffer floaters"
+                    helper="Automatic applies the buffer pre-assign ratio below. Interactive defers buffer confirmation to the Step 3 wizard."
+                    value={step3Mode30}
+                    onChange={setStep3Mode30}
+                  />
+                  {step3Mode30 === 'automatic' ? (
+                    <div className="ml-1 space-y-1 border-l-2 border-primary/30 pl-3">
+                      <Label className="text-[11px] text-muted-foreground">Buffer pre-assign ratio</Label>
+                      <Select
+                        value={String(step30BufferPreAssignRatio)}
+                        onValueChange={(v) => {
+                          const n = Math.max(0, Math.min(1, parseFloat(String(v))))
+                          setStep30BufferPreAssignRatio(Number.isFinite(n) ? n : 0)
+                        }}
+                      >
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="0">0% (none)</SelectItem>
+                          <SelectItem value="0.25">25%</SelectItem>
+                          <SelectItem value="0.5">50%</SelectItem>
+                          <SelectItem value="0.75">75%</SelectItem>
+                          <SelectItem value="1">100%</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   ) : null}
+                  <MiniStepRow
+                    title="Step 3.2 · Preferred reservations"
+                    helper="Automatic applies greedy preferred-slot reservations before the v2 allocator."
+                    value={step3Mode32}
+                    onChange={setStep3Mode32}
+                  />
+                  <MiniStepRow
+                    title="Step 3.3 · Adjacent reservations"
+                    helper="Automatic assigns adjacent slots tied to special-program PCAs before the allocator."
+                    value={step3Mode33}
+                    onChange={setStep3Mode33}
+                  />
                 </div>
               ) : (
-                <div className="rounded-md border border-border p-3 text-sm text-muted-foreground">
-                  Run “pipeline” to compute invariants for this scenario.
+                <div className="rounded-md border border-border/70 bg-muted/10 px-3 py-2 text-[11px] text-muted-foreground leading-snug">
+                  Headless <span className="font-medium text-foreground">V1</span> uses latest pending FTE with a recomputed
+                  team order (highest pending first, stable tie-break) before running the legacy floating PCA allocator.
                 </div>
               )}
+
+              {props.openStep3Wizard ? (
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-md border border-border px-3 py-2">
+                  <p className="text-[11px] text-muted-foreground min-w-0 leading-snug">
+                    Need the full wizard (3.0–3.4)? Jump to Step 3 on the schedule. This closes Leave Sim.
+                  </p>
+                  <Button type="button" variant="secondary" size="sm" className="shrink-0" onClick={() => props.openStep3Wizard?.()}>
+                    Open Step 3 wizard
+                  </Button>
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <Button variant="default" onClick={runAllSteps} disabled={isRunningSteps}>
+                  Run pipeline (Steps 2–4) + invariants
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={isRunningSteps}
+                  onClick={async () => {
+                    if (props.userRole !== 'developer') return
+                    setIsRunningSteps(true)
+                    try {
+                      props.clearDomainFromStep('therapist-pca')
+                      props.goToStep('therapist-pca')
+                      props.recalculateScheduleCalculations()
+                      if (props.runStep2Auto) {
+                        await props.runStep2Auto({
+                          autoStep20: step2Mode21 === 'automatic',
+                          autoStep21: step2Mode20 === 'automatic',
+                          autoStep22: step2Mode22 === 'automatic',
+                          autoStep23: step2Mode23 === 'automatic',
+                        })
+                      } else {
+                        await props.runStep2({})
+                      }
+                    } finally {
+                      setIsRunningSteps(false)
+                      props.onOpenChange(false)
+                    }
+                  }}
+                >
+                  Run Step 2 only
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={isRunningSteps}
+                  onClick={async () => {
+                    if (props.userRole !== 'developer') return
+                    setIsRunningSteps(true)
+                    try {
+                      if (clearTieBreakDecisions) props.setTieBreakDecisions({})
+                      props.clearDomainFromStep('floating-pca')
+                      props.goToStep('floating-pca')
+                      if (step3Engine === 'v2') {
+                        if (props.runStep3V2Auto) {
+                          const bufferRatio = step3Mode30 === 'automatic' ? step30BufferPreAssignRatio : 0
+                          await props.runStep3V2Auto({
+                            autoStep32: step3Mode32 === 'automatic',
+                            autoStep33: step3Mode33 === 'automatic',
+                            bufferPreAssignRatio: bufferRatio,
+                          })
+                        } else {
+                          await props.runStep3({ onTieBreak: async ({ teams }) => [...teams].sort()[0]! })
+                        }
+                      } else {
+                        const { teamOrder, pendingForV1 } = buildStep3HarnessTeamOrder({
+                          visibleTeams: props.visibleTeams ?? TEAMS,
+                          pendingPerTeam: props.pendingPCAFTEPerTeam,
+                        })
+                        await props.runStep3({
+                          onTieBreak: async ({ teams }) => [...teams].sort()[0]!,
+                          userTeamOrder: teamOrder,
+                          userAdjustedPendingFTE: pendingForV1,
+                        })
+                      }
+                    } finally {
+                      setIsRunningSteps(false)
+                      props.onOpenChange(false)
+                    }
+                  }}
+                >
+                  Run Step 3 only{step3Engine === 'v2' ? ' (V2)' : ' (V1)'}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={isRunningSteps}
+                  onClick={async () => {
+                    if (props.userRole !== 'developer') return
+                    setIsRunningSteps(true)
+                    try {
+                      props.clearDomainFromStep('bed-relieving')
+                      props.goToStep('bed-relieving')
+                      await props.runStep4()
+                    } finally {
+                      setIsRunningSteps(false)
+                      props.onOpenChange(false)
+                    }
+                  }}
+                >
+                  Run Step 4 only
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-snug">
+                Run buttons close this dialog so you can review the grid immediately.
+              </p>
             </div>
+
+            {report ? (
+              <div
+                className={cn(
+                  'rounded-md border p-3 text-xs',
+                  report.ok ? 'border-green-200 bg-green-50 dark:border-green-900/40 dark:bg-green-950/30' : 'border-red-200 bg-red-50 dark:border-red-900/40 dark:bg-red-950/30'
+                )}
+              >
+                <div className="font-medium">{report.ok ? 'Invariants: PASS' : 'Invariants: FAIL'}</div>
+                {!report.ok ? (
+                  <div className="mt-1 space-y-1">
+                    {report.issues.slice(0, 12).map((x, idx) => (
+                      <div key={`inv-${idx}`}>{x}</div>
+                    ))}
+                    {report.issues.length > 12 ? <div>…and {report.issues.length - 12} more</div> : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -1169,7 +1391,7 @@ export function DevLeaveSimPanel(props: {
               <Input value={config.seed} onChange={(e) => setConfig((c) => ({ ...c, seed: e.target.value }))} />
               <Tooltip
                 side="bottom"
-                content="Randomize seed + (planned/sick/urgent) counts. This fills the fields so you can still tweak before generating."
+                content="Sets a new seed and rolls quotas with a seeded RNG (separate stream from Generate). Sick leans low; urgent scales down when sick is high."
               >
                 <Button variant="outline" onClick={randomizeCountsAndSeed}>
                   Random
@@ -1360,7 +1582,7 @@ export function DevLeaveSimPanel(props: {
                     </div>
                   </div>
                   <div className="text-[11px] text-muted-foreground">
-                    "Random" picks a value within [min, max] for each field. PCA budget snaps to 0 / 0.5 / 1.0 / 1.5 / 2.0.
+                    &quot;Random&quot; uses a seeded draw per new seed: therapist and PCA budget are uniform within ranges (PCA snaps to 0 / 0.5 / 1.0 / 1.5 / 2.0). Sick is weighted toward lower counts; urgent is capped lower when sick is high.
                   </div>
                 </div>
               )}

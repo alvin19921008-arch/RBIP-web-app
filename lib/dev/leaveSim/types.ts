@@ -59,7 +59,7 @@ export type DevLeaveSimConfig = {
   // Planned leave knobs (developer-specified)
   plannedTherapistCount: number // therapists excluding SPT
   plannedTherapistMin: number // randomizer lower bound (default 0)
-  plannedTherapistMax: number // quota cap / randomizer upper bound (default 3)
+  plannedTherapistMax: number // quota cap / randomizer upper bound (default 5)
   plannedPcaFteBudget: number // 0..2.0, in chunks of 0.5/1.0
   plannedPcaFteBudgetMin: number // randomizer lower bound (default 0)
   plannedPcaFteBudgetMax: number // quota cap / randomizer upper bound (default 2.0)
@@ -134,7 +134,7 @@ export function defaultDevLeaveSimConfig(): DevLeaveSimConfig {
     seed: String(Date.now()),
     plannedTherapistCount: 0,
     plannedTherapistMin: 0,
-    plannedTherapistMax: 3,
+    plannedTherapistMax: 5,
     plannedPcaFteBudget: 0,
     plannedPcaFteBudgetMin: 0,
     plannedPcaFteBudgetMax: 2,

@@ -10506,6 +10506,9 @@ function SchedulePageContent() {
             specialPrograms={specialPrograms}
             sptAllocations={sptAllocations}
             staffOverrides={staffOverrides as any}
+            showSharedTherapistStep={showSharedTherapistStep}
+            visibleTeams={visibleTeams}
+            pendingPCAFTEPerTeam={pendingPCAFTEPerTeam}
             setStaffOverrides={(next) => setStaffOverrides(next as any)}
             clearDomainFromStep={(stepId) => scheduleActions.clearDomainFromStep(stepId as any)}
             goToStep={goToStep as any}
@@ -10525,7 +10528,7 @@ function SchedulePageContent() {
                 },
               })
             }}
-            runStep2Auto={async ({ autoStep20, autoStep21, autoStep22 }) => {
+            runStep2Auto={async ({ autoStep20, autoStep21, autoStep22, autoStep23 }) => {
               // Step numbering:
               // - Step 2.0: Special Program Override dialog
               // - Step 2.1: Non-floating PCA substitution dialog
@@ -10535,6 +10538,7 @@ function SchedulePageContent() {
               // - autoStep21 => skip Step 2.0 (special programs)
               // - autoStep20 => auto-handle Step 2.1 (substitution)
               // - autoStep22 => skip Step 2.2 (SPT final edit)
+              // - autoStep23 => skip Step 2.3 (shared therapist edit) when applicable
 
               // If the caller wants the real special-program override dialog, open it and await results.
               let baseOverrides: any = { ...(staffOverrides as any) }
@@ -10647,13 +10651,22 @@ function SchedulePageContent() {
                 }
                 break
               }
+
+              if (showSharedTherapistStep && !autoStep23) {
+                const step23 = await showStep2Point3_SharedTherapistEdit()
+                if (step23 && Object.keys(step23).length > 0) {
+                  applyStep2Point3_SharedTherapistEdits(step23 as any)
+                }
+              }
             }}
-            runStep3={async ({ onTieBreak }) => {
+            runStep3={async (args) => {
               await scheduleActions.runStep3FloatingPCA({
-                onTieBreak: onTieBreak as any,
+                onTieBreak: args.onTieBreak as any,
+                userTeamOrder: args.userTeamOrder,
+                userAdjustedPendingFTE: args.userAdjustedPendingFTE,
               })
             }}
-            runStep3V2Auto={async ({ autoStep32, autoStep33, bufferPreAssignRatio, mode }) => {
+            runStep3V2Auto={async ({ autoStep32, autoStep33, bufferPreAssignRatio }) => {
               // Build defaults similar to the wizard (3.1/3.4), optionally auto-applying 3.0/3.2/3.3.
               const pending0 = { ...pendingPCAFTEPerTeam }
               const runtimeTeams = visibleTeams.length > 0 ? visibleTeams : TEAMS
@@ -10727,7 +10740,7 @@ function SchedulePageContent() {
               }
 
               // Step 3.2 (auto): preferred PCA + preferred slot reservations.
-              if (autoStep32 && mode !== 'balanced') {
+              if (autoStep32) {
                 const res = computeReservations(
                   pcaPreferences,
                   currentPending,
@@ -10761,7 +10774,7 @@ function SchedulePageContent() {
               }
 
               // Step 3.3 (auto): adjacent-slot reservations from special program PCAs.
-              if (autoStep33 && mode !== 'balanced') {
+              if (autoStep33) {
                 // Keep selecting greedily until no more valid options.
                 const used = new Set<string>()
                 const markUsedFromAllocations = () => {
@@ -10820,27 +10833,23 @@ function SchedulePageContent() {
                 pcaPool: floatingPCAs as any,
                 pcaPreferences,
                 specialPrograms,
-                mode: (mode as any) ?? 'standard',
-                preferenceSelectionMode: ((mode as any) ?? 'standard') === 'standard' ? 'selected_only' : 'legacy',
+                mode: 'standard',
+                preferenceSelectionMode: 'selected_only',
                 preferenceProtectionMode: 'exclusive',
-                selectedPreferenceAssignments:
-                  (((mode as any) ?? 'standard') === 'standard'
-                    ? [
-                        ...step32Assignments.map((a) => ({
-                          team: a.team,
-                          slot: a.slot,
-                          pcaId: a.pcaId,
-                          source: 'step32' as const,
-                        })),
-                        ...step33Assignments.map((a) => ({
-                          team: a.team,
-                          slot: a.slot,
-                          pcaId: a.pcaId,
-                          source: 'step33' as const,
-                        })),
-                      ]
-                    : []
-                  ),
+                selectedPreferenceAssignments: [
+                  ...step32Assignments.map((a) => ({
+                    team: a.team,
+                    slot: a.slot,
+                    pcaId: a.pcaId,
+                    source: 'step32' as const,
+                  })),
+                  ...step33Assignments.map((a) => ({
+                    team: a.team,
+                    slot: a.slot,
+                    pcaId: a.pcaId,
+                    source: 'step33' as const,
+                  })),
+                ],
               })
 
               // Add Step 3.0/3.2/3.3 assignments into tracker for visibility, matching wizard behavior.
