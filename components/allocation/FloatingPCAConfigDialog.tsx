@@ -25,8 +25,8 @@ import {
   AdjacentSlotReservations,
   AdjacentSlotInfo,
 } from '@/lib/utils/reservationLogic'
-import { 
-  allocateFloatingPCA_v2,
+import {
+  allocateFloatingPCA_v1LegacyPreference,
   FloatingPCAAllocationResultV2,
 } from '@/lib/algorithms/pcaAllocation'
 import { AllocationTracker } from '@/types/schedule'
@@ -1111,7 +1111,7 @@ export function FloatingPCAConfigDialog({
       finalAllocations = result.updatedAllocations
     }
 
-    const algorithmResult = await allocateFloatingPCA_v2({
+    const algorithmResult = await allocateFloatingPCA_v1LegacyPreference({
       mode,
       teamOrder: teamOrder,
       currentPendingFTE: finalPendingFTE,

@@ -150,6 +150,8 @@ export interface SlotAssignmentLog {
   pcaId: string                   // Which PCA was assigned
   pcaName: string                 // PCA name for display
   assignedIn: 'step30' | 'step32' | 'step33' | 'step34'  // Which step made this assignment
+  allocationStage?: 'draft' | 'repair' | 'extra-coverage'
+  repairReason?: 'ranked-coverage' | 'fairness-floor' | 'duplicate-reduction' | 'continuity-reduction' | null
   
   // Step 3.4 specific tracking
   cycle?: 1 | 2 | 3              // Which cycle (only for step34)
@@ -205,6 +207,7 @@ export interface TeamAllocationLog {
     preferredPCAUsed?: boolean
     fulfilledByBuffer?: boolean     // true if team's pending was wholly fulfilled by buffer assignments
     allocationMode?: 'standard' | 'balanced' // Which Step 3.4 mode produced this tracker
+    repairAuditDefects?: Array<'B1' | 'A1' | 'A2' | 'C1' | 'F1'>
   }
 }
 

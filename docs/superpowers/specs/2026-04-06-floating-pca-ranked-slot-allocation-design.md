@@ -1,90 +1,196 @@
 # Floating PCA Ranked Slot Allocation Design
 
-Status: approved design for planning
+Status: approved design for planning, revised after 2026-04-09 investigation
 
 Date: 2026-04-06
+
+Revised: 2026-04-09
+
+Implementation notes: 2026-04-10 (wizard preview/save path + `executeSlotAssignments` executed list)
 
 Owner: chat-approved with user
 
 ## Summary
-This design revises Step 3 floating PCA allocation so teams can rank the slots they care about instead of choosing only one preferred slot. The final allocator becomes slot-first, with pending fulfillment as the top priority, ranked slots as the primary target order, continuity as a secondary optimization, preferred PCA as a helpful but non-authoritative signal, and gym usage reserved for true last resort.
+This design revises Step 3 floating PCA allocation so teams can rank the slots they care about instead of choosing only one preferred slot. The original V2 idea was a slot-first greedy allocator. After investigation on 2026-04-09, the approved design is now more specific:
 
-The redesign keeps Step 3.2 as a light manual assist and moves the real ranked-slot fulfillment policy into Step 3.4. The hover diagnostic is expanded so users can see which rank was fulfilled, whether the allocator had to use unranked or duplicate fallback, whether gym was used as last resort, and whether preferred PCA or continuity was honored.
+- Step 3.4 V2 remains ranked-slot-aware.
+- The first pass should still feel like a human editor: team-order driven, continuity-friendly, and willing to keep using the same PCA when that remains locally useful.
+- A bounded audit-and-repair pass is added after the first draft allocation so the allocator can fix globally bad outcomes for ranked coverage, duplicate floating coverage, and over-splitting across many PCAs.
 
-## Current Context
-The current implementation stores `preferred_slots` as an array but effectively treats it as a single-slot preference.
+This revised design intentionally blends:
 
-Current code shape:
-- `components/dashboard/PCAPreferencePanel.tsx` limits preferred slot selection to 1.
-- `lib/utils/reservationLogic.ts` Step 3.2 reservation logic only uses `preferred_slots[0]`.
-- `lib/utils/floatingPCAHelpers.ts` reduces team slot preference to a single `preferredSlot`.
-- `lib/algorithms/pcaAllocationFloating.ts` is still largely structured around Condition A/B/C/D and often keeps filling from the same PCA after securing a single preferred slot.
-- `components/allocation/PCABlock.tsx` already exposes assignment-level hover diagnostics and can be extended instead of replaced.
+- V2's ranked-slot purpose
+- V1's stronger continuity and PCA-choice instincts
+- a new deterministic post-pass review that mimics how a human editor would audit and swap assignments on the Excel sheet
+
+## Why This Revision Exists
+The investigation established three real issues in the earlier V2 behavior:
+
+### Problem B: ranked-slot loss from caller contract
+The ranked wizard path could call V2 with `preferenceSelectionMode: 'selected_only'`, which rebuilt preferences while erasing `preferred_slots`. That meant the ranked allocator sometimes ran without any ranked slots at all.
+
+### Problem C: continuity became too weak
+The previous V2 structure re-ran target selection after every `0.25` slot. Continuity existed only as a soft candidate tiebreaker, so V2 split one team's pending across multiple PCAs more often than V1.
+
+### Problem A: duplicates lacked global protection
+The previous V2 allowed duplicate fallback too locally. Even when local duplication was legal, the engine did not adequately protect:
+
+- other teams' still-unfilled ranked slots
+- other teams' useful first non-duplicate slot
+- PCAs that were globally valuable for another team's preferred or ranked path
+
+The revised design below supersedes the earlier purely greedy interpretation.
 
 ## Goals
 - Allow each team to rank only the slots they care about.
-- Keep meeting team pending FTE as the first priority whenever any legal path exists.
-- Make ranked slot fulfillment more important than matching a particular preferred PCA.
-- Preserve continuity when it helps fulfill ranked order, without allowing continuity to skip a higher-ranked slot.
-- Prevent bad concentration patterns where multiple different floating PCAs stack onto the same slot while another useful unused slot is still available.
+- Keep ranked-slot fulfillment as the defining purpose of V2.
+- Keep meeting pending FTE high priority whenever any legal path exists, but not through globally poor concentration or starvation outcomes.
+- Preserve continuity when it remains locally useful and does not needlessly harm global quality.
+- Prevent bad concentration patterns where multiple floating PCAs stack onto the same slot while the schedule still has better global options.
 - Keep `avoid gym` behavior strong by default, but allow gym as a true last-resort rescue path.
-- Make allocator decisions easier to understand through hover diagnostics and summary copy.
+- Make allocator decisions easier to understand through tracker metadata and hover copy.
+- Keep the final algorithm deterministic and harness-testable.
 
 ## Non-Goals
 - Do not redesign the whole Step 3 wizard flow.
 - Do not remove preferred PCA as an input.
 - Do not make Step 3.2 the authoritative engine for ranked-slot fulfillment.
 - Do not require teams to rank all 4 slots.
-- Do not introduce unrelated allocator refactors outside this ranked-slot redesign.
+- Do not build a full combinatorial optimizer for the entire schedule.
+- Do not introduce an unconstrained repair pass that freely rewrites the whole schedule.
+
+## Approved Objective Order
+When trade-offs exist, the approved schedule-level objective order is:
+
+1. Protect higher-ranked slot coverage first.
+2. Improve pending fulfillment, but with a fairness floor:
+   - do not over-serve one team while another pending team is left without any useful non-duplicate floating slot if a bounded repair can improve that
+   - redistribution may happen, but it must stay bounded and must not recklessly strip a team that is already reasonably served
+3. Prefer continuity from the same PCA.
+4. Minimize duplicate floating coverage.
+
+This objective order applies most strongly in the post-pass audit/repair stage.
 
 ## Approved Product Decisions
 
 ### 1. Slot preference model
 - `preferred_slots` remains the stored field.
-- The field is reinterpreted as an ordered ranked list, highest priority first.
+- The field is interpreted as an ordered ranked list, highest priority first.
 - Teams can rank all 4 slots or only the slots they care about.
-- Any unranked slot belongs to a lower-priority `unranked` bucket.
+- Unranked non-gym slots form a lower-priority bucket.
 
 Examples:
 - `1 > 3 > 4` means slot `2` is unranked.
 - `1 > 3` means slots `2` and `4` are unranked.
-- `[]` means the team has no slot ranking.
+- `[]` means the team has no ranked slot preference.
 
-### 2. Pending fulfillment priority
-- The allocator should meet the team's pending FTE whenever any legal path exists.
-- Ranked-slot failure must not by itself justify leaving pending unmet.
-- The allocator may progress from ranked to unranked to duplicate to gym-last-resort in order to meet pending.
+### 2. First-pass philosophy
+The first pass should mimic how a human editor usually allocates on the spreadsheet:
 
-### 3. Ranked slots over preferred PCA
-- Ranked slot order is more important than preferred PCA.
-- Preferred PCA remains a secondary preference inside slot fulfillment, not the primary objective.
-- The allocator must not skip a higher-ranked slot just because a preferred PCA can satisfy a lower-ranked slot.
+- team-order driven, not strict round-robin
+- continuity-friendly once a good PCA/team pairing has started
+- still ranked-slot aware
+- still gym-avoidant
 
-### 4. Continuity policy
-- Same PCA covering multiple different useful slots is preferred.
-- Continuity is beneficial only inside the ranked-slot-first decision ladder.
-- Continuity must never cause the allocator to skip a higher-ranked slot.
+The first pass is intentionally allowed to be locally greedy. It is not required to solve every global trade-off immediately, because the audit-and-repair pass will review the draft allocation afterward.
+
+### 3. First-pass slot ladder
+For the team currently being processed, the first pass should use this local slot ladder:
+
+1. ranked-unused non-gym
+2. unranked-unused non-gym
+3. duplicate non-gym only when no useful unused non-gym slot remains for that team
+4. gym only as true last resort
+
+Important clarification:
+- The first pass is not "any useful slot first across all teams."
+- V2 must still preserve ranked-slot priority within the team currently being processed.
+- The audit stage, not the first pass, is where global correction happens.
+
+### 4. PCA choice ladder inside the first pass
+Inside the active slot step, PCA choice should remain similar to V1's stronger PCA instincts:
+
+1. Prefer a PCA that can satisfy the current slot and continue into another still-useful slot.
+2. Within that group, prefer preferred PCA.
+3. If no preferred PCA works, prefer floor PCA.
+4. If no floor PCA works, use non-floor PCA.
+
+Continuity may happen immediately during the first pass. It does not need to wait for every other team to receive one slot first.
+
+This is deliberate: continuity belongs in the human-like draft allocation, while global correction belongs in the audit stage.
 
 ### 5. Duplicate-slot policy
-- Duplicate floating coverage onto the same team slot is allowed only after all useful unused slots have been exhausted.
-- Once duplication becomes unavoidable, the allocator should return to ranked order and duplicate ranked slots first.
-- Non-gym duplicates are preferred before gym duplicates.
+Duplicate floating coverage is not forbidden, but it is a true fallback:
 
-### 6. Gym policy
+- local duplicate fallback becomes legal only after the active team has no useful unused non-gym slot left
+- when duplication is locally unavoidable, duplicate ranked slots first
+- if ranked duplicates are exhausted, duplicate unranked non-gym slots
+- gym duplicates are last resort of last resort
+
+However, duplicate assignments remain provisional until the audit pass finishes. A duplicate that was locally legal in the first pass may still be removed or reassigned later.
+
+### 6. Global protection rules for audit
+Before the final result is accepted, the audit stage must check whether a locally legal assignment is globally poor.
+
+The audit must specifically look for:
+
+- a duplicate using a PCA that is still valuable for another team's ranked or preferred path
+- a team left with no useful non-duplicate slot while another team has extra concentration
+- a higher-ranked slot that could be recovered by bounded reassignment
+- one team unnecessarily split across multiple PCAs when a bounded repair could collapse that into fewer PCAs
+
+### 7. Fairness floor
+The agreed fairness floor is:
+
+- before the final result is accepted, every pending team should get at least one useful non-duplicate floating slot if legally possible after bounded repair
+- "useful" means ranked if possible, otherwise unranked non-gym
+
+This fairness floor belongs primarily to the audit-and-repair stage, not as a hard rule that blocks all early continuity in the first pass.
+
+### 8. Preference contract for ranked V2 callers
+The ranked V2 engine must preserve the team's ranked slots even when Step 3.2 or Step 3.3 produced manual selections.
+
+Approved rule:
+- manual selections may narrow or bias preferred PCA choice
+- manual selections must not erase the base `preferred_slots` ranking
+
+This fixes the earlier `selected_only` contract failure.
+
+### 9. Gym policy
 - If `avoid gym` is enabled, the allocator should avoid the gym slot during ranked, unranked, and duplicate fallback whenever another legal path exists.
 - Gym may be used only when it is truly the final remaining legal path to satisfy pending FTE.
 
+### 10. Extra coverage policy
+`extraCoverageMode` is not part of the core ranked-slot fulfillment quality model for A-C.
+
+Approved interpretation:
+- core Step 3 V2 fulfillment should be evaluated with `extraCoverageMode: 'none'`
+- if any extra-coverage mode is retained for diagnostics or experiments, it must be treated as a separate post-core augmentation
+- extra coverage must not be allowed to hide or redefine the quality metrics for A-C
+
 ## Recommended Architecture
 
-### Recommended approach: Option A
-Keep Step 3.2 as a light optional/manual assist and make Step 3.4 the authoritative ranked-slot fulfillment engine.
+### Recommended approach: continuity-first draft + bounded repair
+Keep Step 3.2 as a light optional/manual assist and make Step 3.4 the authoritative ranked-slot fulfillment engine, but split Step 3.4 internally into two stages:
+
+1. continuity-friendly first pass
+2. bounded audit-and-repair pass
 
 Rationale:
-- Step 3.2 is currently modeled around `preferred PCA + one preferred slot`, so expanding it into the main ranked-slot engine would require a much larger UI and reservation rewrite.
-- The real distribution, concentration, and fallback logic belongs in Step 3.4 because Step 3.4 already sees pending FTE, existing allocations, floor matching, and fallback states.
-- This approach keeps the mental model simple:
-  - Step 3.2 helps when a clean early match exists.
-  - Step 3.4 decides final fulfillment.
+- Step 3.2 is still too small and UI-oriented to carry the full ranked-slot algorithm.
+- The original all-in-one V2 greedy loop proved too local for A-C.
+- A bounded repair stage better matches how a human editor allocates first, then reviews the full sheet and swaps assignments for a better global outcome.
+
+### Recommended internal units
+The implementation should prefer smaller focused helpers instead of continuing to grow one large V2 function:
+
+- preference contract / effective preferences
+- first-pass target + PCA ordering
+- audit defect detection
+- repair move generation and application
+- schedule score comparison / acceptance logic
+
+The canonical external allocator name remains `allocateFloatingPCA_v2RankedSlot`.
 
 ## Component Responsibilities
 
@@ -92,10 +198,9 @@ Rationale:
 File area: `components/dashboard/PCAPreferencePanel.tsx`
 
 Changes:
-- Replace `Preferred Slot (1 only)` with ranked slot ordering.
-- Let teams rank only the slots they care about.
+- Keep ranked slot ordering as the data model.
 - Keep preferred PCA ordering as-is.
-- Keep gym slot declaration separate.
+- Keep gym declaration separate.
 - If `avoid gym` is on, the gym slot remains visible to the user but is treated by the allocator as blocked until true last resort.
 
 Recommended UI language:
@@ -109,85 +214,96 @@ File area: `lib/utils/reservationLogic.ts`
 
 Revised role:
 - Step 3.2 remains a light manual aid.
-- It should help secure a clean preferred-PCA match for the highest currently feasible ranked slot.
-- It should not become the source of truth for the full ranked-slot engine.
+- It may secure a clean preferred-PCA match for a currently feasible ranked slot.
+- It must not become the source of truth for final ranked-slot fulfillment.
+- Step 3.2 selections may bias preferred PCA handling, but must not wipe ranked-slot order for Step 3.4.
 
-Intended behavior:
-- If the team's top-ranked slot can be reserved through preferred PCA, Step 3.2 can surface that.
-- If not, Step 3.2 should not overcomplicate the UI by trying to solve the full ranked-slot problem.
-- Step 3.4 remains authoritative.
+### Step 3 V2 wizard (preview / save)
+File areas: `components/allocation/FloatingPCAConfigDialogV2.tsx`, `lib/features/schedule/step3V2CommittedSelections.ts`
+
+When the user commits Step 3.2 and/or Step 3.3 choices, those selections are **executed** into pending FTE and floating PCA allocations (same mechanism as `executeSlotAssignments` elsewhere) **before** Step 3.4 ranked V2 runs. Step 3.4 then sees real slot occupancy and pending, not only PCA-bias metadata. Tracker rows for executed Step 3.2/3.3 assignments use `assignedIn: 'step32' | 'step33'` so the Step 3.4 review UI and saved `allocationTracker` stay consistent with persisted `result.allocations`.
+
+`executeSlotAssignments` reports **`executedAssignments`** so callers only log tracker rows for assignments that actually applied (e.g. pending exhausted or slot unavailable).
 
 ### Step 3.4
-File area: `lib/algorithms/pcaAllocationFloating.ts`
+Primary file area: `lib/algorithms/pcaAllocationFloating.ts`
 
 Revised role:
-- Slot-first ranked fulfillment engine.
-- Authoritative allocator for ranked, unranked, duplicate, and gym-last-resort fallback.
+- authoritative ranked-slot fulfillment engine
+- continuity-friendly draft allocator
+- bounded global audit/repair stage
 
-## Step 3.4 Decision Ladder
-For each team, the allocator should apply the following ladder:
+## Step 3.4 Stage 1: continuity-friendly draft
+For the active team, the draft allocator should:
 
-1. Meet the team's pending FTE if any legal path exists.
-2. Try unused ranked non-gym slots in exact ranked order.
-3. If pending remains, try unused unranked non-gym slots.
-4. If pending still remains and no useful unused non-gym slot remains, allow duplicate non-gym slots, again using ranked order first.
-5. If pending still remains and no non-gym path exists, allow gym only as true last resort.
+1. Try ranked-unused non-gym slots in exact ranked order.
+2. If no ranked-unused slot is currently usable, try unranked-unused non-gym slots.
+3. Once a PCA has been chosen, allow immediate continuity when it stays within the active team's slot ladder and remains useful.
+4. Only allow duplicate non-gym after the active team has no useful unused non-gym slot left.
+5. Only allow gym when no non-gym legal path remains.
 
-This ladder is team-first and slot-first.
+This stage is intentionally not a full global optimizer.
+
+## Step 3.4 Stage 2: bounded audit-and-repair
+After the draft allocation is complete, the allocator must audit the whole schedule and try small deterministic repairs.
+
+### Defects the audit must detect
+- `B1`: a higher-ranked slot is still unfilled even though a bounded reassignment can fill it
+- `A1`: a team has duplicate floating coverage while another pending team still lacks a useful non-duplicate slot
+- `A2`: a duplicate or continuity assignment consumed a PCA that is still globally valuable for another team's ranked or preferred path
+- `C1`: one team is split across more PCAs than necessary even though a bounded repair can preserve or improve overall quality
+- `F1`: fairness-floor violation, where a pending team is left without any useful non-duplicate floating slot despite a feasible repair
+
+### Allowed repair moves
+The repair pass must stay small and deterministic. Approved move shapes:
+
+1. move one assigned slot from one team to another
+2. swap one assigned slot between two teams
+3. collapse a team's multi-PCA fulfillment into fewer PCAs when quality is not worsened
+4. replace a duplicate slot with a non-duplicate slot when the schedule score improves
+
+The repair pass must not perform unconstrained whole-schedule rewrites.
+
+### Repair acceptance rule
+Each candidate repair should be scored lexicographically. A repair is accepted only if it is strictly better on the approved priority order:
+
+1. ranked-slot coverage
+2. fairness floor
+3. fulfilled pending
+4. duplicate reduction
+5. split reduction
+
+Implementation note:
+- The implementation may use a concrete score vector.
+- The repair pass must remain deterministic.
+- The repair pass must be bounded by explicit limits on move size and iteration count.
+
+### Bounded redistribution rule
+Redistribution is allowed, but must stay conservative:
+
+- do not freely strip a well-served team just to chase a tiny optimization elsewhere
+- one-slot redistribution is acceptable when it clearly improves ranked coverage or fairness
+- the repair pass must not create large swings such as taking multiple slots away from one team just to rescue another
+
+This reflects the user's stated Excel editing pattern.
 
 ## PCA Selection Ladder Inside Each Slot Step
 Once the allocator is trying to satisfy the current highest-priority slot target, PCA selection should follow this cascade:
 
-1. Prefer a PCA that can satisfy the current slot and also continue into the next still-needed higher-priority slot.
-2. Within that group, prefer preferred PCA if one is available.
+1. Prefer a PCA that can satisfy the current slot and continue into another still-useful slot.
+2. Within that group, prefer preferred PCA.
 3. If no preferred PCA works, prefer floor PCA.
 4. If no floor PCA works, use non-floor PCA.
 
 Important constraint:
-- Continuity helps only after the current highest-priority slot is respected.
-- A PCA that can cover rank `#2` and `#3` must not outrank the PCA needed to satisfy rank `#1`.
-
-## Distribution Rules
-
-### Good outcomes
-- Same PCA covers multiple different useful slots.
-- Different PCAs cover different useful slots.
-
-### Outcome to avoid
-- Multiple different floating PCAs stack on the same slot while another useful unused slot remains available.
-
-Example:
-- Team needs `0.5` FTE (`2` floating slots).
-- Useful slots available are `2` and `3`.
-
-Preferred order:
-1. Same PCA covers `2 + 3`.
-2. PCA A covers `2`, PCA B covers `3`.
-3. Avoid PCA A and PCA B both stacking on `2` while `3` is still free.
+- Ranked-slot order still outranks continuity.
+- A PCA that can cover rank `#2` and `#3` must not outrank the only PCA that can cover rank `#1`.
 
 ## Partial Ranking Semantics
 - Ranked slots are a strict ordered list.
-- Unranked slots form a lower-priority bucket.
-- The allocator must exhaust ranked-unused and then unranked-unused before allowing duplicate floating coverage.
-- Once duplication becomes necessary, ranked order becomes active again.
-
-This means unranked slots are permitted, but only after ranked-unused opportunities have been evaluated.
-
-## Slot-First Lookahead Model
-The most stable Step 3.4 structure for this design is a slot-target loop with lookahead continuity.
-
-Recommended internal flow:
-1. Determine the next slot target for the team from the slot ladder.
-2. Build candidate PCAs who can satisfy that slot.
-3. Score or order those candidates by:
-   - can continue into the next still-needed higher-priority slot
-   - preferred PCA
-   - floor PCA
-   - non-floor PCA
-4. Assign one slot, or one PCA across multiple different useful slots when that continues to respect rank order.
-5. Repeat until pending is met or no legal path remains.
-
-This should replace the existing mental model of a single `preferredSlot` plus PCA-centric continuation.
+- Unranked slots form a lower-priority non-gym bucket.
+- The draft allocator must exhaust ranked-unused and then unranked-unused before allowing local duplicate fallback.
+- Once duplication becomes necessary, duplicate ranked order becomes active again.
 
 ## Diagnostics Design
 
@@ -199,6 +315,7 @@ The hover summary should answer:
 - Did the allocator use duplicate floating coverage?
 - Did it use gym as last resort?
 - Was preferred PCA used?
+- Did audit/repair change the first draft?
 
 Suggested summary fields:
 - `Pending met: Yes / No`
@@ -207,10 +324,12 @@ Suggested summary fields:
 - `Used duplicate floating slot: Yes / No`
 - `Gym used: No / Last resort`
 - `Preferred PCA used: Yes / No`
+- `Post-pass repair applied: Yes / No`
 
 Suggested summary copy:
 - `Pending met. Highest ranked fulfilled: #2.`
 - `Pending met using unranked non-gym slot.`
+- `Pending met after post-pass repair improved ranked coverage.`
 - `Pending met with ranked duplicate after unused slots exhausted.`
 - `Pending met with gym as last resort.`
 - `Pending not fully met; no legal slot path remained.`
@@ -221,6 +340,7 @@ Each assignment line should communicate:
 - whether it came from ranked-unused, unranked-unused, ranked-duplicate, or gym-last-resort fallback
 - which PCA tier was used
 - whether continuity was used
+- whether audit/repair later moved or replaced it
 
 Suggested assignment copy:
 - `slot 1 (rank #1, preferred PCA)`
@@ -228,6 +348,7 @@ Suggested assignment copy:
 - `slot 2 (unranked, floor PCA fallback)`
 - `slot 1 (rank #1 duplicate, non-gym fallback)`
 - `slot 4 (gym last resort to meet pending)`
+- `slot 3 reassigned in audit to improve global ranked coverage`
 
 ### Recommended tracker additions
 The hover can remain literal and easy to read if the tracker records explicit reasons.
@@ -238,55 +359,65 @@ Recommended new assignment/tracker fields:
 - `pcaSelectionTier?: 'preferred' | 'floor' | 'non-floor'`
 - `usedContinuity?: boolean`
 - `duplicateSlot?: boolean`
+- `allocationStage?: 'draft' | 'repair' | 'extra-coverage'`
+- `repairReason?: 'ranked-coverage' | 'fairness-floor' | 'duplicate-reduction' | 'continuity-reduction' | null`
 
 ## Scenario Table
 
 | Scenario | Team input | Expected result | Why |
 | --- | --- | --- | --- |
 | 1. Simple preferred hit | Need `0.25`; ranked `1 > 3`; preferred PCA available on `1` | Assign preferred PCA to `1` | Highest ranked slot first; preferred PCA can satisfy it directly |
-| 2. Same PCA continuity across ranked slots | Need `0.5`; ranked `2 > 3`; same PCA available on both `2` and `3` | Same PCA gets `2 + 3` | Ranked slots first, and continuity across different useful slots is best outcome |
+| 2. Same PCA continuity across ranked slots | Need `0.5`; ranked `2 > 3`; same PCA available on both `2` and `3` | Same PCA gets `2 + 3` in the draft pass | Ranked slots first, and continuity across different useful slots is best human-like outcome |
 | 3. Rank #1 forces non-preferred PCA | Need `0.5`; ranked `1 > 3`; preferred PCAs cannot cover `1`; floor PCA can cover `1 + 3` | Floor PCA gets `1 + 3` | Rank #1 outranks preferred-PCA wish; continuity then helps finish rank #2 |
 | 4. Rank #1 first, preferred PCA second | Need `0.5`; ranked `1 > 3`; floor PCA can cover only `1`; preferred PCA available on `3` | Floor PCA gets `1`, preferred PCA gets `3` | Must solve rank #1 first; then preferred PCA helps on next ranked slot |
 | 5. Ranked exhausted, use unranked | Need `0.5`; ranked only `1`; `1` is assigned, `3` is free, no other ranked slot exists | Use `1`, then unused unranked non-gym `3` | Pending must be met; unused unranked slot beats duplication |
-| 6. Avoid duplicate while unused slot exists | Need `0.5`; ranked `2 > 3`; PCA A can do `2`, PCA B can do `2` and `3` | End state should cover `2` and `3`, not `2 + 2` | Multiple PCAs must spread across useful unused slots before stacking |
-| 7. Duplicate becomes unavoidable | Need `0.5`; ranked `1 > 3 > 2`; all useful unused non-gym slots exhausted except already-covered ranked slots | Duplicate non-gym starts at `1`, then `3`, then `2` if needed | Once duplication is unavoidable, return to ranked order exactly |
-| 8. Gym only as final rescue | Need `0.25`; ranked `1 > 3`; all non-gym paths impossible; gym slot `4` exists and `avoid gym` is on | Use `4` only if it is the only remaining path to meet pending | Gym remains blocked until true last resort |
-| 9. Partial ranking only | Need `0.5`; ranked `1 > 3`; slots `2` and `4` unranked | Try `1`, then `3`, then unused unranked non-gym before any duplicate | Unranked slots are a lower-priority bucket, not forbidden |
-| 10. No ranked slots configured | Need `0.5`; no ranked slots; gym avoided | Use unused non-gym slots with continuity and PCA cascade | Normal fallback behavior without slot preference |
+| 6. Local continuity before global repair | Team A can immediately continue with the same PCA; Team B still has a useful slot available | First pass may let Team A continue | Human editors draft this way; global correction belongs in audit |
+| 7. Audit repairs duplicate concentration | Team A draft ended with duplicate floating slot while Team B has no useful non-duplicate slot | Audit reassigns if a bounded repair exists | Duplicate is fallback only, not automatically final |
+| 8. Audit rescues missing higher-ranked slot | Draft meets pending but misses another team's higher-ranked slot | Audit may reassign one slot if the schedule score improves | Ranked coverage has highest global priority |
+| 9. Audit reduces over-splitting | Draft uses multiple PCAs for one team even though one PCA could safely cover more of it | Audit collapses to fewer PCAs when schedule quality does not worsen | Continuity is a desired global quality signal |
+| 10. Gym only as final rescue | Need `0.25`; ranked `1 > 3`; all non-gym paths impossible; gym slot `4` exists and `avoid gym` is on | Use `4` only if it is the only remaining path to meet pending | Gym remains blocked until true last resort |
+| 11. Partial ranking only | Need `0.5`; ranked `1 > 3`; slots `2` and `4` unranked | Try `1`, then `3`, then unused unranked non-gym before any duplicate | Unranked slots are a lower-priority bucket, not forbidden |
+| 12. No ranked slots configured | Need `0.5`; no ranked slots; gym avoided | Use unused non-gym slots with continuity and PCA cascade | Normal fallback behavior without slot preference |
 
 ## Error Handling and Edge Cases
 - If no ranked slots are configured, Step 3.4 should behave like a no-slot-preference team and still honor gym avoidance and floor/PCA cascades.
 - If a ranked slot is the gym slot and `avoid gym` is enabled, the slot remains visible in the user's ranking but is treated as blocked until last resort.
 - If pending cannot be fully met after ranked-unused, unranked-unused, duplicate non-gym, and gym-last-resort checks, diagnostics should explicitly say no legal path remained.
 - Step 3.2 must not consume more team pending than remains after earlier selections.
-- Step 3.4 must not allow duplicate-slot stacking before unused useful slots are exhausted.
+- Step 3.4 draft must not allow duplicate-slot stacking before unused useful slots are exhausted for that team.
+- The final accepted result must preserve ranked slots in the effective preference contract.
+- The repair stage must stop after bounded deterministic work; no infinite retry loop or unconstrained re-optimization.
 
 ## Testing Guidance
 This design should be implemented with focused regression coverage around:
-- partial ranked-slot inputs
+- preserving ranked slots when Step 3.2/3.3 manual selections exist
 - rank-first over preferred-PCA conflicts
 - same-PCA continuity across different slots
-- different-PCAs across different slots
-- duplicate-slot prevention while unused slots exist
-- duplicate ranked-order fallback once duplicates become necessary
+- duplicate-slot prevention while unused or repairable alternatives exist
+- bounded repair rescuing higher-ranked slots
+- bounded repair reducing duplicates without unacceptable fulfillment loss
+- bounded repair reducing over-splitting when safe
 - gym-last-resort rescue behavior
-- hover/tracker reason fields for ranked, unranked, duplicate, and gym cases
+- tracker reason fields for draft vs repair decisions
 
 Recommended test layers:
-- unit tests for slot-bucket construction and candidate ordering
+- unit tests for effective preference construction, target ordering, and repair scoring
 - regression tests for the scenario table above
-- one focused UI test for ranked-slot preference entry and hover wording
+- one focused caller-path test for the ranked Step 3 wizard contract (committed Step 3.2/3.3 → allocations + tracker; see `tests/regression/f75-step3-v2-committed-manual-selections-preview.test.ts`)
 
 ## Primary Files / Areas
 - `components/dashboard/PCAPreferencePanel.tsx`
+- `components/allocation/FloatingPCAConfigDialogV2.tsx`
+- `lib/features/schedule/step3V2CommittedSelections.ts`
 - `lib/utils/reservationLogic.ts`
 - `lib/utils/floatingPCAHelpers.ts`
 - `lib/algorithms/pcaAllocationFloating.ts`
-- `components/allocation/PCABlock.tsx`
+- any extracted V2 helper files under `lib/algorithms/`
 - relevant Step 3 tests in `tests/regression`
 
 ## Implementation Notes
 - This document is design-only and does not prescribe a DB migration.
 - The preferred path is to reuse `preferred_slots: number[]` and change its semantics.
 - The implementation should favor explicit tracker metadata over reconstructing hover reasons from allocator side effects.
-- The implementation should favor a slot-target loop with lookahead continuity over continuing to expand the single-`preferredSlot` condition model.
+- The implementation should favor a continuity-friendly first pass plus bounded repair over a purely greedy one-slot loop.
+- The implementation should preserve the canonical code-facing name `allocateFloatingPCA_v2RankedSlot`.

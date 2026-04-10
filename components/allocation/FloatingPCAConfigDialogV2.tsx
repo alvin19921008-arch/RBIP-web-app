@@ -40,13 +40,13 @@ import {
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import type { Team } from '@/types/staff'
 import {
-  allocateFloatingPCA_rankedV2,
   type FloatingPCAAllocationResultV2,
 } from '@/lib/algorithms/pcaAllocation'
 import {
   buildStep31PreviewExtraCoverageOptions,
   countProjectedExtraSlots,
 } from '@/lib/features/schedule/step31ProjectedExtraSlots'
+import { runStep3V2CommittedSelections } from '@/lib/features/schedule/step3V2CommittedSelections'
 import { computeStep3V2ReservationPreview } from '@/lib/features/schedule/step3V2ReservationPreview'
 import { computeAdjacentSlotReservations, type SlotAssignment } from '@/lib/utils/reservationLogic'
 import { buildStep34TeamDetailViewModel } from './step34/step34ViewModel'
@@ -63,13 +63,6 @@ const STEP34_DETAIL_BADGE_CLASS =
 
 type Step32Decision = 'system' | 'keep-preferred' | 'skip'
 type Step33Decision = 'use' | 'skip'
-
-interface V2ManualAssignment {
-  team: Team
-  slot: number
-  pcaId: string
-  source: 'step32' | 'step33'
-}
 
 function getStepDisplayLabel(step: Step3V2Step): string {
   if (step === '3.1') return '3.1 Adjust'
@@ -344,7 +337,10 @@ export function FloatingPCAConfigDialogV2({
 
     ;(async () => {
       try {
-        const standardRes = await allocateFloatingPCA_rankedV2(
+        // Ranked V2 + selected_only preserves base [preferred_slots] order; empty Step 3.2 picks here
+        // fall back to DB [preferred_pca_ids]. Manual selections may bias PCA choice in Step 3.4 but
+        // must not erase ranked-slot priority.
+        const standardRes = await allocateFloatingPCA_v2RankedSlot(
           buildStep31PreviewExtraCoverageOptions({
             mode: 'standard' as const,
             teamOrder,
@@ -519,36 +515,20 @@ export function FloatingPCAConfigDialogV2({
     })
   }, [adjacentPreview.adjacentReservations, adjacentTeams, step33Decisions, step33SelectedOptionByTeam])
 
-  const step34Selections = useMemo<V2ManualAssignment[]>(() => {
-    return [
-      ...step32AssignmentsForSave.map((assignment) => ({
-        team: assignment.team,
-        slot: assignment.slot,
-        pcaId: assignment.pcaId,
-        source: 'step32' as const,
-      })),
-      ...step33AssignmentsForSave.map((assignment) => ({
-        team: assignment.team,
-        slot: assignment.slot,
-        pcaId: assignment.pcaId,
-        source: 'step33' as const,
-      })),
-    ]
-  }, [step32AssignmentsForSave, step33AssignmentsForSave])
-
   const runStep34Preview = useCallback(async () => {
     setStep34Loading(true)
     try {
-      const result = await allocateFloatingPCA_rankedV2({
-        mode: 'standard',
+      const result = await runStep3V2CommittedSelections({
         teamOrder,
         currentPendingFTE: { ...adjustedFTE },
         existingAllocations: existingAllocations.map((allocation) => ({ ...allocation })),
-        pcaPool: floatingPCAs,
+        floatingPCAs,
         pcaPreferences,
         specialPrograms,
+        step32Assignments: step32AssignmentsForSave,
+        step33Assignments: step33AssignmentsForSave,
+        mode: 'standard',
         preferenceSelectionMode: 'selected_only',
-        selectedPreferenceAssignments: step34Selections,
         extraCoverageMode: 'round-robin-team-order',
       })
       setStep34PreviewResult(result)
@@ -562,7 +542,8 @@ export function FloatingPCAConfigDialogV2({
     floatingPCAs,
     pcaPreferences,
     specialPrograms,
-    step34Selections,
+    step32AssignmentsForSave,
+    step33AssignmentsForSave,
     teamOrder,
   ])
 

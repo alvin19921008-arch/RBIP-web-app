@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-import { allocateFloatingPCA_v2, type PCAData } from '../../lib/algorithms/pcaAllocation'
+import { allocateFloatingPCA_v1LegacyPreference, type PCAData } from '../../lib/algorithms/pcaAllocation'
 import type { PCAPreference, SpecialProgram } from '../../types/allocation'
 import type { PCAAllocation } from '../../types/schedule'
 import type { Team } from '../../types/staff'
@@ -59,7 +59,7 @@ async function runScenario(selectedPreferenceAssignments: Array<{ team: Team; sl
   const pcaPreferences: PCAPreference[] = []
   const specialPrograms: SpecialProgram[] = []
 
-  return allocateFloatingPCA_v2({
+  return allocateFloatingPCA_v1LegacyPreference({
     mode: 'standard',
     teamOrder: ['MC', 'FO', 'SMM', 'SFM', 'CPPC', 'GMC', 'NSM', 'DRO'],
     currentPendingFTE,

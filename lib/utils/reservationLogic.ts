@@ -19,7 +19,6 @@ import {
 import {
   assignSlotIfValid,
   findAvailablePCAs,
-  getSlotTeam,
   type StaffOverrideWithSubstitution,
 } from '@/lib/utils/floatingPCAHelpers'
 
@@ -193,6 +192,7 @@ export function executeSlotAssignments(
   updatedPendingFTE: Record<Team, number>
   updatedAllocations: PCAAllocation[]
   pcaFTEChanges: Record<string, number>  // pcaId -> new FTE remaining
+  executedAssignments: SlotAssignment[]
 } {
   // Clone the pending FTE
   const updatedPendingFTE = { ...adjustedPendingFTE }
@@ -216,6 +216,7 @@ export function executeSlotAssignments(
   
   // Track FTE changes for PCAs
   const pcaFTEChanges: Record<string, number> = {}
+  const executedAssignments: SlotAssignment[] = []
   
   for (const assignment of assignments) {
     const { team, slot, pcaId } = assignment
@@ -272,11 +273,13 @@ export function executeSlotAssignments(
       }
       updatedAllocations.push(allocation)
       allocationByStaffId.set(pcaId, allocation)
+      executedAssignments.push(assignment)
     } else {
       // Update existing allocation - assign the slot to this team
       if (assignSlotIfValid({ allocation, slot, team, minFteRemaining: 0.25 })) {
         allocation.fte_remaining = Math.max(0, allocation.fte_remaining - 0.25)
         allocation.slot_assigned = (allocation.slot_assigned || 0) + 0.25
+        executedAssignments.push(assignment)
       }
     }
 
@@ -288,6 +291,7 @@ export function executeSlotAssignments(
     updatedPendingFTE,
     updatedAllocations,
     pcaFTEChanges,
+    executedAssignments,
   }
 }
 

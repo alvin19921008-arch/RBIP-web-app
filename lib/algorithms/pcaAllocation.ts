@@ -3168,12 +3168,12 @@ function getWeekday(date: Date): 'mon' | 'tue' | 'wed' | 'thu' | 'fri' {
   return weekdays[day === 0 ? 6 : day - 1]
 }
 
-// Step 3.4 floating allocation lives in pcaAllocationFloating.ts
-export {
-  allocateFloatingPCA_v2,
-  allocateFloatingPCA_rankedV2,
-  type FloatingPCAAllocationMode,
-  type FloatingPCAAllocationContextV2,
-  type FloatingPCAAllocationResultV2,
+// Step 3.4 floating allocation uses explicit V1/V2 behavior-named entrypoints.
+export type {
+  FloatingPCAAllocationMode,
+  FloatingPCAAllocationContextV2,
+  FloatingPCAAllocationResultV2,
 } from './pcaAllocationFloating'
+export { allocateFloatingPCA_v1LegacyPreference } from './floatingPcaV1LegacyPreference'
+export { allocateFloatingPCA_v2RankedSlot } from './floatingPcaV2RankedSlot'
 

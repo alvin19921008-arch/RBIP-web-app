@@ -234,7 +234,8 @@ import type { PCAData, FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pc
 import type { BedAllocationContext } from '@/lib/algorithms/bedAllocation'
 import type { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
-import { executeSlotAssignments, type SlotAssignment } from '@/lib/utils/reservationLogic'
+import type { SlotAssignment } from '@/lib/utils/reservationLogic'
+import { executeStep3V2HarnessAuto } from '@/lib/features/schedule/step3Harness/runStep3V2Harness'
 import { Input } from '@/components/ui/input'
 
 const ScheduleCopyWizard = dynamic(
@@ -10682,208 +10683,27 @@ function SchedulePageContent() {
               const floatingPCAs = floatingPCAsForStep3
               const baseExistingAllocations = existingAllocationsForStep3
 
-              const { allocateFloatingPCA_v2 } = await import('@/lib/algorithms/pcaAllocation')
-              const {
-                computeReservations,
-                computeAdjacentSlotReservations,
-                executeSlotAssignments,
-                simulateStep30BufferPreAssignments,
-              } = await import('@/lib/utils/reservationLogic')
-              const {
-                recordAssignment,
-                getTeamPreferenceInfo,
-                getTeamFloor,
-                isFloorPCAForTeam,
-                finalizeTrackerSummary,
-              } = await import('@/lib/utils/floatingPCAHelpers')
-
-              // Mutable working state across 3.0/3.2/3.3
-              let currentPending: Record<Team, number> = { ...pending0 }
-              let currentAllocations: any[] = baseExistingAllocations.map((a: any) => ({ ...a }))
-
-              const step30Assignments: Array<{ team: Team; slot: number; pcaId: string; pcaName: string }> = []
-              const step32Assignments: Array<{ team: Team; slot: number; pcaId: string; pcaName: string }> = []
-              const step33Assignments: Array<{ team: Team; slot: number; pcaId: string; pcaName: string }> = []
-
-              const pickNextTeam = (pending: Record<Team, number>): Team | null => {
-                // Choose the highest pending team by current teamOrder.
-                let best: Team | null = null
-                let bestVal = -Infinity
-                for (const t of teamOrder) {
-                  const v = pending[t] || 0
-                  if (v > bestVal) {
-                    bestVal = v
-                    best = t
-                  }
-                }
-                if (!best) return null
-                return (pending[best] || 0) > 0 ? best : null
-              }
-
-              // Step 3.0 (simulated): pre-assign some buffer-floating PCA slots before 3.1.
-              const ratio = Math.max(0, Math.min(1, bufferPreAssignRatio || 0))
-              if (ratio > 0) {
-                const bufferFloatingPCAs = (bufferStaff || []).filter(
-                  (s) => s.rank === 'PCA' && s.status === 'buffer' && (s as any).floating
-                )
-                const result = simulateStep30BufferPreAssignments({
-                  currentPendingFTE: currentPending as any,
-                  currentAllocations: currentAllocations as any,
-                  floatingPCAs: floatingPCAs as any,
-                  bufferFloatingPCAIds: bufferFloatingPCAs.map((staff) => staff.id),
-                  teamOrder,
-                  ratio,
-                })
-                step30Assignments.push(...result.step30Assignments)
-                currentPending = result.updatedPendingFTE as any
-                currentAllocations = result.updatedAllocations as any
-              }
-
-              // Step 3.2 (auto): preferred PCA + preferred slot reservations.
-              if (autoStep32) {
-                const res = computeReservations(
-                  pcaPreferences,
-                  currentPending,
-                  floatingPCAs as any,
-                  currentAllocations as any,
-                  staffOverrides as any
-                )
-                const used = new Set<string>() // pcaId:slot
-                for (const team of teamOrder) {
-                  const info = res.teamReservations[team]
-                  if (!info) continue
-                  const slot = info.slot
-                  const candidates = [...(info.pcaIds || [])].sort((a, b) => {
-                    const an = info.pcaNames?.[a] || a
-                    const bn = info.pcaNames?.[b] || b
-                    if (an !== bn) return an.localeCompare(bn)
-                    return a.localeCompare(b)
-                  })
-                  for (const pcaId of candidates) {
-                    const key = `${pcaId}:${slot}`
-                    if (used.has(key)) continue
-                    used.add(key)
-                    const assignment = { team, slot, pcaId, pcaName: info.pcaNames?.[pcaId] || 'Unknown PCA' }
-                    step32Assignments.push(assignment)
-                    const r = executeSlotAssignments([assignment], currentPending, currentAllocations, floatingPCAs as any)
-                    currentPending = r.updatedPendingFTE as any
-                    currentAllocations = r.updatedAllocations as any
-                    break
-                  }
-                }
-              }
-
-              // Step 3.3 (auto): adjacent-slot reservations from special program PCAs.
-              if (autoStep33) {
-                // Keep selecting greedily until no more valid options.
-                const used = new Set<string>()
-                const markUsedFromAllocations = () => {
-                  used.clear()
-                  for (const alloc of currentAllocations as any[]) {
-                    if (alloc.slot1) used.add(`${alloc.staff_id}:1`)
-                    if (alloc.slot2) used.add(`${alloc.staff_id}:2`)
-                    if (alloc.slot3) used.add(`${alloc.staff_id}:3`)
-                    if (alloc.slot4) used.add(`${alloc.staff_id}:4`)
-                  }
-                }
-                markUsedFromAllocations()
-
-                while (true) {
-                  const adj = computeAdjacentSlotReservations(
-                    currentPending,
-                    currentAllocations as any,
-                    floatingPCAs as any,
-                    specialPrograms as any,
-                    staffOverrides as any,
-                    getWeekday(selectedDate)
-                  )
-                  if (!adj.hasAnyAdjacentReservations) break
-
-                  let picked = false
-                  for (const team of teamOrder) {
-                    const pending = currentPending[team] || 0
-                    if (pending <= 0) continue
-                    const options = [...(adj.adjacentReservations[team] || [])].sort((a, b) => {
-                      if (a.pcaName !== b.pcaName) return a.pcaName.localeCompare(b.pcaName)
-                      return a.adjacentSlot - b.adjacentSlot
-                    })
-                    for (const opt of options) {
-                      const slot = opt.adjacentSlot
-                      const key = `${opt.pcaId}:${slot}`
-                      if (used.has(key)) continue
-                      const assignment = { team, slot, pcaId: opt.pcaId, pcaName: opt.pcaName }
-                      step33Assignments.push(assignment)
-                      const r = executeSlotAssignments([assignment], currentPending, currentAllocations, floatingPCAs as any)
-                      currentPending = r.updatedPendingFTE as any
-                      currentAllocations = r.updatedAllocations as any
-                      markUsedFromAllocations()
-                      picked = true
-                      break
-                    }
-                  }
-
-                  if (!picked) break
-                }
-              }
-
-              const result = await allocateFloatingPCA_v2({
-                teamOrder,
-                currentPendingFTE: currentPending,
-                existingAllocations: currentAllocations as any,
-                pcaPool: floatingPCAs as any,
+              const harnessRun = await executeStep3V2HarnessAuto({
+                currentPendingFTE: pending0 as Record<Team, number>,
+                visibleTeams,
+                floatingPCAs: floatingPCAs as any,
+                existingAllocations: baseExistingAllocations as any,
                 pcaPreferences,
                 specialPrograms,
-                mode: 'standard',
-                preferenceSelectionMode: 'selected_only',
-                preferenceProtectionMode: 'exclusive',
-                selectedPreferenceAssignments: [
-                  ...step32Assignments.map((a) => ({
-                    team: a.team,
-                    slot: a.slot,
-                    pcaId: a.pcaId,
-                    source: 'step32' as const,
-                  })),
-                  ...step33Assignments.map((a) => ({
-                    team: a.team,
-                    slot: a.slot,
-                    pcaId: a.pcaId,
-                    source: 'step33' as const,
-                  })),
-                ],
+                staffOverrides: staffOverrides as any,
+                selectedDate,
+                autoStep32,
+                autoStep33,
+                bufferPreAssignRatio,
+                bufferStaff: bufferStaff as any,
               })
 
-              // Add Step 3.0/3.2/3.3 assignments into tracker for visibility, matching wizard behavior.
-              const allocationOrderMap = new Map<Team, number>()
-              teamOrder.forEach((team, idx) => allocationOrderMap.set(team, idx + 1))
-
-              const addAssignmentsToTracker = (assignments: Array<{ team: Team; slot: number; pcaId: string; pcaName: string }>, assignedIn: 'step30' | 'step32' | 'step33') => {
-                for (const assignment of assignments) {
-                  const pca = (floatingPCAs as any[]).find((p) => p.id === assignment.pcaId)
-                  if (!pca) continue
-                  const teamPref = getTeamPreferenceInfo(assignment.team, pcaPreferences)
-                  const teamFloor = getTeamFloor(assignment.team, pcaPreferences)
-                  const isPreferredPCA = teamPref.preferredPCAIds.includes(assignment.pcaId)
-                  const isPreferredSlot = teamPref.preferredSlot === assignment.slot
-                  recordAssignment(result.tracker as any, assignment.team, {
-                    slot: assignment.slot,
-                    pcaId: assignment.pcaId,
-                    pcaName: assignment.pcaName,
-                    assignedIn,
-                    wasPreferredSlot: isPreferredSlot,
-                    wasPreferredPCA: isPreferredPCA,
-                    wasFloorPCA: isFloorPCAForTeam(pca, teamFloor),
-                    allocationOrder: allocationOrderMap.get(assignment.team),
-                    isBufferAssignment: assignedIn === 'step30',
-                  } as any)
-                }
-              }
-
-              addAssignmentsToTracker(step30Assignments, 'step30')
-              addAssignmentsToTracker(step32Assignments, 'step32')
-              addAssignmentsToTracker(step33Assignments, 'step33')
-              finalizeTrackerSummary(result.tracker as any)
-
-              await handleFloatingPCAConfigSave(result, teamOrder, step32Assignments as any, step33Assignments as any)
+              await handleFloatingPCAConfigSave(
+                harnessRun.result,
+                harnessRun.teamOrder,
+                harnessRun.step32Assignments as any,
+                harnessRun.step33Assignments as any
+              )
             }}
             openStep3Wizard={() => {
               if (!step2Result) {

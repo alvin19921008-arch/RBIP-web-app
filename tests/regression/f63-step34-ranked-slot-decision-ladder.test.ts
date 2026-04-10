@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-import { allocateFloatingPCA_rankedV2 } from '../../lib/algorithms/pcaAllocation'
+import { allocateFloatingPCA_v2RankedSlot } from '../../lib/algorithms/pcaAllocation'
 import type { PCAData } from '../../lib/algorithms/pcaAllocation'
 import type { PCAPreference } from '../../types/allocation'
 import type { Team } from '../../types/staff'
@@ -45,7 +45,7 @@ function makePreference(team: Team, rankedSlots: number[], preferredPcaIds: stri
   }
 }
 
-function slotOwner(result: Awaited<ReturnType<typeof allocateFloatingPCA_rankedV2>>, pcaId: string, slot: 1 | 2 | 3 | 4) {
+function slotOwner(result: Awaited<ReturnType<typeof allocateFloatingPCA_v2RankedSlot>>, pcaId: string, slot: 1 | 2 | 3 | 4) {
   const allocation = result.allocations.find((row) => row.staff_id === pcaId)
   if (!allocation) return null
   return slot === 1 ? allocation.slot1 : slot === 2 ? allocation.slot2 : slot === 3 ? allocation.slot3 : allocation.slot4
@@ -54,7 +54,7 @@ function slotOwner(result: Awaited<ReturnType<typeof allocateFloatingPCA_rankedV
 async function main() {
   const teamOrder: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
-  const rankFirstResult = await allocateFloatingPCA_rankedV2({
+  const rankFirstResult = await allocateFloatingPCA_v2RankedSlot({
     teamOrder,
     currentPendingFTE: { ...emptyTeamRecord(0), FO: 0.5 },
     existingAllocations: [],
@@ -72,7 +72,7 @@ async function main() {
   assert.equal(rankFirstResult.pendingPCAFTEPerTeam.FO, 0)
   assert.equal(rankFirstResult.tracker.FO.assignments[0]?.fulfilledSlotRank, 1)
 
-  const unrankedBeforeDuplicate = await allocateFloatingPCA_rankedV2({
+  const unrankedBeforeDuplicate = await allocateFloatingPCA_v2RankedSlot({
     teamOrder,
     currentPendingFTE: { ...emptyTeamRecord(0), FO: 0.5 },
     existingAllocations: [
@@ -101,7 +101,7 @@ async function main() {
   assert.equal(slotOwner(unrankedBeforeDuplicate, 'other-1', 2), 'FO')
   assert.equal(unrankedBeforeDuplicate.tracker.FO.assignments[0]?.slotSelectionPhase, 'unranked-unused')
 
-  const gymLastResort = await allocateFloatingPCA_rankedV2({
+  const gymLastResort = await allocateFloatingPCA_v2RankedSlot({
     teamOrder,
     currentPendingFTE: { ...emptyTeamRecord(0), FO: 0.25 },
     existingAllocations: [],

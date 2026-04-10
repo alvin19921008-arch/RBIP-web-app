@@ -653,6 +653,7 @@ export function createEmptyTracker(): AllocationTracker {
         preferredPCAUsed: false,
         fulfilledByBuffer: false,
         allocationMode: undefined,
+        repairAuditDefects: [],
       },
     }
   }
