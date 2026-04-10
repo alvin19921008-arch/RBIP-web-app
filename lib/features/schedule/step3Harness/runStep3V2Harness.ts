@@ -9,8 +9,8 @@ import {
   simulateStep30BufferPreAssignments,
   type SlotAssignment,
 } from '@/lib/utils/reservationLogic'
+import { finalizeRankedSlotFloatingTracker } from '@/lib/algorithms/floatingPcaV2/trackerSummaryDerivations'
 import {
-  finalizeTrackerSummary,
   getTeamFloor,
   getTeamPreferenceInfo,
   isFloorPCAForTeam,
@@ -239,7 +239,7 @@ export async function executeStep3V2HarnessAuto(
   addAssignmentsToTracker(step30Assignments, 'step30')
   addAssignmentsToTracker(step32Assignments, 'step32')
   addAssignmentsToTracker(step33Assignments, 'step33')
-  finalizeTrackerSummary(result.tracker as any)
+  finalizeRankedSlotFloatingTracker(result.tracker as any)
 
   return {
     result,

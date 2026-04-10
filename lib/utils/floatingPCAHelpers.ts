@@ -1,6 +1,8 @@
 /**
- * Floating PCA Allocation Helpers
- * 
+ * Shared floating PCA mechanics only.
+ * Keep slot/pending/allocation mechanics here.
+ * Move ranked-V2 provenance or tracker policy to version-scoped modules (e.g. floatingPcaV2/provenance).
+ *
  * Reusable functions for the revised Step 3.4 floating PCA allocation algorithm.
  * Includes floor matching, slot assignment, availability checks, and tracking.
  */
@@ -34,62 +36,6 @@ export type StaffOverrideWithSubstitution = {
   substitutionFor?: SubstitutionForEntry
   substitutionForBySlot?: SubstitutionForBySlot
   [key: string]: any
-}
-
-type Step3FloatingSelectionSeed = {
-  team: Team
-  slot: number
-  pcaId: string
-}
-
-function isTrackedSlot(value: number): value is 1 | 2 | 3 | 4 {
-  return value === 1 || value === 2 || value === 3 || value === 4
-}
-
-function getCoveragePriority(kind: NonNullable<SlotAssignmentLog['upstreamCoverageKind']>): number {
-  if (kind === 'special-program') return 0
-  if (kind === 'substitution-like') return 1
-  return 2
-}
-
-export function buildStep3FloatingSelectionKey(selection: Step3FloatingSelectionSeed): string {
-  return `${selection.team}:${selection.slot}:${selection.pcaId}`
-}
-
-export function buildUpstreamCoverageKindByTeamSlot(args: {
-  existingAllocations: PCAAllocation[]
-  floatingPcaIds?: Set<string>
-  excludeStep3OwnedSelections?: Step3FloatingSelectionSeed[]
-}): Map<string, NonNullable<SlotAssignmentLog['upstreamCoverageKind']>> {
-  const excludeKeys = new Set(
-    (args.excludeStep3OwnedSelections ?? []).map((selection) => buildStep3FloatingSelectionKey(selection))
-  )
-  const coverageByTeamSlot = new Map<string, NonNullable<SlotAssignmentLog['upstreamCoverageKind']>>()
-
-  for (const allocation of args.existingAllocations) {
-    for (const slot of [1, 2, 3, 4] as const) {
-      const team = getSlotTeam(allocation, slot)
-      if (!team || !isTrackedSlot(slot)) continue
-      if (excludeKeys.has(buildStep3FloatingSelectionKey({ team, slot, pcaId: allocation.staff_id }))) {
-        continue
-      }
-
-      const nextKind: NonNullable<SlotAssignmentLog['upstreamCoverageKind']> =
-        allocation.special_program_ids?.length
-          ? 'special-program'
-          : args.floatingPcaIds?.has(allocation.staff_id)
-            ? 'substitution-like'
-            : 'non-floating'
-
-      const teamSlotKey = `${team}:${slot}`
-      const currentKind = coverageByTeamSlot.get(teamSlotKey)
-      if (!currentKind || getCoveragePriority(nextKind) < getCoveragePriority(currentKind)) {
-        coverageByTeamSlot.set(teamSlotKey, nextKind)
-      }
-    }
-  }
-
-  return coverageByTeamSlot
 }
 
 function getNormalizedPcaAvailableSlots(pca: { availableSlots?: number[] } | null | undefined): number[] | null {
@@ -758,12 +704,18 @@ export function recordAssignment(
 }
 
 /**
- * Finalize derived tracker summary flags for all teams.
+ * Finalize shared tracker summary flags for all teams (version-agnostic mechanics).
  *
- * Important: duplicate-floating summary flags must use the shared true duplicate
- * semantics helper, not raw `slotSelectionPhase === 'ranked-duplicate'` markers,
- * because a single Step 3 floating row can still land on top of upstream Step 2
- * coverage without being a true duplicate-floating case.
+ * Covers:
+ * - AM/PM balance from assigned slots
+ * - True duplicate-floating summary (must use `getQualifyingDuplicateFloatingAssignmentsForSlot`, not raw
+ *   `slotSelectionPhase === 'ranked-duplicate'`, because Step 3 can sit on upstream Step 2 coverage without a
+ *   true duplicate-floating case)
+ * - `preferredPCAUsed` from legacy counters / `wasPreferredPCA` only
+ *
+ * Ranked-slot V2 derivations (`fulfilledSlotRank`, `slotSelectionPhase`, `pcaSelectionTier`) live in
+ * `lib/algorithms/floatingPcaV2/trackerSummaryDerivations.ts` — call `applyRankedSlotStep34TrackerSummaryFields`
+ * after this when the tracker was built by ranked V2 (or V2 preview/harness paths).
  */
 export function finalizeTrackerSummary(tracker: AllocationTracker): void {
   for (const team of TEAMS) {
@@ -773,15 +725,6 @@ export function finalizeTrackerSummary(tracker: AllocationTracker): void {
     const hasPM = slots.some(s => PM_SLOTS.includes(s))
     teamLog.summary.amPmBalanced = hasAM && hasPM
 
-    const rankedFulfilled = teamLog.assignments
-      .map((assignment) => assignment.fulfilledSlotRank)
-      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
-    teamLog.summary.highestRankedSlotFulfilled =
-      rankedFulfilled.length > 0 ? Math.min(...rankedFulfilled) : null
-
-    teamLog.summary.usedUnrankedSlot = teamLog.assignments.some(
-      (assignment) => assignment.slotSelectionPhase === 'unranked-unused'
-    )
     teamLog.summary.usedDuplicateFloatingSlot = ([1, 2, 3, 4] as const).some((slot) => {
       const logsForSlot = teamLog.assignments.filter((assignment) => assignment.slot === slot)
       return (
@@ -793,15 +736,9 @@ export function finalizeTrackerSummary(tracker: AllocationTracker): void {
         }).length >= 2
       )
     })
-    teamLog.summary.gymUsedAsLastResort = teamLog.assignments.some(
-      (assignment) => assignment.slotSelectionPhase === 'gym-last-resort'
-    )
     teamLog.summary.preferredPCAUsed =
       teamLog.summary.preferredPCAsUsed > 0 ||
-      teamLog.assignments.some(
-        (assignment) =>
-          assignment.pcaSelectionTier === 'preferred' || assignment.wasPreferredPCA === true
-      )
+      teamLog.assignments.some((assignment) => assignment.wasPreferredPCA === true)
   }
 }
 

@@ -57,7 +57,7 @@ function buildTrueStep3OwnedSlotCount(args: {
   const baselineByStaffId = new Map(
     (args.baselineAllocations ?? []).map((allocation) => [allocation.staff_id, allocation])
   )
-  const counts = new Map<1 | 2 | 3 | 4>([
+  const counts = new Map<1 | 2 | 3 | 4, number>([
     [1, 0],
     [2, 0],
     [3, 0],
@@ -158,6 +158,10 @@ function getRankTierWeight(tier: RankedPcaTier): number {
   return 2
 }
 
+function asTrackedSlots(slots: number[]): Array<1 | 2 | 3 | 4> {
+  return slots.filter((slot): slot is 1 | 2 | 3 | 4 => slot === 1 || slot === 2 || slot === 3 || slot === 4)
+}
+
 function getUsableSlotsForPca(args: {
   pca: PCAData
   allocations: PCAAllocation[]
@@ -174,7 +178,7 @@ function getUsableSlotsForPca(args: {
     : VALID_SLOTS.filter((slot) => !(avoidGym && gymSlot === slot))
 
   if (!Array.isArray(pca.availableSlots)) {
-    return baseAvailable
+    return asTrackedSlots(baseAvailable)
   }
 
   const normalizedAvailable = pca.availableSlots.filter(
@@ -182,7 +186,7 @@ function getUsableSlotsForPca(args: {
   )
   if (normalizedAvailable.length === 0) return []
 
-  return baseAvailable.filter((slot) => normalizedAvailable.includes(slot))
+  return asTrackedSlots(baseAvailable).filter((slot) => normalizedAvailable.includes(slot))
 }
 
 function pickRankedCandidateForTarget(args: {

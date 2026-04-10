@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { allocateFloatingPCA_v2RankedSlot, type PCAData } from '../../lib/algorithms/pcaAllocation'
 import { runRankedV2DraftAllocation } from '../../lib/algorithms/floatingPcaV2/draftAllocation'
 import { detectRankedV2RepairDefects } from '../../lib/algorithms/floatingPcaV2/repairAudit'
+import { finalizeRankedSlotFloatingTracker } from '../../lib/algorithms/floatingPcaV2/trackerSummaryDerivations'
 import {
   buildRankedSlotAllocationScore,
   compareScores,
@@ -12,7 +13,6 @@ import { roundToNearestQuarterWithMidpoint } from '../../lib/utils/rounding'
 import {
   TEAMS,
   createEmptyTracker,
-  finalizeTrackerSummary,
   getTeamPreferenceInfo,
   recordAssignment,
 } from '../../lib/utils/floatingPCAHelpers'
@@ -139,7 +139,7 @@ function runDraftAudit(args: {
     }
     tracker[defect.team].summary.repairAuditDefects = existing
   }
-  finalizeTrackerSummary(tracker)
+  finalizeRankedSlotFloatingTracker(tracker)
 
   return { allocations, pendingFTE, tracker, defects }
 }

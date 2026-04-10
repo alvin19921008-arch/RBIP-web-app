@@ -3,9 +3,9 @@ import {
   type FloatingPCAAllocationResultV2,
   type PCAData,
 } from '@/lib/algorithms/pcaAllocation'
+import { buildUpstreamCoverageKindByTeamSlot } from '@/lib/algorithms/floatingPcaV2/provenance'
+import { finalizeRankedSlotFloatingTracker } from '@/lib/algorithms/floatingPcaV2/trackerSummaryDerivations'
 import {
-  buildUpstreamCoverageKindByTeamSlot,
-  finalizeTrackerSummary,
   getTeamPreferenceInfo,
   isFloorPCAForTeam,
   recordAssignment,
@@ -99,7 +99,7 @@ function appendCommittedAssignmentsToTracker(args: {
     } as any)
   }
 
-  finalizeTrackerSummary(result.tracker as any)
+  finalizeRankedSlotFloatingTracker(result.tracker as any)
 }
 
 export async function runStep3V2CommittedSelections(

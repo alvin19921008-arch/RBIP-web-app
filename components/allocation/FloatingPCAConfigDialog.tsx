@@ -447,7 +447,7 @@ export function FloatingPCAConfigDialog({
       const balancedAllocations = existingAllocations.map((a) => ({ ...a }))
 
       const [standardRes, balancedRes] = await Promise.all([
-        allocateFloatingPCA_v2(buildStep31PreviewExtraCoverageOptions({
+        allocateFloatingPCA_v1LegacyPreference(buildStep31PreviewExtraCoverageOptions({
           mode: 'standard',
           teamOrder,
           currentPendingFTE: standardPending,
@@ -459,7 +459,7 @@ export function FloatingPCAConfigDialog({
           preferenceProtectionMode,
           selectedPreferenceAssignments: [],
         })),
-        allocateFloatingPCA_v2(buildStep31PreviewExtraCoverageOptions({
+        allocateFloatingPCA_v1LegacyPreference(buildStep31PreviewExtraCoverageOptions({
           mode: 'balanced',
           teamOrder,
           currentPendingFTE: balancedPending,
