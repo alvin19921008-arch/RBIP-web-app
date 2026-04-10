@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import type { TeamAllocationLog } from '../../types/schedule'
+import { createEmptyTracker, finalizeTrackerSummary } from '../../lib/utils/floatingPCAHelpers'
 import {
   formatV2RepairAuditDefectLabel,
   formatV2SlotSelectionPhaseLabel,
@@ -199,6 +200,26 @@ async function main() {
     ),
     false,
     'Expected the standalone V2 tooltip model to stay free of legacy star-marker signals.'
+  )
+
+  const upstreamSummaryTracker = createEmptyTracker()
+  upstreamSummaryTracker.FO = makeEmptyLog()
+  upstreamSummaryTracker.FO.team = 'FO'
+  upstreamSummaryTracker.FO.assignments.push({
+    slot: 2,
+    pcaId: 'upstream-stacked',
+    pcaName: 'Upstream Stacked',
+    assignedIn: 'step34',
+    allocationStage: 'draft',
+    slotSelectionPhase: 'ranked-duplicate',
+    duplicateSlot: true,
+    ...({ step3OwnershipKind: 'step3-floating', upstreamCoverageKind: 'non-floating' } as any),
+  })
+  finalizeTrackerSummary(upstreamSummaryTracker)
+  assert.equal(
+    upstreamSummaryTracker.FO.summary.usedDuplicateFloatingSlot,
+    false,
+    'Tracker summary should only mark duplicate-floating when at least two true Step 3 floating rows qualify on the same slot.'
   )
 }
 

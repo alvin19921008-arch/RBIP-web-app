@@ -4,6 +4,7 @@ import {
   type PCAData,
 } from '@/lib/algorithms/pcaAllocation'
 import {
+  buildUpstreamCoverageKindByTeamSlot,
   finalizeTrackerSummary,
   getTeamPreferenceInfo,
   isFloorPCAForTeam,
@@ -31,39 +32,37 @@ interface RunStep3V2CommittedSelectionsArgs {
   preferenceSelectionMode?: 'legacy' | 'selected_only'
 }
 
-function buildTeamSlotCounts(allocations: PCAAllocation[]): Map<string, number> {
-  const counts = new Map<string, number>()
-  for (const allocation of allocations) {
-    for (const slot of [1, 2, 3, 4] as const) {
-      const team =
-        slot === 1
-          ? allocation.slot1
-          : slot === 2
-            ? allocation.slot2
-            : slot === 3
-              ? allocation.slot3
-              : allocation.slot4
-      if (!team) continue
-      const key = `${team}:${slot}`
-      counts.set(key, (counts.get(key) ?? 0) + 1)
-    }
-  }
-  return counts
-}
-
 function appendCommittedAssignmentsToTracker(args: {
   result: FloatingPCAAllocationResultV2
   teamOrder: Team[]
   executedAssignments: Array<SlotAssignment & { source: ManualAssignmentSource }>
   floatingPCAs: PCAData[]
   pcaPreferences: PCAPreference[]
+  existingAllocations: PCAAllocation[]
 }): void {
-  const { result, teamOrder, executedAssignments, floatingPCAs, pcaPreferences } = args
+  const { result, teamOrder, executedAssignments, floatingPCAs, pcaPreferences, existingAllocations } = args
   const allocationOrderMap = new Map<Team, number>()
   teamOrder.forEach((team, index) => allocationOrderMap.set(team, index + 1))
 
-  const teamSlotCounts = buildTeamSlotCounts(result.allocations)
   const pcaById = new Map(floatingPCAs.map((pca) => [pca.id, pca]))
+  const floatingPcaIds = new Set(floatingPCAs.map((pca) => pca.id))
+  const upstreamCoverageByTeamSlot = buildUpstreamCoverageKindByTeamSlot({
+    existingAllocations,
+    floatingPcaIds,
+  })
+  const step3OwnedCountsByTeamSlot = new Map<string, number>()
+
+  for (const team of teamOrder) {
+    for (const assignment of result.tracker[team].assignments) {
+      if (assignment.assignedIn !== 'step34') continue
+      const slotKey = `${team}:${assignment.slot}`
+      step3OwnedCountsByTeamSlot.set(slotKey, (step3OwnedCountsByTeamSlot.get(slotKey) ?? 0) + 1)
+    }
+  }
+  for (const assignment of executedAssignments) {
+    const slotKey = `${assignment.team}:${assignment.slot}`
+    step3OwnedCountsByTeamSlot.set(slotKey, (step3OwnedCountsByTeamSlot.get(slotKey) ?? 0) + 1)
+  }
 
   for (const assignment of executedAssignments) {
     const pref = getTeamPreferenceInfo(assignment.team, pcaPreferences)
@@ -72,12 +71,17 @@ function appendCommittedAssignmentsToTracker(args: {
     const isPreferredPca = pref.preferredPCAIds.includes(assignment.pcaId)
     const isFloorPca = pca ? isFloorPCAForTeam(pca, pref.teamFloor) : undefined
     const isGymLastResort = pref.avoidGym && pref.gymSlot === assignment.slot
+    const slotKey = `${assignment.team}:${assignment.slot}`
+    const upstreamCoverageKind = upstreamCoverageByTeamSlot.get(slotKey) ?? null
+    const trueDuplicateFloating = (step3OwnedCountsByTeamSlot.get(slotKey) ?? 0) > 1
 
     recordAssignment(result.tracker as any, assignment.team, {
       slot: assignment.slot,
       pcaId: assignment.pcaId,
       pcaName: assignment.pcaName,
       assignedIn: assignment.source,
+      step3OwnershipKind: 'step3-floating',
+      upstreamCoverageKind,
       wasPreferredSlot: assignment.slot === (pref.preferredSlot ?? -1),
       wasPreferredPCA: isPreferredPca,
       wasFloorPCA: isFloorPca,
@@ -90,7 +94,7 @@ function appendCommittedAssignmentsToTracker(args: {
           : 'unranked-unused',
       pcaSelectionTier: isPreferredPca ? 'preferred' : isFloorPca ? 'floor' : 'non-floor',
       usedContinuity: false,
-      duplicateSlot: (teamSlotCounts.get(`${assignment.team}:${assignment.slot}`) ?? 0) > 1,
+      duplicateSlot: trueDuplicateFloating,
       allocationOrder: allocationOrderMap.get(assignment.team),
     } as any)
   }
@@ -158,6 +162,7 @@ export async function runStep3V2CommittedSelections(
     executedAssignments: committedAssignments,
     floatingPCAs: args.floatingPCAs,
     pcaPreferences: args.pcaPreferences,
+    existingAllocations: args.existingAllocations,
   })
 
   for (const team of args.teamOrder) {

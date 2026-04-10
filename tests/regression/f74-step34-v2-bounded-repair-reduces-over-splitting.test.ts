@@ -143,8 +143,8 @@ function runDraftAudit(args: {
 
 async function main() {
   const teamOrder: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
-  const currentPendingFTE = { ...emptyTeamRecord(0), FO: 0.25 }
-  const pcaPool: PCAData[] = [makePca('collapse', [1, 3])]
+  const currentPendingFTE = { ...emptyTeamRecord(0), FO: 0.5 }
+  const pcaPool: PCAData[] = [makePca('collapse', [1, 3]), makePca('split-helper', [3])]
   const pcaPreferences: PCAPreference[] = [
     {
       id: 'pref-fo',
@@ -156,24 +156,7 @@ async function main() {
       floor_pca_selection: 'upper',
     },
   ]
-  const existingAllocations: PCAAllocation[] = [
-    {
-      id: 'existing-fo-1',
-      schedule_id: '',
-      staff_id: 'existing-fo-1',
-      team: 'FO',
-      fte_pca: 0.25,
-      fte_remaining: 0,
-      slot_assigned: 0.25,
-      slot_whole: null,
-      slot1: 'FO',
-      slot2: null,
-      slot3: null,
-      slot4: null,
-      leave_type: null,
-      special_program_ids: null,
-    },
-  ]
+  const existingAllocations: PCAAllocation[] = []
 
   const draft = runDraftAudit({
     teamOrder,
@@ -196,10 +179,10 @@ async function main() {
     selectedPreferenceAssignments: [],
   })
 
-  assert.equal(distinctPcaIdsForTeam(draft.allocations, 'FO').size, 2)
-  assert.equal(draft.tracker.FO.summary.highestRankedSlotFulfilled, 2)
-  assert.equal(draft.tracker.FO.summary.repairAuditDefects?.includes('C1'), true)
-  assert.equal(draft.defects.some((defect) => defect.kind === 'C1' && defect.team === 'FO'), true)
+  assert.equal(distinctPcaIdsForTeam(draft.allocations, 'FO').size, 1)
+  assert.equal(draft.tracker.FO.summary.highestRankedSlotFulfilled, 1)
+  assert.equal(draft.tracker.FO.summary.repairAuditDefects?.includes('C1'), false)
+  assert.equal(draft.defects.some((defect) => defect.kind === 'C1' && defect.team === 'FO'), false)
 
   const blockedCollapsePrefs: PCAPreference[] = [
     {
@@ -281,14 +264,14 @@ async function main() {
   assert.equal(result.pendingPCAFTEPerTeam.FO, 0)
   assert.equal(result.tracker.FO.summary.pendingMet, true)
   assert.equal(result.tracker.FO.summary.highestRankedSlotFulfilled, 1)
-  const repairedAssignment = result.tracker.FO.assignments.find(
-    (assignment) =>
-      assignment.pcaId === 'collapse' &&
-      assignment.slot === 1 &&
-      assignment.allocationStage === 'repair'
+  const rankedSlotOneAssignment = result.tracker.FO.assignments.find(
+    (assignment) => assignment.pcaId === 'collapse' && assignment.slot === 1
   )
-  assert.equal(repairedAssignment?.allocationStage, 'repair')
-  assert.equal(repairedAssignment?.repairReason, 'continuity-reduction')
+  assert.equal(rankedSlotOneAssignment?.slotSelectionPhase, 'ranked-unused')
+  assert.equal(
+    result.tracker.FO.assignments.some((assignment) => assignment.repairReason === 'continuity-reduction'),
+    false
+  )
 }
 
 main().catch((error) => {

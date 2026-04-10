@@ -144,6 +144,11 @@ export interface ScheduleCalculations {
 /**
  * Tracks how a specific slot was assigned to a team.
  * Used for tooltip display and debugging.
+ *
+ * V2 note:
+ * - `duplicateSlot` is a Step 3.4 algorithm hint carried on individual rows
+ * - user-facing duplicate-floating interpretation must still be recomputed from
+ *   true Step 3-owned floating rows on the same team + slot
  */
 export interface SlotAssignmentLog {
   slot: number                    // 1, 2, 3, or 4
@@ -172,6 +177,8 @@ export interface SlotAssignmentLog {
   overlapSlot?: boolean           // Was this slot already assigned to another PCA?
 
   // Ranked-slot Step 3.4 diagnostics (V2)
+  step3OwnershipKind?: 'step3-floating'
+  upstreamCoverageKind?: 'non-floating' | 'special-program' | 'substitution-like' | null
   fulfilledSlotRank?: number | null
   slotSelectionPhase?: 'ranked-unused' | 'unranked-unused' | 'ranked-duplicate' | 'gym-last-resort'
   pcaSelectionTier?: 'preferred' | 'floor' | 'non-floor'
@@ -181,6 +188,11 @@ export interface SlotAssignmentLog {
 
 /**
  * Aggregated tracking info per team for tooltip display.
+ *
+ * V2 note:
+ * - `usedDuplicateFloatingSlot` means at least one slot ended with true
+ *   duplicate-floating (two or more Step 3-owned floating rows), not merely
+ *   broad same-slot occupancy from upstream Step 2 coverage.
  */
 export interface TeamAllocationLog {
   team: Team

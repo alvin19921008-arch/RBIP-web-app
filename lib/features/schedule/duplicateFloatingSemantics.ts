@@ -35,6 +35,8 @@ export function getQualifyingDuplicateFloatingAssignmentsForSlot(args: {
   const step34Logs = args.logsForSlot.filter((entry) => entry.assignedIn === 'step34')
   const qualifying = step34Logs.filter(
     (entry) =>
+      entry.step3OwnershipKind === 'step3-floating' &&
+      entry.upstreamCoverageKind == null &&
       !isPcaSubstitutingNonFloatingOnSlotForTeam({
         staffOverrides: args.staffOverrides,
         pcaId: entry.pcaId,

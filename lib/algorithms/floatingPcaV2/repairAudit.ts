@@ -22,6 +22,7 @@ export type DetectRankedV2RepairDefectsContext = {
   allocations: PCAAllocation[]
   pcaPool: PCAData[]
   teamPrefs: Record<Team, TeamPreferenceInfo>
+  baselineAllocations?: PCAAllocation[]
 }
 
 type AuditState = {
@@ -29,9 +30,13 @@ type AuditState = {
   orderedPcas: PCAData[]
   floatingPcaIds: Set<string>
   allocationByStaffId: Map<string, PCAAllocation>
+  baselineAllocationByStaffId: Map<string, PCAAllocation>
   slotCountsByTeam: Record<Team, Map<Slot, number>>
+  trueStep3SlotCountsByTeam: Record<Team, Map<Slot, number>>
   assignedSlotsByTeam: Record<Team, Slot[]>
+  trueStep3AssignedSlotsByTeam: Record<Team, Slot[]>
   distinctPcaIdsByTeam: Record<Team, string[]>
+  distinctTrueStep3PcaIdsByTeam: Record<Team, string[]>
   initialPendingFTE: Record<Team, number>
   pendingFTE: Record<Team, number>
   teamPrefs: Record<Team, TeamPreferenceInfo>
@@ -86,6 +91,7 @@ function buildAuditState(context: DetectRankedV2RepairDefectsContext): AuditStat
   )
   const floatingPcaIds = new Set(orderedPcas.map((pca) => pca.id))
   const allocationByStaffId = new Map<string, PCAAllocation>()
+  const baselineAllocationByStaffId = new Map<string, PCAAllocation>()
 
   for (const allocation of [...context.allocations].sort((a, b) =>
     String(a.staff_id).localeCompare(String(b.staff_id))
@@ -94,12 +100,23 @@ function buildAuditState(context: DetectRankedV2RepairDefectsContext): AuditStat
       allocationByStaffId.set(allocation.staff_id, allocation)
     }
   }
+  for (const allocation of [...(context.baselineAllocations ?? [])].sort((a, b) =>
+    String(a.staff_id).localeCompare(String(b.staff_id))
+  )) {
+    if (!baselineAllocationByStaffId.has(allocation.staff_id)) {
+      baselineAllocationByStaffId.set(allocation.staff_id, allocation)
+    }
+  }
 
   const slotCountsByTeam = createTeamRecord(() => createSlotCountMap())
+  const trueStep3SlotCountsByTeam = createTeamRecord(() => createSlotCountMap())
   const assignedSlotsByTeam = createTeamRecord<Slot[]>(() => [])
+  const trueStep3AssignedSlotsByTeam = createTeamRecord<Slot[]>(() => [])
   const distinctPcaIdsByTeam = createTeamRecord<string[]>(() => [])
+  const distinctTrueStep3PcaIdsByTeam = createTeamRecord<string[]>(() => [])
 
   for (const allocation of allocationByStaffId.values()) {
+    const baselineAllocation = baselineAllocationByStaffId.get(allocation.staff_id)
     for (const slot of VALID_SLOTS) {
       const team = getSlotTeam(allocation, slot)
       if (!team) continue
@@ -109,11 +126,20 @@ function buildAuditState(context: DetectRankedV2RepairDefectsContext): AuditStat
         distinctPcaIdsByTeam[team].push(allocation.staff_id)
         distinctPcaIdsByTeam[team].sort((a, b) => a.localeCompare(b))
       }
+      if (!floatingPcaIds.has(allocation.staff_id)) continue
+      if (getSlotTeam(baselineAllocation, slot) === team) continue
+      trueStep3SlotCountsByTeam[team].set(slot, (trueStep3SlotCountsByTeam[team].get(slot) ?? 0) + 1)
+      trueStep3AssignedSlotsByTeam[team].push(slot)
+      if (!distinctTrueStep3PcaIdsByTeam[team].includes(allocation.staff_id)) {
+        distinctTrueStep3PcaIdsByTeam[team].push(allocation.staff_id)
+        distinctTrueStep3PcaIdsByTeam[team].sort((a, b) => a.localeCompare(b))
+      }
     }
   }
 
   for (const team of TEAMS) {
     assignedSlotsByTeam[team].sort((a, b) => a - b)
+    trueStep3AssignedSlotsByTeam[team].sort((a, b) => a - b)
   }
 
   return {
@@ -121,9 +147,13 @@ function buildAuditState(context: DetectRankedV2RepairDefectsContext): AuditStat
     orderedPcas,
     floatingPcaIds,
     allocationByStaffId,
+    baselineAllocationByStaffId,
     slotCountsByTeam,
+    trueStep3SlotCountsByTeam,
     assignedSlotsByTeam,
+    trueStep3AssignedSlotsByTeam,
     distinctPcaIdsByTeam,
+    distinctTrueStep3PcaIdsByTeam,
     initialPendingFTE: { ...context.initialPendingFTE },
     pendingFTE: { ...context.pendingFTE },
     teamPrefs: context.teamPrefs,
@@ -195,6 +225,20 @@ function getCurrentTeamSlotsOnPca(
   return VALID_SLOTS.filter((slot) => getSlotTeam(allocation, slot) === team)
 }
 
+function getTrueStep3TeamSlotsOnPca(
+  state: AuditState,
+  team: Team,
+  pcaId: string
+): Slot[] {
+  const allocation = state.allocationByStaffId.get(pcaId)
+  const baselineAllocation = state.baselineAllocationByStaffId.get(pcaId)
+  if (!allocation) return []
+  return VALID_SLOTS.filter((slot) => {
+    if (getSlotTeam(allocation, slot) !== team) return false
+    return getSlotTeam(baselineAllocation, slot) !== team
+  })
+}
+
 function getRepairSlotOrder(pref: TeamPreferenceInfo): Slot[] {
   const rankedNonGym = pref.rankedSlots.filter(
     (slot): slot is Slot => isValidSlot(slot) && !(pref.avoidGym && pref.gymSlot === slot)
@@ -211,7 +255,7 @@ function isValidSlot(value: number): value is Slot {
 }
 
 function getDuplicatedSlots(state: AuditState, team: Team): Slot[] {
-  return VALID_SLOTS.filter((slot) => (state.slotCountsByTeam[team].get(slot) ?? 0) > 1)
+  return VALID_SLOTS.filter((slot) => (state.trueStep3SlotCountsByTeam[team].get(slot) ?? 0) > 1)
 }
 
 function teamHadMeaningfulPending(state: AuditState, team: Team): boolean {
@@ -220,10 +264,10 @@ function teamHadMeaningfulPending(state: AuditState, team: Team): boolean {
 
 function teamHasUsefulNonDuplicateSlot(state: AuditState, team: Team): boolean {
   const pref = state.teamPrefs[team]
-  for (const pcaId of state.distinctPcaIdsByTeam[team]) {
+  for (const pcaId of state.distinctTrueStep3PcaIdsByTeam[team]) {
     if (!state.floatingPcaIds.has(pcaId)) continue
-    for (const slot of getCurrentTeamSlotsOnPca(state, team, pcaId)) {
-      if ((state.slotCountsByTeam[team].get(slot) ?? 0) > 1) continue
+    for (const slot of getTrueStep3TeamSlotsOnPca(state, team, pcaId)) {
+      if ((state.trueStep3SlotCountsByTeam[team].get(slot) ?? 0) > 1) continue
       if (pref.avoidGym && pref.gymSlot === slot) continue
       return true
     }
@@ -342,10 +386,33 @@ function canDuplicateTeamRescueOtherTeam(
   for (const slot of duplicatedSlots) {
     if (!isUsefulNonDuplicateSlotForTeam(state, otherTeam, slot)) continue
 
-    for (const pcaId of state.distinctPcaIdsByTeam[duplicateTeam]) {
+    for (const pcaId of state.distinctTrueStep3PcaIdsByTeam[duplicateTeam]) {
       if (!state.floatingPcaIds.has(pcaId)) continue
-      if (!getCurrentTeamSlotsOnPca(state, duplicateTeam, pcaId).includes(slot)) continue
+      if (!getTrueStep3TeamSlotsOnPca(state, duplicateTeam, pcaId).includes(slot)) continue
 
+      const pca = state.orderedPcas.find((candidate) => candidate.id === pcaId)
+      if (!pca) continue
+      if (!getNormalizedAvailableSlots(pca).includes(slot)) continue
+      return true
+    }
+  }
+
+  return false
+}
+
+function canAcquireDirectlyFromTrueDuplicate(
+  state: AuditState,
+  team: Team,
+  slot: Slot
+): boolean {
+  if (!isUsefulNonDuplicateSlotForTeam(state, team, slot)) return false
+
+  for (const otherTeam of state.orderedTeams) {
+    if (otherTeam === team) continue
+    if ((state.trueStep3SlotCountsByTeam[otherTeam].get(slot) ?? 0) < 2) continue
+
+    for (const pcaId of state.distinctTrueStep3PcaIdsByTeam[otherTeam]) {
+      if (!getTrueStep3TeamSlotsOnPca(state, otherTeam, pcaId).includes(slot)) continue
       const pca = state.orderedPcas.find((candidate) => candidate.id === pcaId)
       if (!pca) continue
       if (!getNormalizedAvailableSlots(pca).includes(slot)) continue
@@ -359,10 +426,10 @@ function canDuplicateTeamRescueOtherTeam(
 function getAuditRelevantPcaIds(state: AuditState, team: Team): string[] {
   const relevant = new Set<string>()
 
-  for (const pcaId of state.distinctPcaIdsByTeam[team]) {
-    const teamSlots = getCurrentTeamSlotsOnPca(state, team, pcaId)
+  for (const pcaId of state.distinctTrueStep3PcaIdsByTeam[team]) {
+    const teamSlots = getTrueStep3TeamSlotsOnPca(state, team, pcaId)
     const duplicated = teamSlots.some(
-      (slot) => (state.slotCountsByTeam[team].get(slot) ?? 0) > 1
+      (slot) => (state.trueStep3SlotCountsByTeam[team].get(slot) ?? 0) > 1
     )
     if (duplicated || teamSlots.length > 1) {
       relevant.add(pcaId)
@@ -400,13 +467,13 @@ function isGloballyValuablePcaConsumed(
 }
 
 function hasCollapsibleSplitDefect(state: AuditState, team: Team): boolean {
-  const teamSlots = state.assignedSlotsByTeam[team]
+  const teamSlots = state.trueStep3AssignedSlotsByTeam[team]
   if (teamSlots.length < 2) return false
-  if (state.distinctPcaIdsByTeam[team].length < 2) return false
+  if (state.distinctTrueStep3PcaIdsByTeam[team].length < 2) return false
   if (getDuplicatedSlots(state, team).length > 0) return false
 
   for (const pca of state.orderedPcas) {
-    const currentSlotsOnPca = getCurrentTeamSlotsOnPca(state, team, pca.id)
+    const currentSlotsOnPca = getTrueStep3TeamSlotsOnPca(state, team, pca.id)
     if (currentSlotsOnPca.length === teamSlots.length) continue
     if (!canPcaHostAllTeamSlots(state, team, pca, teamSlots)) continue
     if (isGloballyValuablePcaConsumed(state, team, pca.id)) continue
@@ -448,7 +515,7 @@ function hasFairnessFloorViolation(state: AuditState, team: Team): boolean {
 function isUsefulNonDuplicateSlotForTeam(state: AuditState, team: Team, slot: Slot): boolean {
   const pref = state.teamPrefs[team]
   if (pref.avoidGym && pref.gymSlot === slot) return false
-  if ((state.slotCountsByTeam[team].get(slot) ?? 0) > 0) return false
+  if ((state.trueStep3SlotCountsByTeam[team].get(slot) ?? 0) > 0) return false
 
   const rankedNonGym = pref.rankedSlots.filter(
     (candidate): candidate is Slot => isValidSlot(candidate) && !(pref.avoidGym && pref.gymSlot === candidate)
@@ -469,7 +536,7 @@ function canAcquireUsefulNonDuplicateSlot(state: AuditState, team: Team): boolea
   const usefulSlots = [...rankedNonGym, ...pref.unrankedNonGymSlots.filter(isValidSlot)]
 
   for (const slot of usefulSlots) {
-    if (canRescueSlotForTeam(state, team, slot)) {
+    if (canRescueSlotForTeam(state, team, slot) || canAcquireDirectlyFromTrueDuplicate(state, team, slot)) {
       return true
     }
   }

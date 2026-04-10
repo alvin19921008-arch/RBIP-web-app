@@ -194,12 +194,12 @@ function getSlotPathLabel(args: {
     return 'Duplicate floating coverage'
   }
 
-  const slotPath = formatV2SlotSelectionPhaseLabel(args.assignment.slotSelectionPhase)
-  if (slotPath) return slotPath
-
   if (args.assignment.slotSelectionPhase === 'ranked-duplicate' || args.assignment.duplicateSlot === true) {
     return 'To fulfill pending FTE'
   }
+
+  const slotPath = formatV2SlotSelectionPhaseLabel(args.assignment.slotSelectionPhase)
+  if (slotPath) return slotPath
 
   return 'Assigned during final allocation'
 }

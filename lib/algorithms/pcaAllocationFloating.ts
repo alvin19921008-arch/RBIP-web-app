@@ -9,6 +9,7 @@ import type { PCAPreference, SpecialProgram } from '@/types/allocation'
 import type { PCAData } from './pcaAllocationTypes'
 import {
   TEAMS,
+  buildUpstreamCoverageKindByTeamSlot,
   createEmptyTracker,
   recordAssignment,
   finalizeTrackerSummary,
@@ -1725,6 +1726,16 @@ export async function allocateFloatingPCA_rankedV2(
         }))
       )
     : pcaPreferences
+  const floatingPcaIds = new Set(pcaPool.map((pca) => pca.id))
+  const upstreamCoverageByTeamSlot = buildUpstreamCoverageKindByTeamSlot({
+    existingAllocations,
+    floatingPcaIds,
+    excludeStep3OwnedSelections: selectedPreferenceAssignments.map((assignment) => ({
+      team: assignment.team,
+      slot: assignment.slot,
+      pcaId: assignment.pcaId,
+    })),
+  })
 
   const teamPrefs: Record<Team, TeamPreferenceInfo> = {} as Record<Team, TeamPreferenceInfo>
   for (const team of TEAMS) {
@@ -1744,6 +1755,7 @@ export async function allocateFloatingPCA_rankedV2(
     teamPrefs,
     tracker,
     recordAssignmentWithOrder,
+    baselineAllocations: existingAllocations,
   })
 
   const setRepairAuditDefects = (defects: RankedV2RepairDefect[]) => {
@@ -1780,6 +1792,7 @@ export async function allocateFloatingPCA_rankedV2(
     allocations,
     pcaPool,
     teamPrefs,
+    baselineAllocations: existingAllocations,
   })
   setRepairAuditDefects(repairAuditDefects)
 
@@ -1822,6 +1835,7 @@ export async function allocateFloatingPCA_rankedV2(
           allocations: candidate.allocations,
           pcaPool,
           teamPrefs,
+          baselineAllocations: existingAllocations,
         })
         const candidateScore = buildRankedSlotAllocationScore({
           allocations: candidate.allocations,
@@ -2015,6 +2029,7 @@ export async function allocateFloatingPCA_rankedV2(
           )
         : undefined
       const duplicateSlot = (teamSlotCounts.get(`${team}:${slot}`) ?? 0) > 1
+      const upstreamCoverageKind = upstreamCoverageByTeamSlot.get(`${team}:${slot}`) ?? null
       const repairReason = acceptedRepairReasons.get(`${team}:${allocation.staff_id}:${slot}`)
       const isExtraCoverage = extraCoverageKeys.has(`${allocation.staff_id}:${slot}`)
       const draftAssignment = draftAssignmentByKey.get(`${team}:${allocation.staff_id}:${slot}`)
@@ -2029,6 +2044,8 @@ export async function allocateFloatingPCA_rankedV2(
             pcaId: allocation.staff_id,
             pcaName: pca?.name ?? allocation.staff_id,
             assignedIn: 'step34',
+            step3OwnershipKind: 'step3-floating',
+            upstreamCoverageKind,
             allocationStage: 'draft',
             repairReason: null,
             duplicateSlot,
@@ -2038,6 +2055,8 @@ export async function allocateFloatingPCA_rankedV2(
             pcaId: allocation.staff_id,
             pcaName: pca?.name ?? allocation.staff_id,
             assignedIn: 'step34',
+            step3OwnershipKind: 'step3-floating',
+            upstreamCoverageKind,
             cycle: 3,
             allocationStage: isExtraCoverage ? 'extra-coverage' : repairReason ? 'repair' : 'draft',
             repairReason: repairReason ?? null,

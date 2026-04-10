@@ -6,7 +6,12 @@
  */
 
 import { Team } from '@/types/staff'
-import { PCAAllocation, SlotAssignmentLog, TeamAllocationLog, AllocationTracker } from '@/types/schedule'
+import {
+  PCAAllocation,
+  SlotAssignmentLog,
+  TeamAllocationLog,
+  AllocationTracker,
+} from '@/types/schedule'
 import { PCAPreference } from '@/types/allocation'
 import { PCAData } from '@/lib/algorithms/pcaAllocation'
 import {
@@ -14,6 +19,7 @@ import {
   type SubstitutionForBySlot,
   type SubstitutionForEntry,
 } from '@/lib/utils/substitutionFor'
+import { getQualifyingDuplicateFloatingAssignmentsForSlot } from '@/lib/features/schedule/duplicateFloatingSemantics'
 
 // ============================================================================
 // Constants
@@ -28,6 +34,62 @@ export type StaffOverrideWithSubstitution = {
   substitutionFor?: SubstitutionForEntry
   substitutionForBySlot?: SubstitutionForBySlot
   [key: string]: any
+}
+
+type Step3FloatingSelectionSeed = {
+  team: Team
+  slot: number
+  pcaId: string
+}
+
+function isTrackedSlot(value: number): value is 1 | 2 | 3 | 4 {
+  return value === 1 || value === 2 || value === 3 || value === 4
+}
+
+function getCoveragePriority(kind: NonNullable<SlotAssignmentLog['upstreamCoverageKind']>): number {
+  if (kind === 'special-program') return 0
+  if (kind === 'substitution-like') return 1
+  return 2
+}
+
+export function buildStep3FloatingSelectionKey(selection: Step3FloatingSelectionSeed): string {
+  return `${selection.team}:${selection.slot}:${selection.pcaId}`
+}
+
+export function buildUpstreamCoverageKindByTeamSlot(args: {
+  existingAllocations: PCAAllocation[]
+  floatingPcaIds?: Set<string>
+  excludeStep3OwnedSelections?: Step3FloatingSelectionSeed[]
+}): Map<string, NonNullable<SlotAssignmentLog['upstreamCoverageKind']>> {
+  const excludeKeys = new Set(
+    (args.excludeStep3OwnedSelections ?? []).map((selection) => buildStep3FloatingSelectionKey(selection))
+  )
+  const coverageByTeamSlot = new Map<string, NonNullable<SlotAssignmentLog['upstreamCoverageKind']>>()
+
+  for (const allocation of args.existingAllocations) {
+    for (const slot of [1, 2, 3, 4] as const) {
+      const team = getSlotTeam(allocation, slot)
+      if (!team || !isTrackedSlot(slot)) continue
+      if (excludeKeys.has(buildStep3FloatingSelectionKey({ team, slot, pcaId: allocation.staff_id }))) {
+        continue
+      }
+
+      const nextKind: NonNullable<SlotAssignmentLog['upstreamCoverageKind']> =
+        allocation.special_program_ids?.length
+          ? 'special-program'
+          : args.floatingPcaIds?.has(allocation.staff_id)
+            ? 'substitution-like'
+            : 'non-floating'
+
+      const teamSlotKey = `${team}:${slot}`
+      const currentKind = coverageByTeamSlot.get(teamSlotKey)
+      if (!currentKind || getCoveragePriority(nextKind) < getCoveragePriority(currentKind)) {
+        coverageByTeamSlot.set(teamSlotKey, nextKind)
+      }
+    }
+  }
+
+  return coverageByTeamSlot
 }
 
 function getNormalizedPcaAvailableSlots(pca: { availableSlots?: number[] } | null | undefined): number[] | null {
@@ -696,7 +758,12 @@ export function recordAssignment(
 }
 
 /**
- * Finalize AM/PM balance status for all teams in the tracker.
+ * Finalize derived tracker summary flags for all teams.
+ *
+ * Important: duplicate-floating summary flags must use the shared true duplicate
+ * semantics helper, not raw `slotSelectionPhase === 'ranked-duplicate'` markers,
+ * because a single Step 3 floating row can still land on top of upstream Step 2
+ * coverage without being a true duplicate-floating case.
  */
 export function finalizeTrackerSummary(tracker: AllocationTracker): void {
   for (const team of TEAMS) {
@@ -715,11 +782,17 @@ export function finalizeTrackerSummary(tracker: AllocationTracker): void {
     teamLog.summary.usedUnrankedSlot = teamLog.assignments.some(
       (assignment) => assignment.slotSelectionPhase === 'unranked-unused'
     )
-    teamLog.summary.usedDuplicateFloatingSlot = teamLog.assignments.some(
-      (assignment) =>
-        assignment.slotSelectionPhase === 'ranked-duplicate' ||
-        assignment.duplicateSlot === true
-    )
+    teamLog.summary.usedDuplicateFloatingSlot = ([1, 2, 3, 4] as const).some((slot) => {
+      const logsForSlot = teamLog.assignments.filter((assignment) => assignment.slot === slot)
+      return (
+        getQualifyingDuplicateFloatingAssignmentsForSlot({
+          team,
+          slot,
+          logsForSlot,
+          staffOverrides: undefined,
+        }).length >= 2
+      )
+    })
     teamLog.summary.gymUsedAsLastResort = teamLog.assignments.some(
       (assignment) => assignment.slotSelectionPhase === 'gym-last-resort'
     )

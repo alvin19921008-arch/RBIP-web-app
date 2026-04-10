@@ -114,6 +114,7 @@ function runDraftAudit(args: {
     teamPrefs,
     tracker,
     recordAssignmentWithOrder,
+    baselineAllocations: args.existingAllocations,
   })
 
   const defects = detectRankedV2RepairDefects({
@@ -123,6 +124,7 @@ function runDraftAudit(args: {
     allocations,
     pcaPool: args.pcaPool,
     teamPrefs,
+    baselineAllocations: args.existingAllocations,
   })
 
   for (const team of TEAMS) {
@@ -253,13 +255,14 @@ async function main() {
 
   assert.equal(duplicateCount(draft.allocations, 'FO'), 1)
   assert.equal(draft.tracker.SMM.assignments[0]?.slotSelectionPhase, 'gym-last-resort')
-  assert.equal(draft.tracker.FO.summary.repairAuditDefects?.includes('A1'), true)
-  assert.equal(draft.tracker.FO.summary.repairAuditDefects?.includes('A2'), true)
+  assert.equal(draft.tracker.FO.summary.usedDuplicateFloatingSlot, false)
+  assert.equal(draft.tracker.FO.summary.repairAuditDefects?.includes('A1'), false)
+  assert.equal(draft.tracker.FO.summary.repairAuditDefects?.includes('A2'), false)
   assert.equal(draft.tracker.SMM.summary.repairAuditDefects?.includes('F1'), true)
-  assert.equal(draft.defects.some((defect) => defect.kind === 'A1' && defect.team === 'FO'), true)
+  assert.equal(draft.defects.some((defect) => defect.kind === 'A1' && defect.team === 'FO'), false)
   assert.equal(
     draft.defects.some((defect) => defect.kind === 'A2' && defect.team === 'FO' && defect.pcaId === 'a'),
-    true
+    false
   )
   assert.equal(draft.defects.some((defect) => defect.kind === 'F1' && defect.team === 'SMM'), true)
   const a2Candidates = generateRepairCandidates({
@@ -375,7 +378,7 @@ async function main() {
         team: 'SMM',
         preferred_pca_ids: [],
         preferred_slots: [1],
-        gym_schedule: 4,
+        gym_schedule: 2,
         avoid_gym_schedule: true,
         floor_pca_selection: 'upper',
       },

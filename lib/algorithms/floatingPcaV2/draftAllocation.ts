@@ -40,18 +40,40 @@ function findAllocationByStaffId(
   return allocations.find((allocation) => allocation.staff_id === staffId)
 }
 
-function buildRankedSlotCount(team: Team, allocations: PCAAllocation[]): Map<1 | 2 | 3 | 4, number> {
+function getSlotOwner(allocation: PCAAllocation | undefined, slot: 1 | 2 | 3 | 4): Team | null {
+  if (!allocation) return null
+  if (slot === 1) return allocation.slot1
+  if (slot === 2) return allocation.slot2
+  if (slot === 3) return allocation.slot3
+  return allocation.slot4
+}
+
+function buildTrueStep3OwnedSlotCount(args: {
+  team: Team
+  allocations: PCAAllocation[]
+  floatingPcaIds: Set<string>
+  baselineAllocations?: PCAAllocation[]
+}): Map<1 | 2 | 3 | 4, number> {
+  const baselineByStaffId = new Map(
+    (args.baselineAllocations ?? []).map((allocation) => [allocation.staff_id, allocation])
+  )
   const counts = new Map<1 | 2 | 3 | 4>([
     [1, 0],
     [2, 0],
     [3, 0],
     [4, 0],
   ])
-  for (const slot of getTeamExistingSlots(team, allocations)) {
-    const validSlot = toValidRankedSlot(slot)
-    if (!validSlot) continue
-    counts.set(validSlot, (counts.get(validSlot) ?? 0) + 1)
+
+  for (const allocation of args.allocations) {
+    if (!args.floatingPcaIds.has(allocation.staff_id)) continue
+    const baselineAllocation = baselineByStaffId.get(allocation.staff_id)
+    for (const slot of VALID_SLOTS) {
+      if (getSlotOwner(allocation, slot) !== args.team) continue
+      if (getSlotOwner(baselineAllocation, slot) === args.team) continue
+      counts.set(slot, (counts.get(slot) ?? 0) + 1)
+    }
   }
+
   return counts
 }
 
@@ -59,9 +81,16 @@ function buildRankedTargets(args: {
   team: Team
   pref: TeamPreferenceInfo
   allocations: PCAAllocation[]
+  floatingPcaIds: Set<string>
+  baselineAllocations?: PCAAllocation[]
 }): RankedTarget[] {
-  const { team, pref, allocations } = args
-  const slotCounts = buildRankedSlotCount(team, allocations)
+  const { team, pref, allocations, floatingPcaIds, baselineAllocations } = args
+  const slotCounts = buildTrueStep3OwnedSlotCount({
+    team,
+    allocations,
+    floatingPcaIds,
+    baselineAllocations,
+  })
 
   const isUsed = (slot: number): boolean => {
     const validSlot = toValidRankedSlot(slot)
@@ -232,9 +261,17 @@ function findContinuityTarget(args: {
   pref: TeamPreferenceInfo
   allocations: PCAAllocation[]
   pca: PCAData
+  floatingPcaIds: Set<string>
+  baselineAllocations?: PCAAllocation[]
 }): RankedTarget | null {
-  const { team, pref, allocations, pca } = args
-  const targets = buildRankedTargets({ team, pref, allocations })
+  const { team, pref, allocations, pca, floatingPcaIds, baselineAllocations } = args
+  const targets = buildRankedTargets({
+    team,
+    pref,
+    allocations,
+    floatingPcaIds,
+    baselineAllocations,
+  })
 
   for (const target of targets) {
     const avoidGym = target.phase === 'gym-last-resort' ? false : pref.avoidGym
@@ -273,6 +310,7 @@ function recordDraftAssignment(args: {
     pcaId: pca.id,
     pcaName: pca.name,
     assignedIn: 'step34',
+    step3OwnershipKind: 'step3-floating',
     cycle: 1,
     wasPreferredSlot: assignedSlot === (pref.preferredSlot ?? -1),
     wasPreferredPCA: tier === 'preferred',
@@ -295,8 +333,11 @@ export function runRankedV2DraftAllocation(args: {
   teamPrefs: Record<Team, TeamPreferenceInfo>
   tracker: AllocationTracker
   recordAssignmentWithOrder: (team: Team, log: SlotAssignmentLog) => void
+  baselineAllocations?: PCAAllocation[]
 }): void {
-  const { teamOrder, pendingFTE, allocations, pcaPool, teamPrefs, recordAssignmentWithOrder } = args
+  const { teamOrder, pendingFTE, allocations, pcaPool, teamPrefs, recordAssignmentWithOrder, baselineAllocations } =
+    args
+  const floatingPcaIds = new Set(pcaPool.map((candidate) => candidate.id))
 
   for (const team of teamOrder) {
     const pref = teamPrefs[team]
@@ -312,6 +353,8 @@ export function runRankedV2DraftAllocation(args: {
           pref,
           allocations,
           pca: continuityPca,
+          floatingPcaIds,
+          baselineAllocations,
         })
 
         if (continuityTarget) {
@@ -352,7 +395,13 @@ export function runRankedV2DraftAllocation(args: {
         }
       }
 
-      const targets = buildRankedTargets({ team, pref, allocations })
+      const targets = buildRankedTargets({
+        team,
+        pref,
+        allocations,
+        floatingPcaIds,
+        baselineAllocations,
+      })
       if (targets.length === 0) break
 
       let winner:
