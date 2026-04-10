@@ -6,6 +6,8 @@ Date: 2026-04-06
 
 Revised: 2026-04-09
 
+Semantics addendum: 2026-04-10 (duplicate-floating narrowing and floating-eligible terminology)
+
 Implementation notes: 2026-04-10 (wizard preview/save path + `executeSlotAssignments` executed list)
 
 Owner: chat-approved with user
@@ -23,6 +25,14 @@ This revised design intentionally blends:
 - V1's stronger continuity and PCA-choice instincts
 - a new deterministic post-pass review that mimics how a human editor would audit and swap assignments on the Excel sheet
 
+Important follow-up:
+
+- the 2026-04-10 standalone spec `docs/superpowers/specs/2026-04-10-v2-duplicate-floating-semantics-alignment-design.md` is now the authoritative contract for:
+  - narrowing duplicate-floating to true Step 3-owned floating-on-floating stacking
+  - distinguishing upstream-covered slots from true duplicate-floating
+  - replacing ambiguous `useful` wording with floating-specific terminology in new V2 code/comments/spec text
+  - keeping V2 engine, repair audit, preview, tracker, and tooltip aligned on duplicate semantics
+
 ## Why This Revision Exists
 The investigation established three real issues in the earlier V2 behavior:
 
@@ -36,7 +46,7 @@ The previous V2 structure re-ran target selection after every `0.25` slot. Conti
 The previous V2 allowed duplicate fallback too locally. Even when local duplication was legal, the engine did not adequately protect:
 
 - other teams' still-unfilled ranked slots
-- other teams' useful first non-duplicate slot
+- other teams' first non-duplicate floating-eligible slot
 - PCAs that were globally valuable for another team's preferred or ranked path
 
 The revised design below supersedes the earlier purely greedy interpretation.
@@ -64,7 +74,7 @@ When trade-offs exist, the approved schedule-level objective order is:
 
 1. Protect higher-ranked slot coverage first.
 2. Improve pending fulfillment, but with a fairness floor:
-   - do not over-serve one team while another pending team is left without any useful non-duplicate floating slot if a bounded repair can improve that
+   - do not over-serve one team while another pending team is left without any non-duplicate floating-eligible slot if a bounded repair can improve that
    - redistribution may happen, but it must stay bounded and must not recklessly strip a team that is already reasonably served
 3. Prefer continuity from the same PCA.
 4. Minimize duplicate floating coverage.
@@ -99,18 +109,23 @@ For the team currently being processed, the first pass should use this local slo
 
 1. ranked-unused non-gym
 2. unranked-unused non-gym
-3. duplicate non-gym only when no useful unused non-gym slot remains for that team
+3. duplicate non-gym only when no non-duplicate floating-eligible non-gym slot remains for that team
 4. gym only as true last resort
 
 Important clarification:
-- The first pass is not "any useful slot first across all teams."
+- The first pass is not "any floating-eligible slot first across all teams."
 - V2 must still preserve ranked-slot priority within the team currently being processed.
 - The audit stage, not the first pass, is where global correction happens.
+
+Semantics clarification:
+
+- `ranked-unused` and `unranked-unused` describe the Step 3 floating path, not raw sheet occupancy
+- upstream Step 2 non-floating / special-program / substitution-like coverage does not, by itself, make a slot duplicate-floating
 
 ### 4. PCA choice ladder inside the first pass
 Inside the active slot step, PCA choice should remain similar to V1's stronger PCA instincts:
 
-1. Prefer a PCA that can satisfy the current slot and continue into another still-useful slot.
+1. Prefer a PCA that can satisfy the current slot and continue into another still-floating-eligible slot.
 2. Within that group, prefer preferred PCA.
 3. If no preferred PCA works, prefer floor PCA.
 4. If no floor PCA works, use non-floor PCA.
@@ -122,12 +137,18 @@ This is deliberate: continuity belongs in the human-like draft allocation, while
 ### 5. Duplicate-slot policy
 Duplicate floating coverage is not forbidden, but it is a true fallback:
 
-- local duplicate fallback becomes legal only after the active team has no useful unused non-gym slot left
+- local duplicate fallback becomes legal only after the active team has no non-duplicate floating-eligible non-gym slot left
 - when duplication is locally unavoidable, duplicate ranked slots first
 - if ranked duplicates are exhausted, duplicate unranked non-gym slots
 - gym duplicates are last resort of last resort
 
 However, duplicate assignments remain provisional until the audit pass finishes. A duplicate that was locally legal in the first pass may still be removed or reassigned later.
+
+Critical semantics clarification:
+
+- duplicate-floating is a floating-only concept
+- duplicate-floating exists only when a true Step 3-owned floating assignment is already on a team + slot and another true Step 3-owned floating assignment is added to that same team + slot
+- upstream Step 2 coverage alone must not be treated as duplicate-floating
 
 ### 6. Global protection rules for audit
 Before the final result is accepted, the audit stage must check whether a locally legal assignment is globally poor.
@@ -135,15 +156,15 @@ Before the final result is accepted, the audit stage must check whether a locall
 The audit must specifically look for:
 
 - a duplicate using a PCA that is still valuable for another team's ranked or preferred path
-- a team left with no useful non-duplicate slot while another team has extra concentration
+- a team left with no non-duplicate floating-eligible slot while another team has extra concentration
 - a higher-ranked slot that could be recovered by bounded reassignment
 - one team unnecessarily split across multiple PCAs when a bounded repair could collapse that into fewer PCAs
 
 ### 7. Fairness floor
 The agreed fairness floor is:
 
-- before the final result is accepted, every pending team should get at least one useful non-duplicate floating slot if legally possible after bounded repair
-- "useful" means ranked if possible, otherwise unranked non-gym
+- before the final result is accepted, every pending team should get at least one non-duplicate floating-eligible slot if legally possible after bounded repair
+- ranked floating-eligible slot wins first; otherwise use an unranked non-gym floating-eligible slot
 
 This fairness floor belongs primarily to the audit-and-repair stage, not as a hard rule that blocks all early continuity in the first pass.
 
@@ -238,8 +259,8 @@ For the active team, the draft allocator should:
 
 1. Try ranked-unused non-gym slots in exact ranked order.
 2. If no ranked-unused slot is currently usable, try unranked-unused non-gym slots.
-3. Once a PCA has been chosen, allow immediate continuity when it stays within the active team's slot ladder and remains useful.
-4. Only allow duplicate non-gym after the active team has no useful unused non-gym slot left.
+3. Once a PCA has been chosen, allow immediate continuity when it stays within the active team's slot ladder and remains floating-eligible.
+4. Only allow duplicate non-gym after the active team has no non-duplicate floating-eligible non-gym slot left.
 5. Only allow gym when no non-gym legal path remains.
 
 This stage is intentionally not a full global optimizer.
@@ -249,10 +270,15 @@ After the draft allocation is complete, the allocator must audit the whole sched
 
 ### Defects the audit must detect
 - `B1`: a higher-ranked slot is still unfilled even though a bounded reassignment can fill it
-- `A1`: a team has duplicate floating coverage while another pending team still lacks a useful non-duplicate slot
+- `A1`: a team has true duplicate-floating coverage while another pending team still lacks a non-duplicate floating-eligible slot
 - `A2`: a duplicate or continuity assignment consumed a PCA that is still globally valuable for another team's ranked or preferred path
 - `C1`: one team is split across more PCAs than necessary even though a bounded repair can preserve or improve overall quality
-- `F1`: fairness-floor violation, where a pending team is left without any useful non-duplicate floating slot despite a feasible repair
+- `F1`: fairness-floor violation, where a pending team is left without any non-duplicate floating-eligible slot despite a feasible repair
+
+Clarification:
+
+- `A1` and the duplicate branch of `A2` must use the narrow true duplicate-floating definition from the 2026-04-10 semantics spec
+- upstream Step 2 occupancy alone must not create duplicate-floating defects
 
 ### Allowed repair moves
 The repair pass must stay small and deterministic. Approved move shapes:
@@ -290,7 +316,7 @@ This reflects the user's stated Excel editing pattern.
 ## PCA Selection Ladder Inside Each Slot Step
 Once the allocator is trying to satisfy the current highest-priority slot target, PCA selection should follow this cascade:
 
-1. Prefer a PCA that can satisfy the current slot and continue into another still-useful slot.
+1. Prefer a PCA that can satisfy the current slot and continue into another still-floating-eligible slot.
 2. Within that group, prefer preferred PCA.
 3. If no preferred PCA works, prefer floor PCA.
 4. If no floor PCA works, use non-floor PCA.
@@ -304,6 +330,11 @@ Important constraint:
 - Unranked slots form a lower-priority non-gym bucket.
 - The draft allocator must exhaust ranked-unused and then unranked-unused before allowing local duplicate fallback.
 - Once duplication becomes necessary, duplicate ranked order becomes active again.
+
+Follow-up terminology note:
+
+- this document originally used `useful` as shorthand
+- for newer V2 code/comments/specs, prefer the more explicit term `floating-eligible`
 
 ## Diagnostics Design
 
@@ -367,12 +398,12 @@ Recommended new assignment/tracker fields:
 | Scenario | Team input | Expected result | Why |
 | --- | --- | --- | --- |
 | 1. Simple preferred hit | Need `0.25`; ranked `1 > 3`; preferred PCA available on `1` | Assign preferred PCA to `1` | Highest ranked slot first; preferred PCA can satisfy it directly |
-| 2. Same PCA continuity across ranked slots | Need `0.5`; ranked `2 > 3`; same PCA available on both `2` and `3` | Same PCA gets `2 + 3` in the draft pass | Ranked slots first, and continuity across different useful slots is best human-like outcome |
+| 2. Same PCA continuity across ranked slots | Need `0.5`; ranked `2 > 3`; same PCA available on both `2` and `3` | Same PCA gets `2 + 3` in the draft pass | Ranked slots first, and continuity across different floating-eligible slots is best human-like outcome |
 | 3. Rank #1 forces non-preferred PCA | Need `0.5`; ranked `1 > 3`; preferred PCAs cannot cover `1`; floor PCA can cover `1 + 3` | Floor PCA gets `1 + 3` | Rank #1 outranks preferred-PCA wish; continuity then helps finish rank #2 |
 | 4. Rank #1 first, preferred PCA second | Need `0.5`; ranked `1 > 3`; floor PCA can cover only `1`; preferred PCA available on `3` | Floor PCA gets `1`, preferred PCA gets `3` | Must solve rank #1 first; then preferred PCA helps on next ranked slot |
 | 5. Ranked exhausted, use unranked | Need `0.5`; ranked only `1`; `1` is assigned, `3` is free, no other ranked slot exists | Use `1`, then unused unranked non-gym `3` | Pending must be met; unused unranked slot beats duplication |
-| 6. Local continuity before global repair | Team A can immediately continue with the same PCA; Team B still has a useful slot available | First pass may let Team A continue | Human editors draft this way; global correction belongs in audit |
-| 7. Audit repairs duplicate concentration | Team A draft ended with duplicate floating slot while Team B has no useful non-duplicate slot | Audit reassigns if a bounded repair exists | Duplicate is fallback only, not automatically final |
+| 6. Local continuity before global repair | Team A can immediately continue with the same PCA; Team B still has a floating-eligible slot available | First pass may let Team A continue | Human editors draft this way; global correction belongs in audit |
+| 7. Audit repairs duplicate concentration | Team A draft ended with true duplicate-floating while Team B has no non-duplicate floating-eligible slot | Audit reassigns if a bounded repair exists | Duplicate is fallback only, not automatically final |
 | 8. Audit rescues missing higher-ranked slot | Draft meets pending but misses another team's higher-ranked slot | Audit may reassign one slot if the schedule score improves | Ranked coverage has highest global priority |
 | 9. Audit reduces over-splitting | Draft uses multiple PCAs for one team even though one PCA could safely cover more of it | Audit collapses to fewer PCAs when schedule quality does not worsen | Continuity is a desired global quality signal |
 | 10. Gym only as final rescue | Need `0.25`; ranked `1 > 3`; all non-gym paths impossible; gym slot `4` exists and `avoid gym` is on | Use `4` only if it is the only remaining path to meet pending | Gym remains blocked until true last resort |
@@ -384,7 +415,7 @@ Recommended new assignment/tracker fields:
 - If a ranked slot is the gym slot and `avoid gym` is enabled, the slot remains visible in the user's ranking but is treated as blocked until last resort.
 - If pending cannot be fully met after ranked-unused, unranked-unused, duplicate non-gym, and gym-last-resort checks, diagnostics should explicitly say no legal path remained.
 - Step 3.2 must not consume more team pending than remains after earlier selections.
-- Step 3.4 draft must not allow duplicate-slot stacking before unused useful slots are exhausted for that team.
+- Step 3.4 draft must not allow duplicate-slot stacking before non-duplicate floating-eligible slots are exhausted for that team.
 - The final accepted result must preserve ranked slots in the effective preference contract.
 - The repair stage must stop after bounded deterministic work; no infinite retry loop or unconstrained re-optimization.
 
@@ -393,12 +424,14 @@ This design should be implemented with focused regression coverage around:
 - preserving ranked slots when Step 3.2/3.3 manual selections exist
 - rank-first over preferred-PCA conflicts
 - same-PCA continuity across different slots
-- duplicate-slot prevention while unused or repairable alternatives exist
+- duplicate-slot prevention while non-duplicate floating-eligible or repairable alternatives exist
 - bounded repair rescuing higher-ranked slots
 - bounded repair reducing duplicates without unacceptable fulfillment loss
 - bounded repair reducing over-splitting when safe
 - gym-last-resort rescue behavior
 - tracker reason fields for draft vs repair decisions
+- non-floating / special-program / substitution-like upstream coverage not being misclassified as duplicate-floating
+- final V2 preview and V2 tooltip staying aligned on duplicate wording
 
 Recommended test layers:
 - unit tests for effective preference construction, target ordering, and repair scoring
@@ -421,3 +454,4 @@ Recommended test layers:
 - The implementation should favor explicit tracker metadata over reconstructing hover reasons from allocator side effects.
 - The implementation should favor a continuity-friendly first pass plus bounded repair over a purely greedy one-slot loop.
 - The implementation should preserve the canonical code-facing name `allocateFloatingPCA_v2RankedSlot`.
+- The narrower duplicate-floating contract is defined in `docs/superpowers/specs/2026-04-10-v2-duplicate-floating-semantics-alignment-design.md`.

@@ -16,6 +16,11 @@ import { getAllocationSpecialProgramSlotsForTeam } from '@/lib/utils/scheduleRes
 import { buildDisplayViewForWeekday } from '@/lib/utils/scheduleRuntimeProjection'
 import { shouldShowExtraCoverage } from '@/lib/features/schedule/extraCoverageVisibility'
 import { derivePcaDisplayFlagsBySlot } from '@/lib/features/schedule/pcaDisplayClassification'
+import type { Step3FlowChoice } from '@/lib/features/schedule/step3DialogFlow'
+import { selectPcaTrackerTooltipVariant } from '@/lib/features/schedule/pcaTrackerTooltip'
+import { buildV2PcaTrackerTooltipModel } from '@/lib/features/schedule/v2PcaTrackerTooltipModel'
+import { V1PcaTrackerTooltip } from './pcaTracker/V1PcaTrackerTooltip'
+import { V2PcaTrackerTooltip } from './pcaTracker/V2PcaTrackerTooltip'
 
 interface PCABlockProps {
   team: Team
@@ -44,6 +49,8 @@ interface PCABlockProps {
   weekday?: 'mon' | 'tue' | 'wed' | 'thu' | 'fri' // Weekday for checking if DRM is active
   externalHover?: boolean // External hover state (e.g., from popover drag)
   allocationLog?: TeamAllocationLog // Allocation tracking log for this team (from Step 3.4)
+  /** Explicit Step 3 flow choice for tooltip rendering when known. */
+  step3FlowChoice?: Step3FlowChoice | null
   /** Final Step 3.1 allocation order position (1-based), if known. */
   step3OrderPosition?: number
   /** Current pending PCA FTE for this team (from Step 2/3 state), if known. */
@@ -560,6 +567,7 @@ export const PCABlock = memo(function PCABlock({
   weekday,
   externalHover = false,
   allocationLog,
+  step3FlowChoice,
   step3OrderPosition,
   pendingPcaFte,
   floatingPoolRemainingFte,
@@ -1196,168 +1204,57 @@ export const PCABlock = memo(function PCABlock({
                 ? cycle3Assignments[0].allocationOrder
                 : undefined
               
-              // Condition descriptions
-              const getConditionDescription = (condition?: 'A' | 'B' | 'C' | 'D'): string => {
-                switch (condition) {
-                  case 'A': return 'Preferred PCA + Preferred slot'
-                  case 'B': return 'Preferred slot only'
-                  case 'C': return 'Preferred PCA only'
-                  case 'D': return 'No preferences'
-                  default: return ''
-                }
-              }
-              
-              // Determine tooltip position (left for DRO and rightmost teams to prevent truncation)
               const showOnLeft = team === 'DRO' || ['NSM', 'GMC', 'MC'].includes(team)
-              
+              const tooltipVariant = selectPcaTrackerTooltipVariant({
+                explicitFlowSurface: step3FlowChoice,
+                allocationLog,
+              })
+              const v2TooltipModel =
+                tooltipVariant === 'v2'
+                  ? buildV2PcaTrackerTooltipModel({
+                      team,
+                      allocationLog,
+                      bufferAssignments: bufferFloatingAssignments,
+                      step3OrderPosition: allocationOrderCycle1,
+                      pendingPcaFte,
+                      staffOverrides,
+                    })
+                  : null
+
+              const tooltipBody =
+                hasTracker || hasBufferAssignments ? (
+                  tooltipVariant === 'v2' && v2TooltipModel ? (
+                    <V2PcaTrackerTooltip model={v2TooltipModel} />
+                  ) : (
+                    <V1PcaTrackerTooltip
+                      team={team}
+                      hasAllocationAssignments={hasAllocationAssignments}
+                      hasBufferAssignments={hasBufferAssignments}
+                      allocationLog={allocationLog}
+                      allocationOrderCycle1={allocationOrderCycle1}
+                      allocationOrderCycle2={allocationOrderCycle2}
+                      allocationOrderCycle3={allocationOrderCycle3}
+                      totalActualSlots={totalActualSlots}
+                      bufferFloatingSlots={bufferFloatingSlots}
+                      bufferFloatingAssignments={bufferFloatingAssignments}
+                      groupedByPCA={groupedByPCA}
+                      fulfilledByBufferOnly={fulfilledByBufferOnly}
+                      pendingPcaFte={pendingPcaFte}
+                      floatingPoolRemainingFte={floatingPoolRemainingFte}
+                    />
+                  )
+                ) : null
+
               return (
                 <div className="relative group mt-0.5">
-                  <div className="text-xs text-black/60 cursor-help">
-                    Assigned: {assignedPcaFteRounded.toFixed(2)}
-                  </div>
-                  {/* Allocation Tracking Tooltip on hover */}
-                  <div className={`absolute ${showOnLeft ? 'right-0' : 'left-0'} bottom-full mb-2 w-80 p-3 bg-gray-900 text-white text-xs rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity z-50 pointer-events-none`}>
-                    {(hasTracker || hasBufferAssignments) ? (
-                      <div className="space-y-2">
-                        {/* Summary Header */}
-                        <div className="font-semibold border-b border-gray-700 pb-1">
-                          Allocation Tracking - {team}
-                        </div>
-
-                        {hasAllocationAssignments && allocationLog?.summary?.allocationMode && (
-                          <div className="text-[10px] text-gray-300">
-                            Mode: {allocationLog.summary.allocationMode === 'balanced' ? 'Balanced (take turns)' : 'Standard'}
-                          </div>
-                        )}
-                        
-                        {/* Allocation Order by Cycle - show before total slots */}
-                        {/* Cycle 1 order is always shown (all teams processed in cycle 1, order from step 3.1 teamOrder) */}
-                        {/* Cycle 2/3 orders shown on top if team received assignments in those cycles */}
-                        {allocationOrderCycle1 !== undefined && (
-                          <div className="text-[10px] text-gray-300 space-y-0.5">
-                            {allocationOrderCycle3 !== undefined && (
-                              <div>
-                                {allocationOrderCycle3 === 1 ? '1st' : allocationOrderCycle3 === 2 ? '2nd' : allocationOrderCycle3 === 3 ? '3rd' : `${allocationOrderCycle3}th`} in cycle 3
-                              </div>
-                            )}
-                            {allocationOrderCycle2 !== undefined && (
-                              <div>
-                                {allocationOrderCycle2 === 1 ? '1st' : allocationOrderCycle2 === 2 ? '2nd' : allocationOrderCycle2 === 3 ? '3rd' : `${allocationOrderCycle2}th`} in cycle 2
-                              </div>
-                            )}
-                            <div>
-                              {allocationOrderCycle1 === 1 ? '1st' : allocationOrderCycle1 === 2 ? '2nd' : allocationOrderCycle1 === 3 ? '3rd' : `${allocationOrderCycle1}th`} in cycle 1
-                            </div>
-                          </div>
-                        )}
-                        
-                        {/* Summary Stats */}
-                        <div className="grid grid-cols-2 gap-1 text-[10px] border-t border-gray-700 pt-1">
-                          <div>Total slots: {totalActualSlots}</div>
-                          {hasBufferAssignments && <div>From 3.0: {bufferFloatingSlots.length}</div>}
-                          {hasAllocationAssignments && (() => {
-                            // Recalculate step 3.4 count by filtering out buffer PCAs (same as slotsFromLog)
-                            const step34Assignments = allocationLog.assignments.filter(a => 
-                              a.assignedIn === 'step34' && !bufferPCAIds.has(a.pcaId)
-                            )
-                            const fromStep34Count = step34Assignments.length
-                            const fromStep34Cycle1 = step34Assignments.filter(a => a.cycle === 1).length
-                            const fromStep34Cycle2 = step34Assignments.filter(a => a.cycle === 2).length
-                            const fromStep34Cycle3 = step34Assignments.filter(a => a.cycle === 3).length
-                            
-                            return (
-                              <>
-                                <div>From 3.2: {allocationLog.summary.fromStep32}</div>
-                                <div>From 3.3: {allocationLog.summary.fromStep33}</div>
-                                <div>From 3.4: {fromStep34Count}</div>
-                              </>
-                            )
-                          })()}
-                        </div>
-
-                        {/* Pending/diagnostic note when there are no Step 3 assignments */}
-                        {!hasAllocationAssignments && (
-                          <div className="text-[10px] border-t border-gray-700 pt-1 text-gray-300 space-y-1">
-                            <div>Pending (current): {typeof pendingPcaFte === 'number' ? pendingPcaFte.toFixed(2) : '—'}</div>
-                            {typeof pendingPcaFte === 'number' && pendingPcaFte <= 0.001 ? (
-                              <div>No floating PCA assignment needed (pending ≈ 0).</div>
-                            ) : (
-                              <div>
-                                No Step 3 assignments recorded for this team.
-                                {typeof floatingPoolRemainingFte === 'number' && floatingPoolRemainingFte <= 0.001
-                                  ? ' Floating pool appears exhausted.'
-                                  : typeof floatingPoolRemainingFte === 'number'
-                                    ? ' Floating pool still has capacity; constraints/preferences may have blocked assignment.'
-                                    : ''}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        
-                        {/* Show message if fulfilled by buffer only */}
-                        {fulfilledByBufferOnly && (
-                          <div className="text-[10px] text-yellow-400 border-t border-gray-700 pt-1">
-                            Team pending requirement wholly fulfilled by manual buffer floating PCA assignment (Step 3.0)
-                          </div>
-                        )}
-                        
-                        {/* Per-PCA Details (grouped by PCA name) */}
-                        <div className="space-y-1 border-t border-gray-700 pt-1 max-h-48 overflow-y-auto">
-                          {/* Buffer floating PCA assignments (Step 3.0) */}
-                          {bufferFloatingAssignments.map((bufferAssign, idx) => (
-                            <div key={`buffer-${idx}`} className="text-[10px]">
-                              <div className="font-medium">{bufferAssign.pcaName}:</div>
-                              {bufferAssign.slots.map(slot => (
-                                <div key={slot} className="text-[10px] pl-4">
-                                  slot {slot} (From step 3.0)
-                                </div>
-                              ))}
-                            </div>
-                          ))}
-                          
-                          {/* Algorithm assignments (grouped by PCA) */}
-                          {Array.from(groupedByPCA.entries()).map(([pcaName, slotAssignments]) => (
-                            <div key={pcaName} className="text-[10px]">
-                              <div className="font-medium">{pcaName}:</div>
-                              {slotAssignments.map(({ slot, assignment }) => (
-                                <div key={slot} className="text-[10px] pl-4">
-                                  slot {slot} (
-                                  {assignment.assignedIn === 'step34' 
-                                    ? `C${assignment.cycle}${assignment.condition ? `-${getConditionDescription(assignment.condition)}` : ''}` 
-                                    : assignment.assignedIn === 'step32' 
-                                    ? 'From step 3.2'
-                                    : assignment.assignedIn === 'step33'
-                                    ? 'From step 3.3'
-                                    : assignment.assignedIn === 'step30'
-                                    ? 'From step 3.0'
-                                    : assignment.assignedIn}
-                                  {assignment.wasPreferredPCA && assignment.wasPreferredSlot ? ', ★PCA, ★Slot' :
-                                   assignment.wasPreferredSlot ? ', ★Slot' :
-                                   assignment.wasPreferredPCA ? ', ★PCA' : ''}
-                                  {assignment.assignmentTag === 'remaining' && ', remaining'}
-                                  {assignment.wasFloorPCA !== undefined && (
-                                    assignment.wasFloorPCA ? ', Floor' : ', Non-floor'
-                                  )}
-                                  {assignment.wasExcludedInCycle1 && ', C2-unlocked'}
-                                  )
-                                </div>
-                              ))}
-                            </div>
-                          ))}
-                        </div>
-                        
-                        {/* Constraint Status */}
-                        {hasAllocationAssignments && (
-                          <div className="text-[10px] border-t border-gray-700 pt-1 text-gray-400">
-                            AM/PM: {allocationLog.summary.amPmBalanced ? '✓ Balanced' : '○ Not balanced'}
-                            {' | '}
-                            Gym: {allocationLog.summary.gymSlotUsed ? '⚠ Used' : '✓ Avoided'}
-                          </div>
-                        )}
-                      </div>
-                    ) : null}
-                    {/* Arrow pointing down */}
-                    <div className={`absolute top-full ${showOnLeft ? 'right-4' : 'left-4'} w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900`}></div>
+                  <div className="text-xs text-black/60 cursor-help">Assigned: {assignedPcaFteRounded.toFixed(2)}</div>
+                  <div
+                    className={`absolute ${showOnLeft ? 'right-0' : 'left-0'} bottom-full mb-2 ${tooltipVariant === 'v2' ? 'max-w-[min(92vw,18rem)] w-72 p-2.5 text-[10px] leading-snug rounded-md' : 'w-80 p-3 text-xs rounded'} bg-gray-900 text-white shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity z-50 pointer-events-none`}
+                  >
+                    {tooltipBody}
+                    <div
+                      className={`absolute top-full ${showOnLeft ? 'right-4' : 'left-4'} w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900`}
+                    />
                   </div>
                 </div>
               )

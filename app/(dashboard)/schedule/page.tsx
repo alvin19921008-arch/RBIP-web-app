@@ -85,6 +85,7 @@ import {
   openStep3EntrySurface,
   openStep3FlowSurface,
   type Step3DialogSurface,
+  type Step3FlowChoice,
 } from '@/lib/features/schedule/step3DialogFlow'
 import { buildPageStep3RuntimeState } from '@/lib/features/schedule/pageStep3Runtime'
 import { willNeedStep21Substitution } from '@/lib/features/schedule/step2SubstitutionProjection'
@@ -965,6 +966,7 @@ function SchedulePageContent() {
     step3Outdated: boolean
     step4Outdated: boolean
   } | null>(null)
+  const [step3FlowChoiceForTooltip, setStep3FlowChoiceForTooltip] = useState<Step3FlowChoice | null>(null)
 
   useEffect(() => {
     latestStaffOverridesRef.current = staffOverrides
@@ -5264,8 +5266,10 @@ function SchedulePageContent() {
     step32Assignments: SlotAssignment[],
     step33Assignments: SlotAssignment[]
   ) => {
+    const selectedStep3FlowChoice: Step3FlowChoice = step3DialogSurface === 'v1-legacy' ? 'v1-legacy' : 'v2-ranked'
     // Store the team order for reference
     setTeamAllocationOrder(teamOrder)
+    setStep3FlowChoiceForTooltip(selectedStep3FlowChoice)
     
     // Close the dialog
     closeAllStep3Dialogs()
@@ -11240,6 +11244,7 @@ function SchedulePageContent() {
                           weekday={currentWeekday}
                           externalHover={popoverDragHoverTeam === team}
                           allocationLog={allocationTracker?.[team]}
+                          step3FlowChoice={step3FlowChoiceForTooltip}
                           step3OrderPosition={step3OrderPositionByTeam[team]}
                           pendingPcaFte={pendingPCAFTEPerTeam?.[team]}
                           floatingPoolRemainingFte={floatingPoolRemainingFte}

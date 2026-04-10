@@ -654,6 +654,7 @@ export function createEmptyTracker(): AllocationTracker {
         fulfilledByBuffer: false,
         allocationMode: undefined,
         repairAuditDefects: [],
+        preStep34RoundedPendingFte: undefined,
       },
     }
   }

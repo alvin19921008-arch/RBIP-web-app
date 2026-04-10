@@ -9,6 +9,7 @@ import {
   isFloorPCAForTeam,
   recordAssignment,
 } from '@/lib/utils/floatingPCAHelpers'
+import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { executeSlotAssignments, type SlotAssignment } from '@/lib/utils/reservationLogic'
 import type { PCAPreference, SpecialProgram } from '@/types/allocation'
 import type { PCAAllocation } from '@/types/schedule'
@@ -129,6 +130,10 @@ export async function runStep3V2CommittedSelections(
     ...step33Result.executedAssignments.map((assignment) => ({ ...assignment, source: 'step33' as const }))
   )
 
+  const preStep34RoundedPendingByTeam = Object.fromEntries(
+    args.teamOrder.map((team) => [team, roundToNearestQuarterWithMidpoint(pendingFTE[team] || 0)])
+  ) as Record<Team, number>
+
   const result = await allocateFloatingPCA_v2RankedSlot({
     teamOrder: args.teamOrder,
     currentPendingFTE: pendingFTE,
@@ -154,6 +159,10 @@ export async function runStep3V2CommittedSelections(
     floatingPCAs: args.floatingPCAs,
     pcaPreferences: args.pcaPreferences,
   })
+
+  for (const team of args.teamOrder) {
+    result.tracker[team].summary.preStep34RoundedPendingFte = preStep34RoundedPendingByTeam[team]
+  }
 
   return result
 }

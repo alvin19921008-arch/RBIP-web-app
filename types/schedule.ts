@@ -208,6 +208,7 @@ export interface TeamAllocationLog {
     fulfilledByBuffer?: boolean     // true if team's pending was wholly fulfilled by buffer assignments
     allocationMode?: 'standard' | 'balanced' // Which Step 3.4 mode produced this tracker
     repairAuditDefects?: Array<'B1' | 'A1' | 'A2' | 'C1' | 'F1'>
+    preStep34RoundedPendingFte?: number
   }
 }
 

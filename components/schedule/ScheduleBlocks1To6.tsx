@@ -3,6 +3,7 @@
 import * as React from 'react'
 import type { Team, Weekday } from '@/types/staff'
 import type { SpecialProgram, SPTAllocation } from '@/types/allocation'
+import type { Step3FlowChoice } from '@/lib/features/schedule/step3DialogFlow'
 import type {
   BedAllocation,
   BedRelievingNotesByToTeam,
@@ -68,6 +69,7 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
   // For PCA block diagnostics/styling (optional)
   stepStatus?: Record<string, 'pending' | 'completed' | 'modified'>
   initializedSteps?: Set<string>
+  step3FlowChoice?: Step3FlowChoice | null
 }) {
   const {
     mode,
@@ -88,6 +90,7 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
     onSaveBedRelievingNotesForToTeam,
     stepStatus,
     initializedSteps,
+    step3FlowChoice,
   } = props
 
   const readOnly = mode === 'reference'
@@ -229,6 +232,7 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
                 step2Initialized={true}
                 initializedSteps={initializedSteps}
                 weekday={weekday as any}
+                step3FlowChoice={step3FlowChoice}
                 readOnly={readOnly}
                 droppableIdPrefix={readOnly ? 'ref-' : undefined}
               />

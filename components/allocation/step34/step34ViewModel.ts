@@ -1,6 +1,6 @@
 import type { FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
+import { getQualifyingDuplicateFloatingAssignmentsForSlot } from '@/lib/features/schedule/duplicateFloatingSemantics'
 import { getTeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
-import { getSubstitutionSlotsForTeam } from '@/lib/utils/substitutionFor'
 import type { PCAPreference } from '@/types/allocation'
 import type { SlotAssignmentLog, TeamAllocationLog } from '@/types/schedule'
 import type { Team } from '@/types/staff'
@@ -66,55 +66,6 @@ function displayPcaName(assignment: SlotAssignmentLog): string {
   return name && name.length > 0 ? name : 'PCA'
 }
 
-function dedupeAssignmentsByPcaId(logs: SlotAssignmentLog[]): SlotAssignmentLog[] {
-  const seen = new Set<string>()
-  const out: SlotAssignmentLog[] = []
-  logs.forEach((log, i) => {
-    const id = log.pcaId?.trim() || log.pcaName?.trim() || `row-${i}`
-    if (seen.has(id)) return
-    seen.add(id)
-    out.push(log)
-  })
-  return out
-}
-
-/**
- * Step 3.4 "duplicate floating" is about stacking multiple floating PCAs on the same slot.
- * Non-floating coverage (Step 2, special programs, etc.) must not inflate that count.
- * A floating PCA substituting for a non-floating PCA on this team/slot is treated as
- * non-floating in nature for this metric (see staffOverrides substitution markers).
- */
-function isPcaSubstitutingNonFloatingOnSlotForTeam(args: {
-  staffOverrides: Record<string, any> | undefined
-  pcaId: string | undefined
-  team: Team
-  slot: 1 | 2 | 3 | 4
-}): boolean {
-  const { staffOverrides, pcaId, team, slot } = args
-  if (!pcaId || !staffOverrides) return false
-  const slots = getSubstitutionSlotsForTeam(staffOverrides[pcaId], team)
-  return slots.includes(slot)
-}
-
-function getQualifyingStep34LogsForDuplicateFloating(args: {
-  team: Team
-  slot: 1 | 2 | 3 | 4
-  logsForSlot: SlotAssignmentLog[]
-  staffOverrides?: Record<string, any>
-}): SlotAssignmentLog[] {
-  const step34 = args.logsForSlot.filter((e) => e.assignedIn === 'step34')
-  const counting = step34.filter(
-    (e) =>
-      !isPcaSubstitutingNonFloatingOnSlotForTeam({
-        staffOverrides: args.staffOverrides,
-        pcaId: e.pcaId,
-        team: args.team,
-        slot: args.slot,
-      })
-  )
-  return dedupeAssignmentsByPcaId(counting)
-}
-
 const DUPLICATE_FLOATING_REASON_SUFFIX =
   'only after every other usable slot was tried but without available floating PCA'
 
@@ -129,7 +80,7 @@ function buildDuplicateFloatingReasonLines(args: {
   const lines: string[] = []
   for (const slot of [1, 2, 3, 4] as const) {
     const logsForSlot = teamLog.assignments.filter((a) => a.slot === slot)
-    const qualifying = getQualifyingStep34LogsForDuplicateFloating({
+    const qualifying = getQualifyingDuplicateFloatingAssignmentsForSlot({
       team,
       slot,
       logsForSlot,
@@ -168,7 +119,7 @@ function buildAssignmentResultLabelForSlot(
   staffOverrides?: Record<string, any>
 ): string {
   const slot = primary.slot as 1 | 2 | 3 | 4
-  const qualifying = getQualifyingStep34LogsForDuplicateFloating({
+  const qualifying = getQualifyingDuplicateFloatingAssignmentsForSlot({
     team,
     slot,
     logsForSlot: allForSlot,
@@ -191,7 +142,7 @@ function buildAssignmentDetailLabel(
 ): string {
   const who = displayPcaName(assignment)
   const slot = assignment.slot as 1 | 2 | 3 | 4
-  const qualifying = getQualifyingStep34LogsForDuplicateFloating({
+  const qualifying = getQualifyingDuplicateFloatingAssignmentsForSlot({
     team,
     slot,
     logsForSlot: allForSlot,

@@ -40,12 +40,14 @@ import {
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import type { Team } from '@/types/staff'
 import {
+  allocateFloatingPCA_v2RankedSlot,
   type FloatingPCAAllocationResultV2,
 } from '@/lib/algorithms/pcaAllocation'
 import {
   buildStep31PreviewExtraCoverageOptions,
   countProjectedExtraSlots,
 } from '@/lib/features/schedule/step31ProjectedExtraSlots'
+import { buildV2Step31ScarcitySummary } from '@/lib/features/schedule/step31V2ScarcitySummary'
 import { runStep3V2CommittedSelections } from '@/lib/features/schedule/step3V2CommittedSelections'
 import { computeStep3V2ReservationPreview } from '@/lib/features/schedule/step3V2ReservationPreview'
 import { computeAdjacentSlotReservations, type SlotAssignment } from '@/lib/utils/reservationLogic'
@@ -658,36 +660,88 @@ export function FloatingPCAConfigDialogV2({
         </p>
       </div>
 
-      <div
-        className={cn(
-          'rounded-xl border bg-background p-4',
-          step31Preview.status === 'ready' &&
-            (step31Preview.standardZeroTeams.length > 0 || step31Preview.balancedShortTeams.length > 0) &&
-            'border-amber-200/90 bg-amber-50/25 dark:border-amber-900/50 dark:bg-amber-950/25'
-        )}
-      >
-        <div className="flex items-center gap-2">
-          {step31Preview.status === 'ready' &&
-          (step31Preview.standardZeroTeams.length > 0 || step31Preview.balancedShortTeams.length > 0) ? (
-            <AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-600" aria-hidden />
-          ) : null}
-          <div className="text-sm font-semibold text-foreground">Scarcity preview</div>
-        </div>
-        <div className="mt-2 space-y-1 text-sm text-muted-foreground">
-          {step31Preview.status === 'loading' ? (
-            <div>Calculating Step 3 preview…</div>
-          ) : step31Preview.status === 'error' ? (
-            <div>{`Preview unavailable: ${step31Preview.message}`}</div>
-          ) : step31Preview.status === 'ready' ? (
-            <>
-              <div>{`Teams with 0 floating PCA (if run now): ${step31Preview.standardZeroTeams.length} · ${formatTeamList(step31Preview.standardZeroTeams)}`}</div>
-              <div>{`Teams still short after allocation (if run now): ${step31Preview.balancedShortTeams.length} · ${formatTeamList(step31Preview.balancedShortTeams)}`}</div>
-            </>
-          ) : (
-            <div>Preview is preparing…</div>
-          )}
-        </div>
-      </div>
+      {(() => {
+        const scarcitySummary = buildV2Step31ScarcitySummary(step31Preview)
+        const showScarcityReady = scarcitySummary !== null
+        const showBlock =
+          step31Preview.status === 'loading' ||
+          step31Preview.status === 'error' ||
+          showScarcityReady
+        if (!showBlock) return null
+
+        return (
+          <div
+            className={cn(
+              'rounded-xl border border-border bg-background p-4',
+              showScarcityReady && 'border-amber-200/70 dark:border-amber-900/45'
+            )}
+          >
+            <div className="flex items-center gap-2">
+              {showScarcityReady ? (
+                <AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-500" aria-hidden />
+              ) : null}
+              <div className="text-sm font-semibold text-foreground">Scarcity preview</div>
+            </div>
+            <div className="mt-3 text-sm text-muted-foreground">
+              {step31Preview.status === 'loading' ? (
+                <div>Calculating Step 3 preview…</div>
+              ) : step31Preview.status === 'error' ? (
+                <div>{`Preview unavailable: ${step31Preview.message}`}</div>
+              ) : showScarcityReady ? (
+                <>
+                  <p className="mb-3 text-xs text-muted-foreground">
+                    If you run Step 3 now, some teams may still miss floating PCA coverage or remain short.
+                  </p>
+                  <div className="inline-grid grid-cols-1 gap-3 rounded-lg border border-amber-200/50 bg-background/80 px-3 py-2 sm:grid-cols-[max-content_auto_max-content] sm:items-stretch sm:gap-0 dark:border-amber-900/35">
+                    <div className="sm:pr-3">
+                      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                        No floating PCA if run now
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                        <span className="text-sm font-medium tabular-nums text-foreground">
+                          {scarcitySummary.zeroCount}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {scarcitySummary.zeroCount === 1 ? 'team' : 'teams'}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        {formatTeamList(scarcitySummary.zeroTeams)}
+                      </div>
+                    </div>
+                    <div
+                      className="hidden h-auto w-px shrink-0 bg-amber-200/40 dark:bg-amber-900/30 sm:block"
+                      aria-hidden
+                    />
+                    <div className="border-t border-amber-200/30 pt-3 dark:border-amber-900/25 sm:border-t-0 sm:pl-3 sm:pt-0">
+                      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                        Still short after allocation
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                        <span className="text-sm font-medium tabular-nums text-foreground">
+                          {scarcitySummary.shortCount}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {scarcitySummary.shortCount === 1 ? 'team' : 'teams'}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        {formatTeamList(scarcitySummary.shortTeams)}
+                      </div>
+                    </div>
+                  </div>
+                  {scarcitySummary.showProjectedExtraSlots ? (
+                    <div className="mt-3 text-xs text-muted-foreground">
+                      Projected extra coverage: {scarcitySummary.projectedExtraSlots} slot
+                      {scarcitySummary.projectedExtraSlots === 1 ? '' : 's'}
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          </div>
+        )
+      })()}
 
       <div className="flex justify-center py-2">
         <div className="max-w-full overflow-x-auto">
