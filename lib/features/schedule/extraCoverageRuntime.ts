@@ -4,6 +4,7 @@ import { buildStaffRuntimeById } from '@/lib/utils/staffRuntimeProjection'
 import { getMainTeam } from '@/lib/utils/teamMerge'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
+import { deriveTeamStep3FloatingFulfillmentSemantics } from '@/lib/features/schedule/step3FloatingFulfillmentSemantics'
 import type { SpecialProgram } from '@/types/allocation'
 import type { PCAAllocation, ScheduleCalculations } from '@/types/schedule'
 import type { Staff, Team } from '@/types/staff'
@@ -57,10 +58,9 @@ export function deriveExtraCoverageByStaffId(args: {
     )
   })
 
-  const assignedNonSpecialByMain = createEmptyTeamRecord<number>(0)
-  const floatingCandidatesByMain = createEmptyTeamRecordFactory<
-    Array<{ staffId: string; slot: 1 | 2 | 3 | 4; staffName: string }>
-  >(() => [])
+  const normalizedAllocationsByMain = createEmptyTeamRecordFactory<Array<PCAAllocation & { staff?: Staff }>>(
+    () => []
+  )
 
   for (const allocation of uniqueAllocations.values()) {
     const runtime = runtimeById[allocation.staff_id]
@@ -103,25 +103,47 @@ export function deriveExtraCoverageByStaffId(args: {
       if (isSpecial) continue
 
       activeSlotsSeen += 1
-      assignedNonSpecialByMain[mainTeam] = (assignedNonSpecialByMain[mainTeam] || 0) + 0.25
-      if (isFloatingPca) {
-        floatingCandidatesByMain[mainTeam] = [
-          ...(floatingCandidatesByMain[mainTeam] || []),
-          { staffId: allocation.staff_id, slot, staffName },
-        ]
+      let normalizedAllocation = normalizedAllocationsByMain[mainTeam].find(
+        (candidate) => candidate.staff_id === allocation.staff_id
+      )
+      if (!normalizedAllocation) {
+        normalizedAllocation = {
+          ...allocation,
+          slot1: null,
+          slot2: null,
+          slot3: null,
+          slot4: null,
+          staff: staffMember,
+        }
+        normalizedAllocationsByMain[mainTeam].push(normalizedAllocation)
       }
+      if (slot === 1) normalizedAllocation.slot1 = mainTeam
+      else if (slot === 2) normalizedAllocation.slot2 = mainTeam
+      else if (slot === 3) normalizedAllocation.slot3 = mainTeam
+      else normalizedAllocation.slot4 = mainTeam
+      void isFloatingPca
+      void staffName
     }
   }
 
   const nextExtraByStaff: ExtraCoverageByStaffId = {}
   args.visibleTeams.forEach((mainTeam) => {
-    const required = requiredByMain[mainTeam] || 0
-    const assigned = assignedNonSpecialByMain[mainTeam] || 0
-    const surplusFte = Math.max(0, roundToNearestQuarterWithMidpoint(assigned - required))
-    const extraSlotsNeeded = Math.max(0, Math.round(surplusFte * 4))
+    const semantics = deriveTeamStep3FloatingFulfillmentSemantics({
+      team: mainTeam,
+      allocations: normalizedAllocationsByMain[mainTeam] || [],
+      allPcaStaff: args.staff,
+      staffOverrides: args.staffOverrides,
+      specialPrograms: args.specialPrograms,
+      weekday,
+      averagePcaPerTeam: requiredByMain[mainTeam] || 0,
+    })
+    const extraSlotsNeeded = Math.max(
+      0,
+      Math.round(roundToNearestQuarterWithMidpoint(semantics.postFulfillmentSurplusFte) * 4)
+    )
     if (extraSlotsNeeded === 0) return
 
-    const candidates = [...(floatingCandidatesByMain[mainTeam] || [])].sort((a, b) => {
+    const candidates = [...semantics.trueStep3FloatingSlots].sort((a, b) => {
       if (a.slot !== b.slot) return b.slot - a.slot
       const nameCmp = a.staffName.localeCompare(b.staffName)
       if (nameCmp !== 0) return nameCmp

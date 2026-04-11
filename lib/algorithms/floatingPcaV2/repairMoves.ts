@@ -142,6 +142,23 @@ function getAssignedSlotsForTeam(allocations: PCAAllocation[], team: Team): Slot
   return slots.sort((a, b) => a - b)
 }
 
+function getAssignedFloatingSlotsForTeam(
+  allocations: PCAAllocation[],
+  team: Team,
+  floatingPcaIds: Set<string>
+): Slot[] {
+  const slots: Slot[] = []
+  for (const allocation of allocations) {
+    if (!floatingPcaIds.has(allocation.staff_id)) continue
+    for (const slot of VALID_SLOTS) {
+      if (getSlotOwner(allocation, slot) === team) {
+        slots.push(slot)
+      }
+    }
+  }
+  return slots.sort((a, b) => a - b)
+}
+
 function getRankedMissingSlots(
   allocations: PCAAllocation[],
   team: Team,
@@ -349,6 +366,35 @@ function isUsefulOpenSlotForTeam(
   return pref.rankedSlots.includes(slot) || pref.unrankedNonGymSlots.includes(slot)
 }
 
+function isFairnessFloorRescueSlotForTeam(
+  allocations: PCAAllocation[],
+  team: Team,
+  slot: Slot,
+  teamPrefs: Record<Team, TeamPreferenceInfo>,
+  floatingPcaIds: Set<string>
+): boolean {
+  const pref = teamPrefs[team]
+  const isGymLastResort = pref.avoidGym && pref.gymSlot === slot
+  if (!isGymLastResort && !isSlotAllowedForTeam(team, slot, teamPrefs)) return false
+  return !getAssignedFloatingSlotsForTeam(allocations, team, floatingPcaIds).includes(slot)
+}
+
+function getFairnessFloorRescueSlots(
+  team: Team,
+  teamPrefs: Record<Team, TeamPreferenceInfo>
+): Slot[] {
+  const pref = teamPrefs[team]
+  const slots = [...pref.duplicateRankOrder.filter(isValidSlot)]
+  if (pref.avoidGym && pref.gymSlot != null && isValidSlot(pref.gymSlot) && !slots.includes(pref.gymSlot)) {
+    slots.push(pref.gymSlot)
+  }
+  return slots
+}
+
+function isValidSlot(value: number): value is Slot {
+  return value === 1 || value === 2 || value === 3 || value === 4
+}
+
 function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairCandidate[] {
   const { defect, allocations, pcaPool, teamPrefs } = context
   if (defect.kind !== 'B1') return []
@@ -554,9 +600,18 @@ function generateF1Candidates(context: GenerateRepairCandidatesContext): RepairC
   const orderedAllocations = [...allocations].sort((a, b) => String(a.staff_id).localeCompare(String(b.staff_id)))
   const floatingPcaIds = buildFloatingPcaIdSet(pcaPool)
 
-  for (const rescueSlot of teamPrefs[defect.team].duplicateRankOrder) {
-    if (rescueSlot !== 1 && rescueSlot !== 2 && rescueSlot !== 3 && rescueSlot !== 4) continue
-    if (!isUsefulOpenSlotForTeam(allocations, defect.team, rescueSlot, teamPrefs)) continue
+  for (const rescueSlot of getFairnessFloorRescueSlots(defect.team, teamPrefs)) {
+    if (
+      !isFairnessFloorRescueSlotForTeam(
+        allocations,
+        defect.team,
+        rescueSlot,
+        teamPrefs,
+        floatingPcaIds
+      )
+    ) {
+      continue
+    }
 
     for (const rescuePca of [...pcaPool].sort((a, b) => String(a.id).localeCompare(String(b.id)))) {
       if (!getNormalizedAvailableSlots(rescuePca).includes(rescueSlot)) continue

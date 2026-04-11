@@ -4,6 +4,10 @@ import {
   formatV2RepairReasonLabel,
   formatV2SlotSelectionPhaseLabel,
 } from '@/lib/features/schedule/pcaTrackerTooltip'
+import {
+  formatStep3FulfillmentSemanticsCompactLine,
+  type Step3FloatingFulfillmentSemantics,
+} from '@/lib/features/schedule/step3FloatingFulfillmentSemantics'
 import type { TeamAllocationLog } from '@/types/schedule'
 import type { Team } from '@/types/staff'
 
@@ -119,6 +123,7 @@ function buildStatusCell(allocationLog?: TeamAllocationLog): Pick<V2PcaTrackerSu
 function buildSummaryCells(args: {
   allocationLog?: TeamAllocationLog
   bufferAssignments: V2PcaTrackerTooltipBufferAssignment[]
+  ownershipSemantics?: Step3FloatingFulfillmentSemantics
 }): V2PcaTrackerSummaryCell[] {
   const totalSlots =
     (args.allocationLog?.summary.totalSlotsAssigned ?? 0) +
@@ -139,6 +144,9 @@ function buildSummaryCells(args: {
     {
       label: '3.4 Mix',
       value: `draft ${draftCount} · repair ${repairCount} · extra ${extraCount}`,
+      subvalue: args.ownershipSemantics
+        ? formatStep3FulfillmentSemanticsCompactLine(args.ownershipSemantics)
+        : undefined,
     },
     {
       label: 'Best ranked slot',
@@ -330,6 +338,7 @@ export function buildV2PcaTrackerTooltipModel(args: {
   step3OrderPosition?: number
   pendingPcaFte?: number
   staffOverrides?: Record<string, any>
+  ownershipSemantics?: Step3FloatingFulfillmentSemantics
 }): V2PcaTrackerTooltipModel | null {
   const bufferAssignments = args.bufferAssignments ?? []
   const hasAllocationRows = (args.allocationLog?.assignments.length ?? 0) > 0
@@ -348,6 +357,7 @@ export function buildV2PcaTrackerTooltipModel(args: {
     summaryCells: buildSummaryCells({
       allocationLog: args.allocationLog,
       bufferAssignments,
+      ownershipSemantics: args.ownershipSemantics,
     }),
     repairIssuePills:
       args.allocationLog?.summary.repairAuditDefects?.map((defect) => formatV2RepairAuditDefectLabel(defect)) ?? [],

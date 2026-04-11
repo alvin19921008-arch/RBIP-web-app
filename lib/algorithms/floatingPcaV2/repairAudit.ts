@@ -275,6 +275,18 @@ function teamHasUsefulNonDuplicateSlot(state: AuditState, team: Team): boolean {
   return false
 }
 
+function teamHasFairnessFloorCoverage(state: AuditState, team: Team): boolean {
+  const pref = state.teamPrefs[team]
+  for (const pcaId of state.distinctTrueStep3PcaIdsByTeam[team]) {
+    if (!state.floatingPcaIds.has(pcaId)) continue
+    for (const slot of getTrueStep3TeamSlotsOnPca(state, team, pcaId)) {
+      if (pref.avoidGym && pref.gymSlot === slot) continue
+      return true
+    }
+  }
+  return false
+}
+
 function getMissingRankedSlots(state: AuditState, team: Team): Slot[] {
   const slotCounts = state.slotCountsByTeam[team]
   return state.teamPrefs[team].rankedSlots.filter(
@@ -508,8 +520,28 @@ function canPcaHostAllTeamSlots(
 
 function hasFairnessFloorViolation(state: AuditState, team: Team): boolean {
   if (!teamHadMeaningfulPending(state, team)) return false
-  if (teamHasUsefulNonDuplicateSlot(state, team)) return false
-  return canAcquireUsefulNonDuplicateSlot(state, team)
+  if (teamHasFairnessFloorCoverage(state, team)) return false
+  return canAcquireFairnessFloorCoverage(state, team)
+}
+
+function canAcquireFairnessFloorCoverage(state: AuditState, team: Team): boolean {
+  const pref = state.teamPrefs[team]
+  const fairnessSlots = getRepairSlotOrder(pref)
+
+  for (const slot of fairnessSlots) {
+    if (canRescueSlotForTeam(state, team, slot) || canAcquireDirectlyFromTrueDuplicate(state, team, slot)) {
+      return true
+    }
+  }
+
+  if (pref.avoidGym && pref.gymSlot != null && isValidSlot(pref.gymSlot)) {
+    const gymSlot = pref.gymSlot
+    if (canRescueSlotForTeam(state, team, gymSlot) || canAcquireDirectlyFromTrueDuplicate(state, team, gymSlot)) {
+      return true
+    }
+  }
+
+  return false
 }
 
 function isUsefulNonDuplicateSlotForTeam(state: AuditState, team: Team, slot: Slot): boolean {

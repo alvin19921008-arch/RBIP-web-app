@@ -19,6 +19,7 @@ import { derivePcaDisplayFlagsBySlot } from '@/lib/features/schedule/pcaDisplayC
 import type { Step3FlowChoice } from '@/lib/features/schedule/step3DialogFlow'
 import { selectPcaTrackerTooltipVariant } from '@/lib/features/schedule/pcaTrackerTooltip'
 import { buildV2PcaTrackerTooltipModel } from '@/lib/features/schedule/v2PcaTrackerTooltipModel'
+import { deriveTeamStep3FloatingFulfillmentSemantics } from '@/lib/features/schedule/step3FloatingFulfillmentSemantics'
 import { V1PcaTrackerTooltip } from './pcaTracker/V1PcaTrackerTooltip'
 import { V2PcaTrackerTooltip } from './pcaTracker/V2PcaTrackerTooltip'
 
@@ -592,6 +593,19 @@ export const PCABlock = memo(function PCABlock({
   // - externalHover is used for "drag from slot picker" mode (not dnd-kit), so allow it directly
   const showHoverEffect = !readOnly && ((isOver && isPCADragging) || externalHover)
   const showExtraCoverageStyling = shouldShowExtraCoverage({ currentStep, initializedSteps })
+  const ownershipSemantics = useMemo(
+    () =>
+      deriveTeamStep3FloatingFulfillmentSemantics({
+        team,
+        allocations,
+        allPcaStaff: allPCAStaff,
+        staffOverrides,
+        specialPrograms,
+        weekday,
+        averagePcaPerTeam: averagePCAPerTeam,
+      }),
+    [team, allocations, allPCAStaff, staffOverrides, specialPrograms, weekday, averagePCAPerTeam]
+  )
 
   const {
     showSubstitutionStyling,
@@ -1218,6 +1232,7 @@ export const PCABlock = memo(function PCABlock({
                       step3OrderPosition: allocationOrderCycle1,
                       pendingPcaFte,
                       staffOverrides,
+                      ownershipSemantics,
                     })
                   : null
 
