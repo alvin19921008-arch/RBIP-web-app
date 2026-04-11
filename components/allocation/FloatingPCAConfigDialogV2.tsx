@@ -115,18 +115,41 @@ function stepLabel(step: Step3V2Step): string {
   }
 }
 
-function getOrdinalLabel(rank: number): string {
-  if (rank === 1) return '1st choice'
-  if (rank === 2) return '2nd choice'
-  if (rank === 3) return '3rd choice'
-  return `${rank}th choice`
-}
-
 function getSlotTime(slot: number): string {
   if (slot === 1) return '0900-1030'
   if (slot === 2) return '1030-1200'
   if (slot === 3) return '1330-1500'
   return '1500-1630'
+}
+
+function formatNoPreferredPcaAvailabilityLine(args: {
+  team: Team
+  firstChoiceSlot: number
+  pcaPreferences: Array<{ team: Team; preferred_pca_ids?: string[] }>
+  floatingPCAs: Array<{ id: string; name?: string | null }>
+}): string {
+  const time = getSlotTime(args.firstChoiceSlot)
+  const pref = args.pcaPreferences.find((p) => p.team === args.team)
+  const ids = pref?.preferred_pca_ids?.filter(Boolean) ?? []
+  const poolById = new Map(args.floatingPCAs.map((pca) => [pca.id, pca]))
+  const names = ids.map((id) => {
+    const pca = poolById.get(id)
+    const label = pca?.name?.trim()
+    return label && label.length > 0 ? label : id
+  })
+
+  if (names.length === 0) {
+    return `No preferred PCA is available for 1st choice ${time}.`
+  }
+  if (names.length === 1) {
+    return `No preferred PCA "${names[0]}" is available for 1st choice ${time}.`
+  }
+  const quoted = names.map((n) => `"${n}"`)
+  const list =
+    quoted.length === 2
+      ? `${quoted[0]} and ${quoted[1]}`
+      : `${quoted.slice(0, -1).join(', ')}, and ${quoted[quoted.length - 1]}`
+  return `No preferred PCAs ${list} are available for 1st choice ${time}.`
 }
 
 /** Step 3.3: one workplace-style line for special-program PCA + adjacent slot (avoids duplicating list + panel copy). */
@@ -151,6 +174,34 @@ function emptyTeamRecord(value = 0): Record<Team, number> {
     NSM: value,
     DRO: value,
   }
+}
+
+const STEP3_FLOATING_ASSIGNED_IN = new Set(['step32', 'step33', 'step34'])
+
+/**
+ * Quarter-slots of floating coverage committed in Steps 3.2–3.4 for UI "Assigned" totals.
+ * When a Step 3.4 preview exists, prefer the tracker (includes executed 3.2/3.3 rows); otherwise use saved slot picks only.
+ */
+function getStep3FloatingAssignedFteForTeam(args: {
+  team: Team
+  step34PreviewResult: FloatingPCAAllocationResultV2 | null
+  step32Assignments: SlotAssignment[]
+  step33Assignments: SlotAssignment[]
+}): number {
+  const { team, step34PreviewResult, step32Assignments, step33Assignments } = args
+  const teamLog = step34PreviewResult?.tracker?.[team]
+  if (teamLog) {
+    const logs = teamLog.assignments ?? []
+    const n = logs.filter((a) => {
+      const src = (a as { assignedIn?: string }).assignedIn
+      return typeof src === 'string' && STEP3_FLOATING_ASSIGNED_IN.has(src)
+    }).length
+    return roundToNearestQuarterWithMidpoint(n * 0.25)
+  }
+  const n =
+    step32Assignments.filter((a) => a.team === team).length +
+    step33Assignments.filter((a) => a.team === team).length
+  return roundToNearestQuarterWithMidpoint(n * 0.25)
 }
 
 function identifyTieGroups(pendingFTE: Record<Team, number>): TieGroup[] {
@@ -517,6 +568,19 @@ export function FloatingPCAConfigDialogV2({
     })
   }, [adjacentPreview.adjacentReservations, adjacentTeams, step33Decisions, step33SelectedOptionByTeam])
 
+  const step3FloatingAssignedFteByTeam = useMemo(() => {
+    const record = emptyTeamRecord(0)
+    for (const team of activeTeams) {
+      record[team] = getStep3FloatingAssignedFteForTeam({
+        team,
+        step34PreviewResult,
+        step32Assignments: step32AssignmentsForSave,
+        step33Assignments: step33AssignmentsForSave,
+      })
+    }
+    return record
+  }, [activeTeams, step34PreviewResult, step32AssignmentsForSave, step33AssignmentsForSave])
+
   const runStep34Preview = useCallback(async () => {
     setStep34Loading(true)
     try {
@@ -807,7 +871,7 @@ export function FloatingPCAConfigDialogV2({
             ? 'No manual review needed'
             : reservation?.preferredPcaMayStillHelpLater
               ? 'Preferred PCA still possible'
-              : 'No preferred PCA here'
+              : 'No preferred PCA a/v here'
           return (
             <button
               key={team}
@@ -823,16 +887,18 @@ export function FloatingPCAConfigDialogV2({
               <div className="font-semibold">{team}</div>
               {isFlagged && reservation ? (
                 <>
-                  <div className="mt-1 text-[11px] leading-4">{`Expected ${adjustedFTE[team].toFixed(2)}`}</div>
-                  <div className="text-[11px] leading-4">Assigned 0.00</div>
+                  <div className="mt-1 text-[11px] leading-4">{`Pending ${roundToNearestQuarterWithMidpoint(adjustedFTE[team] || 0).toFixed(2)}`}</div>
+                  <div className="text-[11px] leading-4">{`Assigned ${step3FloatingAssignedFteByTeam[team].toFixed(2)}`}</div>
                   <div className="mt-2 inline-flex rounded-md bg-blue-100 px-2 py-1 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/50 dark:text-blue-100">
-                    {`Slot ${reservation.slot} · ${getSlotTime(reservation.slot)}`}
+                    {getSlotTime(reservation.slot)}
                   </div>
                 </>
               ) : (
                 <div className="mt-1 text-[11px] leading-4">No manual review needed</div>
               )}
-              <div className="mt-2 text-[11px] font-medium leading-4">{compactState}</div>
+              {isFlagged ? (
+                <div className="mt-2 text-[11px] font-medium leading-4">{compactState}</div>
+              ) : null}
             </button>
           )
         })}
@@ -845,7 +911,8 @@ export function FloatingPCAConfigDialogV2({
           <div className="flex flex-wrap items-center gap-2">
             <div className="text-sm font-semibold text-foreground">{selectedStep32Team}</div>
             <Badge>{`${getOrderLabel(teamOrder.indexOf(selectedStep32Team) + 1)} in order`}</Badge>
-            <Badge variant="outline">{`Pending ${adjustedFTE[selectedStep32Team].toFixed(2)}`}</Badge>
+            <Badge variant="outline">{`Pending ${roundToNearestQuarterWithMidpoint(adjustedFTE[selectedStep32Team] || 0).toFixed(2)}`}</Badge>
+            <Badge variant="outline">{`Assigned ${step3FloatingAssignedFteByTeam[selectedStep32Team].toFixed(2)}`}</Badge>
             <Badge variant="secondary">Needs decision</Badge>
           </div>
 
@@ -871,10 +938,17 @@ export function FloatingPCAConfigDialogV2({
               {`${selectedStep32Team} review`}
             </div>
             <div className="mt-2 space-y-1 text-sm text-muted-foreground">
-              <div>{`No preferred PCA is available for ${getOrdinalLabel(1)} Slot ${selectedReservation.slot} · ${getSlotTime(selectedReservation.slot)}.`}</div>
+              <div>
+                {formatNoPreferredPcaAvailabilityLine({
+                  team: selectedStep32Team,
+                  firstChoiceSlot: selectedReservation.slot,
+                  pcaPreferences,
+                  floatingPCAs,
+                })}
+              </div>
               <div>{`System plans to use ${selectedReservation.recommendedPcaName || 'another available PCA'} first.`}</div>
               {selectedReservation.preferredPcaMayStillHelpLater ? (
-                <div>{`Preferred PCA may still be used later for ${selectedReservation.rankedChoices?.[1] ? `Slot ${selectedReservation.rankedChoices[1].slot} · ${getSlotTime(selectedReservation.rankedChoices[1].slot)}` : 'a later ranked choice'}.`}</div>
+                <div>{`Preferred PCA may still be used later for ${selectedReservation.rankedChoices?.[1] ? getSlotTime(selectedReservation.rankedChoices[1].slot) : 'a later ranked choice'}.`}</div>
               ) : null}
             </div>
           </div>
@@ -942,9 +1016,8 @@ export function FloatingPCAConfigDialogV2({
               <div className="font-semibold">{team}</div>
               {hasAdjacent ? (
                 <>
-                  <div className="mt-1 text-[11px] leading-4">
-                    {`${adjacentPreview.adjacentReservations[team].length} adjacent slot(s)`}
-                  </div>
+                  <div className="mt-1 text-[11px] leading-4">{`Pending ${roundToNearestQuarterWithMidpoint(adjustedFTE[team] || 0).toFixed(2)}`}</div>
+                  <div className="text-[11px] leading-4">{`Assigned ${step3FloatingAssignedFteByTeam[team].toFixed(2)}`}</div>
                   <div className="mt-2 text-[11px] font-medium leading-4">
                     {decision === 'use'
                       ? 'Will assign adjacent slot'
@@ -969,7 +1042,8 @@ export function FloatingPCAConfigDialogV2({
         <div className="space-y-4 rounded-xl border border-emerald-200 bg-background p-4">
           <div className="flex flex-wrap items-center gap-2">
             <div className="text-sm font-semibold text-foreground">{selectedStep33Team}</div>
-            <Badge variant="outline">{`Pending ${adjustedFTE[selectedStep33Team].toFixed(2)}`}</Badge>
+            <Badge variant="outline">{`Pending ${roundToNearestQuarterWithMidpoint(adjustedFTE[selectedStep33Team] || 0).toFixed(2)}`}</Badge>
+            <Badge variant="outline">{`Assigned ${step3FloatingAssignedFteByTeam[selectedStep33Team].toFixed(2)}`}</Badge>
             <Badge>{`${selectedAdjacentOptions.length} adjacent slot(s)`}</Badge>
           </div>
 
@@ -1110,16 +1184,24 @@ export function FloatingPCAConfigDialogV2({
           ref={step34DetailPanelRef}
           className="relative rounded-2xl border border-blue-200 bg-blue-50/40 p-4 shadow-sm dark:bg-blue-950/10"
         >
-          <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-sm font-semibold text-blue-900 dark:text-blue-100">{`${selectedStep34Detail.team} details`}</div>
               <div className="mt-1 text-xs text-muted-foreground">
                 These results belong to the selected team above.
               </div>
             </div>
-            <Badge variant="outline" className={STEP34_DETAIL_BADGE_CLASS}>
-              {selectedStep34Detail.summaryPills[0]?.label}
-            </Badge>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Badge variant="outline" className={STEP34_DETAIL_BADGE_CLASS}>
+                {selectedStep34Detail.summaryPills[0]?.label}
+              </Badge>
+              <Badge variant="outline" className={STEP34_DETAIL_BADGE_CLASS}>
+                {`Pending ${roundToNearestQuarterWithMidpoint(adjustedFTE[selectedStep34Detail.team] || 0).toFixed(2)}`}
+              </Badge>
+              <Badge variant="outline" className={STEP34_DETAIL_BADGE_CLASS}>
+                {`Assigned ${step3FloatingAssignedFteByTeam[selectedStep34Detail.team].toFixed(2)}`}
+              </Badge>
+            </div>
           </div>
 
           <div className="mb-3 flex flex-wrap items-center gap-2">

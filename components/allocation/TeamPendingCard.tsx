@@ -133,7 +133,7 @@ export function TeamPendingCard({
             {pendingFTE.toFixed(2)}
           </div>
 
-          <div className="space-y-0.5 border-t border-border/60 pt-1 text-[8px] leading-tight text-muted-foreground">
+          <div className="space-y-0.5 border-t border-border/60 pt-1 text-[10px] leading-tight text-muted-foreground">
             {avgPcaPerTeam != null && !Number.isNaN(avgPcaPerTeam) ? (
               <div className="flex justify-between gap-1 tabular-nums">
                 <span className="text-muted-foreground/90">Avg</span>

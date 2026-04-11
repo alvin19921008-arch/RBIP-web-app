@@ -307,17 +307,27 @@ export function buildStep34TeamDetailViewModel(args: {
     }
   })
 
+  const highestRankedSlotFulfilledLabel = (() => {
+    if (pref.rankedSlots.length === 0) return null
+    const fulfilledRank = teamLog.summary.highestRankedSlotFulfilled
+    if (typeof fulfilledRank !== 'number' || !Number.isFinite(fulfilledRank) || fulfilledRank < 1) {
+      return 'Highest ranked slot fulfilled: none'
+    }
+    const slot = pref.rankedSlots[fulfilledRank - 1]
+    if (slot !== 1 && slot !== 2 && slot !== 3 && slot !== 4) {
+      return 'Highest ranked slot fulfilled: none'
+    }
+    return `Highest ranked slot fulfilled: ${getTimeRange(slot)}`
+  })()
+
   const summaryPills: Step34SummaryPillViewModel[] = [
     {
       label: teamLog.summary.pendingMet ? 'Pending met' : 'Pending not fully met',
       tone: teamLog.summary.pendingMet ? 'default' : 'muted',
     },
-    {
-      label:
-        typeof teamLog.summary.highestRankedSlotFulfilled === 'number'
-          ? `Highest ranked slot fulfilled: ${getOrdinalShortLabel(teamLog.summary.highestRankedSlotFulfilled)}`
-          : 'Highest ranked slot fulfilled: none',
-    },
+    ...(highestRankedSlotFulfilledLabel
+      ? [{ label: highestRankedSlotFulfilledLabel, tone: 'default' as const }]
+      : []),
     {
       label: teamLog.summary.preferredPCAUsed ? 'Preferred PCA used' : 'Preferred PCA not used',
       tone: teamLog.summary.preferredPCAUsed ? 'default' : 'muted',
