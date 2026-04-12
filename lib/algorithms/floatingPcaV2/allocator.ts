@@ -191,100 +191,138 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
     })
   }
 
-  let repairAuditDefects = detectRankedV2RepairDefects({
-    teamOrder,
-    initialPendingFTE: initialPendingFTE,
-    pendingFTE,
-    allocations,
-    pcaPool,
-    teamPrefs,
-    baselineAllocations: existingAllocations,
-  })
-  setRepairAuditDefects(repairAuditDefects)
-
+  let repairAuditDefects: RankedV2RepairDefect[] = []
   let bestScore = buildRankedSlotAllocationScore({
     allocations,
     initialPendingFTE,
     pendingFTE,
     teamOrder,
-    defects: repairAuditDefects,
+    defects: [],
     teamPrefs,
   })
 
-  for (let iteration = 0; iteration < MAX_REPAIR_ITERATIONS; iteration += 1) {
-    let bestCandidate:
-      | (ReturnType<typeof generateRepairCandidates>[number] & {
-          score: ReturnType<typeof buildRankedSlotAllocationScore>
-          pendingFTE: Record<Team, number>
-          defects: RankedV2RepairDefect[]
-        })
-      | null = null
-
-    for (const defect of sortDefects(repairAuditDefects)) {
-      const candidates = generateRepairCandidates({
-        defect,
-        allocations,
-        pcaPool,
-        teamPrefs,
-      }).slice(0, MAX_CANDIDATES_PER_DEFECT)
-
-      for (const candidate of candidates) {
-        const candidatePendingFTE = computePendingFromAllocations(
-          initialPendingFTE,
-          baselineAssignedSlots,
-          candidate.allocations
-        )
-        const candidateDefects = detectRankedV2RepairDefects({
-          teamOrder,
-          initialPendingFTE,
-          pendingFTE: candidatePendingFTE,
-          allocations: candidate.allocations,
-          pcaPool,
-          teamPrefs,
-          baselineAllocations: existingAllocations,
-        })
-        const candidateScore = buildRankedSlotAllocationScore({
-          allocations: candidate.allocations,
-          initialPendingFTE,
-          pendingFTE: candidatePendingFTE,
-          teamOrder,
-          defects: candidateDefects,
-          teamPrefs,
-        })
-
-        if (compareScores(candidateScore, bestScore) >= 0) continue
-        if (!bestCandidate) {
-          bestCandidate = { ...candidate, score: candidateScore, pendingFTE: candidatePendingFTE, defects: candidateDefects }
-          continue
-        }
-
-        const candidateVsBest = compareScores(candidateScore, bestCandidate.score)
-        if (candidateVsBest < 0) {
-          bestCandidate = { ...candidate, score: candidateScore, pendingFTE: candidatePendingFTE, defects: candidateDefects }
-          continue
-        }
-        if (candidateVsBest === 0 && candidate.sortKey.localeCompare(bestCandidate.sortKey) < 0) {
-          bestCandidate = { ...candidate, score: candidateScore, pendingFTE: candidatePendingFTE, defects: candidateDefects }
-        }
-      }
-    }
-
-    if (!bestCandidate) break
-
-    allocations.splice(0, allocations.length, ...bestCandidate.allocations.map((allocation) => ({ ...allocation })))
-    Object.assign(pendingFTE, bestCandidate.pendingFTE)
-    bestScore = bestCandidate.score
-    repairAuditDefects = bestCandidate.defects
+  const runRepairLoop = () => {
+    repairAuditDefects = detectRankedV2RepairDefects({
+      teamOrder,
+      initialPendingFTE: initialPendingFTE,
+      pendingFTE,
+      allocations,
+      pcaPool,
+      teamPrefs,
+      baselineAllocations: existingAllocations,
+    })
     setRepairAuditDefects(repairAuditDefects)
 
-    for (const assignment of bestCandidate.repairAssignments) {
-      acceptedRepairReasons.set(
-        `${assignment.team}:${assignment.pcaId}:${assignment.slot}`,
-        getRepairReason(bestCandidate.reason)
+    bestScore = buildRankedSlotAllocationScore({
+      allocations,
+      initialPendingFTE,
+      pendingFTE,
+      teamOrder,
+      defects: repairAuditDefects,
+      teamPrefs,
+    })
+
+    for (let iteration = 0; iteration < MAX_REPAIR_ITERATIONS; iteration += 1) {
+      let bestCandidate:
+        | (ReturnType<typeof generateRepairCandidates>[number] & {
+            score: ReturnType<typeof buildRankedSlotAllocationScore>
+            pendingFTE: Record<Team, number>
+            defects: RankedV2RepairDefect[]
+          })
+        | null = null
+
+      for (const defect of sortDefects(repairAuditDefects)) {
+        const candidates = generateRepairCandidates({
+          defect,
+          allocations,
+          pcaPool,
+          teamPrefs,
+          teamOrder,
+          initialPendingFTE,
+          pendingFTE,
+          baselineAllocations: existingAllocations,
+        }).slice(0, MAX_CANDIDATES_PER_DEFECT)
+
+        for (const candidate of candidates) {
+          const candidatePendingFTE = computePendingFromAllocations(
+            initialPendingFTE,
+            baselineAssignedSlots,
+            candidate.allocations
+          )
+          const candidateDefects = detectRankedV2RepairDefects({
+            teamOrder,
+            initialPendingFTE,
+            pendingFTE: candidatePendingFTE,
+            allocations: candidate.allocations,
+            pcaPool,
+            teamPrefs,
+            baselineAllocations: existingAllocations,
+          })
+          const candidateScore = buildRankedSlotAllocationScore({
+            allocations: candidate.allocations,
+            initialPendingFTE,
+            pendingFTE: candidatePendingFTE,
+            teamOrder,
+            defects: candidateDefects,
+            teamPrefs,
+          })
+
+          if (compareScores(candidateScore, bestScore) >= 0) continue
+          if (!bestCandidate) {
+            bestCandidate = {
+              ...candidate,
+              score: candidateScore,
+              pendingFTE: candidatePendingFTE,
+              defects: candidateDefects,
+            }
+            continue
+          }
+
+          const candidateVsBest = compareScores(candidateScore, bestCandidate.score)
+          if (candidateVsBest < 0) {
+            bestCandidate = {
+              ...candidate,
+              score: candidateScore,
+              pendingFTE: candidatePendingFTE,
+              defects: candidateDefects,
+            }
+            continue
+          }
+          if (candidateVsBest === 0 && candidate.sortKey.localeCompare(bestCandidate.sortKey) < 0) {
+            bestCandidate = {
+              ...candidate,
+              score: candidateScore,
+              pendingFTE: candidatePendingFTE,
+              defects: candidateDefects,
+            }
+          }
+        }
+      }
+
+      if (!bestCandidate) break
+
+      allocations.splice(
+        0,
+        allocations.length,
+        ...bestCandidate.allocations.map((allocation) => ({ ...allocation }))
       )
+      Object.assign(pendingFTE, bestCandidate.pendingFTE)
+      bestScore = bestCandidate.score
+      repairAuditDefects = bestCandidate.defects
+      setRepairAuditDefects(repairAuditDefects)
+
+      for (const assignment of bestCandidate.repairAssignments) {
+        acceptedRepairReasons.set(
+          `${assignment.team}:${assignment.pcaId}:${assignment.slot}`,
+          getRepairReason(bestCandidate.reason)
+        )
+      }
     }
   }
 
+  runRepairLoop()
+
+  // Extra coverage runs between repair passes; a second repair loop re-audits after mutations (f99).
   const applyExtraCoverageRoundRobin = () => {
     if (extraCoverageMode !== 'round-robin-team-order') return
 
@@ -371,6 +409,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
   }
 
   applyExtraCoverageRoundRobin()
+  runRepairLoop()
   applyInvalidSlotPairingForDisplay(allocations, pcaPool)
   const draftAssignmentByKey = new Map<string, SlotAssignmentLog>()
   for (const team of TEAMS) {

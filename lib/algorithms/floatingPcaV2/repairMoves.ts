@@ -1,8 +1,13 @@
 import type { Team } from '@/types/staff'
 import type { PCAAllocation } from '@/types/schedule'
 import type { PCAData } from '@/lib/algorithms/pcaAllocationTypes'
-import type { RankedV2RepairDefect } from '@/lib/algorithms/floatingPcaV2/repairAudit'
-import type { TeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
+import {
+  buildRankedV2RepairAuditState,
+  donorHasTrueStep3Ownership,
+  teamCanDonateBoundedly,
+  type RankedV2RepairDefect,
+} from '@/lib/algorithms/floatingPcaV2/repairAudit'
+import { TEAMS, type TeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
 
 type Slot = 1 | 2 | 3 | 4
 
@@ -32,6 +37,10 @@ export type GenerateRepairCandidatesContext = {
   allocations: PCAAllocation[]
   pcaPool: PCAData[]
   teamPrefs: Record<Team, TeamPreferenceInfo>
+  teamOrder?: Team[]
+  initialPendingFTE?: Record<Team, number>
+  pendingFTE?: Record<Team, number>
+  baselineAllocations?: PCAAllocation[]
 }
 
 const VALID_SLOTS: Slot[] = [1, 2, 3, 4]
@@ -395,6 +404,29 @@ function isValidSlot(value: number): value is Slot {
   return value === 1 || value === 2 || value === 3 || value === 4
 }
 
+function zeroPendingFTE(): Record<Team, number> {
+  const record = {} as Record<Team, number>
+  for (const team of TEAMS) {
+    record[team] = 0
+  }
+  return record
+}
+
+function buildAuditStateForRepairCandidates(
+  context: GenerateRepairCandidatesContext
+): ReturnType<typeof buildRankedV2RepairAuditState> {
+  const initial = context.initialPendingFTE ?? zeroPendingFTE()
+  return buildRankedV2RepairAuditState({
+    teamOrder: context.teamOrder ?? TEAMS,
+    initialPendingFTE: initial,
+    pendingFTE: context.pendingFTE ?? initial,
+    allocations: context.allocations,
+    pcaPool: context.pcaPool,
+    teamPrefs: context.teamPrefs,
+    baselineAllocations: context.baselineAllocations,
+  })
+}
+
 function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairCandidate[] {
   const { defect, allocations, pcaPool, teamPrefs } = context
   if (defect.kind !== 'B1') return []
@@ -403,6 +435,7 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
   const candidates: RepairCandidate[] = []
   const sortedPcas = [...pcaPool].sort((a, b) => String(a.id).localeCompare(String(b.id)))
   const floatingPcaIds = buildFloatingPcaIdSet(pcaPool)
+  const auditState = buildAuditStateForRepairCandidates(context)
 
   for (const targetSlot of getRankedMissingSlots(allocations, requestingTeam, teamPrefs)) {
     for (const targetPca of sortedPcas) {
@@ -410,6 +443,27 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
       const targetAllocation = getAllocationByStaffId(allocations, targetPca.id)
       const targetOwner = getSlotOwner(targetAllocation, targetSlot)
       if (!targetOwner || targetOwner === requestingTeam) continue
+
+      if (
+        donorHasTrueStep3Ownership(auditState, targetOwner, targetPca.id, targetSlot) &&
+        teamCanDonateBoundedly(auditState, targetOwner, targetPca.id, targetSlot)
+      ) {
+        const donation = buildCandidate(
+          'B1',
+          `b1:donate:${targetPca.id}:${targetSlot}:${targetOwner}->${requestingTeam}`,
+          allocations,
+          pcaPool,
+          [
+            {
+              pcaId: targetPca.id,
+              slot: targetSlot,
+              fromTeam: targetOwner,
+              toTeam: requestingTeam,
+            },
+          ]
+        )
+        if (donation) candidates.push(donation)
+      }
 
       for (const fallbackPca of sortedPcas) {
         const fallbackAllocation = getAllocationByStaffId(allocations, fallbackPca.id)
@@ -599,6 +653,7 @@ function generateF1Candidates(context: GenerateRepairCandidatesContext): RepairC
   const candidates: RepairCandidate[] = []
   const orderedAllocations = [...allocations].sort((a, b) => String(a.staff_id).localeCompare(String(b.staff_id)))
   const floatingPcaIds = buildFloatingPcaIdSet(pcaPool)
+  const auditState = buildAuditStateForRepairCandidates(context)
 
   for (const rescueSlot of getFairnessFloorRescueSlots(defect.team, teamPrefs)) {
     if (
@@ -639,6 +694,28 @@ function generateF1Candidates(context: GenerateRepairCandidatesContext): RepairC
       }
 
       if (rescueOwner === defect.team) continue
+
+      if (
+        rescueOwner != null &&
+        donorHasTrueStep3Ownership(auditState, rescueOwner, rescuePca.id, rescueSlot) &&
+        teamCanDonateBoundedly(auditState, rescueOwner, rescuePca.id, rescueSlot)
+      ) {
+        const donation = buildCandidate(
+          'F1',
+          `f1:donate:${rescuePca.id}:${rescueSlot}:${rescueOwner}->${defect.team}`,
+          allocations,
+          pcaPool,
+          [
+            {
+              pcaId: rescuePca.id,
+              slot: rescueSlot,
+              fromTeam: rescueOwner,
+              toTeam: defect.team,
+            },
+          ]
+        )
+        if (donation) candidates.push(donation)
+      }
 
       for (const donorAllocation of orderedAllocations) {
         if (!floatingPcaIds.has(donorAllocation.staff_id)) continue

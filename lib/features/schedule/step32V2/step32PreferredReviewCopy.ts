@@ -1,4 +1,8 @@
-import type { Step32ReviewState, Step32TradeoffKind } from '@/lib/features/schedule/step32V2/step32PreferredReviewModel'
+import type {
+  Step32PreferredAvailability,
+  Step32ReviewState,
+  Step32TradeoffKind,
+} from '@/lib/features/schedule/step32V2/step32PreferredReviewModel'
 
 export function getStep32LaneLabel(state: Step32ReviewState): string {
   if (state === 'not_applicable') return 'N/A'
@@ -113,4 +117,21 @@ export function getTradeoffMessage(kind: Step32TradeoffKind): string {
     return 'Rank #1 stays protected, but continuity is reduced because the team would use 2 PCAs instead of 1.'
   }
   return 'This path is allowed, but it trades off a lower-priority quality signal.'
+}
+
+export function getStep32PreferredAvailabilityLabel(kind: Step32PreferredAvailability): string {
+  if (kind === 'rank-1') return 'Available on rank #1'
+  if (kind === 'later-ranked') return 'Available on later rank'
+  if (kind === 'unranked') return 'Available on unranked slot'
+  return 'Unavailable'
+}
+
+/** Wording for reservation scope in Step 3.2 scenario summaries (one quarter-slot). */
+export function getStep32SaveEffectLabel(): string {
+  return 'Reserving saves one slot only (+0.25).'
+}
+
+/** Near the Step 3.2 save buttons: clarifies that only the chosen slot is reserved for Step 3.4. */
+export function getStep32SaveSlotOnlyNearActionLabel(): string {
+  return 'Saving reserves only the selected slot for Step 3.4. It does not assign the whole PCA path shown above.'
 }

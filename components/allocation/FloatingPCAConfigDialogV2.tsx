@@ -1326,28 +1326,25 @@ export function FloatingPCAConfigDialogV2({
           ref={step34DetailPanelRef}
           className="relative rounded-2xl border border-blue-200 bg-blue-50/40 p-4 shadow-sm dark:bg-blue-950/10"
         >
-          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-            <div>
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+            <div className="min-w-0 flex-1 pr-2">
               <div className="text-sm font-semibold text-blue-900 dark:text-blue-100">{`${selectedStep34Detail.team} details`}</div>
               <div className="mt-1 text-xs text-muted-foreground">
                 These results belong to the selected team above.
               </div>
             </div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <Badge variant="outline" className={STEP34_DETAIL_BADGE_CLASS}>
-                {selectedStep34Detail.summaryPills[0]?.label}
-              </Badge>
-              <Badge variant="outline" className={STEP34_DETAIL_BADGE_CLASS}>
+            <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+              <Badge variant="outline" className={cn(STEP34_DETAIL_BADGE_CLASS, 'whitespace-nowrap')}>
                 {`Pending floating ${roundToNearestQuarterWithMidpoint(adjustedFTE[selectedStep34Detail.team] || 0).toFixed(2)}`}
               </Badge>
-              <Badge variant="outline" className={STEP34_DETAIL_BADGE_CLASS}>
+              <Badge variant="outline" className={cn(STEP34_DETAIL_BADGE_CLASS, 'whitespace-nowrap')}>
                 {`Assigned floating ${step3FloatingAssignedFteByTeam[selectedStep34Detail.team].toFixed(2)}`}
               </Badge>
             </div>
           </div>
 
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            {selectedStep34Detail.summaryPills.slice(1).map((pill) => (
+            {selectedStep34Detail.summaryPills.map((pill) => (
               <Badge
                 key={`${selectedStep34Detail.team}-${pill.label}`}
                 variant="outline"

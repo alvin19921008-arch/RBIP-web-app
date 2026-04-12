@@ -11,6 +11,7 @@ export type RankedSlotAllocationScore = {
   highestRankCoverage: number
   fairnessSatisfied: number
   totalFulfilledPendingQuarterSlots: number
+  gymLastResortCount: number
   duplicateFloatingCount: number
   splitPenalty: number
 }
@@ -23,8 +24,9 @@ export type RankedSlotAllocationScore = {
  * 1. ranked coverage — `highestRankCoverage`
  * 2. fairness floor — `fairnessSatisfied`
  * 3. fulfilled pending — `totalFulfilledPendingQuarterSlots`
- * 4. duplicates — `duplicateFloatingCount`
- * 5. split count — `splitPenalty`
+ * 4. gym last resort — `gymLastResortCount` (lower is better)
+ * 5. duplicates — `duplicateFloatingCount`
+ * 6. split count — `splitPenalty`
  */
 export function compareScores(a: RankedSlotAllocationScore, b: RankedSlotAllocationScore): number {
   if (a.highestRankCoverage !== b.highestRankCoverage) {
@@ -35,6 +37,9 @@ export function compareScores(a: RankedSlotAllocationScore, b: RankedSlotAllocat
   }
   if (a.totalFulfilledPendingQuarterSlots !== b.totalFulfilledPendingQuarterSlots) {
     return b.totalFulfilledPendingQuarterSlots - a.totalFulfilledPendingQuarterSlots
+  }
+  if (a.gymLastResortCount !== b.gymLastResortCount) {
+    return a.gymLastResortCount - b.gymLastResortCount
   }
   if (a.duplicateFloatingCount !== b.duplicateFloatingCount) {
     return a.duplicateFloatingCount - b.duplicateFloatingCount
@@ -92,10 +97,9 @@ function getDistinctPcaCountForTeam(allocations: PCAAllocation[], team: Team): n
 export function buildRankedSlotAllocationScore(args: BuildScoreArgs): RankedSlotAllocationScore {
   let highestRankCoverage = 0
   let totalFulfilledPendingQuarterSlots = 0
+  let gymLastResortCount = 0
   let duplicateFloatingCount = 0
   let splitPenalty = 0
-
-  const defectKinds = new Set(args.defects.map((defect) => `${defect.kind}:${defect.team}`))
 
   for (const team of args.teamOrder) {
     const pref = args.teamPrefs[team]
@@ -116,6 +120,13 @@ export function buildRankedSlotAllocationScore(args: BuildScoreArgs): RankedSlot
       if (count > 1) duplicateFloatingCount += count - 1
     }
 
+    if (pref.avoidGym && pref.gymSlot != null) {
+      const gym = pref.gymSlot
+      if (gym === 1 || gym === 2 || gym === 3 || gym === 4) {
+        gymLastResortCount += countGymLastResortUsesForTeam(args.allocations, team, gym)
+      }
+    }
+
     const distinctPcas = getDistinctPcaCountForTeam(args.allocations, team)
     if (distinctPcas > 1) splitPenalty += distinctPcas - 1
   }
@@ -130,7 +141,25 @@ export function buildRankedSlotAllocationScore(args: BuildScoreArgs): RankedSlot
     highestRankCoverage,
     fairnessSatisfied,
     totalFulfilledPendingQuarterSlots,
+    gymLastResortCount,
     duplicateFloatingCount,
     splitPenalty,
   }
+}
+
+function countGymLastResortUsesForTeam(
+  allocations: PCAAllocation[],
+  team: Team,
+  gymSlot: number
+): number {
+  let uses = 0
+  for (const allocation of allocations) {
+    for (const slot of VALID_SLOTS) {
+      if (slot !== gymSlot) continue
+      if (getSlotOwner(allocation, slot) === team) {
+        uses += 1
+      }
+    }
+  }
+  return uses
 }

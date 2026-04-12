@@ -8,12 +8,31 @@ import {
   getOutcomeSummaryLines,
   getStep32LaterOutcomeTitle,
   getStep32RecommendedContinuityOutcomeTitle,
+  getStep32SaveEffectLabel,
   getTradeoffMessage,
 } from '@/lib/features/schedule/step32V2/step32PreferredReviewCopy'
+
+export type Step32PreferredAvailability = 'rank-1' | 'later-ranked' | 'unranked' | 'unavailable'
+
+export interface Step32PreferredPcaStatus {
+  id: string
+  name: string
+  availability: Step32PreferredAvailability
+  detail: string
+}
 
 export type Step32ReviewState = 'not_applicable' | 'matched' | 'alternative' | 'unavailable'
 export type Step32CommitState = 'showable' | 'committable' | 'committable_with_tradeoff' | 'blocked'
 export type Step32TradeoffKind = 'continuity' | 'other'
+
+export interface Step32ScenarioSummary {
+  recommendedLabel: string
+  preferredOutcomeLabel: string | null
+  rankProtectionLabel: string
+  fallbackLabel: string | null
+  tradeoff: Step32TradeoffKind | null
+  saveEffect: string
+}
 
 export interface Step32PathOption {
   pathKey: string
@@ -77,6 +96,8 @@ export interface Step32TeamReview {
   recommendedPcaId: string | null
   recommendedPcaName: string | null
   preferredPcaMayStillHelpLater: boolean
+  preferredPcaStatuses: Step32PreferredPcaStatus[]
+  primaryScenario: Step32ScenarioSummary | null
 }
 
 export interface Step32PreferredReviewSummary {
@@ -178,6 +199,8 @@ function createPreferredReviewState(
     recommendedPcaId: null,
     recommendedPcaName: null,
     preferredPcaMayStillHelpLater: false,
+    preferredPcaStatuses: [],
+    primaryScenario: null,
   }
 }
 
@@ -326,6 +349,60 @@ function buildPathOptionData(args: {
   }
 
   return { option, candidateLookup: buckets.candidateLookup }
+}
+
+function getPreferredAvailabilityForPca(args: {
+  preferredPcaId: string
+  pathData: Array<{
+    option: Step32PathOption
+    candidateLookup: Map<string, { id: string; name: string; bucket: 'preferred' | 'floor' | 'non_floor' }>
+  }>
+}): Step32PreferredAvailability {
+  let onRank1 = false
+  let onLaterRank = false
+  let onUnranked = false
+  let onGym = false
+
+  for (const { option, candidateLookup } of args.pathData) {
+    if (option.pathState === 'unavailable') continue
+    if (!candidateLookup.has(args.preferredPcaId)) continue
+    if (option.kind === 'ranked') {
+      const r = option.rank ?? 0
+      if (r === 1) onRank1 = true
+      else if (r > 1) onLaterRank = true
+    } else if (option.kind === 'unranked') {
+      onUnranked = true
+    } else if (option.kind === 'gym') {
+      onGym = true
+    }
+  }
+
+  if (onRank1) return 'rank-1'
+  if (onLaterRank) return 'later-ranked'
+  if (onUnranked || onGym) return 'unranked'
+  return 'unavailable'
+}
+
+function preferredAvailabilityDetail(kind: Step32PreferredAvailability): string {
+  if (kind === 'rank-1') return 'Feasible on your 1st ranked slot.'
+  if (kind === 'later-ranked') return 'Feasible on a lower ranked slot, not on rank #1.'
+  if (kind === 'unranked') return 'Feasible only on an unranked slot.'
+  return 'No feasible path lists this PCA.'
+}
+
+function buildAlternativePrimaryScenario(args: {
+  reviewState: Step32ReviewState
+  hasLaterPreferred: boolean
+}): Step32ScenarioSummary | null {
+  if (args.reviewState !== 'alternative' || !args.hasLaterPreferred) return null
+  return {
+    recommendedLabel: 'Floor fills rank #1 and continues to rank #2',
+    preferredOutcomeLabel: 'Preferred can still take a later ranked slot',
+    rankProtectionLabel: 'Rank #1 stays protected',
+    fallbackLabel: 'If no preferred PCA is available, Step 3.4 keeps the system fallback path.',
+    tradeoff: 'continuity',
+    saveEffect: getStep32SaveEffectLabel(),
+  }
 }
 
 function buildOutcomeRowsForPcaAcrossPaths(args: {
@@ -556,6 +633,21 @@ function buildReviewableReview(args: {
   const systemPcaName = systemPath?.systemSuggestedPcaName ?? null
   const laterPreferredExists = Boolean(laterPreferred)
 
+  const preferredPcaStatuses: Step32PreferredPcaStatus[] = pref.preferredPCAIds.map((id) => {
+    const availability = getPreferredAvailabilityForPca({ preferredPcaId: id, pathData })
+    return {
+      id,
+      name: preferredPcaNames[id] ?? id,
+      availability,
+      detail: preferredAvailabilityDetail(availability),
+    }
+  })
+
+  const primaryScenario = buildAlternativePrimaryScenario({
+    reviewState,
+    hasLaterPreferred: laterPreferredExists,
+  })
+
   const review = {
     team,
     reviewApplies: true,
@@ -604,6 +696,8 @@ function buildReviewableReview(args: {
     recommendedPcaId: systemPcaId,
     recommendedPcaName: systemPcaName,
     preferredPcaMayStillHelpLater: laterPreferredExists,
+    preferredPcaStatuses,
+    primaryScenario,
   } satisfies Step32TeamReview
 
   return review

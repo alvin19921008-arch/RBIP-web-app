@@ -25,7 +25,7 @@ export type DetectRankedV2RepairDefectsContext = {
   baselineAllocations?: PCAAllocation[]
 }
 
-type AuditState = {
+export type RankedV2RepairAuditState = {
   orderedTeams: Team[]
   orderedPcas: PCAData[]
   floatingPcaIds: Set<string>
@@ -40,6 +40,193 @@ type AuditState = {
   initialPendingFTE: Record<Team, number>
   pendingFTE: Record<Team, number>
   teamPrefs: Record<Team, TeamPreferenceInfo>
+}
+
+/** @internal alias */
+type AuditState = RankedV2RepairAuditState
+
+export function buildRankedV2RepairAuditState(
+  context: DetectRankedV2RepairDefectsContext
+): RankedV2RepairAuditState {
+  return buildAuditState(context)
+}
+
+/**
+ * True when the donor team holds [slot] on [donorPcaId] as Step 3 floating (not baseline/upstream ownership).
+ */
+export function donorHasTrueStep3Ownership(
+  state: RankedV2RepairAuditState,
+  donorTeam: Team,
+  donorPcaId: string,
+  slot: Slot
+): boolean {
+  if (!state.floatingPcaIds.has(donorPcaId)) return false
+  return getTrueStep3TeamSlotsOnPca(state, donorTeam, donorPcaId).includes(slot)
+}
+
+function countTrueStep3FloatingSlotInstances(state: RankedV2RepairAuditState, team: Team): number {
+  let count = 0
+  for (const pcaId of state.distinctTrueStep3PcaIdsByTeam[team]) {
+    if (!state.floatingPcaIds.has(pcaId)) continue
+    count += getTrueStep3TeamSlotsOnPca(state, team, pcaId).length
+  }
+  return count
+}
+
+/**
+ * After hypothetically donating [slot] on [donorPcaId] from [donorTeam]:
+ * - teams with meaningful pending must still satisfy the fairness floor (non-gym when avoided); or
+ * - teams without meaningful pending must not be stripped of all true Step 3 floating slots.
+ */
+export function donationWouldBreakDonorFairnessFloor(
+  state: RankedV2RepairAuditState,
+  donorTeam: Team,
+  donorPcaId: string,
+  slot: Slot
+): boolean {
+  if (!donorHasTrueStep3Ownership(state, donorTeam, donorPcaId, slot)) return false
+  const after = hypotheticalStateAfterDonation(state, donorTeam, donorPcaId, slot)
+  if (teamHadMeaningfulPending(state, donorTeam)) {
+    return !teamHasFairnessFloorCoverage(after, donorTeam)
+  }
+  return countTrueStep3FloatingSlotInstances(after, donorTeam) === 0
+}
+
+/**
+ * Donor would lose all true Step 3 floating coverage on ranked preference slots after donating.
+ */
+export function donationWouldBreakDonorRankCoverage(
+  state: RankedV2RepairAuditState,
+  donorTeam: Team,
+  donorPcaId: string,
+  slot: Slot
+): boolean {
+  if (!teamHadMeaningfulPending(state, donorTeam)) return false
+  if (!donorHasTrueStep3Ownership(state, donorTeam, donorPcaId, slot)) return false
+  const pref = state.teamPrefs[donorTeam]
+  const rankedSet = new Set(
+    pref.rankedSlots.filter((s): s is Slot => isValidSlot(s) && !(pref.avoidGym && pref.gymSlot === s))
+  )
+  if (rankedSet.size === 0) return false
+
+  const beforeRanked = collectTrueStep3RankedSlotsForTeam(state, donorTeam, rankedSet)
+  if (beforeRanked.size === 0) return false
+
+  const after = hypotheticalStateAfterDonation(state, donorTeam, donorPcaId, slot)
+  const afterRanked = collectTrueStep3RankedSlotsForTeam(after, donorTeam, rankedSet)
+  return afterRanked.size === 0
+}
+
+export function teamCanDonateBoundedly(
+  state: RankedV2RepairAuditState,
+  donorTeam: Team,
+  donorPcaId: string,
+  slot: Slot
+): boolean {
+  if (!donorHasTrueStep3Ownership(state, donorTeam, donorPcaId, slot)) return false
+  // Do not treat "shedding" a duplicate stacked on the same clock slot as a bounded donation rescue.
+  if ((state.trueStep3SlotCountsByTeam[donorTeam].get(slot) ?? 0) > 1) return false
+  if (donationWouldBreakDonorFairnessFloor(state, donorTeam, donorPcaId, slot)) return false
+  if (donationWouldBreakDonorRankCoverage(state, donorTeam, donorPcaId, slot)) return false
+  return true
+}
+
+function collectTrueStep3RankedSlotsForTeam(
+  state: RankedV2RepairAuditState,
+  team: Team,
+  rankedSet: Set<Slot>
+): Set<Slot> {
+  const covered = new Set<Slot>()
+  for (const pcaId of state.distinctTrueStep3PcaIdsByTeam[team]) {
+    if (!state.floatingPcaIds.has(pcaId)) continue
+    for (const s of getTrueStep3TeamSlotsOnPca(state, team, pcaId)) {
+      if (rankedSet.has(s)) covered.add(s)
+    }
+  }
+  return covered
+}
+
+function cloneAuditStateSkeleton(source: RankedV2RepairAuditState): RankedV2RepairAuditState {
+  return {
+    ...source,
+    floatingPcaIds: new Set(source.floatingPcaIds),
+    allocationByStaffId: new Map(source.allocationByStaffId),
+    baselineAllocationByStaffId: new Map(source.baselineAllocationByStaffId),
+    slotCountsByTeam: createTeamRecord(() => createSlotCountMap()),
+    trueStep3SlotCountsByTeam: createTeamRecord(() => createSlotCountMap()),
+    assignedSlotsByTeam: createTeamRecord<Slot[]>(() => []),
+    trueStep3AssignedSlotsByTeam: createTeamRecord<Slot[]>(() => []),
+    distinctPcaIdsByTeam: createTeamRecord<string[]>(() => []),
+    distinctTrueStep3PcaIdsByTeam: createTeamRecord<string[]>(() => []),
+    initialPendingFTE: { ...source.initialPendingFTE },
+    pendingFTE: { ...source.pendingFTE },
+    teamPrefs: source.teamPrefs,
+  }
+}
+
+/**
+ * Hypothetical audit state after a direct donation: donor releases [slot] on [donorPcaId] (slot becomes empty on that PCA).
+ */
+function hypotheticalStateAfterDonation(
+  state: RankedV2RepairAuditState,
+  donorTeam: Team,
+  donorPcaId: string,
+  slot: Slot
+): RankedV2RepairAuditState {
+  const next = cloneAuditStateSkeleton(state)
+  const baseAlloc = state.allocationByStaffId.get(donorPcaId)
+  if (!baseAlloc) return next
+  const edited: PCAAllocation = { ...baseAlloc }
+  if (getSlotTeam(edited, slot) !== donorTeam) return next
+  if (slot === 1) edited.slot1 = null
+  else if (slot === 2) edited.slot2 = null
+  else if (slot === 3) edited.slot3 = null
+  else edited.slot4 = null
+
+  next.allocationByStaffId.set(donorPcaId, edited)
+  recomputeDerivedTeamSlotMaps(next)
+  return next
+}
+
+function recomputeDerivedTeamSlotMaps(state: RankedV2RepairAuditState): void {
+  for (const team of TEAMS) {
+    state.slotCountsByTeam[team] = createSlotCountMap()
+    state.trueStep3SlotCountsByTeam[team] = createSlotCountMap()
+    state.assignedSlotsByTeam[team] = []
+    state.trueStep3AssignedSlotsByTeam[team] = []
+    state.distinctPcaIdsByTeam[team] = []
+    state.distinctTrueStep3PcaIdsByTeam[team] = []
+  }
+
+  for (const allocation of state.allocationByStaffId.values()) {
+    const baselineAllocation = state.baselineAllocationByStaffId.get(allocation.staff_id)
+    for (const slot of VALID_SLOTS) {
+      const team = getSlotTeam(allocation, slot)
+      if (!team) continue
+      state.slotCountsByTeam[team].set(slot, (state.slotCountsByTeam[team].get(slot) ?? 0) + 1)
+      state.assignedSlotsByTeam[team].push(slot)
+      if (!state.distinctPcaIdsByTeam[team].includes(allocation.staff_id)) {
+        state.distinctPcaIdsByTeam[team].push(allocation.staff_id)
+        state.distinctPcaIdsByTeam[team].sort((a, b) => a.localeCompare(b))
+      }
+      if (!state.floatingPcaIds.has(allocation.staff_id)) continue
+      if (getSlotTeam(baselineAllocation, slot) === team) continue
+      state.trueStep3SlotCountsByTeam[team].set(
+        slot,
+        (state.trueStep3SlotCountsByTeam[team].get(slot) ?? 0) + 1
+      )
+      state.trueStep3AssignedSlotsByTeam[team].push(slot)
+      if (!state.distinctTrueStep3PcaIdsByTeam[team].includes(allocation.staff_id)) {
+        state.distinctTrueStep3PcaIdsByTeam[team].push(allocation.staff_id)
+        state.distinctTrueStep3PcaIdsByTeam[team].sort((a, b) => a.localeCompare(b))
+      }
+    }
+  }
+
+  for (const team of TEAMS) {
+    state.assignedSlotsByTeam[team].sort((a, b) => a - b)
+    state.trueStep3AssignedSlotsByTeam[team].sort((a, b) => a - b)
+  }
 }
 
 export function detectRankedV2RepairDefects(
@@ -312,6 +499,14 @@ function canRescueSlotForTeam(state: AuditState, team: Team, slot: Slot): boolea
 
     if (owner === team) continue
     if (owner == null && getRemainingAssignableSlots(pca, allocation) >= 1) {
+      return true
+    }
+    if (
+      owner != null &&
+      owner !== team &&
+      donorHasTrueStep3Ownership(state, owner, pca.id, slot) &&
+      teamCanDonateBoundedly(state, owner, pca.id, slot)
+    ) {
       return true
     }
     if (owner != null && canTeamMoveToAlternativeSlot(state, owner, slot)) {

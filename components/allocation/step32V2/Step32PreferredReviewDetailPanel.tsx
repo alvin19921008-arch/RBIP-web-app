@@ -12,11 +12,13 @@ import {
   getStep32PcaSelectAriaLabel,
   getStep32PcaSelectLabel,
   getStep32PcaSelectPlaceholder,
+  getStep32PreferredAvailabilityLabel,
   getStep32SaveDecisionHelperLeaveOpenNoSave,
   getStep32SaveDecisionHelperSavedReservation,
   getStep32SaveDecisionHelperStaleCommit,
   getStep32SaveDecisionTitle,
   getStep32SaveSelectedOutcomeLabel,
+  getStep32SaveSlotOnlyNearActionLabel,
   getTradeoffMessage,
 } from '@/lib/features/schedule/step32V2/step32PreferredReviewCopy'
 import type { SlotAssignment } from '@/lib/utils/reservationLogic'
@@ -221,15 +223,43 @@ export function Step32PreferredReviewDetailPanel({
             1. Choose an outcome
           </div>
           <div className="space-y-1 border-t border-sky-200/70 pt-3 text-sm text-muted-foreground dark:border-sky-900/50">
-            <div>
-              {`Preferred PCA list: ${
-                review.preferredPcaIds.length > 0
-                  ? review.preferredPcaIds.map((pcaId) => review.preferredPcaNames[pcaId] ?? pcaId).join(' · ')
-                  : 'None'
-              }`}
+            <div className="space-y-1">
+              <div className="text-xs font-medium text-foreground">Preferred PCA</div>
+              {review.preferredPcaStatuses?.length ? (
+                review.preferredPcaStatuses.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground"
+                  >
+                    <span className="font-medium text-foreground">{entry.name}</span>
+                    <span className="rounded-full border border-sky-200/80 bg-white/90 px-2 py-0.5 text-[11px] text-foreground dark:border-sky-800/60 dark:bg-sky-950/40">
+                      {getStep32PreferredAvailabilityLabel(entry.availability)}
+                    </span>
+                    <span className="text-[11px]">{entry.detail}</span>
+                  </div>
+                ))
+              ) : review.preferredPcaIds.length > 0 ? (
+                <div className="text-sm text-muted-foreground">
+                  {review.preferredPcaIds
+                    .map((pcaId) => review.preferredPcaNames[pcaId] ?? pcaId)
+                    .join(' · ')}
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">None</div>
+              )}
             </div>
             {rankedChoicesSummary ? <div>{`Ranked slots: ${rankedChoicesSummary}`}</div> : null}
           </div>
+          {review.primaryScenario ? (
+            <div className="mt-3 rounded-lg border border-sky-200/70 bg-sky-50/60 px-3 py-3 text-sm dark:border-sky-800/50 dark:bg-sky-950/30">
+              <div className="font-medium text-foreground">{review.primaryScenario.rankProtectionLabel}</div>
+              <div className="mt-1 text-muted-foreground">{review.primaryScenario.recommendedLabel}</div>
+              {review.primaryScenario.preferredOutcomeLabel ? (
+                <div className="mt-1 text-muted-foreground">{review.primaryScenario.preferredOutcomeLabel}</div>
+              ) : null}
+              <div className="mt-2 text-[11px] text-muted-foreground">{review.primaryScenario.saveEffect}</div>
+            </div>
+          ) : null}
           {review.outcomeOptions.length > 0 ? (
             <div className="mt-3 w-full min-w-0 overflow-x-auto overflow-y-visible">
               <div className="flex flex-nowrap gap-3">
@@ -382,6 +412,7 @@ export function Step32PreferredReviewDetailPanel({
             {getStep32SaveSelectedOutcomeLabel()}
           </button>
         </div>
+        <div className="mt-3 text-xs text-muted-foreground">{getStep32SaveSlotOnlyNearActionLabel()}</div>
         <div
           className={cn(
             'mt-3 text-xs',

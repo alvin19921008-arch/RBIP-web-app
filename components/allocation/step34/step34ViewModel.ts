@@ -2,7 +2,7 @@ import type { FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocati
 import { getQualifyingDuplicateFloatingAssignmentsForSlot } from '@/lib/features/schedule/duplicateFloatingSemantics'
 import { getTeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
 import type { PCAPreference } from '@/types/allocation'
-import type { SlotAssignmentLog, TeamAllocationLog } from '@/types/schedule'
+import type { GymUsageStatus, SlotAssignmentLog, TeamAllocationLog } from '@/types/schedule'
 import type { Team } from '@/types/staff'
 
 export interface Step34SlotCardViewModel {
@@ -25,6 +25,10 @@ export interface Step34TeamDetailViewModel {
   summaryPills: Step34SummaryPillViewModel[]
   slotCards: Step34SlotCardViewModel[]
   reasons: string[]
+}
+
+function resolveFinalGymUsageStatus(summary: TeamAllocationLog['summary']): GymUsageStatus {
+  return summary.gymUsageStatus ?? (summary.gymUsedAsLastResort ? 'used-last-resort' : 'avoided')
 }
 
 function getTimeRange(slot: 1 | 2 | 3 | 4): string {
@@ -236,7 +240,7 @@ function buildReasons(args: {
     reasons.push(line)
   }
 
-  if (teamLog.summary.gymUsedAsLastResort) {
+  if (resolveFinalGymUsageStatus(teamLog.summary) === 'used-last-resort') {
     reasons.push('Gym was used only because no non-gym path remained.')
   } else if (gymSlot === 1 || gymSlot === 2 || gymSlot === 3 || gymSlot === 4) {
     reasons.push(
@@ -320,11 +324,11 @@ export function buildStep34TeamDetailViewModel(args: {
     return `Highest ranked slot fulfilled: ${getTimeRange(slot)}`
   })()
 
+  const gymStatus = resolveFinalGymUsageStatus(teamLog.summary)
+  const gymPillLabel =
+    gymStatus === 'used-last-resort' ? 'Gym used only as last resort' : 'Gym avoided'
+
   const summaryPills: Step34SummaryPillViewModel[] = [
-    {
-      label: teamLog.summary.pendingMet ? 'Pending met' : 'Pending not fully met',
-      tone: teamLog.summary.pendingMet ? 'default' : 'muted',
-    },
     ...(highestRankedSlotFulfilledLabel
       ? [{ label: highestRankedSlotFulfilledLabel, tone: 'default' as const }]
       : []),
@@ -333,8 +337,8 @@ export function buildStep34TeamDetailViewModel(args: {
       tone: teamLog.summary.preferredPCAUsed ? 'default' : 'muted',
     },
     {
-      label: teamLog.summary.gymUsedAsLastResort ? 'Gym used only as last resort' : 'Gym avoided',
-      tone: teamLog.summary.gymUsedAsLastResort ? 'muted' : 'default',
+      label: gymPillLabel,
+      tone: gymStatus === 'used-last-resort' ? 'muted' : 'default',
     },
   ]
 

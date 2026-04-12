@@ -27,9 +27,12 @@ export function applyRankedSlotStep34TrackerSummaryFields(tracker: AllocationTra
       (assignment) => assignment.slotSelectionPhase === 'unranked-unused'
     )
 
-    teamLog.summary.gymUsedAsLastResort = teamLog.assignments.some(
+    const gymUsed = teamLog.assignments.some(
       (assignment) => assignment.slotSelectionPhase === 'gym-last-resort'
     )
+    teamLog.summary.gymUsageStatus = gymUsed ? 'used-last-resort' : 'avoided'
+    teamLog.summary.gymUsedAsLastResort = gymUsed
+    teamLog.summary.gymSlotUsed = gymUsed
 
     const tierPreferred = teamLog.assignments.some((assignment) => assignment.pcaSelectionTier === 'preferred')
     teamLog.summary.preferredPCAUsed = teamLog.summary.preferredPCAUsed || tierPreferred

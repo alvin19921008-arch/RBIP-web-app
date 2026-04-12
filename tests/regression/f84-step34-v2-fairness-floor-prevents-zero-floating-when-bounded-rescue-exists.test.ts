@@ -153,6 +153,10 @@ async function main() {
     allocations,
     pcaPool,
     teamPrefs,
+    teamOrder,
+    initialPendingFTE,
+    pendingFTE,
+    baselineAllocations,
   })
   assert.equal(
     f1Candidates.some(

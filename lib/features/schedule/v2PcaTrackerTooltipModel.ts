@@ -8,7 +8,7 @@ import {
   formatStep3FulfillmentSemanticsCompactLine,
   type Step3FloatingFulfillmentSemantics,
 } from '@/lib/features/schedule/step3FloatingFulfillmentSemantics'
-import type { TeamAllocationLog } from '@/types/schedule'
+import type { GymUsageStatus, TeamAllocationLog } from '@/types/schedule'
 import type { Team } from '@/types/staff'
 
 type AllocationAssignment = TeamAllocationLog['assignments'][number]
@@ -82,6 +82,10 @@ function buildMetaLine(args: {
   return parts.join(' · ')
 }
 
+function resolveFinalGymUsageStatus(summary: TeamAllocationLog['summary']): GymUsageStatus {
+  return summary.gymUsageStatus ?? (summary.gymUsedAsLastResort ? 'used-last-resort' : 'avoided')
+}
+
 function buildTotalSubvalue(args: {
   allocationLog?: TeamAllocationLog
   bufferAssignments: V2PcaTrackerTooltipBufferAssignment[]
@@ -113,7 +117,9 @@ function buildStatusCell(allocationLog?: TeamAllocationLog): Pick<V2PcaTrackerSu
 
   const value = allocationLog.summary.pendingMet ? 'Met' : 'Still short'
   const amPmLabel = allocationLog.summary.amPmBalanced ? 'AM/PM balanced' : 'AM/PM mixed'
-  const gymLabel = allocationLog.summary.gymSlotUsed ? 'Gym used' : 'Gym avoided'
+  const gymStatus = resolveFinalGymUsageStatus(allocationLog.summary)
+  const gymLabel =
+    gymStatus === 'used-last-resort' ? 'Gym used only as last resort' : 'Gym avoided'
   return {
     value,
     subvalue: `${amPmLabel} · ${gymLabel}`,

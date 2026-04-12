@@ -141,6 +141,9 @@ export interface ScheduleCalculations {
 // Allocation Tracking System (Step 3.4)
 // ============================================================================
 
+/** Canonical final gym outcome for ranked V2 (avoid-gym teams): one of two end states. */
+export type GymUsageStatus = 'avoided' | 'used-last-resort'
+
 /**
  * Tracks how a specific slot was assigned to a team.
  * Used for tooltip display and debugging.
@@ -211,6 +214,8 @@ export interface TeamAllocationLog {
     nonFloorPCAsUsed: number
     amPmBalanced: boolean
     gymSlotUsed: boolean  // true if gym slot was assigned despite avoidance
+    /** Canonical final gym state for ranked V2; UI should prefer this over legacy booleans. */
+    gymUsageStatus?: GymUsageStatus
     pendingMet?: boolean
     highestRankedSlotFulfilled?: number | null
     usedUnrankedSlot?: boolean
