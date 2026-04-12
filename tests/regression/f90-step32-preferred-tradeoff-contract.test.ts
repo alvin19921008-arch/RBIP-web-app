@@ -33,44 +33,37 @@ function makePca(id: string, availableSlots: number[], floor?: 'upper' | 'lower'
   } as PCAData
 }
 
-function makePreference(partial: Partial<PCAPreference> & { id: string; team: Team }): PCAPreference {
-  return {
-    preferred_pca_ids: [],
-    preferred_slots: [],
-    gym_schedule: 4,
-    avoid_gym_schedule: true,
-    floor_pca_selection: 'upper',
-    ...partial,
-  }
-}
-
 async function main() {
   const preview = computeStep3V2ReservationPreview({
     pcaPreferences: [
-      makePreference({
+      {
         id: 'pref-fo',
         team: 'FO',
-        preferred_pca_ids: ['pca-a'],
+        preferred_pca_ids: ['preferred-a'],
         preferred_slots: [1, 3],
-      }),
+        gym_schedule: 4,
+        avoid_gym_schedule: true,
+        floor_pca_selection: 'upper',
+      } satisfies PCAPreference,
     ],
     adjustedPendingFTE: { ...emptyTeamRecord(0), FO: 0.5 },
-    floatingPCAs: [makePca('pca-a', [3], 'upper'), makePca('floor-m', [1, 3], 'upper')],
+    floatingPCAs: [makePca('preferred-a', [3], 'upper'), makePca('floor-m', [1, 3], 'upper')],
     existingAllocations: [],
   }) as any
 
   const fo = preview.teamReviews?.FO
-  assert.equal(fo?.reviewState, 'alternative')
   assert.equal(fo?.systemSuggestedPathKey, 'ranked:1')
   assert.equal(
-    fo?.outcomeOptions?.find((option: { outcomeKey: string }) => option.outcomeKey === 'preferred-ranked:3')
-      ?.commitState,
+    fo?.pathOptions?.find((option: { pathKey: string }) => option.pathKey === 'ranked:3')?.commitState,
     'committable_with_tradeoff'
   )
+  assert.equal(
+    fo?.pathOptions?.find((option: { pathKey: string }) => option.pathKey === 'ranked:3')?.tradeoffKind,
+    'continuity'
+  )
   assert.deepEqual(
-    fo?.outcomeOptions?.find((option: { outcomeKey: string }) => option.outcomeKey === 'preferred-ranked:3')
-      ?.summaryLines,
-    ['Protects rank #1', 'Keeps preferred on rank #2', 'Uses 2 PCAs']
+    fo?.pathOptions?.find((option: { pathKey: string }) => option.pathKey === 'ranked:3')?.note,
+    'Rank #1 stays protected, but continuity is reduced because the team would use 2 PCAs instead of 1.'
   )
 }
 

@@ -22,6 +22,12 @@ export interface FloatingPCAAllocationContextV2 {
     pcaId: string
     source?: 'step32' | 'step33'
   }>
+  committedStep3Assignments?: Array<{
+    team: Team
+    slot: number
+    pcaId: string
+    source?: 'step32' | 'step33'
+  }>
 }
 
 export interface FloatingPCAAllocationResultV2 {

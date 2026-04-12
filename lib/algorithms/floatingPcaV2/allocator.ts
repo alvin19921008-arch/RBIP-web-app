@@ -98,6 +98,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
     extraCoverageMode = 'none',
     preferenceSelectionMode = 'legacy',
     selectedPreferenceAssignments = [],
+    committedStep3Assignments = [],
   } = context
 
   const allocations = existingAllocations.map((allocation) => ({ ...allocation }))
@@ -135,7 +136,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
   const upstreamCoverageByTeamSlot = buildUpstreamCoverageKindByTeamSlot({
     existingAllocations,
     floatingPcaIds,
-    excludeStep3OwnedSelections: selectedPreferenceAssignments.map((assignment) => ({
+    excludeStep3OwnedSelections: committedStep3Assignments.map((assignment) => ({
       team: assignment.team,
       slot: assignment.slot,
       pcaId: assignment.pcaId,

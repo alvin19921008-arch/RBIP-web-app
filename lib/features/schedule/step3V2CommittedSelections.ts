@@ -147,8 +147,8 @@ export async function runStep3V2CommittedSelections(
     specialPrograms: args.specialPrograms,
     mode: args.mode ?? 'standard',
     extraCoverageMode: args.extraCoverageMode ?? 'none',
-    preferenceSelectionMode: args.preferenceSelectionMode ?? 'selected_only',
-    selectedPreferenceAssignments: committedAssignments.map((assignment) => ({
+    preferenceSelectionMode: 'legacy',
+    committedStep3Assignments: committedAssignments.map((assignment) => ({
       team: assignment.team,
       slot: assignment.slot,
       pcaId: assignment.pcaId,

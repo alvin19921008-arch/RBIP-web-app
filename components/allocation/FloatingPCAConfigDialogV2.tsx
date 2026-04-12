@@ -50,6 +50,8 @@ import {
 import { buildV2Step31ScarcitySummary } from '@/lib/features/schedule/step31V2ScarcitySummary'
 import { runStep3V2CommittedSelections } from '@/lib/features/schedule/step3V2CommittedSelections'
 import { computeStep3V2ReservationPreview } from '@/lib/features/schedule/step3V2ReservationPreview'
+import { Step32PreferredReviewDetailPanel } from '@/components/allocation/step32V2/Step32PreferredReviewDetailPanel'
+import { Step32PreferredReviewLane } from '@/components/allocation/step32V2/Step32PreferredReviewLane'
 import { computeAdjacentSlotReservations, type SlotAssignment } from '@/lib/utils/reservationLogic'
 import { buildStep34TeamDetailViewModel } from './step34/step34ViewModel'
 
@@ -63,7 +65,6 @@ const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 const STEP34_DETAIL_BADGE_CLASS =
   'border-blue-400/90 bg-white font-semibold text-blue-950 shadow-sm hover:bg-white dark:border-blue-500 dark:bg-blue-950/70 dark:text-blue-50 dark:hover:bg-blue-950/80'
 
-type Step32Decision = 'system' | 'keep-preferred' | 'skip'
 type Step33Decision = 'use' | 'skip'
 
 function getStepDisplayLabel(step: Step3V2Step): string {
@@ -293,8 +294,12 @@ export function FloatingPCAConfigDialogV2({
   const [originalRoundedFTE, setOriginalRoundedFTE] = useState<Record<Team, number>>(emptyTeamRecord())
   const [teamOrder, setTeamOrder] = useState<Team[]>([])
   const [step31Preview, setStep31Preview] = useState<Step31PreviewState>({ status: 'idle' })
-  const [step32Decisions, setStep32Decisions] = useState<Partial<Record<Team, Step32Decision>>>({})
   const [selectedStep32Team, setSelectedStep32Team] = useState<Team | null>(null)
+  const [selectedStep32OutcomeByTeam, setSelectedStep32OutcomeByTeam] = useState<Partial<Record<Team, string>>>({})
+  const [selectedStep32PcaByTeam, setSelectedStep32PcaByTeam] = useState<Partial<Record<Team, string>>>({})
+  const [step32CommittedAssignmentsByTeam, setStep32CommittedAssignmentsByTeam] = useState<
+    Partial<Record<Team, SlotAssignment | null>>
+  >({})
   const [selectedStep33Team, setSelectedStep33Team] = useState<Team | null>(null)
   const [step33Decisions, setStep33Decisions] = useState<Partial<Record<Team, Step33Decision>>>({})
   const [step33SelectedOptionByTeam, setStep33SelectedOptionByTeam] = useState<Partial<Record<Team, string>>>({})
@@ -304,6 +309,9 @@ export function FloatingPCAConfigDialogV2({
   const step34DetailPanelRef = useRef<HTMLDivElement | null>(null)
   const step34TeamButtonRefs = useRef<Map<Team, HTMLButtonElement>>(new Map())
   const [step34DetailBeakCenterX, setStep34DetailBeakCenterX] = useState<number | null>(null)
+  const step32DetailPanelRef = useRef<HTMLDivElement | null>(null)
+  const step32TeamButtonRefs = useRef<Map<Team, HTMLButtonElement>>(new Map())
+  const [step32DetailBeakCenterX, setStep32DetailBeakCenterX] = useState<number | null>(null)
   const v2TeamLaneMeasureRef = useRef<HTMLDivElement | null>(null)
   const v2Step34SlotsRowMeasureRef = useRef<HTMLDivElement | null>(null)
   const v2DialogHeaderTitleRef = useRef<HTMLDivElement | null>(null)
@@ -325,8 +333,10 @@ export function FloatingPCAConfigDialogV2({
     setOriginalRoundedFTE(roundedInitial)
     setTeamOrder(sortedTeams)
     setCurrentStep('3.1')
-    setStep32Decisions({})
     setSelectedStep32Team(null)
+    setSelectedStep32OutcomeByTeam({})
+    setSelectedStep32PcaByTeam({})
+    setStep32CommittedAssignmentsByTeam({})
     setSelectedStep33Team(null)
     setStep33Decisions({})
     setStep33SelectedOptionByTeam({})
@@ -452,6 +462,11 @@ export function FloatingPCAConfigDialogV2({
     [pcaPreferences, adjustedFTE, floatingPCAs, existingAllocations, staffOverrides]
   )
 
+  const reviewableStep32Teams = useMemo(
+    () => teamOrder.filter((team) => reservationPreview.teamReviews[team]?.reviewApplies),
+    [reservationPreview.teamReviews, teamOrder]
+  )
+
   const adjacentPreview = useMemo(
     () =>
       computeAdjacentSlotReservations(
@@ -480,21 +495,140 @@ export function FloatingPCAConfigDialogV2({
     }
   }, [visibleSteps, currentStep])
 
-  const flaggedTeams = useMemo(
-    () => teamOrder.filter((team) => reservationPreview.summary.needsAttentionTeams.includes(team)),
-    [teamOrder, reservationPreview.summary.needsAttentionTeams]
-  )
-
   const adjacentTeams = useMemo(
     () => teamOrder.filter((team) => (adjacentPreview.adjacentReservations[team] || []).length > 0),
     [teamOrder, adjacentPreview.adjacentReservations]
   )
 
   useEffect(() => {
-    if (!selectedStep32Team || !flaggedTeams.includes(selectedStep32Team)) {
-      setSelectedStep32Team(flaggedTeams[0] ?? null)
+    if (!selectedStep32Team || !reviewableStep32Teams.includes(selectedStep32Team)) {
+      setSelectedStep32Team(reviewableStep32Teams[0] ?? null)
     }
-  }, [flaggedTeams, selectedStep32Team])
+  }, [reviewableStep32Teams, selectedStep32Team])
+
+  const selectedStep32Review = selectedStep32Team ? reservationPreview.teamReviews[selectedStep32Team] : null
+  const selectedStep32OutcomeKey = selectedStep32Team ? selectedStep32OutcomeByTeam[selectedStep32Team] ?? null : null
+  const selectedStep32PcaId = selectedStep32Team ? selectedStep32PcaByTeam[selectedStep32Team] ?? null : null
+
+  const selectedStep32Outcome = useMemo(() => {
+    if (!selectedStep32Review) return null
+    return (
+      selectedStep32Review.outcomeOptions.find((option) => option.outcomeKey === selectedStep32OutcomeKey) ??
+      selectedStep32Review.outcomeOptions[0] ??
+      null
+    )
+  }, [selectedStep32OutcomeKey, selectedStep32Review])
+
+  const selectedStep32Path = useMemo(() => {
+    if (!selectedStep32Review) return null
+    if (!selectedStep32Outcome) return selectedStep32Review.pathOptions[0] ?? null
+    return (
+      selectedStep32Review.pathOptions.find((path) => path.pathKey === selectedStep32Outcome.primaryPathKey) ??
+      selectedStep32Review.pathOptions[0] ??
+      null
+    )
+  }, [selectedStep32Outcome, selectedStep32Review])
+
+  const selectedStep32CommittedAssignment = selectedStep32Team
+    ? step32CommittedAssignmentsByTeam[selectedStep32Team] ?? null
+    : null
+
+  useEffect(() => {
+    if (!selectedStep32Team || !selectedStep32Review) return
+    if (selectedStep32Review.outcomeOptions.length === 0) return
+
+    const hasValidOutcome =
+      selectedStep32OutcomeKey != null &&
+      selectedStep32Review.outcomeOptions.some((option) => option.outcomeKey === selectedStep32OutcomeKey)
+
+    if (!hasValidOutcome) {
+      const nextOutcomeKey = selectedStep32Review.outcomeOptions[0]?.outcomeKey ?? null
+      if (nextOutcomeKey != null) {
+        setSelectedStep32OutcomeByTeam((prev) => ({
+          ...prev,
+          [selectedStep32Team]: nextOutcomeKey,
+        }))
+      }
+      return
+    }
+
+    const validPcaIds = new Set(
+      [
+        ...(selectedStep32Path?.preferredCandidates ?? []),
+        ...(selectedStep32Path?.floorCandidates ?? []),
+        ...(selectedStep32Path?.nonFloorCandidates ?? []),
+      ].map((candidate) => candidate.id)
+    )
+
+    if (selectedStep32PcaId != null && validPcaIds.has(selectedStep32PcaId)) {
+      return
+    }
+
+    const nextPcaId =
+      selectedStep32Path?.systemSuggestedPcaId ??
+      selectedStep32Path?.preferredCandidates[0]?.id ??
+      selectedStep32Path?.floorCandidates[0]?.id ??
+      selectedStep32Path?.nonFloorCandidates[0]?.id ??
+      null
+
+    if (nextPcaId != null) {
+      setSelectedStep32PcaByTeam((prev) => ({
+        ...prev,
+        [selectedStep32Team]: nextPcaId,
+      }))
+    }
+  }, [
+    selectedStep32OutcomeKey,
+    selectedStep32PcaId,
+    selectedStep32Path,
+    selectedStep32Review,
+    selectedStep32Team,
+  ])
+
+  const handleCommitSelectedStep32Outcome = useCallback(() => {
+    if (!selectedStep32Team || !selectedStep32Review || !selectedStep32Outcome || !selectedStep32Path) return
+
+    const pcaId =
+      selectedStep32PcaId ??
+      selectedStep32Path.systemSuggestedPcaId ??
+      selectedStep32Path.preferredCandidates[0]?.id ??
+      selectedStep32Path.floorCandidates[0]?.id ??
+      selectedStep32Path.nonFloorCandidates[0]?.id ??
+      null
+
+    if (!pcaId) return
+
+    const pcaName =
+      [
+        ...selectedStep32Path.preferredCandidates,
+        ...selectedStep32Path.floorCandidates,
+        ...selectedStep32Path.nonFloorCandidates,
+      ].find((candidate) => candidate.id === pcaId)?.name ??
+      selectedStep32Path.systemSuggestedPcaName ??
+      selectedStep32Review.recommendedPcaName ??
+      pcaId
+
+    setStep32CommittedAssignmentsByTeam((prev) => ({
+      ...prev,
+      [selectedStep32Team]: {
+        team: selectedStep32Team,
+        slot: selectedStep32Path.slot,
+        pcaId,
+        pcaName,
+      },
+    }))
+  }, [selectedStep32Outcome, selectedStep32PcaId, selectedStep32Path, selectedStep32Review, selectedStep32Team])
+
+  const handleLeaveOpenStep32 = useCallback(() => {
+    if (!selectedStep32Team) return
+    setStep32CommittedAssignmentsByTeam((prev) => {
+      const next = { ...prev }
+      delete next[selectedStep32Team]
+      return next
+    })
+  }, [selectedStep32Team])
+
+  const handleClearCommitStep32 = handleLeaveOpenStep32
 
   useEffect(() => {
     if (!selectedStep33Team || !adjacentTeams.includes(selectedStep33Team)) {
@@ -506,7 +640,6 @@ export function FloatingPCAConfigDialogV2({
   const backTarget = getStep3V2BackTarget({ currentStep, visibleSteps })
   const nextTarget = currentStepIndex >= 0 ? visibleSteps[currentStepIndex + 1] ?? null : null
 
-  const selectedReservation = selectedStep32Team ? reservationPreview.teamReservations[selectedStep32Team] : null
   const selectedAdjacentOptions = useMemo(
     () => (selectedStep33Team ? adjacentPreview.adjacentReservations[selectedStep33Team] || [] : []),
     [adjacentPreview.adjacentReservations, selectedStep33Team]
@@ -535,20 +668,14 @@ export function FloatingPCAConfigDialogV2({
   }, [selectedAdjacentOptions, selectedStep33Team, step33SelectedOptionByTeam])
 
   const step32AssignmentsForSave = useMemo<SlotAssignment[]>(() => {
-    return flaggedTeams.flatMap((team) => {
-      const decision = step32Decisions[team]
-      const reservation = reservationPreview.teamReservations[team]
-      if (decision !== 'system' || !reservation?.recommendedPcaId) return []
+    return teamOrder.flatMap((team) => {
+      const assignment = step32CommittedAssignmentsByTeam[team]
+      if (!assignment) return []
       return [
-        {
-          team,
-          slot: reservation.slot,
-          pcaId: reservation.recommendedPcaId,
-          pcaName: reservation.recommendedPcaName ?? reservation.pcaNames[reservation.recommendedPcaId] ?? reservation.recommendedPcaId,
-        },
+        assignment,
       ]
     })
-  }, [flaggedTeams, reservationPreview.teamReservations, step32Decisions])
+  }, [step32CommittedAssignmentsByTeam, teamOrder])
 
   const step33AssignmentsForSave = useMemo<SlotAssignment[]>(() => {
     return adjacentTeams.flatMap((team) => {
@@ -594,7 +721,7 @@ export function FloatingPCAConfigDialogV2({
         step32Assignments: step32AssignmentsForSave,
         step33Assignments: step33AssignmentsForSave,
         mode: 'standard',
-        preferenceSelectionMode: 'selected_only',
+        preferenceSelectionMode: 'legacy',
         extraCoverageMode: 'round-robin-team-order',
       })
       setStep34PreviewResult(result)
@@ -643,6 +770,49 @@ export function FloatingPCAConfigDialogV2({
     return () => window.removeEventListener('resize', updateBeak)
   }, [currentStep, step34Loading, selectedStep34Team, step34PreviewResult, teamOrder])
 
+  const registerStep32TeamButtonRef = useCallback((team: Team, node: HTMLButtonElement | null) => {
+    if (node) {
+      step32TeamButtonRefs.current.set(team, node)
+    } else {
+      step32TeamButtonRefs.current.delete(team)
+    }
+  }, [])
+
+  useLayoutEffect(() => {
+    if (currentStep !== '3.2' || !selectedStep32Team || !selectedStep32Review) {
+      setStep32DetailBeakCenterX(null)
+      return
+    }
+
+    const updateBeak = () => {
+      const detail = step32DetailPanelRef.current
+      const btn = step32TeamButtonRefs.current.get(selectedStep32Team)
+      if (!detail || !btn) {
+        setStep32DetailBeakCenterX(null)
+        return
+      }
+      const detailRect = detail.getBoundingClientRect()
+      const btnRect = btn.getBoundingClientRect()
+      const center = btnRect.left + btnRect.width / 2 - detailRect.left
+      const clamped = Math.min(Math.max(center, 24), Math.max(detailRect.width - 24, 24))
+      setStep32DetailBeakCenterX(clamped)
+    }
+
+    updateBeak()
+    window.addEventListener('resize', updateBeak)
+    window.addEventListener('scroll', updateBeak, true)
+    return () => {
+      window.removeEventListener('resize', updateBeak)
+      window.removeEventListener('scroll', updateBeak, true)
+    }
+  }, [
+    currentStep,
+    dialogFitWidthPx,
+    selectedStep32Review,
+    selectedStep32Team,
+    teamOrder,
+  ])
+
   const selectedStep34Detail = useMemo(() => {
     if (!step34PreviewResult || !selectedStep34Team) return null
     return buildStep34TeamDetailViewModel({
@@ -668,14 +838,19 @@ export function FloatingPCAConfigDialogV2({
       const headerW =
         (titleEl?.offsetWidth ?? 0) + (stepperEl?.offsetWidth ?? 0) + 24
       let detailW = 0
+      let step32W = 0
       if (currentStep === '3.4') {
         const slotsRow = v2Step34SlotsRowMeasureRef.current
         const slotsW = slotsRow?.offsetWidth ?? 0
         if (slotsW > 0) {
           detailW = slotsW + 40
         }
+      } else if (currentStep === '3.2') {
+        // Step 3.2 is a rich, two-surface UI (lane + detail). Keep it wide enough to avoid
+        // "narrow dialog" scroll fatigue, while still clamping to viewport.
+        step32W = 1160
       }
-      const innerContent = Math.max(laneW, headerW, detailW, 280)
+      const innerContent = Math.max(laneW, headerW, detailW, step32W, 280)
       const horizontalChrome = 56
       const padded = innerContent + horizontalChrome
       const vw = typeof window !== 'undefined' ? window.innerWidth : 1280
@@ -701,7 +876,6 @@ export function FloatingPCAConfigDialogV2({
     step31Preview,
     reservationPreview,
     adjacentPreview,
-    flaggedTeams,
     step34Loading,
     step34PreviewResult,
     selectedStep34Detail,
@@ -848,137 +1022,51 @@ export function FloatingPCAConfigDialogV2({
 
   const renderStep32 = () => (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Info className="h-4 w-4 text-blue-600" />
-        <span>
-          {`${reservationPreview.summary.teamsChecked} checked, ${flaggedTeams.length} need attention, ${reservationPreview.summary.autoContinueTeams.length} continue automatically`}
-          {reservationPreview.summary.gymRiskTeams.length > 0 ? `, gym risk: ${formatTeamList(reservationPreview.summary.gymRiskTeams)}` : ''}
-          .
-        </span>
+      <div className="min-w-0">
+        <Step32PreferredReviewLane
+          gymRiskTeams={reservationPreview.summary.gymRiskTeams}
+          teamOrder={teamOrder}
+          teamReviews={reservationPreview.teamReviews}
+          selectedTeam={selectedStep32Team}
+          onSelectTeam={setSelectedStep32Team}
+          registerTeamButtonRef={registerStep32TeamButtonRef}
+        />
       </div>
 
-      <div className="flex justify-center pb-1">
-        <div className="max-w-full overflow-x-auto">
-          <div
-            ref={v2TeamLaneMeasureRef}
-            className="inline-flex flex-nowrap items-center gap-2"
-          >
-        {teamOrder.map((team, index) => {
-          const isFlagged = flaggedTeams.includes(team)
-          const isSelected = selectedStep32Team === team
-          const reservation = reservationPreview.teamReservations[team]
-          const compactState = !isFlagged
-            ? 'No manual review needed'
-            : reservation?.preferredPcaMayStillHelpLater
-              ? 'Preferred PCA still possible'
-              : 'No preferred PCA a/v here'
-          return (
-            <button
-              key={team}
-              type="button"
-              onClick={() => isFlagged && setSelectedStep32Team(team)}
-              className={cn(
-                'min-w-[118px] rounded-xl border px-3 py-2 text-left text-sm transition-colors',
-                isFlagged ? 'border-blue-300 bg-blue-50/80 text-blue-900 dark:bg-blue-950/30 dark:text-blue-100' : 'border-border bg-muted/10 text-muted-foreground opacity-60',
-                isSelected && 'ring-2 ring-blue-500'
-              )}
-            >
-              <div className="text-[11px] text-muted-foreground">{getOrderLabel(index + 1)}</div>
-              <div className="font-semibold">{team}</div>
-              {isFlagged && reservation ? (
-                <>
-                  <div className="mt-1 text-[11px] leading-4">{`Pending ${roundToNearestQuarterWithMidpoint(adjustedFTE[team] || 0).toFixed(2)}`}</div>
-                  <div className="text-[11px] leading-4">{`Assigned ${step3FloatingAssignedFteByTeam[team].toFixed(2)}`}</div>
-                  <div className="mt-2 inline-flex rounded-md bg-blue-100 px-2 py-1 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/50 dark:text-blue-100">
-                    {getSlotTime(reservation.slot)}
-                  </div>
-                </>
-              ) : (
-                <div className="mt-1 text-[11px] leading-4">No manual review needed</div>
-              )}
-              {isFlagged ? (
-                <div className="mt-2 text-[11px] font-medium leading-4">{compactState}</div>
-              ) : null}
-            </button>
-          )
-        })}
+      <div className="min-w-0">
+        {selectedStep32Review ? (
+          <Step32PreferredReviewDetailPanel
+            detailPanelRef={step32DetailPanelRef}
+            beakCenterX={step32DetailBeakCenterX}
+            review={selectedStep32Review}
+            queuePosition={Math.max(1, teamOrder.indexOf(selectedStep32Team as Team) + 1)}
+            selectedOutcomeKey={selectedStep32OutcomeKey}
+            onSelectOutcome={(outcomeKey) =>
+              selectedStep32Team &&
+              setSelectedStep32OutcomeByTeam((prev) => ({
+                ...prev,
+                [selectedStep32Team]: outcomeKey,
+              }))
+            }
+            selectedPcaId={selectedStep32PcaId}
+            onSelectPca={(pcaId) =>
+              selectedStep32Team &&
+              setSelectedStep32PcaByTeam((prev) => ({
+                ...prev,
+                [selectedStep32Team]: pcaId,
+              }))
+            }
+            committedAssignment={selectedStep32CommittedAssignment}
+            onCommit={handleCommitSelectedStep32Outcome}
+            onLeaveOpen={handleLeaveOpenStep32}
+            onClearCommit={handleClearCommitStep32}
+          />
+        ) : (
+          <div className="rounded-xl border bg-background p-4 text-sm text-muted-foreground">
+            No teams need manual preferred-slot review in this run.
           </div>
-        </div>
+        )}
       </div>
-
-      {selectedReservation && selectedStep32Team ? (
-        <div className="space-y-4 rounded-xl border border-blue-200 bg-background p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-sm font-semibold text-foreground">{selectedStep32Team}</div>
-            <Badge>{`${getOrderLabel(teamOrder.indexOf(selectedStep32Team) + 1)} in order`}</Badge>
-            <Badge variant="outline">{`Pending ${roundToNearestQuarterWithMidpoint(adjustedFTE[selectedStep32Team] || 0).toFixed(2)}`}</Badge>
-            <Badge variant="outline">{`Assigned ${step3FloatingAssignedFteByTeam[selectedStep32Team].toFixed(2)}`}</Badge>
-            <Badge variant="secondary">Needs decision</Badge>
-          </div>
-
-          <div className="grid gap-2 md:grid-cols-4">
-            {(selectedReservation.rankedChoices || []).map((choice) => (
-              <div key={`${selectedStep32Team}-${choice.slot}`} className="rounded-lg border bg-muted/20 p-3">
-                <div className="text-xs font-semibold text-foreground">{choice.label}</div>
-                <div className="mt-1 text-sm text-muted-foreground">{`Slot ${choice.slot} · ${getSlotTime(choice.slot)}`}</div>
-              </div>
-            ))}
-            <div className="rounded-lg border bg-muted/20 p-3">
-              <div className="text-xs font-semibold text-foreground">Other slots</div>
-              <div className="mt-1 text-sm text-muted-foreground">
-                {selectedReservation.otherSlots && selectedReservation.otherSlots.length > 0
-                  ? selectedReservation.otherSlots.map((slot) => `Slot ${slot} · ${getSlotTime(slot)}`).join(', ')
-                  : 'None'}
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4 dark:bg-blue-950/20">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-200">
-              {`${selectedStep32Team} review`}
-            </div>
-            <div className="mt-2 space-y-1 text-sm text-muted-foreground">
-              <div>
-                {formatNoPreferredPcaAvailabilityLine({
-                  team: selectedStep32Team,
-                  firstChoiceSlot: selectedReservation.slot,
-                  pcaPreferences,
-                  floatingPCAs,
-                })}
-              </div>
-              <div>{`System plans to use ${selectedReservation.recommendedPcaName || 'another available PCA'} first.`}</div>
-              {selectedReservation.preferredPcaMayStillHelpLater ? (
-                <div>{`Preferred PCA may still be used later for ${selectedReservation.rankedChoices?.[1] ? getSlotTime(selectedReservation.rankedChoices[1].slot) : 'a later ranked choice'}.`}</div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {(['system', 'keep-preferred', 'skip'] as Step32Decision[]).map((decision) => (
-              <Button
-                key={decision}
-                variant={step32Decisions[selectedStep32Team] === decision ? 'default' : 'outline'}
-                onClick={() =>
-                  setStep32Decisions((prev) => ({
-                    ...prev,
-                    [selectedStep32Team]: decision,
-                  }))
-                }
-              >
-                {decision === 'system'
-                  ? 'Use system plan'
-                  : decision === 'keep-preferred'
-                    ? 'Try to keep preferred PCA'
-                    : 'Skip manual change'}
-              </Button>
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div className="rounded-xl border bg-background p-4 text-sm text-muted-foreground">
-          No teams need manual preferred-slot review in this run.
-        </div>
-      )}
     </div>
   )
 

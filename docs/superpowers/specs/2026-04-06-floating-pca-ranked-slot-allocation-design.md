@@ -4,11 +4,17 @@ Status: approved design for planning, revised after 2026-04-09 investigation
 
 Date: 2026-04-06
 
-Revised: 2026-04-09
+Revised: 2026-04-11
 
 Semantics addendum: 2026-04-10 (duplicate-floating narrowing and floating-eligible terminology)
 
+Engine refinement: upstream provenance, Step 3 ownership, Step 3.4 preview ↔ V2 tooltip alignment, duplicate-floating tracking (see **V2 allocation engine refinement** below)
+
 Implementation notes: 2026-04-10 (wizard preview/save path + `executeSlotAssignments` executed list)
+
+V2 wizard handoff (Step 3.2 / 3.3 → Step 3.4): 2026-04-12 — executed reservations + `committedStep3Assignments` + `preferenceSelectionMode: 'legacy'`; see **V2 business logic log (consolidated)** below. Step 3.2 product/UI spec (review surface, not allocator authority): `docs/superpowers/specs/2026-04-11-v2-step32-preferred-review-design.md`.
+
+Code layout (V1 / V2 extraction): 2026-04-10 — ranked V2 vs legacy V1 vs shared helpers are split into explicit module paths; see **Code layout: V1 vs V2 extraction** below. Extraction spec/plan: `docs/superpowers/specs/2026-04-10-floating-pca-v1-v2-extraction-design.md`, `docs/superpowers/plans/2026-04-10-floating-pca-v1-v2-extraction-plan.md`.
 
 Owner: chat-approved with user
 
@@ -172,10 +178,11 @@ This fairness floor belongs primarily to the audit-and-repair stage, not as a ha
 The ranked V2 engine must preserve the team's ranked slots even when Step 3.2 or Step 3.3 produced manual selections.
 
 Approved rule:
-- manual selections may narrow or bias preferred PCA choice
-- manual selections must not erase the base `preferred_slots` ranking
+- **V2 wizard path (`runStep3V2CommittedSelections` → Step 3.4):** after Step 3.2 / 3.3 assignments are executed into allocations and pending, the ranked V2 allocator is called with **`preferenceSelectionMode: 'legacy'`** and the executed picks passed separately as **`committedStep3Assignments`** on `FloatingPCAAllocationContextV2`. The engine uses **full base `pcaPreferences`** (including the full `preferred_pca_ids` list and `preferred_slots` rank order). Step 3.2 / 3.3 commits are **stateful reservations and provenance**, not a replacement of the team's remaining preferred-PCA identity for the rest of Step 3.4.
+- **Explicit selection path:** callers that intentionally want manual PCA ids to drive effective preferences may still use **`preferenceSelectionMode: 'selected_only'`** with **`selectedPreferenceAssignments`**; `buildEffectiveRankedPreferences` may then replace effective `preferred_pca_ids` per team **without** clearing `preferred_slots` (rank order preserved). This path is **distinct** from the V2 wizard Step 3.2 / 3.3 handoff above.
+- In all cases, manual selection plumbing must **not** erase the base **`preferred_slots`** ranking.
 
-This fixes the earlier `selected_only` contract failure.
+This fixes the earlier failure mode where the wizard path used `selected_only` in a way that dropped ranked intent or collapsed preferred identity inappropriately.
 
 ### 9. Gym policy
 - If `avoid gym` is enabled, the allocator should avoid the gym slot during ranked, unranked, and duplicate fallback whenever another legal path exists.
@@ -188,6 +195,8 @@ Approved interpretation:
 - core Step 3 V2 fulfillment should be evaluated with `extraCoverageMode: 'none'`
 - if any extra-coverage mode is retained for diagnostics or experiments, it must be treated as a separate post-core augmentation
 - extra coverage must not be allowed to hide or redefine the quality metrics for A-C
+
+**V2 refinement (product + diagnostics):** see **§ V2 allocation engine refinement → “Extra coverage: V2 handling and interpretation”** for when the pass runs, tracker labeling, and how extra slots relate to ownership / “assigned vs avg” interpretation.
 
 ## Recommended Architecture
 
@@ -231,13 +240,13 @@ Recommended UI language:
   - `Gym-ranked slots stay avoided unless no other valid path remains.`
 
 ### Step 3.2
-File area: `lib/utils/reservationLogic.ts`
+File area: `lib/utils/reservationLogic.ts` (execution); preview / wizard wiring in `lib/features/schedule/` and V2 dialog.
 
-Revised role:
-- Step 3.2 remains a light manual aid.
-- It may secure a clean preferred-PCA match for a currently feasible ranked slot.
-- It must not become the source of truth for final ranked-slot fulfillment.
-- Step 3.2 selections may bias preferred PCA handling, but must not wipe ranked-slot order for Step 3.4.
+Revised role (business logic only):
+- Step 3.2 remains a **non-authoritative** manual aid relative to Step 3.4 ranked V2.
+- Committed Step 3.2 floating assignments are **executed** before Step 3.4 (same `executeSlotAssignments` family as other reservations) so pending FTE and slot occupancy match what the allocator sees.
+- Executed picks are recorded for tracker / provenance; the Step 3.4 engine must still run ranked draft + bounded repair as the allocator of record.
+- **Preference identity:** the V2 wizard must **not** treat Step 3.2 (or 3.3) commits as “the only preferred PCAs left” for that team. Remaining unmet pending in Step 3.4 may still use **other** preferred PCAs from the base preference list when legal. Technical expression: wizard calls ranked V2 with **`preferenceSelectionMode: 'legacy'`** and passes **`committedStep3Assignments`** for provenance / coverage classification, not `selected_only` overloading (see §8 and **V2 business logic log**).
 
 ### Step 3 V2 wizard (preview / save)
 File areas: `components/allocation/FloatingPCAConfigDialogV2.tsx`, `lib/features/schedule/step3V2CommittedSelections.ts`
@@ -245,6 +254,8 @@ File areas: `components/allocation/FloatingPCAConfigDialogV2.tsx`, `lib/features
 When the user commits Step 3.2 and/or Step 3.3 choices, those selections are **executed** into pending FTE and floating PCA allocations (same mechanism as `executeSlotAssignments` elsewhere) **before** Step 3.4 ranked V2 runs. Step 3.4 then sees real slot occupancy and pending, not only PCA-bias metadata. Tracker rows for executed Step 3.2/3.3 assignments use `assignedIn: 'step32' | 'step33'` so the Step 3.4 review UI and saved `allocationTracker` stay consistent with persisted `result.allocations`.
 
 `executeSlotAssignments` reports **`executedAssignments`** so callers only log tracker rows for assignments that actually applied (e.g. pending exhausted or slot unavailable).
+
+**Ranked V2 call contract (wizard):** `allocateFloatingPCA_v2RankedSlot` is invoked with **`preferenceSelectionMode: 'legacy'`** and **`committedStep3Assignments`** set from the executed Step 3.2 / 3.3 rows. The allocator feeds **`committedStep3Assignments`** into **`buildUpstreamCoverageKindByTeamSlot`** as **`excludeStep3OwnedSelections`** so Step 3–owned coverage on a team+slot is classified correctly for **narrow duplicate-floating** and related audit inputs—without rebuilding effective preferences from those commits alone.
 
 ### Step 3.4
 Primary file area: `lib/algorithms/pcaAllocationFloating.ts`
@@ -393,13 +404,213 @@ Recommended new assignment/tracker fields:
 - `allocationStage?: 'draft' | 'repair' | 'extra-coverage'`
 - `repairReason?: 'ranked-coverage' | 'fairness-floor' | 'duplicate-reduction' | 'continuity-reduction' | null`
 
+## V2 allocation engine refinement
+
+This section refines the ranked V2 engine design beyond the original 2026-04-09 scope: **upstream provenance**, **Step 3 ownership**, **alignment between Step 3.4 final preview and the V2-specific tracker tooltip**, a **narrow duplicate-floating** definition for engine, audit, and diagnostics, **extra-coverage handling** (post-core augmentation, labeling, and fulfillment semantics), and **zero-slot-assigned optimization** (noise reduction after allocation).
+
+**Authoritative semantic contract (duplicate-floating, floating-eligible wording, acceptance criteria):**  
+`docs/superpowers/specs/2026-04-10-v2-duplicate-floating-semantics-alignment-design.md`
+
+**Implementation sequencing and guardrails (V2-only provenance at Step 2 → Step 3 handoff; do not change Step 2 business logic or V1 behavior):**  
+`docs/superpowers/plans/2026-04-10-v2-duplicate-floating-semantics-alignment-plan.md`
+
+### 1. Upstream metadata provenance
+
+Ranked V2’s `FloatingPCAAllocationContextV2` passes `existingAllocations: PCAAllocation[]` from Step 2 plus committed Step 3.2 / 3.3 work. **Raw slot ownership alone does not encode** whether a team+slot is covered by:
+
+- Step 2 non-floating baseline
+- Step 2 special-program assignment
+- Step 2 floating substitution-for-non-floating
+- Step 3-owned floating (buffer / 3.2 / 3.3 / 3.4)
+
+**Refinement:** introduce a **V2-only provenance layer at or just after the Step 2 → Step 3 handoff** (preferred: `lib/features/schedule/step3V2CommittedSelections.ts` and adjacent V2 helpers) so the draft allocator and repair audit do not infer “duplicate” from generic occupancy. Reconstructing provenance from existing fields (`special_program_ids`, `staffOverrides.substitutionFor*`, floating vs non-floating staff) is allowed where sufficient; **changing Step 2 allocation business rules** to make provenance easier is out of scope for this refinement track.
+
+### 2. Step 3 ownership
+
+**Step 3-owned floating** includes any floating fulfillment that belongs to the Step 3 wizard path:
+
+- Step 3.0 buffer / manual floating assignments
+- Committed Step 3.2 and Step 3.3 floating assignments (executed before Step 3.4)
+- Step 3.4 draft, repair, and (if enabled) extra-coverage rows
+
+**Upstream-covered** slots remain eligible Step 3 floating targets until a **true Step 3-owned floating** assignment occupies that team+slot. Stacking one Step 3 floating on a slot that only has Step 2 (or substitution-like) coverage is **not** duplicate-floating.
+
+Tracker rows should record enough ownership/provenance (additive fields or equivalent) so summary flags and UI copy are not driven solely by broad `getTeamExistingSlots`-style occupancy.
+
+### 3. Aligning Step 3.4 preview with V2 tracker tooltip
+
+**Refinement:** treat the **final Step 3.4 preview** (`components/allocation/step34/step34ViewModel.ts` and related view-model helpers) as the **canonical user-facing interpretation** for:
+
+- when to show **duplicate-floating** wording vs neutral wording (e.g. `To fulfill pending FTE`)
+- exclusion of substitution-like Step 3.4 rows where applicable
+
+The **V2-specific tracker tooltip** must reuse the **same** duplicate interpretation helper or contract as the preview so the two surfaces cannot drift. The tooltip must not invent a second definition of duplicate-floating based only on legacy tracker field names such as `ranked-duplicate` or `duplicateSlot` if those labels still reflect broader internal phases.
+
+### 4. Duplicate-floating: refined definition and tracking
+
+**Refined product meaning:**
+
+- **Duplicate-floating** exists only when the **same team** already has **one true Step 3-owned floating** assignment on a slot and **another** true Step 3-owned floating is placed on that **same team + slot**.
+- It is **not** duplicate-floating when the only prior coverage on that slot is upstream Step 2 non-floating, special-program, or substitution-like coverage, and Step 3 adds a single floating assignment there.
+
+**Tracking implications:**
+
+- Repair defects **`A1` / duplicate branch of `A2` / fairness `F1`** should key off this narrow duplicate-floating notion, not raw multi-owner slot counts that mix Step 2 and Step 3.
+- Summary fields such as `usedDuplicateFloatingSlot` and per-row flags like `duplicateSlot` / `slotSelectionPhase: 'ranked-duplicate'` should either be **narrowed in meaning** to match the refined definition or **renamed** with migration notes in code/comments—**without** silently keeping the old broad meaning.
+- Regression coverage should prove **end-to-end alignment**: ranked V2 allocator result → Step 3.4 preview copy → V2 tooltip model, for both non-duplicate stacked cases and true duplicate-floating cases.
+
+### 5. Extra coverage: V2 handling and interpretation
+
+**Purpose:** After core ranked V2 work is done (draft + bounded repair), optionally add **additional** floating slots when the global pool still allows it and every team’s **rounded** pending is already satisfied. This matches a “sheet looks good, add a little more coverage” editor habit, but it must not be confused with core fulfillment or with Step 2 reserved capacity.
+
+**When it runs (engine contract):**
+
+- Extra coverage is a **separate pass** after core allocation.
+- It must run **only if** `extraCoverageMode` is not `'none'` (e.g. production UI may use `'round-robin-team-order'`).
+- It must run **only if** every team has **no remaining rounded pending** (same quarter threshold as core pending checks: effectively “pending met” for all teams before augmentation).
+- If any team still has meaningful rounded pending, **do not** run extra coverage; core repair and fulfillment take precedence.
+
+**Tracker and diagnostics (mandatory labeling):**
+
+- Every assignment created in this pass must be identifiable in the tracker as post-core augmentation, e.g.:
+  - `allocationStage: 'extra-coverage'`
+  - `assignmentTag: 'extra'` where the tracker schema already uses this field
+- Product-facing copy, scarcity preview, and “balance vs avg” explanations must be able to **separate**:
+  - **core Step 3 floating fulfillment** (meeting rounded pending from the Step 3.4 baseline)
+  - **extra-coverage slots** (optional, after all teams satisfied)
+
+**Ownership / fulfillment semantics (Problem E alignment):**
+
+- Extra slots are **true Step 3-owned floating** additions (same notion as other Step 3.4 rows), not Step 2 special-program or substitution buckets.
+- Comparing **raw total occupied PCA slots** on the sheet to **`sum(average_pca_per_team)`** without subtracting Step 2 reserved special-program coverage (and without separating extra-coverage rows) will **overstate** apparent “surplus”; UI and diagnostics should use the same ownership split as legacy pending semantics (special-program slots do not reduce Step 3 pending; see `stepReset` / reservation runtime patterns).
+- Core quality evaluation (ranked coverage, fairness floor, duplicate reduction, split reduction) remains defined with **`extraCoverageMode: 'none'`** per §10; extra coverage must not change those definitions.
+
+**Algorithm shape (bounded, deterministic):**
+
+- Prefer a **round-robin over `teamOrder`** (or equivalent stable order) adding at most one quarter-slot per team per sweep, repeating only while progress is made and PCAs still have legal capacity and slots.
+- Must respect the same **per-PCA capacity**, **availability**, **invalid slot**, and **gym** rules as core assignment unless the product explicitly documents an exception (default: no exception).
+- Stop when no team can receive another legal slot in that mode; do not unconstrained-fill the sheet.
+
+**Product defaults (guidance):**
+
+- Step 3.4 **review / harness / regression** that grades core fulfillment should use `extraCoverageMode: 'none'` unless the test explicitly targets extra behavior.
+- Wizard production paths may keep extra mode on for operational convenience; if so, UI should label or footnote when totals include optional extra slots so editors are not misled vs Excel-era “rarely more than rounding above avg” expectations.
+
+### 6. Zero-slot-assigned optimization
+
+**Problem:** After Step 3.4 (including repair and optional extra coverage), some **floating** PCA allocation rows may exist with **no team assigned on any of slots 1–4** (and effectively **zero** `slot_assigned` / no meaningful contribution to any team). Those rows add noise to the PCA block UI, payloads, and mental model (“why is this PCA listed with no slots?”).
+
+**Approved refinement:**
+
+- **Normalize the allocator output** (or a single documented boundary immediately after V2 returns) so that **purely empty floating PCA shells** are not retained unless the product explicitly requires a placeholder.
+- A row is a candidate for removal or coalescing when **all** of the following hold:
+  - the staff member is a **floating** PCA in the active Step 3 pool context;
+  - **no** `slot1`..`slot4` is set to any team (all null / empty);
+  - the row is **not** required to preserve Step 2 / Step 3.0 semantics (e.g. buffer manual assignment, substitution carrier, or non-floating baseline—**do not** strip non-floating or special-program rows from this rule).
+- If removal would break **tracker completeness** for an audit trail, prefer **omitting the row from persisted `pcaAllocations`** while keeping tracker logs internally consistent, or mark such rows as non-displaying—pick one strategy per implementation but keep behavior **deterministic**.
+
+**Non-goals:**
+
+- Do not use this pass to “fix” unmet pending; zero-slot cleanup is **after** fulfillment.
+- Do not delete rows that still carry **invalid_slot** display pairing or other fields that the save path requires for round-trip integrity unless a separate migration spec says otherwise.
+
+**Testing:**
+
+- Add or extend regression coverage: V2 result after a scenario that previously left a floating PCA with zero slots should either have no such row or a single explicit documented placeholder policy.
+
+## V2 business logic log (consolidated)
+
+This section is an **implementation-aligned** summary of V2 **business logic** (not Step 3.2 UI). Use it as a single place to see how the ranked engine, wizard prelude, provenance, and preference contracts fit together.
+
+### A. Authority and stages
+
+| Stage | Role |
+| --- | --- |
+| Step 3.2 / 3.3 (V2 wizard) | Optional **manual reservations**: execute committed floating slot+PCA choices into **pending** and **`existingAllocations`** before Step 3.4. **Not** the ranked-slot allocator of record. |
+| Step 3.4 ranked V2 | **Allocator of record** for ranked fulfillment: continuity-friendly **draft** + **bounded audit/repair** (+ optional extra coverage), exposed as `allocateFloatingPCA_v2RankedSlot`. |
+
+### B. Execution before Step 3.4
+
+- Committed Step 3.2 / 3.3 assignments use the same **`executeSlotAssignments`** execution path as other reservation flows.
+- Only **`executedAssignments`** (actually applied rows) should drive tracker logging and downstream state—pending may be exhausted or a slot may be unavailable.
+- After execution, Step 3.4 ranked V2 runs against the **updated** allocations and pending, not against hypothetical “preview only” occupancy.
+
+### C. Wizard handoff: `legacy` + `committedStep3Assignments`
+
+For the V2 wizard pipeline (`runStep3V2CommittedSelections` and equivalent):
+
+1. Call ranked V2 with **`preferenceSelectionMode: 'legacy'`** so **`pcaPreferences`** are used as the full base preference record (ranked slots + full preferred PCA list).
+2. Pass executed Step 3.2 / 3.3 rows as **`committedStep3Assignments`** on **`FloatingPCAAllocationContextV2`** (team, slot, pcaId, optional source `step32` | `step33`).
+3. Inside **`allocateFloatingPCA_v2RankedSlotImpl`**, those rows are supplied to **`buildUpstreamCoverageKindByTeamSlot`** as **`excludeStep3OwnedSelections`** so **narrow duplicate-floating** and upstream vs Step 3–owned classification stay correct when Step 3.4 adds floating rows on top of executed wizard work.
+
+**Intent:** Step 3.2 / 3.3 commits are **hard reservations and provenance**, not a signal to **replace** the team’s remaining **`preferred_pca_ids`** with only the committed PCA for the rest of Step 3.4.
+
+### D. When `selected_only` still applies
+
+- **`preferenceSelectionMode: 'selected_only'`** with **`selectedPreferenceAssignments`** remains a **separate, explicit** contract: **`buildEffectiveRankedPreferences`** may replace effective **`preferred_pca_ids`** per team while **preserving `preferred_slots`**.
+- The V2 **wizard** Step 3.2 / 3.3 handoff described in §C should **not** use this mode for the “preserve remaining preferred set” product rule; use it only when a caller deliberately wants selection-driven effective preferences.
+
+### E. Rank order vs continuity vs Step 3.2 review
+
+- **Ranked-slot protection** (earlier ranks before later) remains **above** preferred-PCA wish in the engine objective stack (see **Approved Objective Order** and Scenario 3 in the scenario table).
+- **Continuity** (same PCA across slots when helpful) is a strong **draft** instinct and a **repair** quality signal; it is **not** guaranteed when the user deliberately chooses a different outcome in Step 3.2 review—any such choice is a **continuity / staffing-shape trade-off**, not permission to drop rank #1 protection.
+- Step 3.2 **preview / review** surfaces (outcome options, trade-off labels) are **transparency** on top of the same contracts; they do not change the ranked V2 engine’s final authority.
+
+### F. Pointer to duplicate-floating and tooltip alignment
+
+- Narrow **duplicate-floating**, **floating-eligible** wording, and preview ↔ tooltip alignment remain defined in **`docs/superpowers/specs/2026-04-10-v2-duplicate-floating-semantics-alignment-design.md`** and the **V2 allocation engine refinement** section above. The wizard handoff in §C exists so executed Step 3 rows participate in that classification correctly.
+
+## Code layout: V1 vs V2 extraction (2026-04-10)
+
+This section is for **later agents**: where ranked-slot V2 actually lives after the V1/V2 extraction, so edits land in the right boundary and grep results are not misleading.
+
+### Why this exists
+
+Historically, **legacy standard floating** and **ranked V2** lived in one large `pcaAllocationFloating.ts`, and **`allocatePCA()`** still had a separate inline floating phase. That made it easy to “fix V2” while accidentally changing V1 or shared mechanics. The extraction keeps **behavior the same** but makes **ownership obvious from paths**.
+
+### Stable public entrypoints (do not rename)
+
+Consumers should keep using:
+
+- **`allocateFloatingPCA_v1LegacyPreference`** — legacy-facing Step 3.4 standard/balanced allocator (historically confused with internal `allocateFloatingPCA_v2`).
+- **`allocateFloatingPCA_v2RankedSlot`** — ranked-slot Step 3.4 engine (draft + bounded repair + final tracker assembly).
+
+Both are re-exported from **`lib/algorithms/pcaAllocation.ts`**. Do **not** reintroduce ambiguous exports such as `allocateFloatingPCA_v2` on the canonical module surface.
+
+### Where to edit (by concern)
+
+| Concern | Primary location | Notes |
+| --- | --- | --- |
+| Ranked V2 orchestration (draft, repair loop, final tracker logs) | `lib/algorithms/floatingPcaV2/allocator.ts` | Canonical implementation behind `allocateFloatingPCA_v2RankedSlot`. |
+| Ranked V2 draft pass | `lib/algorithms/floatingPcaV2/draftAllocation.ts` | Continuity-friendly first pass. |
+| Ranked V2 repair / scoring | `lib/algorithms/floatingPcaV2/repairAudit.ts`, `repairMoves.ts`, `scoreSchedule.ts` | Bounded deterministic repair. |
+| Ranked effective preferences (`selected_only`, etc.) | `lib/algorithms/floatingPcaV2/effectivePreferences.ts` | `buildEffectiveRankedPreferences`: used when **`preferenceSelectionMode === 'selected_only'`**; preserves **`preferred_slots`**. V2 wizard Step 3.2/3.3 handoff uses **`legacy`** + **`committedStep3Assignments`** instead (see **V2 business logic log**). |
+| V2 wizard: Step 3.2/3.3 execute then Step 3.4 | `lib/features/schedule/step3V2CommittedSelections.ts` | Executes reservations, then calls ranked V2 with **`preferenceSelectionMode: 'legacy'`** and **`committedStep3Assignments`**; appends executed rows to tracker with ranked metadata. |
+| V2 upstream / Step-3 selection provenance for coverage | `lib/algorithms/floatingPcaV2/provenance.ts` | e.g. `buildUpstreamCoverageKindByTeamSlot` — **not** generic shared helpers. |
+| V2-only **derived** tracker summary fields | `lib/algorithms/floatingPcaV2/trackerSummaryDerivations.ts` | e.g. `highestRankedSlotFulfilled`, `usedUnrankedSlot`, `gymUsedAsLastResort`, `pcaSelectionTier` bump for `preferredPCAUsed`. Call **`finalizeRankedSlotFloatingTracker`** after building a full ranked V2 tracker (runs shared `finalizeTrackerSummary` first, then V2 derivations). |
+| Legacy standard / balanced floating | `lib/algorithms/floatingPcaLegacy/allocator.ts` | Behind `allocateFloatingPCA_v1LegacyPreference`. |
+| Legacy **`allocatePCA()`** floating phase (highest-pending-first inline path) | `lib/algorithms/floatingPcaLegacy/allocatePcaFloatingPhase.ts` | **Still not** the same as `pcaAllocationFloating.ts`. Agents must not assume “floating = only `pcaAllocationFloating`.” |
+| Shared floating **contracts** (context/result types) | `lib/algorithms/floatingPcaShared/contracts.ts` | `FloatingPCAAllocationContextV2`, `FloatingPCAAllocationResultV2`, etc. |
+| Shared display-only invalid-slot pairing | `lib/algorithms/floatingPcaShared/applyInvalidSlotPairingForDisplay.ts` | Used by both legacy and V2 allocators. |
+| Shared slot/pending/assignment **mechanics** | `lib/utils/floatingPCAHelpers.ts` | `TEAMS`, `recordAssignment`, `finalizeTrackerSummary` (shared slice only), availability helpers, etc. **Avoid** stuffing new V2-ranked **policy** here; prefer `floatingPcaV2/`. |
+| Transitional façade | `lib/algorithms/pcaAllocationFloating.ts` | **Thin re-exports only** — no substantive allocator logic. Prefer importing from `floatingPcaLegacy/`, `floatingPcaV2/`, or `floatingPcaShared/` directly in new code. |
+
+### Tracker summary split (important)
+
+- **`finalizeTrackerSummary`** in `floatingPCAHelpers.ts` finalizes **version-agnostic** flags: AM/PM balance from slots, **true** duplicate-floating via the shared semantics helper (not raw `ranked-duplicate` alone), and base `preferredPCAUsed` from legacy counters / `wasPreferredPCA`.
+- **Ranked V2** assignment metadata (`fulfilledSlotRank`, `slotSelectionPhase`, `pcaSelectionTier`) is folded into summary by **`applyRankedSlotStep34TrackerSummaryFields`** / **`finalizeRankedSlotFloatingTracker`** in `trackerSummaryDerivations.ts`.
+
+### Regression anchors
+
+When touching this boundary, run the focused regressions listed in `docs/superpowers/plans/2026-04-10-floating-pca-v1-v2-extraction-plan.md` (export contract, V1/V2 continuity, inline `allocatePCA` floating characterization, ranked repair/tooltip contracts). **`tests/regression/f83-allocate-pca-inline-floating-characterization.test.ts`** locks the non-wizard floating path.
+
 ## Scenario Table
 
 | Scenario | Team input | Expected result | Why |
 | --- | --- | --- | --- |
 | 1. Simple preferred hit | Need `0.25`; ranked `1 > 3`; preferred PCA available on `1` | Assign preferred PCA to `1` | Highest ranked slot first; preferred PCA can satisfy it directly |
 | 2. Same PCA continuity across ranked slots | Need `0.5`; ranked `2 > 3`; same PCA available on both `2` and `3` | Same PCA gets `2 + 3` in the draft pass | Ranked slots first, and continuity across different floating-eligible slots is best human-like outcome |
-| 3. Rank #1 forces non-preferred PCA | Need `0.5`; ranked `1 > 3`; preferred PCAs cannot cover `1`; floor PCA can cover `1 + 3` | Floor PCA gets `1 + 3` | Rank #1 outranks preferred-PCA wish; continuity then helps finish rank #2 |
+| 3. Rank #1 forces non-preferred PCA | Need `0.5`; ranked `1 > 3`; preferred PCAs cannot cover `1` but are available for `3`; floor PCA can cover `1 + 3` | Floor PCA gets `1 + 3` | Rank #1 outranks preferred-PCA wish; system prefers continuity and uses the same floor PCA to finish rank #2. A later UI review surface may still show the preferred PCA on `3` as an allowed override, but that is a continuity trade-off, not a ranked-slot-protection violation. |
 | 4. Rank #1 first, preferred PCA second | Need `0.5`; ranked `1 > 3`; floor PCA can cover only `1`; preferred PCA available on `3` | Floor PCA gets `1`, preferred PCA gets `3` | Must solve rank #1 first; then preferred PCA helps on next ranked slot |
 | 5. Ranked exhausted, use unranked | Need `0.5`; ranked only `1`; `1` is assigned, `3` is free, no other ranked slot exists | Use `1`, then unused unranked non-gym `3` | Pending must be met; unused unranked slot beats duplication |
 | 6. Local continuity before global repair | Team A can immediately continue with the same PCA; Team B still has a floating-eligible slot available | First pass may let Team A continue | Human editors draft this way; global correction belongs in audit |
@@ -422,6 +633,7 @@ Recommended new assignment/tracker fields:
 ## Testing Guidance
 This design should be implemented with focused regression coverage around:
 - preserving ranked slots when Step 3.2/3.3 manual selections exist
+- V2 wizard handoff: executed Step 3.2/3.3 + **`preferenceSelectionMode: 'legacy'`** + **`committedStep3Assignments`** preserves **full base `preferred_pca_ids`** for remaining Step 3.4 work (regressions such as `f91` / related contracts)
 - rank-first over preferred-PCA conflicts
 - same-PCA continuity across different slots
 - duplicate-slot prevention while non-duplicate floating-eligible or repairable alternatives exist
@@ -432,6 +644,8 @@ This design should be implemented with focused regression coverage around:
 - tracker reason fields for draft vs repair decisions
 - non-floating / special-program / substitution-like upstream coverage not being misclassified as duplicate-floating
 - final V2 preview and V2 tooltip staying aligned on duplicate wording
+- extra coverage: only after all teams’ rounded pending is met; tracker labels `extra-coverage`; core metrics still evaluated with `extraCoverageMode: 'none'` in focused tests
+- zero-slot-assigned: floating PCA rows with no team on any slot are normalized away (or one explicit placeholder policy) without breaking non-floating / buffer / substitution carriers
 
 Recommended test layers:
 - unit tests for effective preference construction, target ordering, and repair scoring
@@ -442,16 +656,21 @@ Recommended test layers:
 - `components/dashboard/PCAPreferencePanel.tsx`
 - `components/allocation/FloatingPCAConfigDialogV2.tsx`
 - `lib/features/schedule/step3V2CommittedSelections.ts`
+- `lib/features/schedule/step3Harness/runStep3V2Harness.ts` (V2 harness; uses ranked tracker finalization)
 - `lib/utils/reservationLogic.ts`
-- `lib/utils/floatingPCAHelpers.ts`
-- `lib/algorithms/pcaAllocationFloating.ts`
-- any extracted V2 helper files under `lib/algorithms/`
-- relevant Step 3 tests in `tests/regression`
+- `lib/utils/floatingPCAHelpers.ts` (shared mechanics + shared tracker finalization slice)
+- `lib/algorithms/pcaAllocation.ts` (exports + legacy `allocatePCA` orchestration)
+- `lib/algorithms/pcaAllocationFloating.ts` (**façade only** after extraction)
+- `lib/algorithms/floatingPcaShared/contracts.ts`
+- `lib/algorithms/floatingPcaLegacy/` (`allocator.ts`, `allocatePcaFloatingPhase.ts`)
+- `lib/algorithms/floatingPcaV2/` (`allocator.ts`, `draftAllocation.ts`, repair/score modules, `provenance.ts`, `trackerSummaryDerivations.ts`, `effectivePreferences.ts`)
+- `lib/algorithms/floatingPcaV1LegacyPreference.ts` / `floatingPcaV2RankedSlot.ts` (stable behavior-named wrappers)
+- relevant Step 3 tests in `tests/regression` (including `f83-*` inline floating characterization)
 
 ## Implementation Notes
 - This document is design-only and does not prescribe a DB migration.
 - The preferred path is to reuse `preferred_slots: number[]` and change its semantics.
 - The implementation should favor explicit tracker metadata over reconstructing hover reasons from allocator side effects.
 - The implementation should favor a continuity-friendly first pass plus bounded repair over a purely greedy one-slot loop.
-- The implementation should preserve the canonical code-facing name `allocateFloatingPCA_v2RankedSlot`.
+- The implementation should preserve the canonical code-facing name `allocateFloatingPCA_v2RankedSlot` (implementation: `allocateFloatingPCA_v2RankedSlotImpl` in `floatingPcaV2/allocator.ts`, re-exported through the stable wrapper module).
 - The narrower duplicate-floating contract is defined in `docs/superpowers/specs/2026-04-10-v2-duplicate-floating-semantics-alignment-design.md`.
