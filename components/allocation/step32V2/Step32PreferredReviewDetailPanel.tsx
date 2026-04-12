@@ -1,25 +1,44 @@
 'use client'
 
-import { useMemo, useState, type RefObject } from 'react'
-import { CheckCircle2 } from 'lucide-react'
+import { Fragment, useMemo, type RefObject } from 'react'
 import type {
   Step32PathOption,
   Step32TeamReview,
 } from '@/lib/features/schedule/step32V2/step32PreferredReviewModel'
 import {
+  getStep32LeaveOpenFor34ChoiceLabel,
+  getStep32PcaChangeStepHelper,
+  getStep32PcaSelectAllocatorGroupLabel,
+  getStep32PcaSelectAriaLabel,
+  getStep32PcaSelectLabel,
+  getStep32PcaSelectPlaceholder,
+  getStep32SaveDecisionHelperLeaveOpenNoSave,
+  getStep32SaveDecisionHelperSavedReservation,
+  getStep32SaveDecisionHelperStaleCommit,
   getStep32SaveDecisionTitle,
   getStep32SaveSelectedOutcomeLabel,
   getTradeoffMessage,
 } from '@/lib/features/schedule/step32V2/step32PreferredReviewCopy'
 import type { SlotAssignment } from '@/lib/utils/reservationLogic'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 interface Step32PreferredReviewDetailPanelProps {
   /** Step 1 panel root — used to position the lane→detail beak in viewport space. */
   detailPanelRef?: RefObject<HTMLDivElement | null>
   beakCenterX?: number | null
   review: Step32TeamReview
+  /** Floating PCA FTE committed in Steps 3.2–3.4 for this team (same basis as Step 3.3/3.4 badges). */
+  assignedFloatingFte: number
   queuePosition: number
   selectedOutcomeKey: string | null
   onSelectOutcome: (outcomeKey: string) => void
@@ -28,7 +47,6 @@ interface Step32PreferredReviewDetailPanelProps {
   committedAssignment: SlotAssignment | null
   onCommit: () => void
   onLeaveOpen: () => void
-  onClearCommit: () => void
 }
 
 function getOrderLabel(position: number): string {
@@ -65,6 +83,7 @@ export function Step32PreferredReviewDetailPanel({
   detailPanelRef,
   beakCenterX,
   review,
+  assignedFloatingFte,
   queuePosition,
   selectedOutcomeKey,
   onSelectOutcome,
@@ -73,9 +92,7 @@ export function Step32PreferredReviewDetailPanel({
   committedAssignment,
   onCommit,
   onLeaveOpen,
-  onClearCommit,
 }: Step32PreferredReviewDetailPanelProps) {
-  const [showAllCandidates, setShowAllCandidates] = useState(false)
   const selectedOutcome =
     review.outcomeOptions.find((option) => option.outcomeKey === selectedOutcomeKey) ??
     review.outcomeOptions[0] ??
@@ -110,6 +127,36 @@ export function Step32PreferredReviewDetailPanel({
 
   const canCommit = Boolean(selectedOutcome && selectedPath && resolvedSelectedPcaId && selectedPcaName)
   const candidateGroups = getPathCandidateGroups(selectedPath)
+
+  const otherCandidateGroups = useMemo(() => {
+    const suggestedId = selectedPath?.systemSuggestedPcaId ?? null
+    return getPathCandidateGroups(selectedPath)
+      .map((group) => ({
+        key: group.key,
+        label: group.label,
+        candidates: group.candidates.filter((candidate) => candidate.id !== suggestedId),
+      }))
+      .filter((group) => group.candidates.length > 0)
+  }, [selectedPath])
+
+  const selectablePcaIdSet = useMemo(() => {
+    const next = new Set<string>()
+    const suggestedId = selectedPath?.systemSuggestedPcaId
+    if (suggestedId) next.add(suggestedId)
+    for (const group of otherCandidateGroups) {
+      for (const candidate of group.candidates) {
+        next.add(candidate.id)
+      }
+    }
+    return next
+  }, [otherCandidateGroups, selectedPath?.systemSuggestedPcaId])
+
+  const pcaSelectValue =
+    resolvedSelectedPcaId != null && selectablePcaIdSet.has(resolvedSelectedPcaId)
+      ? resolvedSelectedPcaId
+      : undefined
+
+  const hasSelectablePca = selectablePcaIdSet.size > 0
   const rankedChoicesSummary = useMemo(() => {
     if (!review.rankedChoices || review.rankedChoices.length === 0) return null
     const sorted = [...review.rankedChoices].sort((a, b) => a.rank - b.rank)
@@ -125,9 +172,16 @@ export function Step32PreferredReviewDetailPanel({
       committedAssignment.slot === selectedPath.slot &&
       committedAssignment.pcaId === resolvedSelectedPcaId
   )
-  const commitButtonLabel = currentSelectionIsCommitted
-    ? 'Saved'
-    : getStep32SaveSelectedOutcomeLabel()
+  const staleCommit =
+    Boolean(committedAssignment) && !currentSelectionIsCommitted
+  const leaveOpenChoiceSelected = !committedAssignment
+  const saveChoiceSelected = currentSelectionIsCommitted
+
+  const step32ChoiceButtonClass = cn(
+    'inline-flex min-h-10 items-center justify-center rounded-md border px-3 py-2 text-left text-sm font-medium transition-colors',
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+    'disabled:pointer-events-none disabled:opacity-50'
+  )
 
   const outcomeScrollPeek = review.outcomeOptions.length >= 2
 
@@ -147,7 +201,7 @@ export function Step32PreferredReviewDetailPanel({
             {`${review.team} · ${getOrderLabel(queuePosition)} in order`}
           </div>
           <div className="mt-1 text-xs text-muted-foreground">
-            Pending {review.pending.toFixed(2)} · Assigned {review.assignedSoFar.toFixed(2)}
+            Pending floating {review.pending.toFixed(2)} · Assigned floating {assignedFloatingFte.toFixed(2)}
           </div>
         </div>
         <div className="rounded-full border border-sky-300 bg-white px-3 py-1 text-xs font-medium text-sky-900 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-50">
@@ -236,84 +290,54 @@ export function Step32PreferredReviewDetailPanel({
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             2. Change PCA only if needed
           </div>
-          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0 flex-1 rounded-lg border border-dashed border-muted-foreground/25 px-3 py-2">
-              <div className="text-sm text-foreground">
-                {`Suggested PCA: ${selectedPcaName ?? 'None'}`}
-              </div>
-              <div className="text-xs text-muted-foreground">Other candidates stay hidden until requested.</div>
-            </div>
-          </div>
           <div className="mt-3 space-y-4 text-sm">
             {candidateGroups.some((group) => group.candidates.length > 0) ? (
-              <>
-                {selectedPath?.systemSuggestedPcaId ? (
-                  <button
-                    type="button"
-                    onClick={() => onSelectPca(selectedPath.systemSuggestedPcaId as string)}
-                    className={cn(
-                      'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors',
-                      resolvedSelectedPcaId === selectedPath.systemSuggestedPcaId
-                        ? 'border-sky-500/80 bg-sky-50/80 text-sky-950 dark:bg-sky-950/30 dark:text-sky-50'
-                        : 'border-border/80 bg-background/80 hover:border-sky-300/60'
-                    )}
-                  >
-                    <span className="font-medium">
-                      {selectedPath.systemSuggestedPcaName ?? selectedPath.systemSuggestedPcaId}
-                    </span>
-                    <span className="text-xs text-muted-foreground">Allocator pick</span>
-                  </button>
-                ) : null}
-
-                <div className="flex items-center justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowAllCandidates((prev) => !prev)}
-                    className="h-8 px-2 text-[11px] text-muted-foreground"
-                  >
-                    {showAllCandidates ? 'Hide other candidates' : 'Show other candidates'}
-                  </Button>
-                </div>
-
-                {showAllCandidates ? (
-                  <div className="space-y-4">
-                    {candidateGroups.map((group) => {
-                      const candidates = group.candidates.filter(
-                        (candidate) => candidate.id !== selectedPath?.systemSuggestedPcaId
-                      )
-                      if (candidates.length === 0) return null
-                      return (
-                        <div key={group.key} className="space-y-2">
-                          <div className="text-[11px] font-medium text-muted-foreground">{group.label}</div>
-                          <div className="space-y-2">
-                            {candidates.map((candidate) => {
-                              const isSelected = resolvedSelectedPcaId === candidate.id
-                              return (
-                                <button
-                                  key={candidate.id}
-                                  type="button"
-                                  onClick={() => onSelectPca(candidate.id)}
-                                  className={cn(
-                                    'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors',
-                                    isSelected
-                                      ? 'border-sky-500/80 bg-sky-50/80 text-sky-950 dark:bg-sky-950/30 dark:text-sky-50'
-                                      : 'border-border/80 bg-background/80 hover:border-sky-300/60'
-                                  )}
-                                >
-                                  <span className="font-medium">{candidate.name}</span>
-                                  <span className="text-xs text-muted-foreground">{group.label.toLowerCase()}</span>
-                                </button>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )
-                    })}
+              hasSelectablePca ? (
+                <div className="space-y-1.5">
+                  <div className="text-[11px] font-medium text-muted-foreground">
+                    {getStep32PcaSelectLabel()}
                   </div>
-                ) : null}
-              </>
+                  <Select value={pcaSelectValue} onValueChange={onSelectPca}>
+                    <SelectTrigger
+                      className="h-10 w-full"
+                      aria-label={getStep32PcaSelectAriaLabel()}
+                    >
+                      <SelectValue placeholder={getStep32PcaSelectPlaceholder()} />
+                    </SelectTrigger>
+                    <SelectContent position="popper" sideOffset={4} className="max-h-[min(280px,50vh)]">
+                      {selectedPath?.systemSuggestedPcaId ? (
+                        <>
+                          <SelectGroup>
+                            <SelectLabel>{getStep32PcaSelectAllocatorGroupLabel()}</SelectLabel>
+                            <SelectItem value={selectedPath.systemSuggestedPcaId}>
+                              {selectedPath.systemSuggestedPcaName ?? selectedPath.systemSuggestedPcaId}
+                            </SelectItem>
+                          </SelectGroup>
+                          {otherCandidateGroups.length > 0 ? <SelectSeparator /> : null}
+                        </>
+                      ) : null}
+                      {otherCandidateGroups.map((group, index) => (
+                        <Fragment key={group.key}>
+                          {index > 0 ? <SelectSeparator /> : null}
+                          <SelectGroup>
+                            <SelectLabel>{group.label}</SelectLabel>
+                            {group.candidates.map((candidate) => (
+                              <SelectItem key={candidate.id} value={candidate.id}>
+                                {candidate.name}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </Fragment>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="rounded-lg border border-dashed border-muted-foreground/25 px-3 py-2 text-xs text-muted-foreground">
+                    {getStep32PcaChangeStepHelper()}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">No candidates available.</div>
+              )
             ) : (
               <div className="text-sm text-muted-foreground">No candidates available.</div>
             )}
@@ -325,31 +349,54 @@ export function Step32PreferredReviewDetailPanel({
         <div className="text-xs font-semibold uppercase tracking-wide text-sky-900/80 dark:text-sky-100/80">
           3. {getStep32SaveDecisionTitle()}
         </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button
+        <div
+          className="mt-3 flex flex-wrap gap-2"
+          role="group"
+          aria-label={`${getStep32SaveDecisionTitle()} choices`}
+        >
+          <button
             type="button"
-            onClick={onCommit}
-            disabled={!canCommit || currentSelectionIsCommitted}
-            variant={currentSelectionIsCommitted ? 'secondary' : 'default'}
+            className={cn(
+              step32ChoiceButtonClass,
+              leaveOpenChoiceSelected
+                ? 'border-sky-500 bg-sky-50/90 text-sky-950 shadow-sm ring-1 ring-sky-500/25 dark:bg-sky-950/40 dark:text-sky-50 dark:ring-sky-400/20'
+                : 'border-border bg-background text-foreground hover:border-sky-300/70 hover:bg-muted/40'
+            )}
+            aria-pressed={leaveOpenChoiceSelected}
+            onClick={onLeaveOpen}
           >
-            {currentSelectionIsCommitted ? (
-              <CheckCircle2 className="mr-2 h-4 w-4" aria-hidden />
-            ) : null}
-            {commitButtonLabel}
-          </Button>
-          <Button type="button" variant="outline" onClick={onLeaveOpen} disabled={!committedAssignment}>
-            {committedAssignment ? 'Leave open for Step 3.4' : 'Already open for Step 3.4'}
-          </Button>
-          {committedAssignment ? (
-            <Button type="button" variant="ghost" onClick={onClearCommit}>
-              Clear saved decision
-            </Button>
-          ) : null}
+            {getStep32LeaveOpenFor34ChoiceLabel()}
+          </button>
+          <button
+            type="button"
+            className={cn(
+              step32ChoiceButtonClass,
+              saveChoiceSelected
+                ? 'border-sky-500 bg-sky-50/90 text-sky-950 shadow-sm ring-1 ring-sky-500/25 dark:bg-sky-950/40 dark:text-sky-50 dark:ring-sky-400/20'
+                : 'border-border bg-background text-foreground hover:border-sky-300/70 hover:bg-muted/40'
+            )}
+            aria-pressed={saveChoiceSelected}
+            disabled={!canCommit}
+            onClick={onCommit}
+          >
+            {getStep32SaveSelectedOutcomeLabel()}
+          </button>
         </div>
-        <div className="mt-3 text-xs text-muted-foreground">
-          {committedAssignment
-            ? `Saved ${committedAssignment.pcaName} to slot ${committedAssignment.slot} for ${committedAssignment.team}.`
-            : 'Open for Step 3.4 (nothing saved yet).'}
+        <div
+          className={cn(
+            'mt-3 text-xs',
+            staleCommit ? 'text-amber-900 dark:text-amber-100' : 'text-muted-foreground'
+          )}
+        >
+          {staleCommit
+            ? getStep32SaveDecisionHelperStaleCommit()
+            : committedAssignment
+              ? getStep32SaveDecisionHelperSavedReservation({
+                  pcaName: committedAssignment.pcaName,
+                  slot: committedAssignment.slot,
+                  team: committedAssignment.team,
+                })
+              : getStep32SaveDecisionHelperLeaveOpenNoSave()}
         </div>
       </div>
     </div>

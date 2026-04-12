@@ -6,7 +6,16 @@ import {
   getStep32LaneLabel,
   getStep32LaterOutcomeTitle,
   getStep32LegendItems,
+  getStep32LeaveOpenFor34ChoiceLabel,
+  getStep32PcaChangeStepHelper,
+  getStep32PcaSelectAllocatorGroupLabel,
+  getStep32PcaSelectAriaLabel,
+  getStep32PcaSelectLabel,
+  getStep32PcaSelectPlaceholder,
   getStep32RecommendedContinuityOutcomeTitle,
+  getStep32SaveDecisionHelperLeaveOpenNoSave,
+  getStep32SaveDecisionHelperSavedReservation,
+  getStep32SaveDecisionHelperStaleCommit,
   getStep32SaveDecisionTitle,
   getStep32SaveSelectedOutcomeLabel,
   getStep32StatusHelpLabel,
@@ -34,6 +43,29 @@ async function main() {
   assert.equal(getStep32StatusHelpLabel(), 'How to read statuses')
   assert.equal(getStep32SaveDecisionTitle(), 'Save decision')
   assert.equal(getStep32SaveSelectedOutcomeLabel(), 'Save selected outcome')
+  assert.equal(getStep32LeaveOpenFor34ChoiceLabel(), 'Leave open for Step 3.4')
+  assert.equal(
+    getStep32SaveDecisionHelperLeaveOpenNoSave(),
+    'Leaving this team open for Step 3.4 (no reservation saved).'
+  )
+  assert.equal(
+    getStep32SaveDecisionHelperSavedReservation({
+      pcaName: 'A',
+      slot: 2,
+      team: 'FO',
+    }),
+    'Saved A to slot 2 for FO for Step 3.4.'
+  )
+  assert.equal(
+    getStep32SaveDecisionHelperStaleCommit(),
+    'Reservation on file no longer matches this preview. Save again to update, or leave open for Step 3.4.'
+  )
+
+  assert.equal(getStep32PcaChangeStepHelper(), 'Pick the PCA for this path from the menu.')
+  assert.equal(getStep32PcaSelectLabel(), 'PCA for this path')
+  assert.equal(getStep32PcaSelectPlaceholder(), 'Choose PCA…')
+  assert.equal(getStep32PcaSelectAriaLabel(), 'PCA for this path')
+  assert.equal(getStep32PcaSelectAllocatorGroupLabel(), 'Suggested')
   assert.equal(getStep32LaterOutcomeTitle({ isRanked: true }), 'Preferred on later rank')
   assert.equal(getStep32LaterOutcomeTitle({ isRanked: false }), 'Preferred on later slot')
   assert.equal(getStep32RecommendedContinuityOutcomeTitle(), 'Recommended · Continuity')

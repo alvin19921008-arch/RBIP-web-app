@@ -19,18 +19,21 @@ const TIE_BREAKER_COLORS = [
 interface TeamPendingCardProps {
   team: Team
   pendingFTE: number
-  originalPendingFTE: number  // Original pre-adjusted rounded pending FTE for reference
-  maxValue: number             // Maximum allowed value (cannot exceed original)
-  tieGroupIndex: number | null  // null = not in a tie group, 0-3 = tie group index for coloring
-  isTied: boolean               // Whether this team is in a tie-breaker group (enables drag)
+  /** Quarter-rounded floating cap from Step 3 open (max for ± control). */
+  originalPendingFTE: number
+  maxValue: number
+  tieGroupIndex: number | null
+  isTied: boolean
   onValueChange: (team: Team, newValue: number) => void
   isDragging?: boolean
   /** Target average PCA/team (dashboard “Avg PCA/team” / Step 3 bootstrap target). */
   avgPcaPerTeam?: number | null
-  /** PCA FTE already on team from Step 2 slots (optional breakdown row). */
+  /** Raw floating need before quarter rounding: max(0, avg − non-floating). */
+  rawFloatingFTE?: number | null
+  /** Non-floating PCA FTE on team from Step 2 (shown as “Non-floating”). */
   assignedFromSlotsFTE?: number | null
-  assignedFTE?: number  // Optional: FTE assigned from buffer floating PCA (for display)
-  orderPosition?: number  // Optional: position in the order (1-based) for displaying ordinal number
+  assignedFTE?: number
+  orderPosition?: number
 }
 
 // Helper function to get ordinal suffix (1st, 2nd, 3rd, 4th, etc.)
@@ -53,10 +56,17 @@ export function TeamPendingCard({
   onValueChange,
   isDragging = false,
   avgPcaPerTeam,
+  rawFloatingFTE,
   assignedFromSlotsFTE,
   assignedFTE,
   orderPosition,
 }: TeamPendingCardProps) {
+  const showV2Step31Breakdown =
+    avgPcaPerTeam != null ||
+    (rawFloatingFTE != null && !Number.isNaN(rawFloatingFTE)) ||
+    assignedFromSlotsFTE != null
+
+  const roundedCap = originalPendingFTE
   const {
     attributes,
     listeners,
@@ -107,7 +117,7 @@ export function TeamPendingCard({
     >
       <Card
         className={cn(
-          'w-[7.25rem] shrink-0',
+          'w-[8.125rem] shrink-0',
           colorScheme ? `${colorScheme.border} ${colorScheme.bg} border-2` : 'border',
           isBeingDragged && 'shadow-lg ring-2 ring-primary'
         )}
@@ -128,32 +138,45 @@ export function TeamPendingCard({
             {team}
           </div>
 
-          {/* Pending FTE Value (rounded queue target) */}
-          <div className="text-center text-base font-mono font-semibold tabular-nums leading-tight">
-            {pendingFTE.toFixed(2)}
+          <div className="text-center">
+            <div className="text-[9px] leading-tight text-muted-foreground">Pending floating</div>
+            <div className="text-base font-mono font-semibold tabular-nums leading-tight text-foreground">
+              {pendingFTE.toFixed(2)}
+            </div>
           </div>
 
-          <div className="space-y-0.5 border-t border-border/60 pt-1 text-[10px] leading-tight text-muted-foreground">
-            {avgPcaPerTeam != null && !Number.isNaN(avgPcaPerTeam) ? (
-              <div className="flex justify-between gap-1 tabular-nums">
-                <span className="text-muted-foreground/90">Avg</span>
-                <span className="font-medium text-foreground">{avgPcaPerTeam.toFixed(2)}</span>
+          <div className="space-y-0.5 border-t border-border/60 pt-1 text-[9px] leading-tight text-muted-foreground">
+            {showV2Step31Breakdown ? (
+              <>
+                {avgPcaPerTeam != null && !Number.isNaN(avgPcaPerTeam) ? (
+                  <div className="flex justify-between gap-0.5 tabular-nums">
+                    <span className="text-muted-foreground/90">Avg</span>
+                    <span className="font-medium text-foreground">{avgPcaPerTeam.toFixed(2)}</span>
+                  </div>
+                ) : null}
+                {rawFloatingFTE != null && !Number.isNaN(rawFloatingFTE) ? (
+                  <div className="flex justify-between gap-0.5 tabular-nums">
+                    <span className="min-w-0 shrink text-muted-foreground/90">Raw floating</span>
+                    <span className="font-medium text-foreground">{rawFloatingFTE.toFixed(2)}</span>
+                  </div>
+                ) : null}
+                <div className="flex justify-between gap-0.5 tabular-nums">
+                  <span className="text-muted-foreground/90">Rounded</span>
+                  <span className="font-medium text-foreground">{roundedCap.toFixed(2)}</span>
+                </div>
+                {assignedFromSlotsFTE != null && !Number.isNaN(assignedFromSlotsFTE) ? (
+                  <div className="flex justify-between gap-0.5 tabular-nums">
+                    <span className="min-w-0 shrink text-muted-foreground/90">Non-floating</span>
+                    <span className="font-medium text-foreground">{assignedFromSlotsFTE.toFixed(2)}</span>
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="flex justify-between gap-0.5 tabular-nums">
+                <span className="text-muted-foreground/90">Rounded</span>
+                <span className="font-medium text-foreground">{roundedCap.toFixed(2)}</span>
               </div>
-            ) : null}
-            <div className="flex justify-between gap-1 tabular-nums">
-              <span className="text-muted-foreground/90">Rounded</span>
-              <span className="font-medium text-foreground">{pendingFTE.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between gap-1 tabular-nums">
-              <span className="text-muted-foreground/90">Assigned</span>
-              <span className="font-medium text-foreground">
-                {assignedFromSlotsFTE != null ? assignedFromSlotsFTE.toFixed(2) : '—'}
-              </span>
-            </div>
-            <div className="flex justify-between gap-1 tabular-nums">
-              <span className="text-muted-foreground/90">Pending</span>
-              <span className="font-medium text-foreground">{pendingFTE.toFixed(2)}</span>
-            </div>
+            )}
           </div>
 
           {/* Assigned Value (if buffer PCA assigned) */}

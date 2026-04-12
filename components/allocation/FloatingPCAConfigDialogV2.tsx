@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
+  ChevronDown,
   GripVertical,
   Info,
   XCircle,
@@ -294,6 +295,7 @@ export function FloatingPCAConfigDialogV2({
   const [originalRoundedFTE, setOriginalRoundedFTE] = useState<Record<Team, number>>(emptyTeamRecord())
   const [teamOrder, setTeamOrder] = useState<Team[]>([])
   const [step31Preview, setStep31Preview] = useState<Step31PreviewState>({ status: 'idle' })
+  const [step31CardLegendOpen, setStep31CardLegendOpen] = useState(false)
   const [selectedStep32Team, setSelectedStep32Team] = useState<Team | null>(null)
   const [selectedStep32OutcomeByTeam, setSelectedStep32OutcomeByTeam] = useState<Partial<Record<Team, string>>>({})
   const [selectedStep32PcaByTeam, setSelectedStep32PcaByTeam] = useState<Partial<Record<Team, string>>>({})
@@ -627,8 +629,6 @@ export function FloatingPCAConfigDialogV2({
       return next
     })
   }, [selectedStep32Team])
-
-  const handleClearCommitStep32 = handleLeaveOpenStep32
 
   useEffect(() => {
     if (!selectedStep33Team || !adjacentTeams.includes(selectedStep33Team)) {
@@ -1003,6 +1003,7 @@ export function FloatingPCAConfigDialogV2({
                       avgPcaPerTeam={
                         step31TeamTargets ? step31TeamTargets[team] ?? null : null
                       }
+                      rawFloatingFTE={initialPendingFTE[team] ?? 0}
                       assignedFromSlotsFTE={
                         step31AssignedByTeam ? step31AssignedByTeam[team] ?? 0 : null
                       }
@@ -1016,6 +1017,57 @@ export function FloatingPCAConfigDialogV2({
             </SortableContext>
           </DndContext>
         </div>
+      </div>
+
+      <div className="mt-2">
+        <button
+          type="button"
+          id="step31-card-legend-trigger"
+          aria-expanded={step31CardLegendOpen}
+          aria-controls="step31-card-legend"
+          onClick={() => setStep31CardLegendOpen((open) => !open)}
+          className="flex w-full max-w-full items-center gap-1.5 rounded-sm py-1 text-left text-[11px] font-medium text-foreground/90 outline-none ring-offset-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        >
+          <ChevronDown
+            className={cn(
+              'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
+              step31CardLegendOpen && 'rotate-180'
+            )}
+            aria-hidden
+          />
+          <span>What the card numbers mean</span>
+        </button>
+        {step31CardLegendOpen ? (
+          <div
+            id="step31-card-legend"
+            role="region"
+            aria-labelledby="step31-card-legend-trigger"
+            className="mt-1.5 space-y-1.5 pl-5 text-[11px] leading-snug text-muted-foreground"
+          >
+            <p>
+              <span className="font-medium text-foreground">Avg</span> — Target PCA per team (same as the dashboard).
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Raw floating</span> — What is still needed toward that
+              target after non-floating PCA, before rounding to quarters.
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Rounded</span> — That need in quarter FTE (0.25) steps.
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Non-floating</span> — PCA on this team from Step 2 (often{' '}
+              <span className="tabular-nums">1.00</span>).
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Pending floating</span> — Floating need for this team. It
+              stays the same through Steps 3.2–3.4.
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Assigned floating</span> — Floating PCA already placed on
+              this team in Steps 3.2–3.4.
+            </p>
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -1039,6 +1091,9 @@ export function FloatingPCAConfigDialogV2({
             detailPanelRef={step32DetailPanelRef}
             beakCenterX={step32DetailBeakCenterX}
             review={selectedStep32Review}
+            assignedFloatingFte={
+              selectedStep32Team ? step3FloatingAssignedFteByTeam[selectedStep32Team] ?? 0 : 0
+            }
             queuePosition={Math.max(1, teamOrder.indexOf(selectedStep32Team as Team) + 1)}
             selectedOutcomeKey={selectedStep32OutcomeKey}
             onSelectOutcome={(outcomeKey) =>
@@ -1059,7 +1114,6 @@ export function FloatingPCAConfigDialogV2({
             committedAssignment={selectedStep32CommittedAssignment}
             onCommit={handleCommitSelectedStep32Outcome}
             onLeaveOpen={handleLeaveOpenStep32}
-            onClearCommit={handleClearCommitStep32}
           />
         ) : (
           <div className="rounded-xl border bg-background p-4 text-sm text-muted-foreground">
@@ -1104,8 +1158,8 @@ export function FloatingPCAConfigDialogV2({
               <div className="font-semibold">{team}</div>
               {hasAdjacent ? (
                 <>
-                  <div className="mt-1 text-[11px] leading-4">{`Pending ${roundToNearestQuarterWithMidpoint(adjustedFTE[team] || 0).toFixed(2)}`}</div>
-                  <div className="text-[11px] leading-4">{`Assigned ${step3FloatingAssignedFteByTeam[team].toFixed(2)}`}</div>
+                  <div className="mt-1 text-[11px] leading-4">{`Pending floating ${roundToNearestQuarterWithMidpoint(adjustedFTE[team] || 0).toFixed(2)}`}</div>
+                  <div className="text-[11px] leading-4">{`Assigned floating ${step3FloatingAssignedFteByTeam[team].toFixed(2)}`}</div>
                   <div className="mt-2 text-[11px] font-medium leading-4">
                     {decision === 'use'
                       ? 'Will assign adjacent slot'
@@ -1130,8 +1184,8 @@ export function FloatingPCAConfigDialogV2({
         <div className="space-y-4 rounded-xl border border-emerald-200 bg-background p-4">
           <div className="flex flex-wrap items-center gap-2">
             <div className="text-sm font-semibold text-foreground">{selectedStep33Team}</div>
-            <Badge variant="outline">{`Pending ${roundToNearestQuarterWithMidpoint(adjustedFTE[selectedStep33Team] || 0).toFixed(2)}`}</Badge>
-            <Badge variant="outline">{`Assigned ${step3FloatingAssignedFteByTeam[selectedStep33Team].toFixed(2)}`}</Badge>
+            <Badge variant="outline">{`Pending floating ${roundToNearestQuarterWithMidpoint(adjustedFTE[selectedStep33Team] || 0).toFixed(2)}`}</Badge>
+            <Badge variant="outline">{`Assigned floating ${step3FloatingAssignedFteByTeam[selectedStep33Team].toFixed(2)}`}</Badge>
             <Badge>{`${selectedAdjacentOptions.length} adjacent slot(s)`}</Badge>
           </div>
 
@@ -1284,10 +1338,10 @@ export function FloatingPCAConfigDialogV2({
                 {selectedStep34Detail.summaryPills[0]?.label}
               </Badge>
               <Badge variant="outline" className={STEP34_DETAIL_BADGE_CLASS}>
-                {`Pending ${roundToNearestQuarterWithMidpoint(adjustedFTE[selectedStep34Detail.team] || 0).toFixed(2)}`}
+                {`Pending floating ${roundToNearestQuarterWithMidpoint(adjustedFTE[selectedStep34Detail.team] || 0).toFixed(2)}`}
               </Badge>
               <Badge variant="outline" className={STEP34_DETAIL_BADGE_CLASS}>
-                {`Assigned ${step3FloatingAssignedFteByTeam[selectedStep34Detail.team].toFixed(2)}`}
+                {`Assigned floating ${step3FloatingAssignedFteByTeam[selectedStep34Detail.team].toFixed(2)}`}
               </Badge>
             </div>
           </div>

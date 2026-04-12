@@ -35,6 +35,50 @@ export function getStep32SaveSelectedOutcomeLabel(): string {
   return 'Save selected outcome'
 }
 
+/** Step 3 “leave open” choice — same label whether or not a reservation exists. */
+export function getStep32LeaveOpenFor34ChoiceLabel(): string {
+  return 'Leave open for Step 3.4'
+}
+
+export function getStep32SaveDecisionHelperLeaveOpenNoSave(): string {
+  return 'Leaving this team open for Step 3.4 (no reservation saved).'
+}
+
+export function getStep32SaveDecisionHelperSavedReservation(args: {
+  pcaName: string
+  slot: number
+  team: string
+}): string {
+  return `Saved ${args.pcaName} to slot ${args.slot} for ${args.team} for Step 3.4.`
+}
+
+export function getStep32SaveDecisionHelperStaleCommit(): string {
+  return 'Reservation on file no longer matches this preview. Save again to update, or leave open for Step 3.4.'
+}
+
+/** Helper under the PCA select in Step 3.2 detail (Step 2). */
+export function getStep32PcaChangeStepHelper(): string {
+  return 'Pick the PCA for this path from the menu.'
+}
+
+/** Visible label above the PCA select. */
+export function getStep32PcaSelectLabel(): string {
+  return 'PCA for this path'
+}
+
+export function getStep32PcaSelectPlaceholder(): string {
+  return 'Choose PCA…'
+}
+
+export function getStep32PcaSelectAriaLabel(): string {
+  return 'PCA for this path'
+}
+
+/** Select group heading for the allocator’s suggested PCA row. */
+export function getStep32PcaSelectAllocatorGroupLabel(): string {
+  return 'Suggested'
+}
+
 export function getStep32LaterOutcomeTitle(args: { isRanked: boolean }): string {
   return args.isRanked ? 'Preferred on later rank' : 'Preferred on later slot'
 }
