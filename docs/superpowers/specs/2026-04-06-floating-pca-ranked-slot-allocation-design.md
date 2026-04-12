@@ -6,6 +6,8 @@ Date: 2026-04-06
 
 Revised: 2026-04-11
 
+Allocator refinement: 2026-04-12 — bounded **donor donation** repair shape, **gym-aware** lexicographic scoring, **second repair pass** after extra coverage, canonical **`gymUsageStatus`** on tracker summary (see **§ Step 3.4 Stage 2 → Orchestration: repair → extra coverage → repair again** and **§ V2 allocation engine refinement → Extra coverage: V2 handling and interpretation** below, plus **§9 Gym policy** for UI source of truth).
+
 Semantics addendum: 2026-04-10 (duplicate-floating narrowing and floating-eligible terminology)
 
 Engine refinement: upstream provenance, Step 3 ownership, Step 3.4 preview ↔ V2 tooltip alignment, duplicate-floating tracking (see **V2 allocation engine refinement** below)
@@ -86,6 +88,8 @@ When trade-offs exist, the approved schedule-level objective order is:
 4. Minimize duplicate floating coverage.
 
 This objective order applies most strongly in the post-pass audit/repair stage.
+
+**Implementation (2026-04-12):** The repair pass’s concrete lexicographic score (`buildRankedSlotAllocationScore` / `compareScores` in `lib/algorithms/floatingPcaV2/scoreSchedule.ts`) inserts **`gymLastResortCount`** after fulfilled-pending components and **before** duplicate reduction: prefer schedules with **fewer** uses of the team’s configured gym clock slot when `avoid gym` is on (penalize gym occupancy in the score snapshot, aligned with “gym only as last resort” product pressure). Tie-breaking on duplicates and splits follows as before.
 
 ## Approved Product Decisions
 
@@ -187,6 +191,8 @@ This fixes the earlier failure mode where the wizard path used `selected_only` i
 ### 9. Gym policy
 - If `avoid gym` is enabled, the allocator should avoid the gym slot during ranked, unranked, and duplicate fallback whenever another legal path exists.
 - Gym may be used only when it is truly the final remaining legal path to satisfy pending FTE.
+
+**UI and tracker source of truth (2026-04-12):** Final ranked V2 tracker rows carry `slotSelectionPhase: 'gym-last-resort'` only when the gym path was the true last-resort assignment. **`TeamAllocationLog.summary`** exposes a canonical **`gymUsageStatus?: 'avoided' | 'used-last-resort'`** (`types/schedule.ts`), derived in **`applyRankedSlotStep34TrackerSummaryFields`** (`trackerSummaryDerivations.ts`) from whether **any** assignment has `slotSelectionPhase === 'gym-last-resort'`, with legacy **`gymSlotUsed`** / **`gymUsedAsLastResort`** kept aligned to that final meaning. Step 3.4 preview pills and the V2 PCA tracker tooltip **Status** line must prefer **`gymUsageStatus`** over legacy booleans alone so chip, cards, and tooltip cannot disagree on “gym avoided” vs “gym used only as last resort.”
 
 ### 10. Extra coverage policy
 `extraCoverageMode` is not part of the core ranked-slot fulfillment quality model for A-C.
@@ -298,8 +304,19 @@ The repair pass must stay small and deterministic. Approved move shapes:
 2. swap one assigned slot between two teams
 3. collapse a team's multi-PCA fulfillment into fewer PCAs when quality is not worsened
 4. replace a duplicate slot with a non-duplicate slot when the schedule score improves
+5. **bounded donor donation (2026-04-12):** transfer **one** true Step 3–owned floating slot on a PCA from a **donor** team to a **requesting** team **without** requiring a fabricated “fallback” assignment on the donor and **without** a two-team swap, when donor-protection rules pass (see below).
 
 The repair pass must not perform unconstrained whole-schedule rewrites.
+
+**Donor donation — intent:** Some ranked-gap (`B1`) or fairness-floor (`F1`) rescues are only feasible if a team that already has **surplus** true Step 3 floating coverage **gives up** a slot on a shared PCA so the requester can take that clock slot. Earlier implementations only considered “open slot,” “move with fallback,” or “swap,” which could miss this shape.
+
+**Donor donation — eligibility and blocking (implementation in `lib/algorithms/floatingPcaV2/repairAudit.ts`):**
+
+- **True Step 3 ownership:** the donor must actually hold the slot as Step 3–added floating (not baseline/upstream-only occupancy); helpers include `donorHasTrueStep3Ownership`, `buildRankedV2RepairAuditState`.
+- **Bounded donation gate:** `teamCanDonateBoundedly` requires that the donation does not violate **`donationWouldBreakDonorFairnessFloor`** (donor with meaningful initial pending must keep fairness-floor coverage; donor without meaningful pending must not drop to **zero** true Step 3 floating slots) or **`donationWouldBreakDonorRankCoverage`** (donor with meaningful pending must not lose all true Step 3 presence on non-gym **ranked** preference slots).
+- **Duplicate-stack guard:** do not treat “unstacking” a **duplicate** true Step 3 stack on the same clock slot as a donation rescue (multiple Step 3 rows on same team+slot); donation is rejected when true Step 3 slot count on that slot for the donor is **> 1**.
+
+Candidate generation (`lib/algorithms/floatingPcaV2/repairMoves.ts`) emits donation-shaped updates for **`B1`** and **`F1`** alongside existing move/fallback/swap paths; **`canRescueSlotForTeam`** in repair audit treats a safe donation as a valid rescue when ranking whether a missing ranked slot is “recoverable.”
 
 ### Repair acceptance rule
 Each candidate repair should be scored lexicographically. A repair is accepted only if it is strictly better on the approved priority order:
@@ -307,13 +324,26 @@ Each candidate repair should be scored lexicographically. A repair is accepted o
 1. ranked-slot coverage
 2. fairness floor
 3. fulfilled pending
-4. duplicate reduction
-5. split reduction
+4. **gym last resort (2026-04-12):** fewer gym-clock-slot uses for `avoid gym` teams (`gymLastResortCount` in the score vector — lower is better)
+5. duplicate reduction
+6. split reduction
 
 Implementation note:
-- The implementation may use a concrete score vector.
+- The implementation uses a concrete score vector in `scoreSchedule.ts` (`RankedSlotAllocationScore`).
 - The repair pass must remain deterministic.
 - The repair pass must be bounded by explicit limits on move size and iteration count.
+
+### Orchestration: repair → extra coverage → repair again (2026-04-12)
+
+**Problem:** If optional **extra coverage** runs after the first repair loop and adds Step 3.4 rows, defects detectable on the **final** allocation snapshot can change; freezing the tracker’s `repairAuditDefects` from the pre–extra-coverage audit alone is stale.
+
+**Approved behavior (implemented in `lib/algorithms/floatingPcaV2/allocator.ts`):**
+
+1. Run **`runRepairLoop`** after the **draft** (same bounded defect scan + candidate generation + lexicographic acceptance as today).
+2. Run **`applyExtraCoverageRoundRobin`** only when `extraCoverageMode` allows it and every team’s **rounded** pending is already satisfied (unchanged from §10 / extra-coverage section).
+3. Run **`runRepairLoop` again** on the post–extra-coverage allocations so audit/repair and **tracker `summary.repairAuditDefects`** reflect the **frozen** schedule before final tracker assembly.
+
+**Note on gating extra coverage vs open `B1`/`F1`:** A blanket “skip all extra coverage while any `B1`/`F1` remains” can prevent extra coverage from running when pending is already met but residual ranked-gap semantics still flag `B1`; the **second repair pass** is the contract that reconciles post-extra mutations. If product later requires stricter ordering, specify a narrower guard (e.g. only when pending not satisfied).
 
 ### Bounded redistribution rule
 Redistribution is allowed, but must stay conservative:
@@ -355,7 +385,7 @@ The hover summary should answer:
 - What was the highest ranked slot fulfilled?
 - Did the allocator use an unranked slot?
 - Did the allocator use duplicate floating coverage?
-- Did it use gym as last resort?
+- Did it use gym as last resort? (ranked V2: prefer **`summary.gymUsageStatus`** — `'avoided'` vs `'used-last-resort'` — over legacy booleans; see **§9**)
 - Was preferred PCA used?
 - Did audit/repair change the first draft?
 
@@ -364,7 +394,7 @@ Suggested summary fields:
 - `Highest ranked slot fulfilled: #1 / #2 / None`
 - `Used unranked slot: Yes / No`
 - `Used duplicate floating slot: Yes / No`
-- `Gym used: No / Last resort`
+- `Gym: Avoided / Used only as last resort` (backed by `gymUsageStatus` when present)
 - `Preferred PCA used: Yes / No`
 - `Post-pass repair applied: Yes / No`
 
@@ -465,10 +495,12 @@ The **V2-specific tracker tooltip** must reuse the **same** duplicate interpreta
 
 **When it runs (engine contract):**
 
-- Extra coverage is a **separate pass** after core allocation.
+- Extra coverage is a **separate pass** after core allocation **and** after the **first** bounded repair loop (draft → repair → then extra coverage → **second repair**; see **Step 3.4 Stage 2 → Orchestration: repair → extra coverage → repair again**).
 - It must run **only if** `extraCoverageMode` is not `'none'` (e.g. production UI may use `'round-robin-team-order'`).
 - It must run **only if** every team has **no remaining rounded pending** (same quarter threshold as core pending checks: effectively “pending met” for all teams before augmentation).
 - If any team still has meaningful rounded pending, **do not** run extra coverage; core repair and fulfillment take precedence.
+
+**Post–extra-coverage audit:** After extra coverage mutates allocations, the engine **re-runs** the same bounded repair loop so `repairAuditDefects` on the final tracker matches a fresh `detectRankedV2RepairDefects` pass on the frozen snapshot (regression: `f99`; implementation: `allocator.ts`).
 
 **Tracker and diagnostics (mandatory labeling):**
 
@@ -527,7 +559,7 @@ This section is an **implementation-aligned** summary of V2 **business logic** (
 | Stage | Role |
 | --- | --- |
 | Step 3.2 / 3.3 (V2 wizard) | Optional **manual reservations**: execute committed floating slot+PCA choices into **pending** and **`existingAllocations`** before Step 3.4. **Not** the ranked-slot allocator of record. |
-| Step 3.4 ranked V2 | **Allocator of record** for ranked fulfillment: continuity-friendly **draft** + **bounded audit/repair** (+ optional extra coverage), exposed as `allocateFloatingPCA_v2RankedSlot`. |
+| Step 3.4 ranked V2 | **Allocator of record** for ranked fulfillment: continuity-friendly **draft** + **bounded audit/repair** + optional **extra coverage** + **second bounded repair** (then final tracker / provenance), exposed as `allocateFloatingPCA_v2RankedSlot`. |
 
 ### B. Execution before Step 3.4
 
@@ -587,7 +619,7 @@ Both are re-exported from **`lib/algorithms/pcaAllocation.ts`**. Do **not** rein
 | Ranked effective preferences (`selected_only`, etc.) | `lib/algorithms/floatingPcaV2/effectivePreferences.ts` | `buildEffectiveRankedPreferences`: used when **`preferenceSelectionMode === 'selected_only'`**; preserves **`preferred_slots`**. V2 wizard Step 3.2/3.3 handoff uses **`legacy`** + **`committedStep3Assignments`** instead (see **V2 business logic log**). |
 | V2 wizard: Step 3.2/3.3 execute then Step 3.4 | `lib/features/schedule/step3V2CommittedSelections.ts` | Executes reservations, then calls ranked V2 with **`preferenceSelectionMode: 'legacy'`** and **`committedStep3Assignments`**; appends executed rows to tracker with ranked metadata. |
 | V2 upstream / Step-3 selection provenance for coverage | `lib/algorithms/floatingPcaV2/provenance.ts` | e.g. `buildUpstreamCoverageKindByTeamSlot` — **not** generic shared helpers. |
-| V2-only **derived** tracker summary fields | `lib/algorithms/floatingPcaV2/trackerSummaryDerivations.ts` | e.g. `highestRankedSlotFulfilled`, `usedUnrankedSlot`, `gymUsedAsLastResort`, `pcaSelectionTier` bump for `preferredPCAUsed`. Call **`finalizeRankedSlotFloatingTracker`** after building a full ranked V2 tracker (runs shared `finalizeTrackerSummary` first, then V2 derivations). |
+| V2-only **derived** tracker summary fields | `lib/algorithms/floatingPcaV2/trackerSummaryDerivations.ts` | e.g. `highestRankedSlotFulfilled`, `usedUnrankedSlot`, **`gymUsageStatus`** (canonical `'avoided' \| 'used-last-resort'` from `gym-last-resort` phase rows), **`gymUsedAsLastResort`** / **`gymSlotUsed`** (kept aligned with canonical gym for ranked V2 finalization), `pcaSelectionTier` bump for `preferredPCAUsed`. Call **`finalizeRankedSlotFloatingTracker`** after building a full ranked V2 tracker (runs shared `finalizeTrackerSummary` first, then V2 derivations). |
 | Legacy standard / balanced floating | `lib/algorithms/floatingPcaLegacy/allocator.ts` | Behind `allocateFloatingPCA_v1LegacyPreference`. |
 | Legacy **`allocatePCA()`** floating phase (highest-pending-first inline path) | `lib/algorithms/floatingPcaLegacy/allocatePcaFloatingPhase.ts` | **Still not** the same as `pcaAllocationFloating.ts`. Agents must not assume “floating = only `pcaAllocationFloating`.” |
 | Shared floating **contracts** (context/result types) | `lib/algorithms/floatingPcaShared/contracts.ts` | `FloatingPCAAllocationContextV2`, `FloatingPCAAllocationResultV2`, etc. |
@@ -598,7 +630,7 @@ Both are re-exported from **`lib/algorithms/pcaAllocation.ts`**. Do **not** rein
 ### Tracker summary split (important)
 
 - **`finalizeTrackerSummary`** in `floatingPCAHelpers.ts` finalizes **version-agnostic** flags: AM/PM balance from slots, **true** duplicate-floating via the shared semantics helper (not raw `ranked-duplicate` alone), and base `preferredPCAUsed` from legacy counters / `wasPreferredPCA`.
-- **Ranked V2** assignment metadata (`fulfilledSlotRank`, `slotSelectionPhase`, `pcaSelectionTier`) is folded into summary by **`applyRankedSlotStep34TrackerSummaryFields`** / **`finalizeRankedSlotFloatingTracker`** in `trackerSummaryDerivations.ts`.
+- **Ranked V2** assignment metadata (`fulfilledSlotRank`, `slotSelectionPhase`, `pcaSelectionTier`) is folded into summary by **`applyRankedSlotStep34TrackerSummaryFields`** / **`finalizeRankedSlotFloatingTracker`** in `trackerSummaryDerivations.ts`, including canonical **`gymUsageStatus`** for UI/tooltip (see §9 gym policy).
 
 ### Regression anchors
 
@@ -620,6 +652,7 @@ When touching this boundary, run the focused regressions listed in `docs/superpo
 | 10. Gym only as final rescue | Need `0.25`; ranked `1 > 3`; all non-gym paths impossible; gym slot `4` exists and `avoid gym` is on | Use `4` only if it is the only remaining path to meet pending | Gym remains blocked until true last resort |
 | 11. Partial ranking only | Need `0.5`; ranked `1 > 3`; slots `2` and `4` unranked | Try `1`, then `3`, then unused unranked non-gym before any duplicate | Unranked slots are a lower-priority bucket, not forbidden |
 | 12. No ranked slots configured | Need `0.5`; no ranked slots; gym avoided | Use unused non-gym slots with continuity and PCA cascade | Normal fallback behavior without slot preference |
+| 13. Bounded donor donation | Requester missing rank `#1`; another team holds rank `#1` on a PCA with true Step 3 floating **and** keeps another true Step 3 slot; donation passes donor-protection | Repair may move that clock slot to the requester **without** swap/fallback | Ranked rescue exists only when audit recognizes donation-only path and candidates include single-transfer donation; harmful donations (donor stripped of all true Step 3 floating, fairness floor, or ranked coverage) stay blocked |
 
 ## Error Handling and Edge Cases
 - If no ranked slots are configured, Step 3.4 should behave like a no-slot-preference team and still honor gym avoidance and floor/PCA cascades.
@@ -644,8 +677,12 @@ This design should be implemented with focused regression coverage around:
 - tracker reason fields for draft vs repair decisions
 - non-floating / special-program / substitution-like upstream coverage not being misclassified as duplicate-floating
 - final V2 preview and V2 tooltip staying aligned on duplicate wording
-- extra coverage: only after all teams’ rounded pending is met; tracker labels `extra-coverage`; core metrics still evaluated with `extraCoverageMode: 'none'` in focused tests
+- extra coverage: only after all teams’ rounded pending is met; tracker labels `extra-coverage`; core metrics still evaluated with `extraCoverageMode: 'none'` in focused tests; **after** extra coverage in round-robin mode, **second repair** run and tracker **`repairAuditDefects`** consistent with fresh audit (`f99`)
+- canonical gym summary: **`gymUsageStatus`** vs legacy flags; tooltip + Step 3.4 pills (`f95`, `f96`)
+- bounded donor donation: safe vs harmful repair shapes (`f97`, `f98`); existing repair rescues (`f72`, `f84`, `f85`) remain green
 - zero-slot-assigned: floating PCA rows with no team on any slot are normalized away (or one explicit placeholder policy) without breaking non-floating / buffer / substitution carriers
+
+**Plan / changelog cross-reference:** `docs/superpowers/plans/2026-04-12-step32-step34-preferred-gym-and-repair-fixes-implementation-plan.md`, `CHANGELOG_2.md` (2026-04-12 preferred / gym / repair).
 
 Recommended test layers:
 - unit tests for effective preference construction, target ordering, and repair scoring
@@ -664,6 +701,8 @@ Recommended test layers:
 - `lib/algorithms/floatingPcaShared/contracts.ts`
 - `lib/algorithms/floatingPcaLegacy/` (`allocator.ts`, `allocatePcaFloatingPhase.ts`)
 - `lib/algorithms/floatingPcaV2/` (`allocator.ts`, `draftAllocation.ts`, repair/score modules, `provenance.ts`, `trackerSummaryDerivations.ts`, `effectivePreferences.ts`)
+- `types/schedule.ts` (`GymUsageStatus`, `TeamAllocationLog.summary.gymUsageStatus` for ranked V2 UI alignment)
+- `components/allocation/step34/step34ViewModel.ts`, `lib/features/schedule/v2PcaTrackerTooltipModel.ts` (canonical gym labels; not allocator core but contract consumers)
 - `lib/algorithms/floatingPcaV1LegacyPreference.ts` / `floatingPcaV2RankedSlot.ts` (stable behavior-named wrappers)
 - relevant Step 3 tests in `tests/regression` (including `f83-*` inline floating characterization)
 
