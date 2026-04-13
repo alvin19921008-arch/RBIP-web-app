@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { FaqAccordion } from '@/components/help/FaqAccordion'
@@ -84,6 +85,20 @@ export function HelpCenterContent(props: { onAfterStartTour?: () => void }) {
                 </Button>
               </div>
             ))}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-base font-semibold">Guides</h2>
+        <div className="rounded-md border border-border p-3 space-y-2">
+          <div className="text-sm font-medium">Avg PCA/team and quarter slots</div>
+          <p className="text-xs text-muted-foreground">
+            Plain-language notes on continuous vs 0.25 slots, scarcity and slack, surplus-adjusted targets vs post-need
+            extra coverage (V2 Step 3).
+          </p>
+          <Button asChild size="sm" variant="outline">
+            <Link href="/help/avg-and-slots">Open guide</Link>
+          </Button>
         </div>
       </section>
 

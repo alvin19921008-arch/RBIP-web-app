@@ -25,6 +25,7 @@ import { LeaveBlock } from '@/components/allocation/LeaveBlock'
 import { CalculationBlock } from '@/components/allocation/CalculationBlock'
 import { PCACalculationBlock } from '@/components/allocation/PCACalculationBlock'
 import { PcaAllocationLegendPopover } from '@/components/allocation/PcaAllocationLegendPopover'
+import { AvgPcaFormulaPopoverContent } from '@/components/help/AvgPcaFormulaPopoverContent'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Info } from 'lucide-react'
@@ -313,66 +314,9 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
               <PopoverContent
                 align="center"
                 side="top"
-                className="w-[420px] rounded-md border border-amber-200 bg-amber-50/95 p-3"
+                className="w-[420px] max-h-[min(520px,70vh)] overflow-y-auto rounded-md border border-amber-200 bg-amber-50/95 p-3"
               >
-                <div className="space-y-2 text-xs leading-snug">
-                  <div className="font-semibold">Avg PCA/team formula</div>
-                  <div className="text-muted-foreground">
-                    We follow the legacy Excel semantics: special program PCA slots are treated as reserved capacity and
-                    do not count toward “Assigned” fulfillment.
-                  </div>
-
-                  <div className="space-y-1">
-                    <div>
-                      <span className="font-semibold">1) Reserve special program slots</span>
-                    </div>
-                    <div className="text-muted-foreground">
-                      <span className="font-mono">reservedSpecialProgramSlotsFTE</span> = sum of required program slots
-                      for this weekday (incl. Step 2.0 overrides, excludes DRM) × 0.25
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <div>
-                      <span className="font-semibold">2) Base pool (earmark DRM first)</span>
-                    </div>
-                    <div className="text-muted-foreground font-mono">
-                      basePool = totalPCAOnDuty − reservedSpecialProgramSlotsFTE − drmAddOnFte
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <div>
-                      <span className="font-semibold">3) Distribute base Avg PCA/team</span>
-                    </div>
-                    <div className="text-muted-foreground font-mono">
-                      baseAvg[team] = (PT[team] / totalPT) × basePool
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <div>
-                      <span className="font-semibold">4) DRO special handling (DRM)</span>
-                    </div>
-                    <div className="text-muted-foreground">
-                      <span className="font-mono">finalAvg[DRO]</span> = <span className="font-mono">baseAvg[DRO]</span>{' '}
-                      + <span className="font-mono">drmAddOnFte</span> (from Step 2.0 override, default 0.4)
-                    </div>
-                  </div>
-
-                  <div className="border-t pt-2 space-y-1">
-                    <div className="font-semibold">Sanity check</div>
-                    <div className="text-muted-foreground">
-                      For each team, compute <span className="font-mono">balance = Assigned − Target</span>.
-                      Use <span className="font-mono">finalAvg[DRO]</span> as DRO’s target on DRM days (otherwise use
-                      base Avg). Then:
-                    </div>
-                    <div className="text-muted-foreground">
-                      sum of positive balances ≈ absolute sum of negative balances (small drift can happen due to
-                      quarter-slot rounding and 2‑decimal display).
-                    </div>
-                  </div>
-                </div>
+                <AvgPcaFormulaPopoverContent />
               </PopoverContent>
             </Popover>
           </div>

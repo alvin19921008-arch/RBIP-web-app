@@ -16,6 +16,8 @@ Part II adds a bounded ranked-slot promotion layer after required coverage has a
 Both parts are explicitly V2-only. This spec also adds a hard V1/V2 boundary contract so future agents do not chaotically edit both engines together.
 
 ## Relationship To Existing Specs
+- **Floating / non-floating glossary and Avg PCA unification (read first for vocabulary):** `docs/superpowers/specs/2026-04-13-step3-floating-nonfloating-contract-table.md`
+- **Step 3 projection boundary (Part 1 — single handoff object):** `docs/superpowers/plans/2026-04-13-step3-contract-reset-part1-projection-unification-implementation-plan.md`
 - Base ranked V2 allocator design: `docs/superpowers/specs/2026-04-06-floating-pca-ranked-slot-allocation-design.md`
 - V2 Step 3.2 review surface: `docs/superpowers/specs/2026-04-11-v2-step32-preferred-review-design.md`
 - V1/V2 extraction boundary: `docs/superpowers/specs/2026-04-10-floating-pca-v1-v2-extraction-design.md`
@@ -28,6 +30,7 @@ Both parts are explicitly V2-only. This spec also adds a hard V1/V2 boundary con
 - one shared surplus-aware projection used by the Step 2 delta/toast path and Step 3.1 initial pending target state
 - therapist-weighted redistribution of executable global slack before final quarter-rounding
 - explicit target/provenance fields so Step 3.4 tooltip text can explain surplus-adjusted assignments in a tiny, debug-friendly way
+- optional **user-facing literacy** copy: Help Center guide `/help/avg-and-slots` plus a short “continuous vs quarter slots” section in the existing Avg PCA/team formula popover (no new dashboard badges)
 - a separate optional ranked-promotion layer in the V2 repair/orchestration path that permits bounded swap-only or safe-move upgrades after required coverage is already met
 - regression and harness coverage for both layers
 - a V2-only editing contract so future work stays out of V1 unless explicitly approved
@@ -35,7 +38,7 @@ Both parts are explicitly V2-only. This spec also adds a hard V1/V2 boundary con
 ### Out of scope
 - changing the V1 allocator's behavior
 - folding surplus-adjusted targets back into `rawAveragePCAPerTeam` as the developer-facing source of truth
-- redesigning the visible Step 3.1 or Step 3.4 UI beyond tiny tooltip/provenance hints
+- redesigning the visible Step 3.1 or Step 3.4 UI beyond tiny tooltip/provenance hints (allowed: dedicated Help article + popover educational text as above)
 - replacing the existing V2 draft-pass philosophy
 - turning optional ranked promotion into a full unconstrained optimizer
 - exposing a large new front-facing "surplus" feature concept to users
@@ -51,6 +54,28 @@ First, Step 2 can already change the real floating landscape by changing therapi
 - the later extra-coverage behavior that may create "surplus" slots after draft and repair have already run
 
 Second, the recent ranked-gap cap fixed one class of over-requesting, but it also removed a class of desirable ranked improvement opportunities. A team that already met its required pending may still reasonably want to improve from a lower-ranked slot to a higher-ranked slot. That should remain possible, but only when the improvement can be achieved through a bounded no-net-loss swap or donor-safe move. Harmful donation is not acceptable for this phase.
+
+## Part I — Mental model: Why “surplus” exists after Step 2 (not a Step 2 omission by default)
+
+This section addresses **Group A / Part I** confusion: *Step 2 already settled therapists, special programs, and non-floating coverage, and `average_pca_per_team` was updated — so why does “surplus” show up later (e.g. after Step 3.4 tooltips)? Shouldn’t those extra slots have been “in” the post–Step 2 Avg PCA/team?*
+
+### Two different objects (see contract table)
+
+Use the glossary in `2026-04-13-step3-floating-nonfloating-contract-table.md`:
+
+- **Avg** (display / therapist-weighted **raw** team requirement) answers *bed-weighted demand per team*. It is **not** defined as “total floating FTE divided by teams,” and **Part 1 + product contract** keep **dashboard / Step 3.1 “Avg”** aligned to that **raw** scalar (`displayTargetByTeam`), **not** to surplus-inflated operational totals (regression: `f113-step3-dashboard-avg-pca-uses-raw-bootstrap-target`).
+- **Surplus-aware operational targets** (rounded floating / pending seeds after grants) answer *how many **executable quarter-slots** the floating pool must place*, after **global** realizability and **sum-preserving** reconciliation. That layer **may** be **higher** than `round(Avg − non-floating)` for some teams when **redistributable slack** exists — without changing the **display Avg** number the user reasons about at a glance.
+
+So: **0.5 FTE “extra” in the pool** is **not** required to appear as +0.5 on every team’s **Avg** row. It is materialized as **at most** `redistributableSlackSlots` quarter-slot **grants** on the **operational floating target** path, weighted by raw demand share, then explained in **tooltip/provenance** where relevant.
+
+### Where slack actually comes from (upstream vs engine)
+
+- **Legitimate Part I “surplus” (slack redistribution):** After Step 2, the schedule has a **fixed** set of floating PCAs and slot topology. **Local** rounding of each team’s **raw floating** gap can **under-use** the **global** count of placeable quarter-slots. The **difference** (executable slack) is **not** an error in Step 2’s Avg formula — it is a **discretization + global capacity** phenomenon. Part I **folds that slack into operational targets** (before / as part of the single Step 3 projection handoff), not by silently rewriting **display Avg**.
+- **Upstream bug (different diagnosis):** If **non-floating FTE** or **typed coverage** is wrong (e.g. naive headcount, substitution misclassified), then **raw floating** and every downstream number are wrong. That is **not** “surplus after 3.4” — it is **wrong gap math**; fix **Step 2 attribution / bootstrap inputs** per the contract table’s “non-floating display vs typing” note.
+
+### After Step 3.4
+
+Tooltips that mention **surplus-adjusted target** refer to **operational** provenance (grants on the floating obligation), not a claim that **Avg** was retroactively wrong at Step 2. Optional **extra coverage** after allocation is **separate** from Part I surplus metadata; do not treat `Extra` as proof of Part I surplus grants.
 
 ## Goals
 - Keep `rawAveragePCAPerTeam` as the developer-facing therapist-weighted base demand.
@@ -86,16 +111,19 @@ For implementation and debugging, the system must keep separate layers:
 
 This separation is mandatory even if the front-facing experience hides most of it.
 
-### 2. Surplus hint stays tooltip-only
-If a final Step 3.4 outcome exists because the team's target was uplifted by surplus adjustment, that should be explained only in Step 3.4 tracker tooltip/provenance text.
+### 2. Surplus hint: tracker tooltip + Help/popover literacy (no new badges)
+If a final Step 3.4 outcome exists because the team's target was uplifted by surplus adjustment, that should be explained in **Step 3.4 tracker tooltip/provenance** text.
 
 Allowed:
 - a short provenance line such as `Surplus-adjusted target`
 - a tiny explanatory sentence such as `This team received 1 extra quarter-slot from therapist-weighted global surplus adjustment.`
+- **Help Center** page `/help/avg-and-slots` and a **short** subsection in the existing **Avg PCA/team formula** popover (dashboard + schedule) linking to that guide: continuous vs quarter slots, why slack/scarcity can appear, **surplus-adjusted** (target built at Step 2→3 / projection) vs **post-need extra** (optional placement after need met in Step 3.4). Copy must stay **plain language** and must **not** imply display Avg was wrong at Step 2.
+- **Planned (not necessarily in first Part I ship):** a **single discreet line** of copy in **Step 3.1** (`FloatingPCAConfigDialogV2`) when this team’s **pending / operational floating seed** includes a **surplus-adjusted** component (e.g. one line under the team card or near **Pending floating**, wording like “Includes shared slack” / “Surplus-adjusted target” — exact string TBD). **Do not** add a new badge or second hero control.
+- **Planned (not necessarily in first Part I ship):** a **single discreet line** in the **Step 3.4** preview / tracker area when **post-need extra** coverage is relevant for the current view (distinct from surplus-adjusted target provenance — e.g. “Optional slot after need met”). **Do not** conflate with surplus-adjusted tooltip text.
 
 Disallowed:
 - new visible badges on Step 3.4 summary cards
-- a new standalone UI control for surplus debugging
+- a new standalone control whose primary purpose is engineer-only surplus debugging
 
 ### 3. Raw/base values must absorb surplus before rounding
 The approved order is:
@@ -131,8 +159,10 @@ This preserves the approved mental model:
 
 Design rule:
 - weighting should use `rawSurplusFte`
-- realization should be capped by `redistributableSlackSlots`
+- realization should be capped by `redistributableSlackSlots` (an **integer count of quarter slots**, not “use up every FTE of continuous surplus”)
 - final allocator authority remains the quarter-based operational output, not the continuous ideal
+
+**Continuous surplus vs discrete grants:** `rawSurplusFte` is in **continuous** FTE. **Materialized** grants are in steps of **0.25 FTE** per slot. If `redistributableSlackSlots = 1`, **at most one** slot (`0.25` FTE) can be granted globally in that reconciliation pass—even when `rawSurplusFte` is larger (e.g. `0.43`). The leftover continuous story (`0.43 − 0.25 = 0.18` in that example) is **not** “lost” by a separate bug; it is **not realizable as another quarter slot** while the **executable slack cap** is one slot. A second slot would require **`redistributableSlackSlots ≥ 2`** (and the usual fair split / reconciliation rules), not merely `rawSurplusFte ≥ 0.5`.
 
 ### 5. Optional ranked promotion is distinct from required ranked coverage
 The system must separate:
@@ -193,7 +223,7 @@ Any shared-surface change must include a focused check that V1 behavior was not 
 ### Part I. Surplus-Aware Step 3 Target Architecture
 
 #### Intent
-Step 2 is where the user settles the real upstream inputs that determine Step 3 floating pressure. Therefore Step 2 should produce the first authoritative Step 3 target projection, while Step 3.1 should recompute the same projection from live state for correctness. The two surfaces must share one calculation model.
+Step 2 is where the user settles the real upstream inputs that determine Step 3 floating pressure (**Avg**, non-floating coverage, floating staff availability). **After Part 1 projection unification**, the **Step 2 → Step 3 boundary** produces **one shared projection object** (single calculation model + consistent inputs). Step 3.1 **consumes** that projection for display seeds and fixed rounded floating targets; it **recomputes** only when **live state** diverges from what Step 2 last finalized (same rules, fresher inputs — not a second ad-hoc math branch). Step 2 delta / toast messaging should describe the **same** surplus-aware **operational** target change the user will see at Step 3.1, while **Avg** display stays the **raw** contract per the floating/non-floating table.
 
 #### New conceptual model
 Introduce an explicit `Step3TargetProjection` concept with three layers:
@@ -306,15 +336,34 @@ Instead it:
 - used executable slack only to cap what could actually be realized
 - still ended at the required quarter-based operational output
 
+**Read the numbers together:** Here `rawSurplusFte = 0.43` but `redistributableSlackSlots = 1` ⇒ only **one** quarter grant (`0.25` FTE) exists at the outlet. The **ideal** weighted shares still used `0.43` for **fairness of who gets** that single slot; the **remaining** `0.18` FTE of continuous “surplus story” does **not** auto-create a second slot. That is what **capped by executable slack** means—not that `0.18` is thrown away arbitrarily, but that **slot count** is bounded before discretization.
+
 #### Shared Step 2 / Step 3.1 contract
 The Step 2 completion path should calculate this projection and use it for delta/toast messaging.
 
 Step 3.1 should:
-- recompute the same projection from live state
+- **consume** the same projection object built at the Step 2→3 boundary (Part 1 unification); **recompute with the same model** only when **live state** has diverged (fresher inputs), not a parallel ad-hoc target branch
 - initialize its pending values from the same rounded adjusted target layer
 - remain correct even if state changed after Step 2
 
-This means Step 2 becomes the first authoritative projection point, while Step 3.1 remains the runtime verification point.
+Step 2 remains the first **authoritative** projection point; Step 3.1 is the **live** consumer (and re-validator when inputs change).
+
+#### User-facing literacy (Part I, non-blocking)
+Staff confusion often mixes **display Avg** (continuous, raw therapist-weighted), **surplus-adjusted operational floating targets** (slack shared at handoff), and **post-need extra** (allocator optional coverage after need is met). Part I implementation should keep **tooltips** tiny; **product education** belongs in `/help/avg-and-slots` and the **formula popover** cross-link, aligned with `2026-04-13-step3-floating-nonfloating-contract-table.md`. **Optional follow-up:** one **small line** each in Step 3.1 and Step 3.4 per **Locked decision 2** (planned, not mandatory for first ship).
+
+#### Engineering field glossary (stable names; map to product language)
+Do **not** mass-rename bootstrap/projection identifiers solely for naming aesthetics; churn breaks tests and reviews. Instead keep **this spec + contract table** as the glossary.
+
+| Typical code / spec field | Role in one sentence | Nearest product glossary (contract table) |
+|---------------------------|----------------------|-------------------------------------------|
+| `rawSurplusFte` | Continuous surplus used as **weighting input** for fair shares | Not a row on the card; informs **shared slack** math |
+| `idealWeightedSurplusShareByTeam` | Each team’s **fair share** of `rawSurplusFte` before slot cap | Same — internal |
+| `redistributableSlackSlots` | **Max count** of quarter slots that may be **materialized** in this pass | Bridges to “how many slots the pool can still place” vs sum of needs |
+| `realizedSurplusSlotGrantsByTeam` (or equivalent) | Actual **0.25** grants applied per team after cap + reconciliation | Feeds **operational** floating target / pending seed, not **display Avg** |
+| `surplusAdjustedTeamTargets` | Continuous-layer targets after grants, pre-final quarter snap | Between **raw floating** story and **rounded** operational |
+| `roundedAdjustedTeamTargets` / `roundedPendingByTeam` | Quarter-grid **operational** outputs consumed by Step 3.1 / allocator | Align with **Pending floating** / operational obligation (after surplus), not necessarily the **Rounded floating** row if that row is **pre-surplus** `round(raw floating)` only |
+
+Full code-name definitions also live in `2026-04-13-step3-floating-nonfloating-contract-table.md` § **V2 surplus / projection field glossary**.
 
 #### Step 2 delta semantics
 The existing "Step 3 target updated" delta path should describe the final surplus-aware rounded target change, not only the pre-surplus raw target change.
@@ -329,8 +378,8 @@ The message should reflect the projection the user will actually see at Step 3.1
 If a Step 3.4 assignment exists because a team's target was increased by surplus redistribution, final tracker/provenance data may expose that reason in tiny form.
 
 Approved scope:
-- tooltip/provenance text only
-- no new major visual concept
+- tooltip/provenance text on the tracker
+- Help article + popover literacy per **Locked decision 2** (no new summary-card badges)
 
 The provenance should be derived from target adjustment metadata, not reconstructed heuristically from final allocations alone.
 
@@ -445,6 +494,9 @@ This design should be implemented with focused regressions around:
 ## Primary Files / Areas
 - `lib/features/schedule/step3Bootstrap.ts`
 - Step 2 / Step 3 controller wiring where target deltas and Step 3 entry state are built
+- `app/(dashboard)/help/avg-and-slots/page.tsx` (Part I user literacy)
+- `components/help/avgPcaFormulaSteps.tsx`, `components/help/AvgPcaFormulaPopoverContent.tsx`, `components/help/HelpCenterContent.tsx` (popover + Help Center entry)
+- `components/schedule/ScheduleBlocks1To6.tsx`, `app/(dashboard)/schedule/page.tsx` (Avg formula popover hosts)
 - `components/allocation/FloatingPCAConfigDialogV2.tsx`
 - `lib/algorithms/floatingPcaV2/allocator.ts`
 - `lib/algorithms/floatingPcaV2/repairAudit.ts`

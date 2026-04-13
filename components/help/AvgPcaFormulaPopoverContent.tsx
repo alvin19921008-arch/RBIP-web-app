@@ -1,0 +1,52 @@
+'use client'
+
+import type { ReactNode } from 'react'
+import Link from 'next/link'
+import { cn } from '@/lib/utils'
+import { AvgPcaFormulaSteps, AvgPcaSanityCheckStaticDescription } from '@/components/help/avgPcaFormulaSteps'
+
+export type AvgPcaFormulaPopoverContentProps = {
+  className?: string
+  /** When set, replaces the static “Sanity check” footer (e.g. schedule page live totals). */
+  sanityCheckFooter?: ReactNode
+}
+
+export function AvgPcaFormulaPopoverContent({ className, sanityCheckFooter }: AvgPcaFormulaPopoverContentProps) {
+  return (
+    <div className={cn('space-y-2 text-xs leading-snug', className)}>
+      <div className="font-semibold">Avg PCA/team formula</div>
+      <AvgPcaFormulaSteps />
+
+      <div className="border-t border-amber-200/80 pt-2 space-y-1">
+        <div className="font-semibold">Sanity check</div>
+        {sanityCheckFooter ?? <AvgPcaSanityCheckStaticDescription />}
+      </div>
+
+      <div className="border-t border-amber-200/80 pt-2 space-y-2">
+        <div className="font-semibold">Continuous vs quarter slots</div>
+        <p className="text-muted-foreground">
+          Avg PCA/team is computed in <span className="font-medium text-foreground">continuous</span> FTE (fractions).
+          Step 3 placement uses <span className="font-medium text-foreground">quarter slots</span> (0.25 FTE each).
+          Snapping many teams to the grid and adding them up can leave a small global mismatch: sometimes extra
+          placeable slots remain (slack), sometimes the pool is tight (scarcity). That is normal—not necessarily an
+          error in the Avg formula.
+        </p>
+        <p className="text-muted-foreground">
+          <span className="font-medium text-foreground">Surplus-adjusted</span> (V2) means slack was shared into a
+          team’s <span className="font-medium text-foreground">floating target</span> at the Step 2→3 handoff; the
+          dashboard Avg row stays the raw therapist-weighted value. <span className="font-medium text-foreground">
+            Post-need extra
+          </span>{' '}
+          is different: optional coverage after a team’s stated need is already met (Step 3.4), and depends on how
+          allocation runs—not the same label as surplus-adjusted targets.
+        </p>
+        <Link
+          href="/help/avg-and-slots"
+          className="inline-flex text-xs font-medium text-primary underline-offset-4 hover:underline"
+        >
+          Open full guide: Avg PCA and quarter slots
+        </Link>
+      </div>
+    </div>
+  )
+}

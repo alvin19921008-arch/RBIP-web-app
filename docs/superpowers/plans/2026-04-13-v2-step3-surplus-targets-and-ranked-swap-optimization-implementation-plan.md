@@ -30,6 +30,14 @@
 ## File Structure
 
 ### Task Group A: Surplus-aware target pipeline
+- Add: `app/(dashboard)/help/avg-and-slots/page.tsx`
+  - Plain-language guide: continuous vs quarter slots; scarcity/slack; surplus-adjusted vs post-need extra (per Part I spec).
+- Add: `components/help/avgPcaFormulaSteps.tsx`, `components/help/AvgPcaFormulaPopoverContent.tsx`
+  - Shared formula copy + popover body (formula, sanity check slot, teaser + link to full guide).
+- Modify: `components/help/HelpCenterContent.tsx`
+  - “Guides” card linking to `/help/avg-and-slots`.
+- Modify: `components/schedule/ScheduleBlocks1To6.tsx`, `app/(dashboard)/schedule/page.tsx`
+  - Replace duplicated Avg PCA popover markup with `AvgPcaFormulaPopoverContent` (schedule page keeps live sanity-check footer).
 - Modify: `lib/features/schedule/step3Bootstrap.ts`
   - Expand bootstrap summary into a surplus-aware target projection model while preserving current callers during migration.
 - Modify: `lib/features/schedule/controller/useScheduleController.ts`
@@ -70,6 +78,8 @@
 - Create: `tests/regression/f113-step34-v2-optional-ranked-promotion-blocks-harmful-donation.test.ts`
 - Create: `tests/regression/f114-step34-v2-optional-ranked-promotion-is-not-modeled-as-b1-defect.test.ts`
 
+**Repository note:** The `f111`–`f114` filenames above were the original Task Group B sketch. The worktree may already use those numbers for **other** contracts (e.g. rounded-slack fallback, tracker provenance, dashboard Avg). Before implementing Task Group B, **list `tests/regression/f11*.test.ts`**, pick the next free `f11x` sequence for optional-ranked-promotion tests, and update this plan (or rename files) so **identifiers stay unique**—do not overwrite unrelated regressions.
+
 ### Files that must stay untouched
 - Do not modify: `lib/algorithms/floatingPcaLegacy/allocator.ts`
 - Do not modify: `lib/algorithms/floatingPcaLegacy/allocatePcaFloatingPhase.ts`
@@ -107,11 +117,11 @@ If Task Group A changes the target model, the same surplus-aware rounded result 
 - Step 3.1 initial pending values
 - any Step 3 stale/out-of-date comparison that depends on bootstrap targets
 
-### Constraint 4: Tooltip hint must remain tiny and non-visual
-Surplus-adjustment explanation is tooltip/provenance-only.
+### Constraint 4: Tooltip hint tiny; literacy via Help + popover (no new surplus badges)
+Surplus-adjustment explanation is **first** tooltip/provenance on the Step 3.4 tracker. **Additionally**, Part I allows the `/help/avg-and-slots` article and the extended Avg PCA/team **popover** (link + short teaser) per the spec—plain language, no new Step 3.4 summary badges.
 
 Disallowed:
-- new summary-card badges
+- new summary-card badges for surplus
 - new lane chips
 - broad UI redesign for surplus
 
@@ -141,6 +151,35 @@ Use focused regression commands and file-scoped lints. Do not rely on repo-wide 
 ---
 
 ## Task Group A: Part 1 Only
+
+### Task A0: User literacy — Help page + Avg PCA popover (Part I)
+
+**Goal:** Reduce confusion between **display Avg** (continuous/raw), **surplus-adjusted floating targets** (Step 2→3 projection), and **post-need extra** (optional Step 3.4 placement). Align copy with `2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md` Part I and `2026-04-13-step3-floating-nonfloating-contract-table.md`.
+
+**Files:**
+- Add: `app/(dashboard)/help/avg-and-slots/page.tsx`
+- Add: `components/help/avgPcaFormulaSteps.tsx`, `components/help/AvgPcaFormulaPopoverContent.tsx`
+- Modify: `components/help/HelpCenterContent.tsx`, `components/schedule/ScheduleBlocks1To6.tsx`, `app/(dashboard)/schedule/page.tsx`
+
+- [ ] **Step 1:** Add the Help article route and shared formula fragments; wire Help Center “Guides” card.
+- [ ] **Step 2:** Refactor both Avg PCA popovers to use `AvgPcaFormulaPopoverContent`; preserve schedule page **live** sanity-check numbers via `sanityCheckFooter`.
+- [ ] **Step 3:** Manually verify `/help/avg-and-slots`, popover scroll on small viewports, and Link from dashboard + schedule PCA Calculations block.
+
+### Task A0b: Planned micro-lines — Step 3.1 / Step 3.4 (deferred)
+
+**Status:** Spec-only unless explicitly picked up. **Do not implement** until Task Group A projection semantics and Help/popover literacy are stable.
+
+**Goal:** One **discreet** line each: **surplus-adjusted** context in **Step 3.1**, **post-need extra** context in **Step 3.4** (distinct wording), per `2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md` Locked decision 2.
+
+**Files (expected when implemented):**
+- `components/allocation/FloatingPCAConfigDialogV2.tsx` (e.g. per-team or footer line when surplus-adjusted seed applies — flag from projection / `realizedSurplusSlotGrantsByTeam` or equivalent)
+- Step 3.4 preview / tracker shell (exact component TBD — line when post-need / extra-coverage preview applies)
+
+- [ ] **Step 1:** Add non-intrusive line in 3.1 when surplus-adjusted seed applies; optional “?” link to `/help/avg-and-slots`.
+- [ ] **Step 2:** Add non-intrusive line in 3.4 when post-need / extra-coverage preview applies; must **not** reuse surplus-adjusted wording.
+- [ ] **Step 3:** Manual check on a fixture date with and without grants / extra coverage.
+
+**Docs / naming:** Maintain the **engineering field glossary** in the contract table + surplus spec; **no mass rename** of projection fields for this task.
 
 ### Task A1: Lock surplus-projection semantics in regression tests first
 

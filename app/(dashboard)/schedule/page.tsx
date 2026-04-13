@@ -51,6 +51,7 @@ import { useNavigationLoading } from '@/components/ui/navigation-loading'
 import { useToast } from '@/components/ui/toast-context'
 import { StepIndicator } from '@/components/allocation/StepIndicator'
 import { PcaAllocationLegendPopover } from '@/components/allocation/PcaAllocationLegendPopover'
+import { AvgPcaFormulaPopoverContent } from '@/components/help/AvgPcaFormulaPopoverContent'
 import dynamic from 'next/dynamic'
 import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopover'
 import { StaffContextMenu } from '@/components/allocation/StaffContextMenu'
@@ -11664,65 +11665,29 @@ function SchedulePageContent() {
                       <PopoverContent
                         align="center"
                         side="top"
-                        className="w-[420px] rounded-md border border-amber-200 bg-amber-50/95 p-3"
+                        className="w-[420px] max-h-[min(520px,70vh)] overflow-y-auto rounded-md border border-amber-200 bg-amber-50/95 p-3"
                       >
-                        <div className="space-y-2 text-xs leading-snug">
-                          <div className="font-semibold">Avg PCA/team formula</div>
-                          <div className="text-muted-foreground">
-                            We follow the legacy Excel semantics: special program PCA slots are treated as reserved
-                            capacity and do not count toward “Assigned” fulfillment.
-                          </div>
-
-                          <div className="space-y-1">
-                            <div className="font-semibold">1) Reserve special program slots</div>
-                            <div className="text-muted-foreground">
-                              <span className="font-mono">reservedSpecialProgramSlotsFTE</span> = sum of required program
-                              slots for this weekday (incl. Step 2.0 overrides, excludes DRM) × 0.25
+                        <AvgPcaFormulaPopoverContent
+                          sanityCheckFooter={
+                            <div className="space-y-1">
+                              <div className="text-muted-foreground">
+                                For each team, compute <span className="font-mono">balance = Assigned − Target</span>.
+                                Use <span className="font-mono">finalAvg[DRO]</span> as DRO’s target on DRM days
+                                (otherwise use base Avg). Then:
+                              </div>
+                              <div className="text-muted-foreground font-mono">
+                                +ve sum: {pcaBalanceSanity.positiveSum.toFixed(2)} | -ve abs sum:{' '}
+                                {pcaBalanceSanity.negativeAbsSum.toFixed(2)} | net: {pcaBalanceSanity.netDiff.toFixed(2)}
+                              </div>
+                              <div className="text-muted-foreground text-[11px]">
+                                Team balances (today): {pcaBalanceSanity.perTeamText}
+                              </div>
+                              <div className="text-muted-foreground text-[11px]">
+                                Small drift can happen due to quarter-slot rounding and 2-decimal display.
+                              </div>
                             </div>
-                          </div>
-
-                          <div className="space-y-1">
-                            <div className="font-semibold">2) Base pool (earmark DRM first)</div>
-                            <div className="text-muted-foreground font-mono">
-                              basePool = totalPCAOnDuty − reservedSpecialProgramSlotsFTE − drmAddOnFte
-                            </div>
-                          </div>
-
-                          <div className="space-y-1">
-                            <div className="font-semibold">3) Distribute base Avg PCA/team</div>
-                            <div className="text-muted-foreground font-mono">
-                              baseAvg[team] = (PT[team] / totalPT) × basePool
-                            </div>
-                          </div>
-
-                          <div className="space-y-1">
-                            <div className="font-semibold">4) DRO special handling (DRM)</div>
-                            <div className="text-muted-foreground">
-                              <span className="font-mono">finalAvg[DRO]</span> ={' '}
-                              <span className="font-mono">baseAvg[DRO]</span> + <span className="font-mono">drmAddOnFte</span>{' '}
-                              (from Step 2.0 override, default 0.4)
-                            </div>
-                          </div>
-
-                          <div className="border-t pt-2 space-y-1">
-                            <div className="font-semibold">Sanity check</div>
-                            <div className="text-muted-foreground">
-                              For each team, compute <span className="font-mono">balance = Assigned − Target</span>. Use{' '}
-                              <span className="font-mono">finalAvg[DRO]</span> as DRO’s target on DRM days (otherwise use
-                              base Avg). Then:
-                            </div>
-                            <div className="text-muted-foreground font-mono">
-                              +ve sum: {pcaBalanceSanity.positiveSum.toFixed(2)} | -ve abs sum:{' '}
-                              {pcaBalanceSanity.negativeAbsSum.toFixed(2)} | net: {pcaBalanceSanity.netDiff.toFixed(2)}
-                            </div>
-                            <div className="text-muted-foreground text-[11px]">
-                              Team balances (today): {pcaBalanceSanity.perTeamText}
-                            </div>
-                            <div className="text-muted-foreground text-[11px]">
-                              Small drift can happen due to quarter-slot rounding and 2-decimal display.
-                            </div>
-                          </div>
-                        </div>
+                          }
+                        />
                       </PopoverContent>
                     </Popover>
                   </div>
