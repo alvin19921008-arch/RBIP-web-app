@@ -235,6 +235,49 @@ export function detectRankedV2RepairDefects(
   const state = buildAuditState(context)
   const defects: RankedV2RepairDefect[] = []
 
+  // #region agent log (H1) FO multi-rank defect snapshot
+  if (state.teamPrefs.FO.rankedSlots.length > 1) {
+    const rankedSlots = state.teamPrefs.FO.rankedSlots.filter((slot): slot is Slot => isValidSlot(slot))
+    const coveredRankedSlots = rankedSlots.filter((slot) => teamHasFloatingCoverageOnSlot(state, 'FO', slot))
+    const missingRankedSlots = getMissingRankedSlots(state, 'FO')
+    const initialTargetSlots = Math.round(((state.initialPendingFTE.FO ?? 0) + 1e-9) / 0.25)
+    const firstCoveredRank = rankedSlots.findIndex((slot) => coveredRankedSlots.includes(slot))
+    const coveredHigherRankSlots = rankedSlots.slice(0, Math.max(firstCoveredRank, 0))
+    ;(typeof fetch === 'function'
+      ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9381e2' },
+          body: JSON.stringify({
+            sessionId: '9381e2',
+            runId: 'fo-4-3-investigation',
+            hypothesisId: 'H1',
+            location: 'lib/algorithms/floatingPcaV2/repairAudit.ts:detectRankedV2RepairDefects',
+            message: 'FO multi-rank B1 defect snapshot',
+            data: {
+              team: 'FO',
+              initialPendingFTE: state.initialPendingFTE.FO ?? null,
+              pendingFTE: state.pendingFTE.FO ?? null,
+              initialTargetSlots,
+              rankedSlots,
+              coveredRankedSlots,
+              missingRankedSlots,
+              recoverableMissingRankedSlots: missingRankedSlots.map((slot) => ({
+                slot,
+                canRescue: canRescueSlotForTeam(state, 'FO', slot),
+              })),
+              assignedSlots: state.assignedSlotsByTeam.FO,
+              trueStep3AssignedSlots: state.trueStep3AssignedSlotsByTeam.FO,
+              alreadyHasLowerRankedCoverageWhileHigherMissing:
+                coveredRankedSlots.length > 0 && coveredHigherRankSlots.some((slot) => missingRankedSlots.includes(slot)),
+              wouldTriggerB1: missingRankedSlots.some((slot) => canRescueSlotForTeam(state, 'FO', slot)),
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {})
+      : Promise.resolve())
+  }
+  // #endregion
+
   for (const team of state.orderedTeams) {
     if (!teamHadMeaningfulPending(state, team)) continue
     if (hasRecoverableHigherRankedSlot(state, team)) {
@@ -474,11 +517,25 @@ function teamHasFairnessFloorCoverage(state: AuditState, team: Team): boolean {
   return false
 }
 
+function teamHasFloatingCoverageOnSlot(state: AuditState, team: Team, slot: Slot): boolean {
+  for (const pcaId of state.distinctPcaIdsByTeam[team]) {
+    if (!state.floatingPcaIds.has(pcaId)) continue
+    if (getCurrentTeamSlotsOnPca(state, team, pcaId).includes(slot)) {
+      return true
+    }
+  }
+  return false
+}
+
+function getRelevantRankedSlots(state: AuditState, team: Team): Slot[] {
+  const targetSlotCount = Math.max(0, Math.round(((state.initialPendingFTE[team] ?? 0) + 1e-9) / 0.25))
+  return state.teamPrefs[team].rankedSlots
+    .filter((slot): slot is Slot => isValidSlot(slot))
+    .slice(0, targetSlotCount)
+}
+
 function getMissingRankedSlots(state: AuditState, team: Team): Slot[] {
-  const slotCounts = state.slotCountsByTeam[team]
-  return state.teamPrefs[team].rankedSlots.filter(
-    (slot): slot is Slot => isValidSlot(slot) && (slotCounts.get(slot) ?? 0) === 0
-  )
+  return getRelevantRankedSlots(state, team).filter((slot) => !teamHasFloatingCoverageOnSlot(state, team, slot))
 }
 
 function hasRecoverableHigherRankedSlot(state: AuditState, team: Team): boolean {

@@ -26,12 +26,18 @@ interface TeamPendingCardProps {
   isTied: boolean
   onValueChange: (team: Team, newValue: number) => void
   isDragging?: boolean
-  /** Target average PCA/team (dashboard “Avg PCA/team” / Step 3 bootstrap target). */
+  /** Display average PCA/team (same as dashboard — [Step3ProjectionV2.displayTargetByTeam] / raw bootstrap target). */
   avgPcaPerTeam?: number | null
   /** Raw floating need before quarter rounding: max(0, avg − non-floating). */
   rawFloatingFTE?: number | null
   /** Non-floating PCA FTE on team from Step 2 (shown as “Non-floating”). */
   assignedFromSlotsFTE?: number | null
+  /**
+   * Step 3.1 “Rounded” row: quarter-rounded fixed floating target from the Step 2→3 projection
+   * ([fixedRoundedFloatingTargetByTeam] at open). Step 3.1 ± adjusts pending; this value moves by the same
+   * quarter delta so it stays the fixed target Steps 3.2+ use (not “non-floating + pending” as a separate sum).
+   */
+  fixedRoundedFloatingTargetFte?: number | null
   assignedFTE?: number
   orderPosition?: number
 }
@@ -58,15 +64,21 @@ export function TeamPendingCard({
   avgPcaPerTeam,
   rawFloatingFTE,
   assignedFromSlotsFTE,
+  fixedRoundedFloatingTargetFte,
   assignedFTE,
   orderPosition,
 }: TeamPendingCardProps) {
   const showV2Step31Breakdown =
     avgPcaPerTeam != null ||
     (rawFloatingFTE != null && !Number.isNaN(rawFloatingFTE)) ||
-    assignedFromSlotsFTE != null
+    assignedFromSlotsFTE != null ||
+    (fixedRoundedFloatingTargetFte != null && Number.isFinite(fixedRoundedFloatingTargetFte))
 
   const roundedCap = originalPendingFTE
+  const fixedRoundedFloatingDisplay =
+    fixedRoundedFloatingTargetFte != null && Number.isFinite(fixedRoundedFloatingTargetFte)
+      ? fixedRoundedFloatingTargetFte
+      : roundedCap
   const {
     attributes,
     listeners,
@@ -161,8 +173,13 @@ export function TeamPendingCard({
                   </div>
                 ) : null}
                 <div className="flex justify-between gap-0.5 tabular-nums">
-                  <span className="text-muted-foreground/90">Rounded</span>
-                  <span className="font-medium text-foreground">{roundedCap.toFixed(2)}</span>
+                  <span
+                    className="text-muted-foreground/90"
+                    title="Fixed rounded floating target from the Step 2→3 projection at open; Step 3.1 ± moves it by the same quarter change as pending. Locked from Step 3.2 onward unless you return to Step 3.1."
+                  >
+                    Rounded floating
+                  </span>
+                  <span className="font-medium text-foreground">{fixedRoundedFloatingDisplay.toFixed(2)}</span>
                 </div>
                 {assignedFromSlotsFTE != null && !Number.isNaN(assignedFromSlotsFTE) ? (
                   <div className="flex justify-between gap-0.5 tabular-nums">
@@ -173,8 +190,13 @@ export function TeamPendingCard({
               </>
             ) : (
               <div className="flex justify-between gap-0.5 tabular-nums">
-                <span className="text-muted-foreground/90">Rounded</span>
-                <span className="font-medium text-foreground">{roundedCap.toFixed(2)}</span>
+                <span
+                  className="text-muted-foreground/90"
+                  title="Fixed rounded floating target from the Step 2→3 projection at open; Step 3.1 ± moves it by the same quarter change as pending. Locked from Step 3.2 onward unless you return to Step 3.1."
+                >
+                  Rounded floating
+                </span>
+                <span className="font-medium text-foreground">{fixedRoundedFloatingDisplay.toFixed(2)}</span>
               </div>
             )}
           </div>

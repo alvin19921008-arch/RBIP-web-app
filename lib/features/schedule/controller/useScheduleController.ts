@@ -28,7 +28,12 @@ import type { PCAAllocationContext, PCAData } from '@/lib/algorithms/pcaAllocati
 import type { BedAllocationContext } from '@/lib/algorithms/bedAllocation'
 import { computeBedsDesignatedByTeam, computeBedsForRelieving } from '@/lib/features/schedule/bedMath'
 import { getSptWeekdayConfigMap } from '@/lib/features/schedule/sptConfig'
-import { computeStep3BootstrapState } from '@/lib/features/schedule/step3Bootstrap'
+import {
+  buildStep3ProjectionV2FromBootstrapSummary,
+  buildStep3ProjectionVersionKey,
+  computeStep3BootstrapState,
+  computeStep3BootstrapSummary,
+} from '@/lib/features/schedule/step3Bootstrap'
 import { computeStep3ResetForReentry } from '@/lib/features/schedule/stepReset'
 import { normalizeScheduleStateForSave } from '@/lib/features/schedule/saveNormalization'
 import {
@@ -244,6 +249,10 @@ type UndoEntry = {
   label: string
   createdAt: number
   snapshot: UndoSnapshot
+}
+
+type Step2ResultSurplusProjection = {
+  rawAveragePCAPerTeam?: Record<Team, number>
 }
 
 type ScheduleDomainState = {
@@ -3798,6 +3807,13 @@ export function useScheduleController(params: {
       // Persist substitution display intent from the exact Step 2 result.
       // Explicit wizard selections remain the source of truth; otherwise we fall back
       // to auto-detecting substitution intent from the resulting allocations.
+      const authoritativeStep2Overrides = buildAuthoritativeStep2SubstitutionOverrides({
+        baseOverrides: staffOverrides as any,
+        staff,
+        allocations: ((pcaResult as any).allocations || []) as PCAAllocation[],
+        resolvedSelections: resolvedSubstitutionSelectionsSnapshot ?? undefined,
+      })
+
       setStaffOverrides((prev: any) => {
         const nextOverrides = buildAuthoritativeStep2SubstitutionOverrides({
           baseOverrides: prev ?? {},
@@ -3808,11 +3824,78 @@ export function useScheduleController(params: {
         return nextOverrides
       })
 
+      let step3FloatingBootstrapSummaryV2: ReturnType<typeof computeStep3BootstrapSummary> | undefined
+      let step3ProjectionV2: ReturnType<typeof buildStep3ProjectionV2FromBootstrapSummary> | undefined
+      try {
+        const {
+          existingTeamPCAAssigned: assignedForFloatingBootstrap,
+          existingAllocations: allocsForFloatingBootstrap,
+          nonFloatingFteBreakdownByTeam: floatingBootstrapNonFloatingBreakdown,
+        } = computeStep3BootstrapState({
+          pcaAllocations: pcaByTeam as any,
+          staff,
+          specialPrograms: modifiedSpecialPrograms as any,
+          weekday,
+          staffOverrides: authoritativeStep2Overrides as any,
+        })
+
+        const floatingBootstrapRuntime = buildScheduleRuntimeProjection({
+          selectedDate,
+          staff,
+          staffOverrides: authoritativeStep2Overrides as any,
+          replacedNonFloatingIds,
+          excludeSubstitutionSlotsForFloating: true,
+          excludeSpecialProgramSlotsForFloating: true,
+          clampBufferFteRemaining: true,
+        })
+        const floatingPCAsForBootstrap = buildPcaAllocatorView({
+          projection: floatingBootstrapRuntime,
+          fallbackToBaseTeamWhenEffectiveTeamMissing: true,
+        })
+
+        const teamTargetsForFloatingBootstrap = createEmptyTeamRecord<number>(0)
+        TEAMS.forEach((team) => {
+          teamTargetsForFloatingBootstrap[team] = (calculations as any)?.[team]?.average_pca_per_team || 0
+        })
+
+        step3FloatingBootstrapSummaryV2 = computeStep3BootstrapSummary({
+          teams: TEAMS,
+          teamTargets: teamTargetsForFloatingBootstrap,
+          existingTeamPCAAssigned: assignedForFloatingBootstrap,
+          floatingPCAs: floatingPCAsForBootstrap,
+          existingAllocations: allocsForFloatingBootstrap,
+          staffOverrides: authoritativeStep2Overrides as any,
+          reservedSpecialProgramPcaFte,
+          floatingPcaAllocationVersion: 'v2',
+          rawAveragePCAPerTeamByTeam: rawAveragePCAPerTeam,
+          nonFloatingFteBreakdownByTeam: floatingBootstrapNonFloatingBreakdown,
+        })
+        const step3ProjectionVersionKey = buildStep3ProjectionVersionKey({
+          teams: TEAMS,
+          teamTargets: teamTargetsForFloatingBootstrap,
+          existingTeamPCAAssigned: assignedForFloatingBootstrap,
+          floatingPCAs: floatingPCAsForBootstrap,
+          existingAllocations: allocsForFloatingBootstrap,
+          staffOverrides: authoritativeStep2Overrides as any,
+          reservedSpecialProgramPcaFte,
+          floatingPcaAllocationVersion: 'v2',
+          rawAveragePCAPerTeamByTeam: rawAveragePCAPerTeam,
+        })
+        step3ProjectionV2 = buildStep3ProjectionV2FromBootstrapSummary(step3FloatingBootstrapSummaryV2, {
+          projectionVersion: step3ProjectionVersionKey,
+        })
+      } catch {
+        step3FloatingBootstrapSummaryV2 = undefined
+        step3ProjectionV2 = undefined
+      }
+
       setStep2Result({
         pcaData,
         teamPCAAssigned: (pcaResult as any).teamPCAAssigned || createEmptyTeamRecord<number>(0),
         nonFloatingAllocations: (pcaResult as any).allocations,
         rawAveragePCAPerTeam,
+        step3FloatingBootstrapSummaryV2,
+        step3ProjectionV2,
       })
 
       setStepStatus((prev: any) => ({ ...prev, 'therapist-pca': 'completed' }))
@@ -3911,7 +3994,7 @@ export function useScheduleController(params: {
         return chosen
       }
 
-      const avg = (step2Result as any)?.rawAveragePCAPerTeam
+      const avg = (step2Result as Step2ResultSurplusProjection | null)?.rawAveragePCAPerTeam
       if (!avg) {
         console.error('Missing Step 2 average PCA per team (step2Result.rawAveragePCAPerTeam)')
       }
@@ -3945,6 +4028,64 @@ export function useScheduleController(params: {
 
       const { allocatePCAWithAdapter } = await loadPcaEngine()
       const pcaResult = await allocatePCAWithAdapter(pcaContext)
+
+      // #region agent log (H6) step3 returned tracker handoff
+      ;(typeof fetch === 'function'
+        ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '41d21d' },
+            body: JSON.stringify({
+              sessionId: '41d21d',
+              runId: 'surplus-debug-postfix',
+              hypothesisId: 'H6',
+              location: 'lib/features/schedule/controller/useScheduleController.ts:runStep3FloatingPCA',
+              message: 'Step 3 controller received allocator result tracker',
+              data: {
+                hasTracker: !!(pcaResult as any)?.tracker,
+                teams: {
+                  FO: {
+                    pending: (pcaResult as any)?.pendingPCAFTEPerTeam?.FO ?? null,
+                    grantSlots:
+                      (pcaResult as any)?.tracker?.FO?.summary?.v2RealizedSurplusSlotGrant ?? null,
+                    enabledRows:
+                      ((pcaResult as any)?.tracker?.FO?.assignments ?? []).filter(
+                        (assignment: any) => assignment?.v2EnabledBySurplusAdjustedTarget === true
+                      ).length,
+                  },
+                  SMM: {
+                    pending: (pcaResult as any)?.pendingPCAFTEPerTeam?.SMM ?? null,
+                    grantSlots:
+                      (pcaResult as any)?.tracker?.SMM?.summary?.v2RealizedSurplusSlotGrant ?? null,
+                    enabledRows:
+                      ((pcaResult as any)?.tracker?.SMM?.assignments ?? []).filter(
+                        (assignment: any) => assignment?.v2EnabledBySurplusAdjustedTarget === true
+                      ).length,
+                  },
+                  CPPC: {
+                    pending: (pcaResult as any)?.pendingPCAFTEPerTeam?.CPPC ?? null,
+                    grantSlots:
+                      (pcaResult as any)?.tracker?.CPPC?.summary?.v2RealizedSurplusSlotGrant ?? null,
+                    enabledRows:
+                      ((pcaResult as any)?.tracker?.CPPC?.assignments ?? []).filter(
+                        (assignment: any) => assignment?.v2EnabledBySurplusAdjustedTarget === true
+                      ).length,
+                  },
+                  DRO: {
+                    pending: (pcaResult as any)?.pendingPCAFTEPerTeam?.DRO ?? null,
+                    grantSlots:
+                      (pcaResult as any)?.tracker?.DRO?.summary?.v2RealizedSurplusSlotGrant ?? null,
+                    enabledRows:
+                      ((pcaResult as any)?.tracker?.DRO?.assignments ?? []).filter(
+                        (assignment: any) => assignment?.v2EnabledBySurplusAdjustedTarget === true
+                      ).length,
+                  },
+                },
+              },
+              timestamp: Date.now(),
+            }),
+          }).catch(() => {})
+        : Promise.resolve())
+      // #endregion
 
       const overrides = staffOverrides as any
       ;((pcaResult as any).allocations || []).forEach((alloc: any) => {

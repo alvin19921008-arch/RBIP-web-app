@@ -141,6 +141,31 @@ export function deriveExtraCoverageByStaffId(args: {
       0,
       Math.round(roundToNearestQuarterWithMidpoint(semantics.postFulfillmentSurplusFte) * 4)
     )
+    if (mainTeam === 'FO' || mainTeam === 'DRO') {
+      // #region agent log (H4) generic extra coverage derivation
+      ;(typeof fetch === 'function'
+        ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a8e678' },
+            body: JSON.stringify({
+              sessionId: 'a8e678',
+              runId: 'step3-surplus-takeover-initial',
+              hypothesisId: 'H4',
+              location: 'lib/features/schedule/extraCoverageRuntime.ts:deriveExtraCoverageByStaffId',
+              message: 'Derived generic extra-coverage semantics for team',
+              data: {
+                team: mainTeam,
+                requiredByMain: Number((requiredByMain[mainTeam] ?? 0).toFixed(3)),
+                postFulfillmentSurplusFte: Number((semantics.postFulfillmentSurplusFte ?? 0).toFixed(3)),
+                trueStep3FloatingSlotCount: semantics.trueStep3FloatingSlots.length,
+                extraSlotsNeeded,
+              },
+              timestamp: Date.now(),
+            }),
+          }).catch(() => {})
+        : Promise.resolve())
+      // #endregion
+    }
     if (extraSlotsNeeded === 0) return
 
     const candidates = [...semantics.trueStep3FloatingSlots].sort((a, b) => {

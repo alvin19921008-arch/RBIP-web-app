@@ -30,6 +30,20 @@ interface RunStep3V2CommittedSelectionsArgs {
   mode?: 'standard' | 'balanced'
   extraCoverageMode?: 'none' | 'round-robin-team-order'
   preferenceSelectionMode?: 'legacy' | 'selected_only'
+  step34SurplusProvenanceByTeam?: Partial<
+    Record<
+      Team,
+      {
+        realizedGrantFte: number
+        enabledStep34RowCount: number
+      }
+    >
+  >
+  /** Fingerprint + grant line used when stamping `v2RealizedSurplusSlotGrant` / row flags. */
+  step34SurplusProvenanceMeta?: {
+    projectionVersion?: string | null
+    grantReadSource?: 'step3_projection_v2' | 'bootstrap_summary'
+  }
 }
 
 function appendCommittedAssignmentsToTracker(args: {
@@ -167,6 +181,65 @@ export async function runStep3V2CommittedSelections(
 
   for (const team of args.teamOrder) {
     result.tracker[team].summary.preStep34RoundedPendingFte = preStep34RoundedPendingByTeam[team]
+  }
+
+  const surplusProvenanceByTeam = args.step34SurplusProvenanceByTeam ?? {}
+  const surplusMeta = args.step34SurplusProvenanceMeta
+  for (const team of args.teamOrder) {
+    const provenance = surplusProvenanceByTeam[team]
+    if (!provenance) continue
+
+    const realizedGrantFte = roundToNearestQuarterWithMidpoint(provenance.realizedGrantFte || 0)
+    result.tracker[team].summary.v2RealizedSurplusSlotGrant = realizedGrantFte
+
+    if (realizedGrantFte < 0.25) continue
+
+    if (surplusMeta?.grantReadSource) {
+      result.tracker[team].summary.v2SurplusProvenanceGrantReadSource = surplusMeta.grantReadSource
+    }
+    if (surplusMeta && 'projectionVersion' in surplusMeta) {
+      result.tracker[team].summary.v2SurplusProvenanceProjectionVersion = surplusMeta.projectionVersion ?? null
+    }
+
+    let remainingEnabledRows = Math.max(0, Math.trunc(provenance.enabledStep34RowCount || 0))
+    if (remainingEnabledRows === 0) continue
+
+    for (const assignment of result.tracker[team].assignments) {
+      if (assignment.assignedIn !== 'step34') continue
+      if (remainingEnabledRows <= 0) break
+      assignment.v2EnabledBySurplusAdjustedTarget = true
+      remainingEnabledRows -= 1
+    }
+
+    if (team === 'FO' || team === 'DRO') {
+      // #region agent log (H3) stamped step34 surplus provenance rows
+      ;(typeof fetch === 'function'
+        ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a8e678' },
+            body: JSON.stringify({
+              sessionId: 'a8e678',
+              runId: 'step3-surplus-takeover-postfix',
+              hypothesisId: 'H3',
+              location: 'lib/features/schedule/step3V2CommittedSelections.ts:surplusProvenanceStamp',
+              message: 'Stamped Step 3.4 surplus provenance rows',
+              data: {
+                team,
+                realizedGrantFte,
+                requestedEnabledRows: Math.max(0, Math.trunc(provenance.enabledStep34RowCount || 0)),
+                stampedEnabledRows: result.tracker[team].assignments.filter(
+                  (assignment) =>
+                    assignment.assignedIn === 'step34' &&
+                    assignment.v2EnabledBySurplusAdjustedTarget === true
+                ).length,
+                trackerGrant: result.tracker[team].summary.v2RealizedSurplusSlotGrant ?? 0,
+              },
+              timestamp: Date.now(),
+            }),
+          }).catch(() => {})
+        : Promise.resolve())
+      // #endregion
+    }
   }
 
   return result

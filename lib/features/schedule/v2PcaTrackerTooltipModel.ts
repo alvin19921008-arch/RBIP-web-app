@@ -179,7 +179,7 @@ function getSourceTag(assignment: AllocationAssignment): string | null {
   if (assignment.assignedIn === 'step34') {
     if (assignment.allocationStage === 'draft') return 'Draft'
     if (assignment.allocationStage === 'repair') return 'Repair'
-    if (assignment.allocationStage === 'extra-coverage') return 'Extra coverage'
+    if (assignment.allocationStage === 'extra-coverage') return 'Post-need extra'
   }
   return null
 }
@@ -208,7 +208,17 @@ function getSlotPathLabel(args: {
     return 'Duplicate floating coverage'
   }
 
-  if (args.assignment.slotSelectionPhase === 'ranked-duplicate' || args.assignment.duplicateSlot === true) {
+  if (
+    args.assignment.allocationStage === 'repair' &&
+    args.assignment.slotSelectionPhase === 'ranked-duplicate'
+  ) {
+    return 'Ranked repair assignment'
+  }
+
+  if (
+    args.assignment.slotSelectionPhase === 'ranked-duplicate' &&
+    qualifyingDuplicates.length < 2
+  ) {
     return 'To fulfill pending FTE'
   }
 
@@ -218,47 +228,92 @@ function getSlotPathLabel(args: {
   return 'Assigned during final allocation'
 }
 
+const SURPLUS_ADJUSTED_TARGET_PROVENANCE_LABEL = 'Target provenance'
+const SURPLUS_ADJUSTED_TARGET_PROVENANCE_VALUE =
+  'Surplus-adjusted rounded target enabled this slot.'
+
+function appendSurplusAdjustedTargetProvenanceIfApplicable(args: {
+  team: Team
+  assignment: AllocationAssignment
+  allocationSummary?: TeamAllocationLog['summary']
+  details: V2PcaTrackerDetailCell[]
+}): V2PcaTrackerDetailCell[] {
+  const grantSlots = args.allocationSummary?.v2RealizedSurplusSlotGrant ?? 0
+  if (grantSlots <= 0) return args.details
+  if (args.assignment.v2EnabledBySurplusAdjustedTarget !== true) return args.details
+
+  const handoffTrace =
+    args.allocationSummary?.v2SurplusProvenanceGrantReadSource === 'step3_projection_v2' &&
+    typeof args.allocationSummary?.v2SurplusProvenanceProjectionVersion === 'string' &&
+    args.allocationSummary.v2SurplusProvenanceProjectionVersion.length > 0
+      ? args.allocationSummary.v2SurplusProvenanceProjectionVersion
+      : null
+
+  const traceDetail: V2PcaTrackerDetailCell | null = handoffTrace
+    ? {
+        label: 'Handoff trace',
+        value: `Frozen Step 3 projection fingerprint (${handoffTrace.length > 96 ? `${handoffTrace.slice(0, 96)}…` : handoffTrace})`,
+      }
+    : null
+
+  return [
+    ...args.details,
+    {
+      label: SURPLUS_ADJUSTED_TARGET_PROVENANCE_LABEL,
+      value: SURPLUS_ADJUSTED_TARGET_PROVENANCE_VALUE,
+    },
+    ...(traceDetail ? [traceDetail] : []),
+  ]
+}
+
 function buildStep34Details(args: {
   team: Team
   assignment: AllocationAssignment
   allAssignments: AllocationAssignment[]
   staffOverrides?: Record<string, any>
+  allocationSummary?: TeamAllocationLog['summary']
 }): V2PcaTrackerDetailCell[] {
   const slotPath = getSlotPathLabel(args)
-  if (args.assignment.allocationStage === 'repair') {
-    return [
-      {
-        label: 'Repair reason',
-        value: formatV2RepairReasonLabel(args.assignment.repairReason) ?? 'Review adjustment',
-      },
-      {
-        label: 'Slot path',
-        value: slotPath,
-      },
-      {
-        label: 'Continuity',
-        value: args.assignment.usedContinuity ? 'Yes' : 'No',
-      },
-    ]
-  }
+  const details =
+    args.assignment.allocationStage === 'repair'
+      ? [
+          {
+            label: 'Repair reason',
+            value: formatV2RepairReasonLabel(args.assignment.repairReason) ?? 'Review adjustment',
+          },
+          {
+            label: 'Slot path',
+            value: slotPath,
+          },
+          {
+            label: 'Continuity',
+            value: args.assignment.usedContinuity ? 'Yes' : 'No',
+          },
+        ]
+      : [
+          {
+            label: 'Slot rank',
+            value:
+              typeof args.assignment.fulfilledSlotRank === 'number' && args.assignment.fulfilledSlotRank > 0
+                ? `Ranked slot #${args.assignment.fulfilledSlotRank}`
+                : 'Not ranked',
+          },
+          {
+            label: 'Slot path',
+            value: slotPath,
+          },
+          {
+            label: 'PCA match',
+            value: getPcaMatchLabel(args.assignment),
+          },
+        ]
 
-  return [
-    {
-      label: 'Slot rank',
-      value:
-        typeof args.assignment.fulfilledSlotRank === 'number' && args.assignment.fulfilledSlotRank > 0
-          ? `Ranked slot #${args.assignment.fulfilledSlotRank}`
-          : 'Not ranked',
-    },
-    {
-      label: 'Slot path',
-      value: slotPath,
-    },
-    {
-      label: 'PCA match',
-      value: getPcaMatchLabel(args.assignment),
-    },
-  ]
+  return appendSurplusAdjustedTargetProvenanceIfApplicable({
+    team: args.team,
+    assignment: args.assignment,
+    allocationSummary: args.allocationSummary,
+    details,
+  })
 }
 
 function buildCommittedDetails(assignment: AllocationAssignment): V2PcaTrackerDetailCell[] {
@@ -316,6 +371,7 @@ function buildAssignmentRows(args: {
             assignment,
             allAssignments: args.allocationLog?.assignments ?? [],
             staffOverrides: args.staffOverrides,
+            allocationSummary: args.allocationLog?.summary,
           })
         : assignment.assignedIn === 'step32' || assignment.assignedIn === 'step33'
           ? buildCommittedDetails(assignment)
@@ -352,6 +408,27 @@ export function buildV2PcaTrackerTooltipModel(args: {
 
   if (!hasAllocationRows && !hasBufferRows) return null
 
+  const defects = args.allocationLog?.summary.repairAuditDefects ?? []
+  const usedDuplicateFloatingSlot = args.allocationLog?.summary.usedDuplicateFloatingSlot === true
+  const hasNonDuplicatePressureDefect = defects.some((defect) => defect !== 'A1' && defect !== 'A2')
+  const defectPills = defects
+    .filter((defect) => {
+      if (defect === 'A1' || defect === 'A2') {
+        return usedDuplicateFloatingSlot || hasNonDuplicatePressureDefect
+      }
+      return true
+    })
+    .map((defect) => formatV2RepairAuditDefectLabel(defect as 'B1' | 'A1' | 'A2' | 'C1' | 'F1'))
+  const repairIssuePills = [
+    ...new Set([...(usedDuplicateFloatingSlot ? ['Duplicate pressure'] : []), ...defectPills]),
+  ]
+  const rows = buildAssignmentRows({
+    team: args.team,
+    allocationLog: args.allocationLog,
+    bufferAssignments,
+    staffOverrides: args.staffOverrides,
+  })
+
   return {
     title: `Allocation Tracking - ${args.team}`,
     metaLine: buildMetaLine({
@@ -365,13 +442,7 @@ export function buildV2PcaTrackerTooltipModel(args: {
       bufferAssignments,
       ownershipSemantics: args.ownershipSemantics,
     }),
-    repairIssuePills:
-      args.allocationLog?.summary.repairAuditDefects?.map((defect) => formatV2RepairAuditDefectLabel(defect)) ?? [],
-    rows: buildAssignmentRows({
-      team: args.team,
-      allocationLog: args.allocationLog,
-      bufferAssignments,
-      staffOverrides: args.staffOverrides,
-    }),
+    repairIssuePills,
+    rows,
   }
 }

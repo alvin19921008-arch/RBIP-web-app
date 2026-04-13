@@ -98,6 +98,11 @@ async function main() {
     0,
     `Expected Step 3 bootstrap to exclude canonical CRP slot 3 from GMC assigned FTE, but got ${canonicalBootstrap.existingTeamPCAAssigned.GMC}`
   )
+  assert.equal(
+    Object.values(canonicalBootstrap.nonFloatingFteBreakdownByTeam.GMC ?? {}).reduce((a, v) => a + (v ?? 0), 0),
+    0,
+    'Expected non-floating breakdown for GMC to sum to 0 when only special-program slot covers GMC'
+  )
 
   const overrideAllocations = emptyTeamAllocations()
   overrideAllocations.GMC.push({

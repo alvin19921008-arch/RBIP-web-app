@@ -19,6 +19,7 @@ export type Step31V2ScarcitySummary = {
   shortTeams: Team[]
   zeroCount: number
   shortCount: number
+  /** Allocator “extra coverage” slot count (post-need), not V2 surplus grant slots. */
   projectedExtraSlots: number
   showProjectedExtraSlots: boolean
 }

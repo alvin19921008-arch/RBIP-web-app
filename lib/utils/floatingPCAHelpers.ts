@@ -739,6 +739,7 @@ export function finalizeTrackerSummary(tracker: AllocationTracker): void {
     teamLog.summary.preferredPCAUsed =
       teamLog.summary.preferredPCAsUsed > 0 ||
       teamLog.assignments.some((assignment) => assignment.wasPreferredPCA === true)
+
   }
 }
 

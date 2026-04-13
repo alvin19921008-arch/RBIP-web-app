@@ -192,9 +192,10 @@ function buildReasons(args: {
   slotCards: Step34SlotCardViewModel[]
   rankedSlots: number[]
   gymSlot: number | null
+  avoidGym: boolean
   staffOverrides?: Record<string, any>
 }): string[] {
-  const { team, teamLog, slotCards, rankedSlots, gymSlot, staffOverrides } = args
+  const { team, teamLog, slotCards, rankedSlots, gymSlot, avoidGym, staffOverrides } = args
   const reasons: string[] = []
 
   const topRankCard = slotCards.find((card) => card.assignment?.fulfilledSlotRank === 1)
@@ -240,12 +241,14 @@ function buildReasons(args: {
     reasons.push(line)
   }
 
-  if (resolveFinalGymUsageStatus(teamLog.summary) === 'used-last-resort') {
-    reasons.push('Gym was used only because no non-gym path remained.')
-  } else if (gymSlot === 1 || gymSlot === 2 || gymSlot === 3 || gymSlot === 4) {
-    reasons.push(
-      `Gym slot (${getTimeRange(gymSlot)}) was not used because pending could still be covered using other slots first.`
-    )
+  if (avoidGym) {
+    if (resolveFinalGymUsageStatus(teamLog.summary) === 'used-last-resort') {
+      reasons.push('Gym was used only because no non-gym path remained.')
+    } else if (gymSlot === 1 || gymSlot === 2 || gymSlot === 3 || gymSlot === 4) {
+      reasons.push(
+        `Gym slot (${getTimeRange(gymSlot)}) was not used because pending could still be covered using other slots first.`
+      )
+    }
   }
 
   if (teamLog.summary.preferredPCAUsed) {
@@ -325,8 +328,6 @@ export function buildStep34TeamDetailViewModel(args: {
   })()
 
   const gymStatus = resolveFinalGymUsageStatus(teamLog.summary)
-  const gymPillLabel =
-    gymStatus === 'used-last-resort' ? 'Gym used only as last resort' : 'Gym avoided'
 
   const summaryPills: Step34SummaryPillViewModel[] = [
     ...(highestRankedSlotFulfilledLabel
@@ -336,23 +337,30 @@ export function buildStep34TeamDetailViewModel(args: {
       label: teamLog.summary.preferredPCAUsed ? 'Preferred PCA used' : 'Preferred PCA not used',
       tone: teamLog.summary.preferredPCAUsed ? 'default' : 'muted',
     },
-    {
-      label: gymPillLabel,
-      tone: gymStatus === 'used-last-resort' ? 'muted' : 'default',
-    },
+    ...(pref.avoidGym
+      ? [
+          {
+            label: gymStatus === 'used-last-resort' ? 'Gym used only as last resort' : 'Gym avoided',
+            tone: gymStatus === 'used-last-resort' ? 'muted' : 'default',
+          },
+        ]
+      : []),
   ]
+
+  const reasons = buildReasons({
+    team,
+    teamLog,
+    slotCards,
+    rankedSlots: pref.rankedSlots,
+    gymSlot: pref.gymSlot,
+    avoidGym: pref.avoidGym,
+    staffOverrides,
+  })
 
   return {
     team,
     summaryPills,
     slotCards,
-    reasons: buildReasons({
-      team,
-      teamLog,
-      slotCards,
-      rankedSlots: pref.rankedSlots,
-      gymSlot: pref.gymSlot,
-      staffOverrides,
-    }),
+    reasons,
   }
 }

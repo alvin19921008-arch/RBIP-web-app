@@ -652,6 +652,38 @@ export const PCABlock = memo(function PCABlock({
         : derivedBaseAveragePCAPerTeam
       : undefined
 
+  useEffect(() => {
+    if (team !== 'FO' && team !== 'SMM' && team !== 'CPPC' && team !== 'DRO') return
+    // #region agent log (H7) pca block received tracker/display props
+    ;(typeof fetch === 'function'
+      ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '41d21d' },
+          body: JSON.stringify({
+            sessionId: '41d21d',
+            runId: 'surplus-debug-postfix',
+            hypothesisId: 'H7',
+            location: 'components/allocation/PCABlock.tsx:props',
+            message: 'PCABlock received display and tracker props',
+            data: {
+              team,
+              averagePCAPerTeam: averagePCAPerTeam ?? null,
+              pendingPcaFte: pendingPcaFte ?? null,
+              hasAllocationLog: !!allocationLog,
+              assignmentCount: allocationLog?.assignments?.length ?? 0,
+              grantSlots: allocationLog?.summary?.v2RealizedSurplusSlotGrant ?? null,
+              enabledRows:
+                allocationLog?.assignments?.filter(
+                  (assignment) => assignment.v2EnabledBySurplusAdjustedTarget === true
+                ).length ?? 0,
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {})
+      : Promise.resolve())
+    // #endregion
+  }, [team, averagePCAPerTeam, pendingPcaFte, allocationLog])
+
   // Helper function to group slots and format them (for both substituting and regular slots)
   const formatSlotGroup = (slots: number[]): string => {
     if (slots.length === 0) return ''
@@ -942,8 +974,11 @@ export const PCABlock = memo(function PCABlock({
             const slotDisplayNodeWithExtra = extraSlotsForTeam.length > 0 ? (
               <div className="space-y-0.5">
                 {slotDisplayNode}
-                <div className="text-[10px] font-semibold text-purple-700 dark:text-purple-300">
-                  Extra: slots {extraSlotsForTeam.join(', ')}
+                <div
+                  className="text-[10px] font-semibold text-purple-700 dark:text-purple-300"
+                  title="Optional Step 3.4 slot after team floating need was met. Separate from surplus-adjusted targets."
+                >
+                  Post-need extra: slots {extraSlotsForTeam.join(', ')}
                 </div>
               </div>
             ) : slotDisplayNode
@@ -984,7 +1019,14 @@ export const PCABlock = memo(function PCABlock({
                 slotDisplay={slotDisplayNodeWithExtra}
                 headerRight={(() => {
                   if (extraSlotsForTeam.length === 0) return null
-                  return <span className="text-[10px] font-semibold text-purple-700 dark:text-purple-300 whitespace-nowrap">Extra</span>
+                  return (
+                    <span
+                      className="text-[10px] font-semibold text-purple-700 dark:text-purple-300 whitespace-nowrap"
+                      title="Post-need optional coverage (Step 3.4). Not surplus redistribution."
+                    >
+                      Post-need
+                    </span>
+                  )
                 })()}
                 onEdit={readOnly ? undefined : (e) => onEditStaff?.(allocation.staff_id, e)}
                 onOpenContextMenu={readOnly ? undefined : (e) => onEditStaff?.(allocation.staff_id, e)}

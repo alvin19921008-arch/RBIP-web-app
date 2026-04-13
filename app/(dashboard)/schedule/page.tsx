@@ -76,9 +76,14 @@ import { computeDrmAddOnFte, computeReservedSpecialProgramPcaFte } from '@/lib/u
 import { getAllocationSpecialProgramSlotsForTeam, isAllocationSlotFromSpecialProgram } from '@/lib/utils/scheduleReservationRuntime'
 import { buildDisplayViewForWeekday } from '@/lib/utils/scheduleRuntimeProjection'
 import {
+  buildStep3ProjectionV2FromBootstrapSummary,
+  buildStep3ProjectionVersionKey,
   computeStep3BootstrapSummary,
+  computeStep3NonFloatingFteBreakdownByTeamFromAllocations,
   describeStep3BootstrapDelta,
+  getStep3AveragePcaDisplayTargets,
   type Step3BootstrapSummary,
+  type Step3ProjectionV2,
 } from '@/lib/features/schedule/step3Bootstrap'
 import {
   closeStep3DialogSurface,
@@ -148,6 +153,12 @@ type Step2FinalizeContext = {
   kind: Step2ImpactKind
   explicitStep3Change?: boolean
   explicitStep4Change?: boolean
+}
+
+type Step2ResultSurplusProjection = {
+  rawAveragePCAPerTeam?: Record<Team, number>
+  step3FloatingBootstrapSummaryV2?: Step3BootstrapSummary
+  step3ProjectionV2?: Step3ProjectionV2
 }
 
 const DEFAULT_STEP2_FINALIZE_CONTEXT: Step2FinalizeContext = {
@@ -1117,6 +1128,7 @@ function SchedulePageContent() {
     () => getVisibleTeams(effectiveTeamMergeConfig.mergedInto),
     [effectiveTeamMergeConfig.mergedInto]
   )
+  const step2ResultSurplusProjection = step2Result as Step2ResultSurplusProjection | null
   const visibleTeamGridStyle = useMemo(
     () => ({ gridTemplateColumns: `repeat(${Math.max(1, visibleTeams.length)}, minmax(0, 1fr))` }),
     [visibleTeams.length]
@@ -1553,6 +1565,14 @@ function SchedulePageContent() {
     mountedMs: number | null
     gridReadyMs: number
   } | null>(null)
+  /**
+   * @deprecated Hook slot preserved (ordering). Live dashboard “Avg PCA/team” uses
+   * [step3DashboardAvgPcaDisplayByTeam] derived from [step3ProjectionV2.displayTargetByTeam].
+   */
+  const surplusAdjustedAveragePCAPerTeamByTeam = useMemo(
+    () => null as Partial<Record<Team, number>> | null,
+    []
+  )
   const [topLoadingVisible, setTopLoadingVisible] = useState(false)
   const [topLoadingProgress, setTopLoadingProgress] = useState(0)
   const loadingBarIntervalRef = useRef<number | null>(null)
@@ -1649,6 +1669,7 @@ function SchedulePageContent() {
   const bufferStep2SuccessToastRef = useRef(false)
   const bufferedStep2SuccessToastPayloadRef = useRef<{ title: string; variant: any; description?: string } | null>(null)
   const step3BootstrapBaselineRef = useRef<Step3BootstrapSummary | null>(null)
+  const step3BootstrapV2BaselineRef = useRef<Step3BootstrapSummary | null>(null)
   const bufferedStep2ToastPendingRef = useRef(false)
   const bufferedStep2ToastAwaitCalculationsRef = useRef<typeof calculations | null>(null)
   const [bufferedStep2ToastFlushVersion, setBufferedStep2ToastFlushVersion] = useState(0)
@@ -5117,6 +5138,70 @@ function SchedulePageContent() {
     allocationTracker,
   ])
 
+  /** Same “saved work exists” signals as `showClearForCurrentStep`, for nav when workflow `stepStatus` lags DB rows. */
+  const allocationStepNavSignals = useMemo(() => {
+    const hasNonBaselineTherapistAllocs = TEAMS.some((team) =>
+      (therapistAllocations[team] || []).some(
+        (a) => typeof a.id === 'string' && !a.id.startsWith('baseline-therapist:')
+      )
+    )
+    const hasNonBaselinePcaAllocs = TEAMS.some((team) =>
+      (pcaAllocations[team] || []).some((a) => typeof a.id === 'string' && !a.id.startsWith('baseline-pca:'))
+    )
+    const hasStep2OverrideKeys = Object.values(staffOverrides ?? {}).some((o: any) => {
+      if (!o || typeof o !== 'object') return false
+      if (Array.isArray(o.specialProgramOverrides) && o.specialProgramOverrides.length > 0) return true
+      if (hasAnySubstitution(o)) return true
+      if (o.team != null) return true
+      return false
+    })
+    const hasStep2Data =
+      step2Result != null ||
+      initializedSteps.has('therapist-pca') ||
+      stepStatus['therapist-pca'] !== 'pending' ||
+      hasNonBaselineTherapistAllocs ||
+      hasNonBaselinePcaAllocs ||
+      hasStep2OverrideKeys
+
+    const hasStep3SlotOverrides = Object.values(staffOverrides ?? {}).some((o: any) => !!o?.slotOverrides)
+    const hasFloatingAllocations = TEAMS.some((team) =>
+      (pcaAllocations[team] || []).some((a) => {
+        const staffMember = staff.find((s) => s.id === a.staff_id)
+        return !!staffMember?.floating
+      })
+    )
+    const hasStep3Data =
+      initializedSteps.has('floating-pca') ||
+      stepStatus['floating-pca'] !== 'pending' ||
+      adjustedPendingFTE != null ||
+      teamAllocationOrder != null ||
+      allocationTracker != null ||
+      hasStep3SlotOverrides ||
+      hasFloatingAllocations
+
+    const hasStep4Notes = Object.keys(bedRelievingNotesByToTeam ?? {}).length > 0
+    const hasStep4Data =
+      initializedSteps.has('bed-relieving') ||
+      stepStatus['bed-relieving'] !== 'pending' ||
+      (bedAllocations?.length ?? 0) > 0 ||
+      hasStep4Notes
+
+    return { hasStep2Data, hasStep3Data, hasStep4Data }
+  }, [
+    staffOverrides,
+    staff,
+    therapistAllocations,
+    pcaAllocations,
+    bedAllocations,
+    bedRelievingNotesByToTeam,
+    step2Result,
+    initializedSteps,
+    stepStatus,
+    adjustedPendingFTE,
+    teamAllocationOrder,
+    allocationTracker,
+  ])
+
   const removeStep2KeysFromOverrides = (overrides: Record<string, any>) => {
     return scheduleActions.removeStep2KeysFromOverrides(overrides as any) as any
   }
@@ -5941,6 +6026,27 @@ function SchedulePageContent() {
     return out
   }, [visibleTeams, existingAssignedValidForStep3Dialog, specialProgramAssignedForStep3Dialog])
 
+  const step3NonFloatingFteBreakdownForDialog = useMemo(
+    () =>
+      computeStep3NonFloatingFteBreakdownByTeamFromAllocations({
+        existingAllocations: existingAllocationsForStep3Dialog,
+        staff: [...staff, ...bufferStaff],
+        specialPrograms: specialPrograms as any,
+        weekday: getWeekday(selectedDate),
+        staffOverrides,
+        canonicalSlotTeam: (t) => (t ? getMainTeam(t, effectiveTeamMergeConfig.mergedInto) : null),
+      }),
+    [
+      existingAllocationsForStep3Dialog,
+      staff,
+      bufferStaff,
+      specialPrograms,
+      selectedDate,
+      staffOverrides,
+      effectiveTeamMergeConfig.mergedInto,
+    ]
+  )
+
   const staffByIdForStepDependencies = useMemo(
     () => buildStaffByIdMap([...staff, ...bufferStaff]),
     [staff, bufferStaff]
@@ -5994,6 +6100,7 @@ function SchedulePageContent() {
         existingAllocations: existingAllocationsForStep3Dialog,
         staffOverrides,
         reservedSpecialProgramPcaFte: reservedSpecialProgramPcaFteForStep3,
+        nonFloatingFteBreakdownByTeam: step3NonFloatingFteBreakdownForDialog,
       }),
     [
       visibleTeams,
@@ -6003,14 +6110,83 @@ function SchedulePageContent() {
       existingAllocationsForStep3Dialog,
       staffOverrides,
       reservedSpecialProgramPcaFteForStep3,
+      step3NonFloatingFteBreakdownForDialog,
     ]
   )
+
+  const step3BootstrapSummaryV2 = useMemo(
+    () =>
+      computeStep3BootstrapSummary({
+        teams: visibleTeams,
+        teamTargets: targetAverageForStep3Dialog,
+        existingTeamPCAAssigned: existingAssignedForCapForStep3Dialog,
+        floatingPCAs: floatingPCAsForStep3,
+        existingAllocations: existingAllocationsForStep3Dialog,
+        staffOverrides,
+        reservedSpecialProgramPcaFte: reservedSpecialProgramPcaFteForStep3,
+        floatingPcaAllocationVersion: 'v2',
+        rawAveragePCAPerTeamByTeam: (step2Result as Step2ResultSurplusProjection | null)?.rawAveragePCAPerTeam,
+        nonFloatingFteBreakdownByTeam: step3NonFloatingFteBreakdownForDialog,
+      }),
+    [
+      visibleTeams,
+      targetAverageForStep3Dialog,
+      existingAssignedForCapForStep3Dialog,
+      floatingPCAsForStep3,
+      existingAllocationsForStep3Dialog,
+      staffOverrides,
+      reservedSpecialProgramPcaFteForStep3,
+      step2Result,
+      step3NonFloatingFteBreakdownForDialog,
+    ]
+  )
+
+  const step3ProjectionV2 = useMemo(() => {
+    const projectionVersion = buildStep3ProjectionVersionKey({
+      teams: visibleTeams,
+      teamTargets: targetAverageForStep3Dialog,
+      existingTeamPCAAssigned: existingAssignedForCapForStep3Dialog,
+      floatingPCAs: floatingPCAsForStep3,
+      existingAllocations: existingAllocationsForStep3Dialog,
+      staffOverrides,
+      reservedSpecialProgramPcaFte: reservedSpecialProgramPcaFteForStep3,
+      floatingPcaAllocationVersion: 'v2',
+      rawAveragePCAPerTeamByTeam: (step2Result as Step2ResultSurplusProjection | null)?.rawAveragePCAPerTeam,
+    })
+    return buildStep3ProjectionV2FromBootstrapSummary(step3BootstrapSummaryV2, { projectionVersion })
+  }, [
+    step3BootstrapSummaryV2,
+    visibleTeams,
+    targetAverageForStep3Dialog,
+    existingAssignedForCapForStep3Dialog,
+    floatingPCAsForStep3,
+    existingAllocationsForStep3Dialog,
+    staffOverrides,
+    reservedSpecialProgramPcaFteForStep3,
+    step2Result,
+  ])
+
+  const step3DashboardAvgPcaDisplayByTeam = useMemo(() => {
+    const partial = getStep3AveragePcaDisplayTargets(step3ProjectionV2)
+    if (!partial) return null
+    const next: Partial<Record<Team, number>> = {}
+    for (const team of TEAMS) {
+      const v = partial[team]
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        next[team] = v
+      }
+    }
+    return Object.keys(next).length ? next : null
+  }, [step3ProjectionV2])
 
   const pendingPCAFTEForStep3Dialog = useMemo(() => {
     const out = createEmptyTeamRecord<number>(0)
     visibleTeams.forEach((mainTeam) => {
       const displayedTarget = step3BootstrapSummary.teamTargets[mainTeam] || 0
-      const recomputedPending = step3BootstrapSummary.pendingByTeam[mainTeam] || 0
+      const recomputedPending =
+        step3DialogSurface === 'v2-ranked'
+          ? step3BootstrapSummaryV2.pendingByTeam[mainTeam] || 0
+          : step3BootstrapSummary.pendingByTeam[mainTeam] || 0
 
       // Fallback for early hydration / missing calculations: preserve legacy pending source.
       const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
@@ -6022,12 +6198,56 @@ function SchedulePageContent() {
     visibleTeams,
     teamContributorsByMain,
     step3BootstrapSummary,
+    step3BootstrapSummaryV2,
+    step3DialogSurface,
     pendingPCAFTEPerTeam,
   ])
 
+  // #region agent log (H1/H3/H5) page-level Step 3 projection wiring
+  useEffect(() => {
+    const rawAvg = (step2Result as Step2ResultSurplusProjection | null)?.rawAveragePCAPerTeam
+    const hasRawAvg =
+      !!rawAvg &&
+      Object.values(rawAvg).some((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    ;(typeof fetch === 'function'
+      ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '41d21d' },
+          body: JSON.stringify({
+            sessionId: '41d21d',
+            runId: 'surplus-debug-initial',
+            hypothesisId: 'H3',
+            location: 'app/(dashboard)/schedule/page.tsx:step3ProjectionWiring',
+            message: 'Computed page Step 3 projection summaries and dialog pending source',
+            data: {
+              step3DialogSurface,
+              hasStep2Result: !!step2Result,
+              hasRawAvg,
+              rawAvgFO: Number((rawAvg?.FO ?? 0).toFixed(3)),
+              rawAvgDRO: Number((rawAvg?.DRO ?? 0).toFixed(3)),
+              v2RawSurplusFte: Number((step3BootstrapSummaryV2.rawSurplusFte ?? 0).toFixed(3)),
+              v2SlackSlots: step3BootstrapSummaryV2.redistributableSlackSlots ?? 0,
+              v2GrantFO: Number((step3BootstrapSummaryV2.realizedSurplusSlotGrantsByTeam?.FO ?? 0).toFixed(3)),
+              v2GrantDRO: Number((step3BootstrapSummaryV2.realizedSurplusSlotGrantsByTeam?.DRO ?? 0).toFixed(3)),
+              pendingFO: Number((pendingPCAFTEForStep3Dialog.FO ?? 0).toFixed(3)),
+              pendingDRO: Number((pendingPCAFTEForStep3Dialog.DRO ?? 0).toFixed(3)),
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {})
+      : Promise.resolve())
+  }, [
+    step2Result,
+    step3DialogSurface,
+    step3BootstrapSummaryV2,
+    pendingPCAFTEForStep3Dialog,
+  ])
+  // #endregion
+
   const captureStep3BootstrapBaseline = useCallback(() => {
     step3BootstrapBaselineRef.current = step3BootstrapSummary
-  }, [step3BootstrapSummary])
+    step3BootstrapV2BaselineRef.current = step3BootstrapSummaryV2
+  }, [step3BootstrapSummary, step3BootstrapSummaryV2])
 
   const startBufferedStep2ToastSession = useCallback(() => {
     if (lastShownToastRef.current?.title === 'Step 2 allocation completed.') {
@@ -6050,7 +6270,10 @@ function SchedulePageContent() {
     bufferedStep2ToastPendingRef.current = false
     if (!payload) return
 
-    const handoffDelta = describeStep3BootstrapDelta(step3BootstrapBaselineRef.current, step3BootstrapSummary)
+    const handoffDelta = describeStep3BootstrapDelta(
+      step3BootstrapV2BaselineRef.current,
+      step3BootstrapSummaryV2
+    )
     const description =
       payload.description && handoffDelta
         ? `${payload.description}\n${handoffDelta.details}`
@@ -6065,7 +6288,8 @@ function SchedulePageContent() {
       ? { durationMs: 15000, showDurationProgress: true, pauseOnHover: true }
       : undefined)
     step3BootstrapBaselineRef.current = step3BootstrapSummary
-  }, [bufferedStep2ToastFlushVersion, calculations, showActionToast, step3BootstrapSummary])
+    step3BootstrapV2BaselineRef.current = step3BootstrapSummaryV2
+  }, [bufferedStep2ToastFlushVersion, calculations, showActionToast, step3BootstrapSummary, step3BootstrapSummaryV2])
 
   const substitutionWizardDataForDisplay = useMemo(() => {
     if (!substitutionWizardData) return null
@@ -10777,10 +11001,28 @@ function SchedulePageContent() {
                 // Allow if Step 1 itself is completed/modified (normal case)
                 const step1Started = stepStatus['leave-fte'] !== 'pending'
 
-                return hasLeaveData || anyLaterStepCompleted || step1Started
+                return (
+                  hasLeaveData ||
+                  anyLaterStepCompleted ||
+                  step1Started ||
+                  allocationStepNavSignals.hasStep2Data ||
+                  allocationStepNavSignals.hasStep3Data ||
+                  allocationStepNavSignals.hasStep4Data
+                )
               }
 
-              // Standard check for other steps: can only go forward if previous step has been started
+              // Forward: require previous step started *or* matching saved allocation/workflow data
+              // (explicit workflow can leave `stepStatus` pending while rows exist — see load gating).
+              if (previousStep.id === 'therapist-pca') {
+                return stepStatus['therapist-pca'] !== 'pending' || allocationStepNavSignals.hasStep2Data
+              }
+              if (previousStep.id === 'floating-pca') {
+                return stepStatus['floating-pca'] !== 'pending' || allocationStepNavSignals.hasStep3Data
+              }
+              if (previousStep.id === 'bed-relieving') {
+                return stepStatus['bed-relieving'] !== 'pending' || allocationStepNavSignals.hasStep4Data
+              }
+
               return stepStatus[previousStep.id] !== 'pending'
             }}
             onNext={handleNextStep}
@@ -11232,7 +11474,10 @@ function SchedulePageContent() {
                           allocations={pcaAllocationsForDisplay[team]}
                           onEditStaff={onEditPcaByTeam[team]}
                           requiredPCA={calculationsForDisplay[team]?.required_pca_per_team}
-                          averagePCAPerTeam={calculationsForDisplay[team]?.average_pca_per_team}
+                          averagePCAPerTeam={
+                            step3DashboardAvgPcaDisplayByTeam?.[team] ??
+                            calculationsForDisplay[team]?.average_pca_per_team
+                          }
                           baseAveragePCAPerTeam={calculationsForDisplay[team]?.base_average_pca_per_team}
                         specialPrograms={specialPrograms}
                           allPCAAllocations={allPCAAllocationsFlat}
@@ -12835,7 +13080,7 @@ function SchedulePageContent() {
                   bufferStaff={bufferStaff}
                   staffOverrides={staffOverrides}
                   step31AssignedByTeam={step3BootstrapSummary.existingAssignedByTeam}
-                  step31TeamTargets={step3BootstrapSummary.teamTargets}
+                  step31TeamTargets={step3ProjectionV2.displayTargetByTeam}
                   onSave={handleFloatingPCAConfigSave}
                   onCancel={handleFloatingPCAConfigCancel}
                 />
@@ -12851,7 +13096,13 @@ function SchedulePageContent() {
                   bufferStaff={bufferStaff}
                   staffOverrides={staffOverrides}
                   step31AssignedByTeam={step3BootstrapSummary.existingAssignedByTeam}
-                  step31TeamTargets={step3BootstrapSummary.teamTargets}
+                  step31TeamTargets={step3ProjectionV2.displayTargetByTeam}
+                  step31RawAveragePCAPerTeamByTeam={
+                    (step2Result as Step2ResultSurplusProjection | null)?.rawAveragePCAPerTeam
+                  }
+                  initialStep3ProjectionV2={step3ProjectionV2}
+                  step31ReservedSpecialProgramPcaFte={reservedSpecialProgramPcaFteForStep3}
+                  step31BootstrapStaff={[...staff, ...bufferStaff]}
                   onSave={handleFloatingPCAConfigSave}
                   onCancel={handleFloatingPCAConfigCancel}
                 />

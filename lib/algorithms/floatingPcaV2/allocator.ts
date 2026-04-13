@@ -147,6 +147,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
   for (const team of TEAMS) {
     teamPrefs[team] = getTeamPreferenceInfo(team, effectivePreferences)
   }
+
   const baselineAssignedSlots = countAssignedSlotsByTeam(existingAllocations)
   const acceptedRepairReasons = new Map<
     string,
@@ -267,6 +268,48 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
             teamPrefs,
           })
 
+          // #region agent log (H2) FO B1 candidate score comparison
+          if (defect.kind === 'B1' && defect.team === 'FO') {
+            ;(typeof fetch === 'function'
+              ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9381e2' },
+                  body: JSON.stringify({
+                    sessionId: '9381e2',
+                    runId: 'fo-4-3-investigation',
+                    hypothesisId: 'H2',
+                    location: 'lib/algorithms/floatingPcaV2/allocator.ts:candidateScore',
+                    message: 'FO B1 candidate score comparison',
+                    data: {
+                      sortKey: candidate.sortKey,
+                      compareToBest: compareScores(candidateScore, bestScore),
+                      repairAssignments: candidate.repairAssignments,
+                      candidateScore,
+                      currentBestScore: bestScore,
+                      candidateDefects: candidateDefects.map((d) =>
+                        'pcaId' in d ? `${d.kind}:${d.team}:${d.pcaId}` : `${d.kind}:${d.team}`
+                      ),
+                      FO: {
+                        rankedSlots: teamPrefs.FO?.rankedSlots ?? [],
+                        initialPendingFTE: initialPendingFTE.FO ?? null,
+                        pendingAfter: candidatePendingFTE.FO ?? null,
+                        slotsBefore: getTeamExistingSlots('FO', allocations),
+                        slotsAfter: getTeamExistingSlots('FO', candidate.allocations),
+                      },
+                      DRO: {
+                        initialPendingFTE: initialPendingFTE.DRO ?? null,
+                        pendingAfter: candidatePendingFTE.DRO ?? null,
+                        slotsBefore: getTeamExistingSlots('DRO', allocations),
+                        slotsAfter: getTeamExistingSlots('DRO', candidate.allocations),
+                      },
+                    },
+                    timestamp: Date.now(),
+                  }),
+                }).catch(() => {})
+              : Promise.resolve())
+          }
+          // #endregion
+
           if (compareScores(candidateScore, bestScore) >= 0) continue
           if (!bestCandidate) {
             bestCandidate = {
@@ -300,6 +343,43 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
       }
 
       if (!bestCandidate) break
+
+      // #region agent log (H4) FO winning repair candidate
+      if (bestCandidate.reason === 'B1' && bestCandidate.repairAssignments.some((assignment) => assignment.team === 'FO')) {
+        ;(typeof fetch === 'function'
+          ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9381e2' },
+              body: JSON.stringify({
+                sessionId: '9381e2',
+                runId: 'fo-4-3-investigation',
+                hypothesisId: 'H4',
+                location: 'lib/algorithms/floatingPcaV2/allocator.ts:winningCandidate',
+                message: 'FO winning repair candidate snapshot',
+                data: {
+                  iteration,
+                  sortKey: bestCandidate.sortKey,
+                  reason: bestCandidate.reason,
+                  score: bestCandidate.score,
+                  defectsAfter: bestCandidate.defects.map((d) =>
+                    'pcaId' in d ? `${d.kind}:${d.team}:${d.pcaId}` : `${d.kind}:${d.team}`
+                  ),
+                  repairAssignments: bestCandidate.repairAssignments,
+                  pendingAfter: {
+                    FO: bestCandidate.pendingFTE.FO ?? null,
+                    DRO: bestCandidate.pendingFTE.DRO ?? null,
+                  },
+                  slotsAfter: {
+                    FO: getTeamExistingSlots('FO', bestCandidate.allocations),
+                    DRO: getTeamExistingSlots('DRO', bestCandidate.allocations),
+                  },
+                },
+                timestamp: Date.now(),
+              }),
+            }).catch(() => {})
+          : Promise.resolve())
+      }
+      // #endregion
 
       allocations.splice(
         0,
@@ -335,6 +415,113 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
       record[team] = 0
       return record
     }, {} as Record<Team, number>)
+
+    const optionalPromotionSnapshot = (['FO'] as const).map((team) => {
+      const configuredRankedSlots = teamPrefs[team].rankedSlots.filter(
+        (slot): slot is 1 | 2 | 3 | 4 => slot === 1 || slot === 2 || slot === 3 || slot === 4
+      )
+      const targetSlotCount = Math.max(0, Math.round(((initialPendingFTE[team] ?? 0) + 1e-9) / 0.25))
+      const cappedRankedSlots = configuredRankedSlots.slice(0, targetSlotCount)
+      const overflowRankedSlots = configuredRankedSlots.slice(targetSlotCount)
+      const currentSlots = getTeamExistingSlots(team, allocations)
+
+      return {
+        team,
+        initialPendingFTE: initialPendingFTE[team] ?? null,
+        targetSlotCount,
+        configuredRankedSlots,
+        cappedRankedSlots,
+        overflowRankedSlots,
+        currentSlots,
+        coveredOverflowRankedSlots: overflowRankedSlots.filter((slot) => currentSlots.includes(slot)),
+        missingOverflowRankedSlots: overflowRankedSlots.filter((slot) => !currentSlots.includes(slot)),
+        overflowRankedSlotOwners: overflowRankedSlots.map((slot) => ({
+          slot,
+          owners: allocations
+            .filter((allocation) =>
+              (slot === 1 ? allocation.slot1 : slot === 2 ? allocation.slot2 : slot === 3 ? allocation.slot3 : allocation.slot4) !=
+              null
+            )
+            .filter(
+              (allocation) =>
+                (slot === 1 ? allocation.slot1 : slot === 2 ? allocation.slot2 : slot === 3 ? allocation.slot3 : allocation.slot4) !=
+                team
+            )
+            .map((allocation) => ({
+              pcaId: allocation.staff_id,
+              owner:
+                slot === 1
+                  ? allocation.slot1
+                  : slot === 2
+                    ? allocation.slot2
+                    : slot === 3
+                      ? allocation.slot3
+                      : allocation.slot4,
+            })),
+        })),
+      }
+    })
+    const optionalPromotionProbe = (() => {
+      const team: Team = 'FO'
+      const configuredRankedSlots = teamPrefs[team].rankedSlots.filter(
+        (slot): slot is 1 | 2 | 3 | 4 => slot === 1 || slot === 2 || slot === 3 || slot === 4
+      )
+      const probedInitialPendingFTE = {
+        ...initialPendingFTE,
+        [team]: Math.max(initialPendingFTE[team] ?? 0, configuredRankedSlots.length * 0.25),
+      }
+      const candidates = generateRepairCandidates({
+        defect: { kind: 'B1', team },
+        allocations,
+        pcaPool,
+        teamPrefs,
+        teamOrder,
+        initialPendingFTE: probedInitialPendingFTE,
+        pendingFTE,
+        baselineAllocations: existingAllocations,
+      })
+      return {
+        team,
+        probedInitialPendingFTE: probedInitialPendingFTE[team],
+        candidateCount: candidates.length,
+        donationCount: candidates.filter((candidate) => candidate.repairAssignments.length === 1).length,
+        swapOrMoveCount: candidates.filter((candidate) => candidate.repairAssignments.length > 1).length,
+        candidateSummaries: candidates.slice(0, 12).map((candidate) => ({
+          sortKey: candidate.sortKey,
+          repairAssignments: candidate.repairAssignments,
+        })),
+      }
+    })()
+
+    // #region agent log (H5) extra coverage entry snapshot
+    ;(typeof fetch === 'function'
+      ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9381e2' },
+          body: JSON.stringify({
+            sessionId: '9381e2',
+            runId: 'fo-4-3-investigation-v2',
+            hypothesisId: 'H5',
+            location: 'lib/algorithms/floatingPcaV2/allocator.ts:applyExtraCoverageRoundRobin',
+            message: 'extra coverage entry snapshot',
+            data: {
+              extraCoverageMode,
+              allSatisfied,
+              pendingFTE: { ...pendingFTE },
+              initialPendingFTE: { FO: initialPendingFTE.FO ?? null, DRO: initialPendingFTE.DRO ?? null },
+              currentSlots: {
+                FO: getTeamExistingSlots('FO', allocations),
+                DRO: getTeamExistingSlots('DRO', allocations),
+              },
+              zeroPending: { FO: zeroPending.FO, DRO: zeroPending.DRO },
+              optionalPromotionSnapshot,
+              optionalPromotionProbe,
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {})
+      : Promise.resolve())
+    // #endregion
 
     let madeProgress = true
     while (madeProgress) {
@@ -385,6 +572,40 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
         })
 
         if (extraResult.slotsAssigned.length === 0) continue
+
+        // #region agent log (H6) FO/DRO extra coverage assignment
+        if (team === 'FO' || team === 'DRO') {
+          ;(typeof fetch === 'function'
+            ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9381e2' },
+                body: JSON.stringify({
+                  sessionId: '9381e2',
+                  runId: 'fo-4-3-investigation-v2',
+                  hypothesisId: 'H6',
+                  location: 'lib/algorithms/floatingPcaV2/allocator.ts:applyExtraCoverageRoundRobin:assignment',
+                  message: 'extra coverage assignment snapshot',
+                  data: {
+                    team,
+                    winner: {
+                      id: winner.id,
+                      name: winner.name,
+                      fte: winner.fte_pca,
+                    },
+                    assignedSlots: extraResult.slotsAssigned,
+                    pendingFTE: { ...pendingFTE },
+                    teamSlotsAfter: getTeamExistingSlots(team, allocations),
+                    donorSlotsAfter: {
+                      FO: getTeamExistingSlots('FO', allocations),
+                      DRO: getTeamExistingSlots('DRO', allocations),
+                    },
+                  },
+                  timestamp: Date.now(),
+                }),
+              }).catch(() => {})
+            : Promise.resolve())
+        }
+        // #endregion
 
         madeProgress = true
         for (const slot of extraResult.slotsAssigned) {
@@ -559,6 +780,47 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
     finalTracker[defect.team].summary.repairAuditDefects = current
   }
   finalizeRankedSlotFloatingTracker(finalTracker)
+
+  // #region agent log (H7) FO/DRO final tracker stages
+  ;(typeof fetch === 'function'
+    ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9381e2' },
+        body: JSON.stringify({
+          sessionId: '9381e2',
+          runId: 'fo-4-3-investigation-v2',
+          hypothesisId: 'H7',
+          location: 'lib/algorithms/floatingPcaV2/allocator.ts:finalTracker',
+          message: 'FO/DRO final tracker stage snapshot',
+          data: {
+            pendingFTE: { FO: pendingFTE.FO ?? null, DRO: pendingFTE.DRO ?? null },
+            extraCoverageByStaffId,
+            FO: {
+              summary: finalTracker.FO.summary,
+              assignments: finalTracker.FO.assignments.map((assignment) => ({
+                slot: assignment.slot,
+                pcaId: assignment.pcaId,
+                allocationStage: assignment.allocationStage ?? null,
+                repairReason: assignment.repairReason ?? null,
+                assignmentTag: assignment.assignmentTag ?? null,
+              })),
+            },
+            DRO: {
+              summary: finalTracker.DRO.summary,
+              assignments: finalTracker.DRO.assignments.map((assignment) => ({
+                slot: assignment.slot,
+                pcaId: assignment.pcaId,
+                allocationStage: assignment.allocationStage ?? null,
+                repairReason: assignment.repairReason ?? null,
+                assignmentTag: assignment.assignmentTag ?? null,
+              })),
+            },
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {})
+    : Promise.resolve())
+  // #endregion
 
   return {
     allocations,

@@ -187,6 +187,13 @@ export interface SlotAssignmentLog {
   pcaSelectionTier?: 'preferred' | 'floor' | 'non-floor'
   usedContinuity?: boolean
   duplicateSlot?: boolean
+
+  /**
+   * V2-only: when true on a Step 3.4 row, this slot would not have been assignable
+   * without surplus-aware rounded target projection (realized surplus slot grant).
+   * Tooltip-only provenance; not shown as a separate tracker badge.
+   */
+  v2EnabledBySurplusAdjustedTarget?: boolean
 }
 
 /**
@@ -226,6 +233,21 @@ export interface TeamAllocationLog {
     allocationMode?: 'standard' | 'balanced' // Which Step 3.4 mode produced this tracker
     repairAuditDefects?: Array<'B1' | 'A1' | 'A2' | 'C1' | 'F1'>
     preStep34RoundedPendingFte?: number
+    /**
+     * V2-only: quarter slots granted to this team from surplus redistribution
+     * (rounded target uplift). Used with per-row `v2EnabledBySurplusAdjustedTarget`
+     * for tooltip provenance only.
+     */
+    v2RealizedSurplusSlotGrant?: number
+    /**
+     * V2-only: `Step3ProjectionV2.projectionVersion` fingerprint when surplus grant FTE was read from
+     * the frozen Step 2→3 projection (or recomputed bootstrap path with same key).
+     */
+    v2SurplusProvenanceProjectionVersion?: string | null
+    /**
+     * V2-only: whether realized surplus grant FTE for stamping came from `Step3ProjectionV2` vs dialog bootstrap.
+     */
+    v2SurplusProvenanceGrantReadSource?: 'step3_projection_v2' | 'bootstrap_summary'
   }
 }
 

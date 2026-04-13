@@ -74,7 +74,9 @@ export function projectLoadStepGating(args: {
   const stepStatus = emptyStepStatus()
   if (args.hasLeaveData) stepStatus['leave-fte'] = 'completed'
   if (args.hasTherapistData || args.hasPCAData) stepStatus['therapist-pca'] = 'completed'
-  if (args.hasPCAData || args.hasBedData) stepStatus['floating-pca'] = 'completed'
+  // Legacy load without persisted workflow: PCA row presence alone must not imply Step 3 completion
+  // (floating stays pending until explicit workflow/init state or downstream signals like bed data).
+  if (args.hasBedData) stepStatus['floating-pca'] = 'completed'
   if (args.hasBedData) stepStatus['bed-relieving'] = 'completed'
 
   const initializedStepsFromLoaded = sanitizeStepIds(args.initializedStepsFromLoaded)

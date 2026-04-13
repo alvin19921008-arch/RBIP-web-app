@@ -4,7 +4,7 @@ Status: approved design for planning, revised after 2026-04-09 investigation
 
 Date: 2026-04-06
 
-Revised: 2026-04-11
+Revised: 2026-04-12
 
 Allocator refinement: 2026-04-12 — bounded **donor donation** repair shape, **gym-aware** lexicographic scoring, **second repair pass** after extra coverage, canonical **`gymUsageStatus`** on tracker summary (see **§ Step 3.4 Stage 2 → Orchestration: repair → extra coverage → repair again** and **§ V2 allocation engine refinement → Extra coverage: V2 handling and interpretation** below, plus **§9 Gym policy** for UI source of truth).
 

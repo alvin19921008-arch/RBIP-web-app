@@ -171,10 +171,15 @@ function getAssignedFloatingSlotsForTeam(
 function getRankedMissingSlots(
   allocations: PCAAllocation[],
   team: Team,
-  teamPrefs: Record<Team, TeamPreferenceInfo>
+  teamPrefs: Record<Team, TeamPreferenceInfo>,
+  floatingPcaIds: Set<string>,
+  initialPendingFTE?: Record<Team, number>
 ): Slot[] {
-  const current = new Set(getAssignedSlotsForTeam(allocations, team))
-  return teamPrefs[team].rankedSlots.filter(
+  const current = new Set(getAssignedFloatingSlotsForTeam(allocations, team, floatingPcaIds))
+  const targetSlotCount = Math.max(0, Math.round((((initialPendingFTE?.[team] ?? 0) as number) + 1e-9) / 0.25))
+  return teamPrefs[team].rankedSlots
+    .slice(0, targetSlotCount || undefined)
+    .filter(
     (slot): slot is Slot =>
       (slot === 1 || slot === 2 || slot === 3 || slot === 4) && !current.has(slot)
   )
@@ -375,6 +380,16 @@ function isUsefulOpenSlotForTeam(
   return pref.rankedSlots.includes(slot) || pref.unrankedNonGymSlots.includes(slot)
 }
 
+function isUsefulReplacementSlotForTeam(
+  team: Team,
+  slot: Slot,
+  teamPrefs: Record<Team, TeamPreferenceInfo>
+): boolean {
+  if (!isSlotAllowedForTeam(team, slot, teamPrefs)) return false
+  const pref = teamPrefs[team]
+  return pref.rankedSlots.includes(slot) || pref.unrankedNonGymSlots.includes(slot)
+}
+
 function isFairnessFloorRescueSlotForTeam(
   allocations: PCAAllocation[],
   team: Team,
@@ -436,8 +451,42 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
   const sortedPcas = [...pcaPool].sort((a, b) => String(a.id).localeCompare(String(b.id)))
   const floatingPcaIds = buildFloatingPcaIdSet(pcaPool)
   const auditState = buildAuditStateForRepairCandidates(context)
-
-  for (const targetSlot of getRankedMissingSlots(allocations, requestingTeam, teamPrefs)) {
+  const debugFoCandidates:
+    | {
+        currentFloatingSlots: Slot[]
+        missingRankedSlots: Slot[]
+        candidateSummaries: Array<{
+          sortKey: string
+          shape: 'donate' | 'move' | 'swap'
+          targetSlot: Slot
+          targetOwner: Team | null
+          donorSlot: Slot | null
+          repairAssignments: RepairAssignment[]
+        }>
+      }
+    | null =
+    requestingTeam === 'FO'
+      ? {
+          currentFloatingSlots: getAssignedFloatingSlotsForTeam(allocations, requestingTeam, floatingPcaIds),
+          missingRankedSlots: getRankedMissingSlots(
+            allocations,
+            requestingTeam,
+            teamPrefs,
+            floatingPcaIds,
+            context.initialPendingFTE
+          ),
+          candidateSummaries: [],
+        }
+      : null
+  for (
+    const targetSlot of getRankedMissingSlots(
+      allocations,
+      requestingTeam,
+      teamPrefs,
+      floatingPcaIds,
+      context.initialPendingFTE
+    )
+  ) {
     for (const targetPca of sortedPcas) {
       if (!getNormalizedAvailableSlots(targetPca).includes(targetSlot)) continue
       const targetAllocation = getAllocationByStaffId(allocations, targetPca.id)
@@ -462,7 +511,19 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
             },
           ]
         )
-        if (donation) candidates.push(donation)
+        if (donation) {
+          candidates.push(donation)
+          if (debugFoCandidates && debugFoCandidates.candidateSummaries.length < 16) {
+            debugFoCandidates.candidateSummaries.push({
+              sortKey: donation.sortKey,
+              shape: 'donate',
+              targetSlot,
+              targetOwner,
+              donorSlot: null,
+              repairAssignments: donation.repairAssignments,
+            })
+          }
+        }
       }
 
       for (const fallbackPca of sortedPcas) {
@@ -477,9 +538,15 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
           ) {
             continue
           }
-          if (!supportedSlots.includes(fallbackSlot)) continue
-          if (!isUsefulOpenSlotForTeam(allocations, targetOwner, fallbackSlot, teamPrefs)) continue
-          if (getSlotOwner(fallbackAllocation, fallbackSlot) != null) continue
+          if (!supportedSlots.includes(fallbackSlot)) {
+            continue
+          }
+          if (!isUsefulOpenSlotForTeam(allocations, targetOwner, fallbackSlot, teamPrefs)) {
+            continue
+          }
+          if (getSlotOwner(fallbackAllocation, fallbackSlot) != null) {
+            continue
+          }
 
           const candidate = applyOneSlotMove({
             defectKind: 'B1',
@@ -494,7 +561,19 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
             fallbackSlot,
             fallbackTeam: targetOwner,
           })
-          if (candidate) candidates.push(candidate)
+          if (candidate) {
+            candidates.push(candidate)
+            if (debugFoCandidates && debugFoCandidates.candidateSummaries.length < 16) {
+              debugFoCandidates.candidateSummaries.push({
+                sortKey: candidate.sortKey,
+                shape: 'move',
+                targetSlot,
+                targetOwner,
+                donorSlot: fallbackSlot,
+                repairAssignments: candidate.repairAssignments,
+              })
+            }
+          }
         }
       }
 
@@ -502,10 +581,11 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
         String(a.staff_id).localeCompare(String(b.staff_id))
       )) {
         if (!floatingPcaIds.has(donorAllocation.staff_id)) continue
-        if (donorAllocation.staff_id === targetPca.id) continue
         for (const donorSlot of VALID_SLOTS) {
           if (getSlotOwner(donorAllocation, donorSlot) !== requestingTeam) continue
-          if (!isUsefulOpenSlotForTeam(allocations, targetOwner, donorSlot, teamPrefs)) continue
+          if (!isUsefulReplacementSlotForTeam(targetOwner, donorSlot, teamPrefs)) {
+            continue
+          }
           const candidate = applyOneSlotSwap({
             defectKind: 'B1',
             sortKey: `b1:swap:${targetPca.id}:${targetSlot}:${donorAllocation.staff_id}:${donorSlot}`,
@@ -520,11 +600,52 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
             donorOwner: requestingTeam,
             newDonorOwner: targetOwner,
           })
-          if (candidate) candidates.push(candidate)
+          if (candidate) {
+            candidates.push(candidate)
+            if (debugFoCandidates && debugFoCandidates.candidateSummaries.length < 16) {
+              debugFoCandidates.candidateSummaries.push({
+                sortKey: candidate.sortKey,
+                shape: 'swap',
+                targetSlot,
+                targetOwner,
+                donorSlot,
+                repairAssignments: candidate.repairAssignments,
+              })
+            }
+          }
         }
       }
     }
   }
+
+  // #region agent log (H3) FO B1 candidate generation
+  if (debugFoCandidates) {
+    ;(typeof fetch === 'function'
+      ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9381e2' },
+          body: JSON.stringify({
+            sessionId: '9381e2',
+            runId: 'fo-4-3-investigation',
+            hypothesisId: 'H3',
+            location: 'lib/algorithms/floatingPcaV2/repairMoves.ts:generateB1Candidates',
+            message: 'FO B1 candidate generation snapshot',
+            data: {
+              team: requestingTeam,
+              rankedSlots: teamPrefs[requestingTeam].rankedSlots,
+              currentFloatingSlots: debugFoCandidates.currentFloatingSlots,
+              missingRankedSlots: debugFoCandidates.missingRankedSlots,
+              donationCount: debugFoCandidates.candidateSummaries.filter((entry) => entry.shape === 'donate').length,
+              moveCount: debugFoCandidates.candidateSummaries.filter((entry) => entry.shape === 'move').length,
+              swapCount: debugFoCandidates.candidateSummaries.filter((entry) => entry.shape === 'swap').length,
+              candidateSummaries: debugFoCandidates.candidateSummaries,
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {})
+      : Promise.resolve())
+  }
+  // #endregion
 
   return candidates
 }

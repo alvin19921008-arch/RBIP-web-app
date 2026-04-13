@@ -36,7 +36,6 @@ export function getQualifyingDuplicateFloatingAssignmentsForSlot(args: {
   const qualifying = step34Logs.filter(
     (entry) =>
       entry.step3OwnershipKind === 'step3-floating' &&
-      entry.upstreamCoverageKind == null &&
       !isPcaSubstitutingNonFloatingOnSlotForTeam({
         staffOverrides: args.staffOverrides,
         pcaId: entry.pcaId,
@@ -45,5 +44,9 @@ export function getQualifyingDuplicateFloatingAssignmentsForSlot(args: {
       })
   )
 
-  return dedupeAssignmentsByPcaId(qualifying)
+  const deduped = dedupeAssignmentsByPcaId(qualifying)
+  // A single Step 3 floating row on a slot is never a duplicate-floating *pair*, even when it sits on
+  // upstream Step 2 coverage (see f78 / f103). Two+ distinct floating rows still qualify together.
+  if (deduped.length < 2) return []
+  return deduped
 }

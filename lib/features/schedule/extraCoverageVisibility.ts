@@ -1,5 +1,11 @@
 import type { ExtraCoverageByStaffId } from '@/lib/features/schedule/extraCoverageRuntime'
 
+/**
+ * Extra coverage UI: optional Step 3.4 floating slots **after** each team’s floating need is satisfied
+ * (`extraCoverageMode: round-robin-team-order`). This path is **independent** of V2 **surplus** grants /
+ * surplus-adjusted targets (`realizedSurplusSlotGrantsByTeam`, `v2EnabledBySurplusAdjustedTarget`).
+ */
+
 export function shouldShowExtraCoverage(args: {
   currentStep?: string | null
   initializedSteps?: Set<string> | null

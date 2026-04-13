@@ -39,7 +39,7 @@ import {
   type Step3V2Step,
 } from '@/lib/features/schedule/step3V2Path'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
-import type { Team } from '@/types/staff'
+import type { Staff, Team } from '@/types/staff'
 import {
   allocateFloatingPCA_v2RankedSlot,
   type FloatingPCAAllocationResultV2,
@@ -57,8 +57,27 @@ import { computeAdjacentSlotReservations, type SlotAssignment } from '@/lib/util
 import { buildStep34TeamDetailViewModel } from './step34/step34ViewModel'
 
 import type { FloatingPCAConfigDialogV1Props } from './FloatingPCAConfigDialogV1'
+import {
+  buildStep3ProjectionVersionKey,
+  computeStep3BootstrapSummary,
+  computeStep3NonFloatingFteBreakdownByTeamFromAllocations,
+  type Step3BootstrapSummary,
+  type Step3ProjectionV2,
+} from '@/lib/features/schedule/step3Bootstrap'
 
-type FloatingPCAConfigDialogV2Props = FloatingPCAConfigDialogV1Props
+type FloatingPCAConfigDialogV2Props = FloatingPCAConfigDialogV1Props & {
+  /** Therapist-weighted demand for V2 surplus projection (kept separate from floating [teamTargets]). */
+  step31RawAveragePCAPerTeamByTeam?: Record<Team, number>
+  /**
+   * Precomputed Step 2 → Step 3 projection from the page/controller (same bootstrap inputs as dialog).
+   * When present with V2 raw-average weights, avoids a second [computeStep3BootstrapSummary] on open.
+   */
+  initialStep3ProjectionV2?: Step3ProjectionV2 | null
+  /** Must match page bootstrap [reservedSpecialProgramPcaFte] so projection fingerprints align. */
+  step31ReservedSpecialProgramPcaFte?: number
+  /** Staff roster (e.g. on-duty + buffer) for non-floating FTE breakdown when the dialog recomputes bootstrap. */
+  step31BootstrapStaff?: Staff[]
+}
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
@@ -178,6 +197,14 @@ function emptyTeamRecord(value = 0): Record<Team, number> {
   }
 }
 
+function hasPositiveRawAverageWeights(raw?: Record<Team, number>): boolean {
+  if (!raw) return false
+  for (const v of Object.values(raw)) {
+    if ((v || 0) > 0) return true
+  }
+  return false
+}
+
 const STEP3_FLOATING_ASSIGNED_IN = new Set(['step32', 'step33', 'step34'])
 
 /**
@@ -283,6 +310,10 @@ export function FloatingPCAConfigDialogV2({
   staffOverrides = {},
   step31AssignedByTeam,
   step31TeamTargets,
+  step31RawAveragePCAPerTeamByTeam,
+  initialStep3ProjectionV2,
+  step31ReservedSpecialProgramPcaFte = 0,
+  step31BootstrapStaff,
   onSave,
   onCancel,
 }: FloatingPCAConfigDialogV2Props) {
@@ -293,6 +324,7 @@ export function FloatingPCAConfigDialogV2({
   const [currentStep, setCurrentStep] = useState<Step3V2Step>('3.1')
   const [adjustedFTE, setAdjustedFTE] = useState<Record<Team, number>>(emptyTeamRecord())
   const [originalRoundedFTE, setOriginalRoundedFTE] = useState<Record<Team, number>>(emptyTeamRecord())
+  const [step31BootstrapSummary, setStep31BootstrapSummary] = useState<Step3BootstrapSummary | null>(null)
   const [teamOrder, setTeamOrder] = useState<Team[]>([])
   const [step31Preview, setStep31Preview] = useState<Step31PreviewState>({ status: 'idle' })
   const [step31CardLegendOpen, setStep31CardLegendOpen] = useState(false)
@@ -325,14 +357,82 @@ export function FloatingPCAConfigDialogV2({
   useEffect(() => {
     if (!open) return
 
+    let surplusPendingByTeam: Record<Team, number> | null = null
+    let computedBootstrapSummary: Step3BootstrapSummary | null = null
+    const projectionVersionAtOpen =
+      step31TeamTargets && step31AssignedByTeam
+        ? buildStep3ProjectionVersionKey({
+            teams: activeTeams,
+            teamTargets: step31TeamTargets as Record<Team, number>,
+            existingTeamPCAAssigned: step31AssignedByTeam as Record<Team, number>,
+            floatingPCAs,
+            existingAllocations,
+            staffOverrides,
+            reservedSpecialProgramPcaFte: step31ReservedSpecialProgramPcaFte,
+            floatingPcaAllocationVersion: 'v2',
+            rawAveragePCAPerTeamByTeam: step31RawAveragePCAPerTeamByTeam,
+          })
+        : null
+    const reuseBootstrapFromProjection =
+      !!initialStep3ProjectionV2?.bootstrapSummary &&
+      hasPositiveRawAverageWeights(step31RawAveragePCAPerTeamByTeam) &&
+      projectionVersionAtOpen != null &&
+      initialStep3ProjectionV2.projectionVersion === projectionVersionAtOpen
+
+    if (reuseBootstrapFromProjection) {
+      computedBootstrapSummary = initialStep3ProjectionV2!.bootstrapSummary
+      surplusPendingByTeam = computedBootstrapSummary.pendingByTeam
+    } else if (
+      hasPositiveRawAverageWeights(step31RawAveragePCAPerTeamByTeam) &&
+      step31TeamTargets &&
+      step31AssignedByTeam
+    ) {
+      try {
+        const nonFloatingFteBreakdownByTeam =
+          Array.isArray(step31BootstrapStaff) && step31BootstrapStaff.length > 0
+            ? computeStep3NonFloatingFteBreakdownByTeamFromAllocations({
+                existingAllocations,
+                staff: step31BootstrapStaff,
+                specialPrograms,
+                weekday,
+                staffOverrides,
+              })
+            : undefined
+        const summary = computeStep3BootstrapSummary({
+          teams: activeTeams,
+          teamTargets: step31TeamTargets as Record<Team, number>,
+          existingTeamPCAAssigned: step31AssignedByTeam as Record<Team, number>,
+          floatingPCAs,
+          existingAllocations,
+          staffOverrides,
+          reservedSpecialProgramPcaFte: step31ReservedSpecialProgramPcaFte,
+          floatingPcaAllocationVersion: 'v2',
+          rawAveragePCAPerTeamByTeam: step31RawAveragePCAPerTeamByTeam,
+          ...(nonFloatingFteBreakdownByTeam != null
+            ? { nonFloatingFteBreakdownByTeam }
+            : {}),
+        })
+        computedBootstrapSummary = summary
+        surplusPendingByTeam = summary.pendingByTeam
+      } catch {
+        computedBootstrapSummary = null
+        surplusPendingByTeam = null
+      }
+    }
+
     const roundedInitial = emptyTeamRecord()
     activeTeams.forEach((team) => {
-      roundedInitial[team] = roundToNearestQuarterWithMidpoint(initialPendingFTE[team] || 0)
+      const projected = surplusPendingByTeam?.[team]
+      const base = initialPendingFTE[team] || 0
+      roundedInitial[team] = roundToNearestQuarterWithMidpoint(
+        projected != null ? projected : base
+      )
     })
     const sortedTeams = sortTeamsByPendingFTE(activeTeams, roundedInitial, activeTeams)
 
     setAdjustedFTE(roundedInitial)
     setOriginalRoundedFTE(roundedInitial)
+    setStep31BootstrapSummary(computedBootstrapSummary)
     setTeamOrder(sortedTeams)
     setCurrentStep('3.1')
     setSelectedStep32Team(null)
@@ -345,7 +445,21 @@ export function FloatingPCAConfigDialogV2({
     setStep34PreviewResult(null)
     setStep34SelectedTeam(null)
     setStep34Loading(false)
-  }, [open, activeTeams, initialPendingFTE])
+  }, [
+    open,
+    activeTeams,
+    initialPendingFTE,
+    step31AssignedByTeam,
+    step31TeamTargets,
+    step31RawAveragePCAPerTeamByTeam,
+    initialStep3ProjectionV2,
+    step31ReservedSpecialProgramPcaFte,
+    step31BootstrapStaff,
+    floatingPCAs,
+    existingAllocations,
+    specialPrograms,
+    staffOverrides,
+  ])
 
   const handleValueChange = useCallback(
     (team: Team, newValue: number) => {
@@ -431,6 +545,48 @@ export function FloatingPCAConfigDialogV2({
           (team) => roundToNearestQuarterWithMidpoint(standardRes.pendingPCAFTEPerTeam[team] || 0) >= 0.25
         )
 
+        // #region agent log (H9) step31 preview projected extra snapshot
+        ;(typeof fetch === 'function'
+          ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9381e2' },
+              body: JSON.stringify({
+                sessionId: '9381e2',
+                runId: 'step31-surplus-investigation',
+                hypothesisId: 'H9',
+                location: 'components/allocation/FloatingPCAConfigDialogV2.tsx:step31PreviewReady',
+                message: 'step31 preview projected extra snapshot',
+                data: {
+                  adjustedFTE: { FO: adjustedFTE.FO ?? null, DRO: adjustedFTE.DRO ?? null },
+                  standardProjectedExtraSlots: countProjectedExtraSlots(standardRes.extraCoverageByStaffId),
+                  extraCoverageByStaffId: standardRes.extraCoverageByStaffId ?? {},
+                  standardZeroTeams,
+                  balancedShortTeams,
+                  pendingAfterPreview: {
+                    FO: standardRes.pendingPCAFTEPerTeam.FO ?? null,
+                    DRO: standardRes.pendingPCAFTEPerTeam.DRO ?? null,
+                  },
+                  trackerAssignedStep34: {
+                    FO:
+                      standardRes.tracker?.FO?.assignments?.filter((assignment) => assignment.assignedIn === 'step34').length ?? 0,
+                    DRO:
+                      standardRes.tracker?.DRO?.assignments?.filter((assignment) => assignment.assignedIn === 'step34').length ?? 0,
+                  },
+                  step31TeamTargets: {
+                    FO: step31TeamTargets?.FO ?? null,
+                    DRO: step31TeamTargets?.DRO ?? null,
+                  },
+                  step31AssignedByTeam: {
+                    FO: step31AssignedByTeam?.FO ?? null,
+                    DRO: step31AssignedByTeam?.DRO ?? null,
+                  },
+                },
+                timestamp: Date.now(),
+              }),
+            }).catch(() => {})
+          : Promise.resolve())
+        // #endregion
+
         setStep31Preview({
           status: 'ready',
           standardZeroTeams,
@@ -450,7 +606,18 @@ export function FloatingPCAConfigDialogV2({
     return () => {
       cancelled = true
     }
-  }, [open, activeTeams, adjustedFTE, teamOrder, existingAllocations, floatingPCAs, pcaPreferences, specialPrograms])
+  }, [
+    open,
+    activeTeams,
+    adjustedFTE,
+    teamOrder,
+    existingAllocations,
+    floatingPCAs,
+    pcaPreferences,
+    specialPrograms,
+    step31AssignedByTeam,
+    step31TeamTargets,
+  ])
 
   const reservationPreview = useMemo(
     () =>
@@ -711,6 +878,102 @@ export function FloatingPCAConfigDialogV2({
   const runStep34Preview = useCallback(async () => {
     setStep34Loading(true)
     try {
+      const projectionVersionNow =
+        step31TeamTargets && step31AssignedByTeam
+          ? buildStep3ProjectionVersionKey({
+              teams: activeTeams,
+              teamTargets: step31TeamTargets as Record<Team, number>,
+              existingTeamPCAAssigned: step31AssignedByTeam as Record<Team, number>,
+              floatingPCAs,
+              existingAllocations,
+              staffOverrides,
+              reservedSpecialProgramPcaFte: step31ReservedSpecialProgramPcaFte,
+              floatingPcaAllocationVersion: 'v2',
+              rawAveragePCAPerTeamByTeam: step31RawAveragePCAPerTeamByTeam,
+            })
+          : null
+
+      const projectionAligned =
+        !!initialStep3ProjectionV2 &&
+        projectionVersionNow != null &&
+        initialStep3ProjectionV2.projectionVersion === projectionVersionNow
+
+      const displayTargetByTeamForBaseline = projectionAligned
+        ? initialStep3ProjectionV2!.displayTargetByTeam
+        : step31BootstrapSummary?.teamTargets
+      const existingAssignedByTeamForBaseline = projectionAligned
+        ? initialStep3ProjectionV2!.existingAssignedByTeam
+        : step31BootstrapSummary?.existingAssignedByTeam
+
+      const step34SurplusProvenanceByTeam = teamOrder.reduce<
+        Partial<Record<Team, { realizedGrantFte: number; enabledStep34RowCount: number }>>
+      >((acc, team) => {
+        const realizedGrantFte = projectionAligned
+          ? (initialStep3ProjectionV2!.realizedSurplusGrantByTeam[team] ?? 0)
+          : (step31BootstrapSummary?.realizedSurplusSlotGrantsByTeam?.[team] ?? 0)
+        if (roundToNearestQuarterWithMidpoint(realizedGrantFte) < 0.25) {
+          return acc
+        }
+
+        const baselineRoundedPending = roundToNearestQuarterWithMidpoint(
+          Math.max(
+            0,
+            (displayTargetByTeamForBaseline?.[team] ?? 0) -
+              (existingAssignedByTeamForBaseline?.[team] ?? 0)
+          )
+        )
+        const adjustedRoundedPending =
+          roundToNearestQuarterWithMidpoint(adjustedFTE[team] || 0)
+        const upliftedQuarterSlots = Math.max(
+          0,
+          Math.round((adjustedRoundedPending - baselineRoundedPending) / 0.25)
+        )
+        if (upliftedQuarterSlots <= 0) {
+          return acc
+        }
+
+        acc[team] = {
+          realizedGrantFte: roundToNearestQuarterWithMidpoint(realizedGrantFte),
+          enabledStep34RowCount: upliftedQuarterSlots,
+        }
+        return acc
+      }, {})
+
+      // #region agent log (H3) step34 surplus provenance inputs
+      ;(typeof fetch === 'function'
+        ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a8e678' },
+            body: JSON.stringify({
+              sessionId: 'a8e678',
+              runId: 'step3-surplus-takeover-initial',
+              hypothesisId: 'H3',
+              location: 'components/allocation/FloatingPCAConfigDialogV2.tsx:runStep34Preview',
+              message: 'Built Step 3.4 surplus provenance inputs',
+              data: {
+                originalRoundedFTE: {
+                  FO: Number((originalRoundedFTE.FO ?? 0).toFixed(3)),
+                  DRO: Number((originalRoundedFTE.DRO ?? 0).toFixed(3)),
+                },
+                adjustedFTE: {
+                  FO: Number((adjustedFTE.FO ?? 0).toFixed(3)),
+                  DRO: Number((adjustedFTE.DRO ?? 0).toFixed(3)),
+                },
+                realizedGrantFte: {
+                  FO: Number((step31BootstrapSummary?.realizedSurplusSlotGrantsByTeam?.FO ?? 0).toFixed(3)),
+                  DRO: Number((step31BootstrapSummary?.realizedSurplusSlotGrantsByTeam?.DRO ?? 0).toFixed(3)),
+                },
+                enabledStep34RowCount: {
+                  FO: step34SurplusProvenanceByTeam.FO?.enabledStep34RowCount ?? 0,
+                  DRO: step34SurplusProvenanceByTeam.DRO?.enabledStep34RowCount ?? 0,
+                },
+              },
+              timestamp: Date.now(),
+            }),
+          }).catch(() => {})
+        : Promise.resolve())
+      // #endregion
+
       const result = await runStep3V2CommittedSelections({
         teamOrder,
         currentPendingFTE: { ...adjustedFTE },
@@ -723,6 +986,11 @@ export function FloatingPCAConfigDialogV2({
         mode: 'standard',
         preferenceSelectionMode: 'legacy',
         extraCoverageMode: 'round-robin-team-order',
+        step34SurplusProvenanceByTeam,
+        step34SurplusProvenanceMeta: {
+          projectionVersion: projectionVersionNow,
+          grantReadSource: projectionAligned ? 'step3_projection_v2' : 'bootstrap_summary',
+        },
       })
       setStep34PreviewResult(result)
       setStep34SelectedTeam((current) => current ?? teamOrder[0] ?? null)
@@ -730,14 +998,23 @@ export function FloatingPCAConfigDialogV2({
       setStep34Loading(false)
     }
   }, [
+    activeTeams,
     adjustedFTE,
     existingAllocations,
     floatingPCAs,
+    initialStep3ProjectionV2,
     pcaPreferences,
     specialPrograms,
+    step31AssignedByTeam,
+    step31BootstrapSummary,
+    step31RawAveragePCAPerTeamByTeam,
+    step31ReservedSpecialProgramPcaFte,
+    step31TeamTargets,
+    staffOverrides,
     step32AssignmentsForSave,
     step33AssignmentsForSave,
     teamOrder,
+    originalRoundedFTE,
   ])
 
   useEffect(() => {
@@ -970,8 +1247,9 @@ export function FloatingPCAConfigDialogV2({
                   </div>
                   {scarcitySummary.showProjectedExtraSlots ? (
                     <div className="mt-3 text-xs text-muted-foreground">
-                      Projected extra coverage: {scarcitySummary.projectedExtraSlots} slot
-                      {scarcitySummary.projectedExtraSlots === 1 ? '' : 's'}
+                      Projected optional slots after core needs: {scarcitySummary.projectedExtraSlots} slot
+                      {scarcitySummary.projectedExtraSlots === 1 ? '' : 's'} (Step 3.4 post-need pass — not surplus
+                      redistribution).
                     </div>
                   ) : null}
                 </>
@@ -989,7 +1267,24 @@ export function FloatingPCAConfigDialogV2({
                 ref={v2TeamLaneMeasureRef}
                 className="inline-flex flex-nowrap items-center gap-1.5 py-1"
               >
-                {teamOrder.map((team, index) => (
+                {teamOrder.map((team, index) => {
+                  const continuousPendingForSeed =
+                    step31BootstrapSummary?.pendingByTeam?.[team] ??
+                    (step31TeamTargets != null && step31AssignedByTeam != null
+                      ? Math.max(
+                          0,
+                          (step31TeamTargets[team] ?? 0) - (step31AssignedByTeam[team] ?? 0)
+                        )
+                      : (initialPendingFTE[team] ?? 0))
+                  const fixedRoundedSeed =
+                    initialStep3ProjectionV2?.fixedRoundedFloatingTargetByTeam?.[team] ??
+                    roundToNearestQuarterWithMidpoint(continuousPendingForSeed)
+                  const initialPendingRounded = originalRoundedFTE[team] || 0
+                  const pendingNow = adjustedFTE[team] || 0
+                  const fixedRoundedFloatingTargetFte = roundToNearestQuarterWithMidpoint(
+                    fixedRoundedSeed + (pendingNow - initialPendingRounded)
+                  )
+                  return (
                   <div key={team} className="flex items-center gap-1.5">
                     <TeamPendingCard
                       team={team}
@@ -1001,18 +1296,21 @@ export function FloatingPCAConfigDialogV2({
                       onValueChange={handleValueChange}
                       orderPosition={index + 1}
                       avgPcaPerTeam={
-                        step31TeamTargets ? step31TeamTargets[team] ?? null : null
+                        initialStep3ProjectionV2?.displayTargetByTeam?.[team] ??
+                        (step31TeamTargets ? step31TeamTargets[team] ?? null : null)
                       }
                       rawFloatingFTE={initialPendingFTE[team] ?? 0}
                       assignedFromSlotsFTE={
                         step31AssignedByTeam ? step31AssignedByTeam[team] ?? 0 : null
                       }
+                      fixedRoundedFloatingTargetFte={fixedRoundedFloatingTargetFte}
                     />
                     {index < teamOrder.length - 1 ? (
                       <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                     ) : null}
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </SortableContext>
           </DndContext>
@@ -1052,15 +1350,18 @@ export function FloatingPCAConfigDialogV2({
               target after non-floating PCA, before rounding to quarters.
             </p>
             <p>
-              <span className="font-medium text-foreground">Rounded</span> — That need in quarter FTE (0.25) steps.
+              <span className="font-medium text-foreground">Rounded floating</span> — Quarter-rounded bootstrap floating
+              pending from the Step 2→3 projection (`round(pending)` at open). In Step 3.1 only, ± on pending moves this by
+              the same quarter step; from Step 3.2 onward that adjusted target stays fixed until you return to Step 3.1.
             </p>
             <p>
               <span className="font-medium text-foreground">Non-floating</span> — PCA on this team from Step 2 (often{' '}
               <span className="tabular-nums">1.00</span>).
             </p>
             <p>
-              <span className="font-medium text-foreground">Pending floating</span> — Floating need for this team. It
-              stays the same through Steps 3.2–3.4.
+              <span className="font-medium text-foreground">Pending floating</span> — Floating FTE still needed from the
+              pool (large number). Adjust with ± in Step 3.1 only; from Step 3.2 onward this need stays fixed unless you
+              go back to Step 3.1.
             </p>
             <p>
               <span className="font-medium text-foreground">Assigned floating</span> — Floating PCA already placed on
