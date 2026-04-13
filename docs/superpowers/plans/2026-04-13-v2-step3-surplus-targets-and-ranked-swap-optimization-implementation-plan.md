@@ -189,7 +189,7 @@ Use focused regression commands and file-scoped lints. Do not rely on repo-wide 
 - Create: `tests/regression/f108-step3-bootstrap-surplus-projection-preserves-global-slot-sum-after-rounding.test.ts`
 - Test: `lib/features/schedule/step3Bootstrap.ts`
 
-- [ ] **Step 1: Write the failing raw-surplus-before-rounding regression**
+- [x] **Step 1: Write the failing raw-surplus-before-rounding regression**
 
 Create `tests/regression/f106-step3-bootstrap-surplus-projection-prefers-raw-surplus-before-rounding.test.ts` with an assertion shape like:
 
@@ -208,7 +208,7 @@ import { computeStep3BootstrapSummary } from '../../lib/features/schedule/step3B
 // - realized slot grant goes to the team with stronger ideal share
 ```
 
-- [ ] **Step 2: Run the new regression and verify RED**
+- [x] **Step 2: Run the new regression and verify RED**
 
 Run:
 
@@ -218,7 +218,7 @@ npx tsx tests/regression/f106-step3-bootstrap-surplus-projection-prefers-raw-sur
 
 Expected: FAIL because the bootstrap summary does not yet expose or implement raw-surplus-first projection semantics.
 
-- [ ] **Step 3: Write the failing executable-slack-cap regression**
+- [x] **Step 3: Write the failing executable-slack-cap regression**
 
 Create `tests/regression/f107-step3-bootstrap-surplus-projection-caps-ideal-distribution-by-executable-slack.test.ts` to lock:
 
@@ -235,7 +235,7 @@ import { computeStep3BootstrapSummary } from '../../lib/features/schedule/step3B
 // - rounded pending remains unchanged
 ```
 
-- [ ] **Step 4: Run the executable-slack-cap regression and verify RED**
+- [x] **Step 4: Run the executable-slack-cap regression and verify RED**
 
 Run:
 
@@ -245,7 +245,7 @@ npx tsx tests/regression/f107-step3-bootstrap-surplus-projection-caps-ideal-dist
 
 Expected: FAIL because the summary does not yet model ideal-vs-realized surplus separately.
 
-- [ ] **Step 5: Write the failing slot-sum-preservation regression**
+- [x] **Step 5: Write the failing slot-sum-preservation regression**
 
 Create `tests/regression/f108-step3-bootstrap-surplus-projection-preserves-global-slot-sum-after-rounding.test.ts` to assert that after rounding reconciliation:
 
@@ -261,7 +261,7 @@ import { computeStep3BootstrapSummary } from '../../lib/features/schedule/step3B
 // - rounded adjusted targets consume exactly two extra quarter-slots globally
 ```
 
-- [ ] **Step 6: Run the slot-sum-preservation regression and verify RED**
+- [x] **Step 6: Run the slot-sum-preservation regression and verify RED**
 
 Run:
 
@@ -271,7 +271,7 @@ npx tsx tests/regression/f108-step3-bootstrap-surplus-projection-preserves-globa
 
 Expected: FAIL because no deterministic reconciliation logic exists yet.
 
-- [ ] **Step 7: Implement the minimal projection expansion in `step3Bootstrap.ts`**
+- [x] **Step 7: Implement the minimal projection expansion in `step3Bootstrap.ts`**
 
 Modify `lib/features/schedule/step3Bootstrap.ts` so `Step3BootstrapSummary` grows into a richer projection contract. Preserve current fields during migration, but add V2-safe metadata such as:
 
@@ -302,7 +302,7 @@ Implementation requirements:
 - reconcile rounding drift deterministically
 - derive `pendingByTeam` from the adjusted/rounded targets, not the old frozen targets
 
-- [ ] **Step 8: Run the three new regressions and make them GREEN**
+- [x] **Step 8: Run the three new regressions and make them GREEN**
 
 Run:
 
@@ -330,7 +330,7 @@ git commit -m "feat: add surplus-aware step 3 bootstrap projection"
 - Test: `components/allocation/FloatingPCAConfigDialogV2.tsx`
 - Create: `tests/regression/f109-step2-step31-share-surplus-aware-rounded-target-contract.test.ts`
 
-- [ ] **Step 1: Write the failing Step 2 / Step 3.1 contract regression**
+- [x] **Step 1: Write the failing Step 2 / Step 3.1 contract regression**
 
 Create `tests/regression/f109-step2-step31-share-surplus-aware-rounded-target-contract.test.ts` with a characterization shape like:
 
@@ -343,7 +343,7 @@ import assert from 'node:assert/strict'
 // - Step 3.1 initialPendingFTE / roundedInitial derive from the same adjusted rounded target
 ```
 
-- [ ] **Step 2: Run the contract regression and verify RED**
+- [x] **Step 2: Run the contract regression and verify RED**
 
 Run:
 
@@ -353,7 +353,7 @@ npx tsx tests/regression/f109-step2-step31-share-surplus-aware-rounded-target-co
 
 Expected: FAIL because Step 3.1 still initializes from `initialPendingFTE` before surplus-aware adjustment.
 
-- [ ] **Step 3: Update Step 2 controller wiring to calculate/store the projection**
+- [x] **Step 3: Update Step 2 controller wiring to calculate/store the projection**
 
 In `lib/features/schedule/controller/useScheduleController.ts`, thread the new projection through the Step 2 completion path so the stored Step 2 result includes enough data for:
 - the Step 2 delta/toast
@@ -362,7 +362,7 @@ In `lib/features/schedule/controller/useScheduleController.ts`, thread the new p
 
 Keep `rawAveragePCAPerTeam` separate from the new projection fields.
 
-- [ ] **Step 4: Update `FloatingPCAConfigDialogV2.tsx` to initialize from surplus-aware rounded targets**
+- [x] **Step 4: Update `FloatingPCAConfigDialogV2.tsx` to initialize from surplus-aware rounded targets**
 
 Replace the current `roundedInitial` seed logic that directly rounds `initialPendingFTE`:
 
@@ -374,7 +374,7 @@ activeTeams.forEach((team) => {
 
 with logic that prefers the shared surplus-aware rounded pending/target values from the new projection contract.
 
-- [ ] **Step 5: Run the Step 2 / Step 3.1 contract regression and make it GREEN**
+- [x] **Step 5: Run the Step 2 / Step 3.1 contract regression and make it GREEN**
 
 Run:
 
@@ -398,7 +398,7 @@ git commit -m "feat: share surplus-aware targets between step 2 and step 3"
 - Modify if needed: shared types carrying tracker/provenance metadata
 - Create: `tests/regression/f110-step34-tooltip-surplus-adjusted-target-provenance-contract.test.ts`
 
-- [ ] **Step 1: Write the failing tooltip provenance regression**
+- [x] **Step 1: Write the failing tooltip provenance regression**
 
 Create `tests/regression/f110-step34-tooltip-surplus-adjusted-target-provenance-contract.test.ts` to assert:
 
@@ -414,7 +414,7 @@ import { buildV2PcaTrackerTooltipModel } from '../../lib/features/schedule/v2Pca
 // - no new visible badge/chip field is required
 ```
 
-- [ ] **Step 2: Run the tooltip provenance regression and verify RED**
+- [x] **Step 2: Run the tooltip provenance regression and verify RED**
 
 Run:
 
@@ -424,7 +424,7 @@ npx tsx tests/regression/f110-step34-tooltip-surplus-adjusted-target-provenance-
 
 Expected: FAIL because the tooltip model does not yet know about surplus-adjusted target provenance.
 
-- [ ] **Step 3: Add tiny provenance plumbing and tooltip wording**
+- [x] **Step 3: Add tiny provenance plumbing and tooltip wording**
 
 Modify `lib/features/schedule/v2PcaTrackerTooltipModel.ts` so the tooltip can surface a tiny explanation only when:
 - the team's target was uplifted by realized surplus grants
@@ -432,7 +432,7 @@ Modify `lib/features/schedule/v2PcaTrackerTooltipModel.ts` so the tooltip can su
 
 Keep the text tiny and tooltip-only.
 
-- [ ] **Step 4: Run the tooltip provenance regression and make it GREEN**
+- [x] **Step 4: Run the tooltip provenance regression and make it GREEN**
 
 Run:
 
@@ -442,7 +442,7 @@ npx tsx tests/regression/f110-step34-tooltip-surplus-adjusted-target-provenance-
 
 Expected: PASS.
 
-- [ ] **Step 5: Run focused lints for Task Group A files**
+- [x] **Step 5: Run focused lints for Task Group A files**
 
 Run IDE lints on:
 - `lib/features/schedule/step3Bootstrap.ts`
