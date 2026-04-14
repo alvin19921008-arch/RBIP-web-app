@@ -179,12 +179,12 @@ Use focused regression commands and file-scoped lints. Do not rely on repo-wide 
 - [x] **Step 1:** Add the Help article route and shared formula fragments; wire Help Center “Guides” card; align guide + popover wording with copy deck.
 - [x] **Step 2:** Refactor both Avg PCA popovers to use `AvgPcaFormulaPopoverContent`; preserve schedule page **live** sanity-check numbers via `sanityCheckFooter`; popover link text **What does this mean?** where applicable.
 - [x] **Step 3:** Wire Step 2 toast body to include `describeStep3BootstrapDelta().main` before team details; update `v2PcaTrackerTooltipModel` provenance string; align Step 3.1 projected post-need line with **Extra after needs** vs raised target.
-- [ ] **Step 4:** Manually verify `/help/avg-and-slots`, popover scroll on small viewports, Link from dashboard + schedule PCA Calculations block, and Step 2 toast shows context line + team deltas.
+- [ ] **Step 4:** Manually verify `/help/avg-and-slots`, popover scroll on small viewports, Link from dashboard + schedule PCA Calculations block, and Step 2 toast shows context line + team deltas. *(A0b implementation session: not re-run here; rely on earlier A0 verification or next QA pass.)*
 - [x] **Step 5:** Run `npx tsx tests/regression/f36-step3-handoff-summary-and-delta.test.ts` and `npx tsx tests/regression/f110-step34-tooltip-surplus-adjusted-target-provenance-contract.test.ts` (and any other touched regression snippets).
 
 ### Task A0b: Planned micro-lines — Step 3.1 / Step 3.4 (deferred)
 
-**Status:** Spec + copy deck finalized under **Locked decision 2**. **UI implementation** still deferred until explicitly picked up after A0 strings ship and stabilize.
+**Status:** **Done** (2026-04-14): Step 3.1 shared-spare line + expander; Step 3.4 chips + micro-caption + post-need line; optional `step34ViewModel` Extra-after-needs bullet; regression `f114-step34-view-model-extra-after-needs-reason-bullet.test.ts`.
 
 **Goal:** Step 3.1 **collapsed + optional expander** (bullets may quote bootstrap/projection numbers). Step 3.4 **minimal chips**: pill **`Raised target`** only for shared-spare path; pill **`Extra after needs`** for post-need; **one full-width micro-caption** under the entire header badge row (Pending floating / Assigned floating / other pills) so occasional readers see: `“Raised target” is from Step 2→3 rounding in the floating pool. “Extra after needs” is from Step 3.4 after needs were met.` Post-need **default one line** (when relevant): `After every team’s basic floating need was met, rounding still left spare slot(s), so the system could place extra slot(s).` Step 3.1 **collapsed** line: `Floating target includes a small raise from shared spare (rounding).` + link **What does this mean?** → `/help/avg-and-slots`.
 
@@ -192,9 +192,9 @@ Use focused regression commands and file-scoped lints. Do not rely on repo-wide 
 - `components/allocation/FloatingPCAConfigDialogV2.tsx` (3.1 line + expander; 3.4 chips + full-width caption under header row)
 - `components/allocation/step34/step34ViewModel.ts` or sibling (optional **Why this happened** bullet sourced from extra-coverage metadata — keep distinct from raised-target copy)
 
-- [ ] **Step 1:** Add 3.1 collapsed line + expander when `realizedSurplusSlotGrantsByTeam` / projection indicates shared spare for that team.
-- [ ] **Step 2:** Add 3.4 chips + full-width micro-caption; post-need default line when preview shows extra coverage — wording must **not** reuse raised-target phrasing.
-- [ ] **Step 3:** Manual check on a fixture date with and without grants / extra coverage.
+- [x] **Step 1:** Add 3.1 collapsed line + expander when `realizedSurplusSlotGrantsByTeam` / projection indicates shared spare for that team.
+- [x] **Step 2:** Add 3.4 chips + full-width micro-caption; post-need default line when preview shows extra coverage — wording must **not** reuse raised-target phrasing.
+- [ ] **Step 3:** Manual check on a fixture date with and without grants / extra coverage. *(Not run in agent session; optional follow-up.)*
 
 **Docs / naming:** Maintain the **engineering field glossary** in the contract table + surplus spec; **no mass rename** of projection fields for this task.
 

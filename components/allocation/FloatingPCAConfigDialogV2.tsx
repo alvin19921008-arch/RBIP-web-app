@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
@@ -80,6 +81,21 @@ type FloatingPCAConfigDialogV2Props = FloatingPCAConfigDialogV1Props & {
 }
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
+
+/** Locked decision 2 — Step 3.4 micro-caption (exact). */
+const STEP34_SURPLUS_MICRO_CAPTION =
+  '"Raised target" is from Step 2→3 rounding in the floating pool. "Extra after needs" is from Step 3.4 after needs were met.'
+
+/** Locked decision 2 — post-need default one line (exact). */
+const STEP34_POST_NEED_DEFAULT_LINE =
+  "After every team's basic floating need was met, rounding still left spare slot(s), so the system could place extra slot(s)."
+
+function teamHasPositiveSurplusGrant(
+  grants: Record<Team, number> | undefined,
+  team: Team
+): boolean {
+  return (grants?.[team] ?? 0) > 1e-9
+}
 
 /** Badges on the light-blue Step 3.4 detail panel: high contrast vs panel tint. */
 const STEP34_DETAIL_BADGE_CLASS =
@@ -328,6 +344,7 @@ export function FloatingPCAConfigDialogV2({
   const [teamOrder, setTeamOrder] = useState<Team[]>([])
   const [step31Preview, setStep31Preview] = useState<Step31PreviewState>({ status: 'idle' })
   const [step31CardLegendOpen, setStep31CardLegendOpen] = useState(false)
+  const [step31SharedSpareDetailsOpen, setStep31SharedSpareDetailsOpen] = useState(false)
   const [selectedStep32Team, setSelectedStep32Team] = useState<Team | null>(null)
   const [selectedStep32OutcomeByTeam, setSelectedStep32OutcomeByTeam] = useState<Partial<Record<Team, string>>>({})
   const [selectedStep32PcaByTeam, setSelectedStep32PcaByTeam] = useState<Partial<Record<Team, string>>>({})
@@ -1100,6 +1117,19 @@ export function FloatingPCAConfigDialogV2({
     })
   }, [pcaPreferences, selectedStep34Team, staffOverrides, step34PreviewResult])
 
+  const step34SurplusAndExtraFlags = useMemo(() => {
+    if (!step34PreviewResult || !selectedStep34Team) {
+      return { showRaisedTargetChip: false, showExtraAfterNeedsChip: false }
+    }
+    const grants = step31BootstrapSummary?.realizedSurplusSlotGrantsByTeam
+    const showRaisedTargetChip = teamHasPositiveSurplusGrant(grants, selectedStep34Team)
+    const teamLog = step34PreviewResult.tracker[selectedStep34Team]
+    const showExtraAfterNeedsChip = teamLog.assignments.some(
+      (a) => a.assignedIn === 'step34' && a.allocationStage === 'extra-coverage'
+    )
+    return { showRaisedTargetChip, showExtraAfterNeedsChip }
+  }, [step31BootstrapSummary, step34PreviewResult, selectedStep34Team])
+
   useLayoutEffect(() => {
     if (!open) {
       setDialogFitWidthPx(0)
@@ -1317,6 +1347,94 @@ export function FloatingPCAConfigDialogV2({
           </DndContext>
         </div>
       </div>
+
+      {(() => {
+        const bs = step31BootstrapSummary
+        const grants = bs?.realizedSurplusSlotGrantsByTeam
+        if (!grants) return null
+        const teamsWithShare = teamOrder.filter((t) => teamHasPositiveSurplusGrant(grants, t))
+        if (teamsWithShare.length === 0) return null
+
+        const spareSlots = bs.redistributableSlackSlots
+        const displayByTeam =
+          initialStep3ProjectionV2?.displayTargetByTeam ?? bs.rawAveragePCAPerTeamByTeam
+        const weightingSample = teamOrder
+          .map((t) => {
+            const v = displayByTeam?.[t]
+            if (v == null || !Number.isFinite(v)) return null
+            return `${t} ${v.toFixed(2)}`
+          })
+          .filter((s): s is string => s != null)
+        const weightingLine =
+          weightingSample.length > 0
+            ? `Current Avg PCA/team (display) weights used for sharing: ${weightingSample.join(', ')}.`
+            : null
+
+        const grantSummary = teamsWithShare
+          .map((t) => `${t} +${(grants[t] ?? 0).toFixed(2)} FTE`)
+          .join(', ')
+        const onlyTeam = teamsWithShare.length === 1 ? teamsWithShare[0] : null
+        const bullet3 =
+          onlyTeam != null
+            ? `${onlyTeam}'s floating target includes that share (${(grants[onlyTeam] ?? 0).toFixed(2)} FTE).`
+            : `These teams' floating targets include that share: ${grantSummary}.`
+
+        return (
+          <div className="rounded-xl border border-border bg-muted/25 px-3 py-2.5">
+            <p className="text-sm text-foreground">
+              <span>Floating target includes a small raise from shared spare (rounding).</span>{' '}
+              <Link
+                href="/help/avg-and-slots"
+                className="text-primary underline-offset-2 hover:underline"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                What does this mean?
+              </Link>
+            </p>
+            <button
+              type="button"
+              aria-expanded={step31SharedSpareDetailsOpen}
+              onClick={() => setStep31SharedSpareDetailsOpen((v) => !v)}
+              className="mt-1.5 flex w-full max-w-full items-center gap-1.5 rounded-sm py-1 text-left text-[11px] font-medium text-foreground/90 outline-none ring-offset-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              <ChevronDown
+                className={cn(
+                  'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
+                  step31SharedSpareDetailsOpen && 'rotate-180'
+                )}
+                aria-hidden
+              />
+              <span>Show details</span>
+            </button>
+            {step31SharedSpareDetailsOpen ? (
+              <ul className="mt-2 list-outside list-disc space-y-1.5 pl-5 text-[11px] leading-snug text-muted-foreground marker:text-muted-foreground">
+                <li className="pl-1">
+                  The floating pool had spare placeable slot(s) after each team{"'"}s need was rounded to slots
+                  {typeof spareSlots === 'number' && Number.isFinite(spareSlots)
+                    ? ` (${spareSlots} spare slot${spareSlots === 1 ? '' : 's'}).`
+                    : '.'}
+                </li>
+                <li className="pl-1">
+                  Those spare slot(s) were shared using each team{"'"}s Avg PCA/team weighting (not an equal split).
+                  {weightingLine ? <> {weightingLine}</> : null}
+                </li>
+                <li className="pl-1">{bullet3}</li>
+                <li className="pl-1">
+                  This is not the same as <span className="font-medium text-foreground">Extra after needs</span>
+                  {' in Step 3.4.'}
+                </li>
+              </ul>
+            ) : null}
+            {step31SharedSpareDetailsOpen ? (
+              <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+                <span className="font-medium text-foreground">Avg PCA/team</span> here was not increased — it stays the
+                Step 2 average.
+              </p>
+            ) : null}
+          </div>
+        )
+      })()}
 
       <div className="mt-2">
         <button
@@ -1628,34 +1746,48 @@ export function FloatingPCAConfigDialogV2({
           ref={step34DetailPanelRef}
           className="relative rounded-2xl border border-blue-200 bg-blue-50/40 p-4 shadow-sm dark:bg-blue-950/10"
         >
-          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+          <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
             <div className="min-w-0 flex-1 pr-2">
               <div className="text-sm font-semibold text-blue-900 dark:text-blue-100">{`${selectedStep34Detail.team} details`}</div>
               <div className="mt-1 text-xs text-muted-foreground">
                 These results belong to the selected team above.
               </div>
             </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+            <div className="flex min-w-0 w-full flex-1 flex-wrap items-center gap-2 sm:w-auto sm:max-w-[min(100%,52rem)] sm:justify-end">
               <Badge variant="outline" className={cn(STEP34_DETAIL_BADGE_CLASS, 'whitespace-nowrap')}>
                 {`Pending floating ${roundToNearestQuarterWithMidpoint(adjustedFTE[selectedStep34Detail.team] || 0).toFixed(2)}`}
               </Badge>
               <Badge variant="outline" className={cn(STEP34_DETAIL_BADGE_CLASS, 'whitespace-nowrap')}>
                 {`Assigned floating ${step3FloatingAssignedFteByTeam[selectedStep34Detail.team].toFixed(2)}`}
               </Badge>
+              {step34SurplusAndExtraFlags.showRaisedTargetChip ? (
+                <Badge variant="outline" className={cn(STEP34_DETAIL_BADGE_CLASS, 'whitespace-nowrap')}>
+                  Raised target
+                </Badge>
+              ) : null}
+              {step34SurplusAndExtraFlags.showExtraAfterNeedsChip ? (
+                <Badge variant="outline" className={cn(STEP34_DETAIL_BADGE_CLASS, 'whitespace-nowrap')}>
+                  Extra after needs
+                </Badge>
+              ) : null}
+              {selectedStep34Detail.summaryPills.map((pill) => (
+                <Badge
+                  key={`${selectedStep34Detail.team}-${pill.label}`}
+                  variant="outline"
+                  className={STEP34_DETAIL_BADGE_CLASS}
+                >
+                  {pill.label}
+                </Badge>
+              ))}
             </div>
           </div>
 
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            {selectedStep34Detail.summaryPills.map((pill) => (
-              <Badge
-                key={`${selectedStep34Detail.team}-${pill.label}`}
-                variant="outline"
-                className={STEP34_DETAIL_BADGE_CLASS}
-              >
-                {pill.label}
-              </Badge>
-            ))}
-          </div>
+          {step34SurplusAndExtraFlags.showRaisedTargetChip || step34SurplusAndExtraFlags.showExtraAfterNeedsChip ? (
+            <p className="mb-2 w-full text-[11px] leading-snug text-muted-foreground">{STEP34_SURPLUS_MICRO_CAPTION}</p>
+          ) : null}
+          {step34SurplusAndExtraFlags.showExtraAfterNeedsChip ? (
+            <p className="mb-3 w-full text-xs text-muted-foreground">{STEP34_POST_NEED_DEFAULT_LINE}</p>
+          ) : null}
 
           <div className="overflow-x-auto pb-1">
             <div

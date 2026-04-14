@@ -255,6 +255,15 @@ function buildReasons(args: {
     reasons.push('Preferred PCA stayed helpful, but only after the higher-priority slot path was respected.')
   }
 
+  const extraCoverageRows = teamLog.assignments.filter(
+    (a) => a.assignedIn === 'step34' && a.allocationStage === 'extra-coverage'
+  )
+  if (extraCoverageRows.length > 0) {
+    reasons.push(
+      `This team has ${extraCoverageRows.length} Step 3.4 ${extraCoverageRows.length === 1 ? 'row' : 'rows'} from Extra after needs (required floating need was already satisfied).`
+    )
+  }
+
   const continuityUsed = slotCards.some((card) => card.assignment?.usedContinuity)
   if (continuityUsed) {
     reasons.push('Continuity was used only when it supported the next useful slot.')
