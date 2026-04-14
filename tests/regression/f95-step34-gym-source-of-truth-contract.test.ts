@@ -1,6 +1,6 @@
 /**
  * Locks the Step 3.4 gym UX contract: tracker `Status` tooltip copy and Step 3.4
- * summary pills must follow canonical `TeamAllocationLog.summary.gymUsageStatus`
+ * slot-card detail must follow canonical `TeamAllocationLog.summary.gymUsageStatus`
  * (see `types/schedule.ts` once `GymUsageStatus` / `gymUsageStatus` exist), not
  * legacy `gymSlotUsed` / `gymUsedAsLastResort` alone.
  *
@@ -73,11 +73,11 @@ async function main() {
   }
 
   const detail = buildStep34TeamDetailViewModel({ team, result, pcaPreferences })
-  const gymPill = detail.summaryPills.find((pill) => pill.label.startsWith('Gym '))
-  assert.equal(
-    gymPill?.label,
-    'Gym used only as last resort',
-    'Step 3.4 summary pill must follow canonical gymUsageStatus when legacy flags disagree'
+  const slot3 = detail.slotCards.find((c) => c.slot === 3)
+  assert.ok(slot3, 'expected slot 3 card')
+  assert.ok(
+    slot3.detailLabel.includes('Gym used only as last resort'),
+    `Step 3.4 slot detail must follow canonical gymUsageStatus when legacy flags disagree, got: ${slot3.detailLabel}`
   )
 }
 

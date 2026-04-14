@@ -82,10 +82,6 @@ type FloatingPCAConfigDialogV2Props = FloatingPCAConfigDialogV1Props & {
 
 const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 
-/** Locked decision 2 — Step 3.4 micro-caption (exact). */
-const STEP34_SURPLUS_MICRO_CAPTION =
-  '"Raised target" is from Step 2→3 rounding in the floating pool. "Extra after needs" is from Step 3.4 after needs were met.'
-
 /** Locked decision 2 — post-need default one line (exact). */
 const STEP34_POST_NEED_DEFAULT_LINE =
   "After every team's basic floating need was met, rounding still left spare slot(s), so the system could place extra slot(s)."
@@ -1790,9 +1786,6 @@ export function FloatingPCAConfigDialogV2({
             </div>
           </div>
 
-          {step34SurplusAndExtraFlags.showRaisedTargetChip || step34SurplusAndExtraFlags.showExtraAfterNeedsChip ? (
-            <p className="mb-2 w-full text-[11px] leading-snug text-muted-foreground">{STEP34_SURPLUS_MICRO_CAPTION}</p>
-          ) : null}
           {step34SurplusAndExtraFlags.showExtraAfterNeedsChip ? (
             <p className="mb-3 w-full rounded-md border border-violet-200/80 bg-violet-50/90 px-3 py-2 text-xs text-violet-950 dark:border-violet-700/80 dark:bg-violet-950/35 dark:text-violet-100">
               {STEP34_POST_NEED_DEFAULT_LINE}

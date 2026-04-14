@@ -361,23 +361,9 @@ export function buildStep34TeamDetailViewModel(args: {
     return `Highest ranked slot fulfilled: ${getTimeRange(slot)}`
   })()
 
-  const gymStatus = resolveFinalGymUsageStatus(teamLog.summary)
-
   const summaryPills: Step34SummaryPillViewModel[] = [
     ...(highestRankedSlotFulfilledLabel
       ? [{ label: highestRankedSlotFulfilledLabel, tone: 'default' as const }]
-      : []),
-    {
-      label: teamLog.summary.preferredPCAUsed ? 'Preferred PCA used' : 'Preferred PCA not used',
-      tone: teamLog.summary.preferredPCAUsed ? 'default' : 'muted',
-    },
-    ...(pref.avoidGym
-      ? [
-          {
-            label: gymStatus === 'used-last-resort' ? 'Gym used only as last resort' : 'Gym avoided',
-            tone: gymStatus === 'used-last-resort' ? 'muted' : 'default',
-          },
-        ]
       : []),
   ]
 
