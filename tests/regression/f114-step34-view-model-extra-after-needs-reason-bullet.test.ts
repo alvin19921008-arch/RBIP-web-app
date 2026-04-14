@@ -55,11 +55,12 @@ async function main() {
   }
 
   const detail = buildStep34TeamDetailViewModel({ team, result, pcaPreferences })
-  const extraBullet = detail.reasons.find((r) => r.includes('Extra after needs'))
+  const extraBullet = detail.reasons.find((r) => r.text.includes('Extra after needs'))
   assert.ok(extraBullet, 'expected Extra after needs reason bullet')
+  assert.equal(extraBullet?.tone, 'extra-after-needs')
   assert.ok(
-    extraBullet.includes('required floating need was already satisfied'),
-    `expected satisfaction clause in reason, got: ${extraBullet}`
+    extraBullet.text.includes('required floating need was already satisfied'),
+    `expected satisfaction clause in reason, got: ${extraBullet.text}`
   )
 }
 

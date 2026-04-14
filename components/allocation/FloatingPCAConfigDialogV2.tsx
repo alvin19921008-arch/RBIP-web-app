@@ -97,9 +97,17 @@ function teamHasPositiveSurplusGrant(
   return (grants?.[team] ?? 0) > 1e-9
 }
 
-/** Badges on the light-blue Step 3.4 detail panel: high contrast vs panel tint. */
+/** Pending / Assigned + generic summary pills on the Step 3.4 detail panel. */
 const STEP34_DETAIL_BADGE_CLASS =
   'border-blue-400/90 bg-white font-semibold text-blue-950 shadow-sm hover:bg-white dark:border-blue-500 dark:bg-blue-950/70 dark:text-blue-50 dark:hover:bg-blue-950/80'
+
+/** Raised target (shared spare) — distinct from default blue chips. */
+const STEP34_RAISED_TARGET_BADGE_CLASS =
+  'border-emerald-600/85 bg-emerald-50 font-semibold text-emerald-950 shadow-sm hover:bg-emerald-50 dark:border-emerald-500 dark:bg-emerald-950/55 dark:text-emerald-50 dark:hover:bg-emerald-950/65'
+
+/** Extra after needs — distinct violet so it reads apart from blue + emerald. */
+const STEP34_EXTRA_AFTER_NEEDS_BADGE_CLASS =
+  'border-violet-600/85 bg-violet-50 font-semibold text-violet-950 shadow-sm hover:bg-violet-50 dark:border-violet-400 dark:bg-violet-950/60 dark:text-violet-50 dark:hover:bg-violet-950/70'
 
 type Step33Decision = 'use' | 'skip'
 
@@ -1761,12 +1769,12 @@ export function FloatingPCAConfigDialogV2({
                 {`Assigned floating ${step3FloatingAssignedFteByTeam[selectedStep34Detail.team].toFixed(2)}`}
               </Badge>
               {step34SurplusAndExtraFlags.showRaisedTargetChip ? (
-                <Badge variant="outline" className={cn(STEP34_DETAIL_BADGE_CLASS, 'whitespace-nowrap')}>
+                <Badge variant="outline" className={cn(STEP34_RAISED_TARGET_BADGE_CLASS, 'whitespace-nowrap')}>
                   Raised target
                 </Badge>
               ) : null}
               {step34SurplusAndExtraFlags.showExtraAfterNeedsChip ? (
-                <Badge variant="outline" className={cn(STEP34_DETAIL_BADGE_CLASS, 'whitespace-nowrap')}>
+                <Badge variant="outline" className={cn(STEP34_EXTRA_AFTER_NEEDS_BADGE_CLASS, 'whitespace-nowrap')}>
                   Extra after needs
                 </Badge>
               ) : null}
@@ -1786,7 +1794,9 @@ export function FloatingPCAConfigDialogV2({
             <p className="mb-2 w-full text-[11px] leading-snug text-muted-foreground">{STEP34_SURPLUS_MICRO_CAPTION}</p>
           ) : null}
           {step34SurplusAndExtraFlags.showExtraAfterNeedsChip ? (
-            <p className="mb-3 w-full text-xs text-muted-foreground">{STEP34_POST_NEED_DEFAULT_LINE}</p>
+            <p className="mb-3 w-full rounded-md border border-violet-200/80 bg-violet-50/90 px-3 py-2 text-xs text-violet-950 dark:border-violet-700/80 dark:bg-violet-950/35 dark:text-violet-100">
+              {STEP34_POST_NEED_DEFAULT_LINE}
+            </p>
           ) : null}
 
           <div className="overflow-x-auto pb-1">
@@ -1816,8 +1826,14 @@ export function FloatingPCAConfigDialogV2({
             <div className="text-sm font-semibold text-blue-900 dark:text-blue-100">Why this happened</div>
             <ul className="mt-2 list-outside list-disc space-y-2 pl-5 text-sm text-muted-foreground marker:text-muted-foreground">
               {selectedStep34Detail.reasons.map((reason) => (
-                <li key={reason} className="pl-1">
-                  {reason}
+                <li key={reason.text} className="pl-1">
+                  {reason.tone === 'extra-after-needs' ? (
+                    <span className="block rounded-md border border-violet-200/90 bg-violet-50/95 px-2.5 py-1.5 text-violet-950 dark:border-violet-600 dark:bg-violet-950/45 dark:text-violet-100">
+                      {reason.text}
+                    </span>
+                  ) : (
+                    reason.text
+                  )}
                 </li>
               ))}
             </ul>

@@ -20,11 +20,18 @@ export interface Step34SummaryPillViewModel {
   tone?: 'default' | 'muted'
 }
 
+export type Step34ReasonTone = 'default' | 'extra-after-needs'
+
+export interface Step34ReasonLine {
+  text: string
+  tone?: Step34ReasonTone
+}
+
 export interface Step34TeamDetailViewModel {
   team: Team
   summaryPills: Step34SummaryPillViewModel[]
   slotCards: Step34SlotCardViewModel[]
-  reasons: string[]
+  reasons: Step34ReasonLine[]
 }
 
 function resolveFinalGymUsageStatus(summary: TeamAllocationLog['summary']): GymUsageStatus {
@@ -186,6 +193,21 @@ function buildAssignmentDetailLabel(
   return `Unused ranked path was available (${who})`
 }
 
+function dedupeReasonLines(lines: Step34ReasonLine[]): Step34ReasonLine[] {
+  const byText = new Map<string, Step34ReasonLine>()
+  for (const line of lines) {
+    const prev = byText.get(line.text)
+    if (!prev) {
+      byText.set(line.text, line)
+      continue
+    }
+    if (prev.tone !== 'extra-after-needs' && line.tone === 'extra-after-needs') {
+      byText.set(line.text, line)
+    }
+  }
+  return [...byText.values()]
+}
+
 function buildReasons(args: {
   team: Team
   teamLog: TeamAllocationLog
@@ -194,9 +216,9 @@ function buildReasons(args: {
   gymSlot: number | null
   avoidGym: boolean
   staffOverrides?: Record<string, any>
-}): string[] {
+}): Step34ReasonLine[] {
   const { team, teamLog, slotCards, rankedSlots, gymSlot, avoidGym, staffOverrides } = args
-  const reasons: string[] = []
+  const reasons: Step34ReasonLine[] = []
 
   const topRankCard = slotCards.find((card) => card.assignment?.fulfilledSlotRank === 1)
   if (topRankCard?.assignment) {
@@ -206,15 +228,15 @@ function buildReasons(args: {
         : topRankCard.assignment.pcaSelectionTier === 'floor'
           ? `floor PCA ${topRankCard.assignment.pcaName}`
           : topRankCard.assignment.pcaName
-    reasons.push(`${topRankCard.label} ${topRankCard.timeRange} was handled first by ${actor}.`)
+    reasons.push({ text: `${topRankCard.label} ${topRankCard.timeRange} was handled first by ${actor}.` })
   } else if (rankedSlots.length > 0) {
     const first = rankedSlots[0]
     if (first === 1 || first === 2 || first === 3 || first === 4) {
-      reasons.push(
-        `${getRankedSlotTileLabel(1)} (${getTimeRange(first)}) stayed unfilled in the final review path.`
-      )
+      reasons.push({
+        text: `${getRankedSlotTileLabel(1)} (${getTimeRange(first)}) stayed unfilled in the final review path.`,
+      })
     } else {
-      reasons.push(`${getRankedSlotTileLabel(1)} stayed unfilled in the final review path.`)
+      reasons.push({ text: `${getRankedSlotTileLabel(1)} stayed unfilled in the final review path.` })
     }
   }
 
@@ -222,13 +244,13 @@ function buildReasons(args: {
     (card) => card.assignment && typeof card.assignment.fulfilledSlotRank === 'number' && card.assignment.fulfilledSlotRank > 1
   )
   if (laterRankCard?.assignment) {
-    reasons.push(
-      `${laterRankCard.label} ${laterRankCard.timeRange} was filled later by ${laterRankCard.assignment.pcaName}.`
-    )
+    reasons.push({
+      text: `${laterRankCard.label} ${laterRankCard.timeRange} was filled later by ${laterRankCard.assignment.pcaName}.`,
+    })
   }
 
   if (teamLog.summary.usedUnrankedSlot) {
-    reasons.push('System used another useful slot before duplicating a slot.')
+    reasons.push({ text: 'System used another useful slot before duplicating a slot.' })
   }
 
   for (const line of buildDuplicateFloatingReasonLines({
@@ -238,42 +260,45 @@ function buildReasons(args: {
     gymSlot,
     staffOverrides,
   })) {
-    reasons.push(line)
+    reasons.push({ text: line })
   }
 
   if (avoidGym) {
     if (resolveFinalGymUsageStatus(teamLog.summary) === 'used-last-resort') {
-      reasons.push('Gym was used only because no non-gym path remained.')
+      reasons.push({ text: 'Gym was used only because no non-gym path remained.' })
     } else if (gymSlot === 1 || gymSlot === 2 || gymSlot === 3 || gymSlot === 4) {
-      reasons.push(
-        `Gym slot (${getTimeRange(gymSlot)}) was not used because pending could still be covered using other slots first.`
-      )
+      reasons.push({
+        text: `Gym slot (${getTimeRange(gymSlot)}) was not used because pending could still be covered using other slots first.`,
+      })
     }
   }
 
   if (teamLog.summary.preferredPCAUsed) {
-    reasons.push('Preferred PCA stayed helpful, but only after the higher-priority slot path was respected.')
+    reasons.push({
+      text: 'Preferred PCA stayed helpful, but only after the higher-priority slot path was respected.',
+    })
   }
 
   const extraCoverageRows = teamLog.assignments.filter(
     (a) => a.assignedIn === 'step34' && a.allocationStage === 'extra-coverage'
   )
   if (extraCoverageRows.length > 0) {
-    reasons.push(
-      `This team has ${extraCoverageRows.length} Step 3.4 ${extraCoverageRows.length === 1 ? 'row' : 'rows'} from Extra after needs (required floating need was already satisfied).`
-    )
+    reasons.push({
+      text: `This team has ${extraCoverageRows.length} Step 3.4 ${extraCoverageRows.length === 1 ? 'row' : 'rows'} from Extra after needs (required floating need was already satisfied).`,
+      tone: 'extra-after-needs',
+    })
   }
 
   const continuityUsed = slotCards.some((card) => card.assignment?.usedContinuity)
   if (continuityUsed) {
-    reasons.push('Continuity was used only when it supported the next useful slot.')
+    reasons.push({ text: 'Continuity was used only when it supported the next useful slot.' })
   }
 
   if (!teamLog.summary.pendingMet) {
-    reasons.push('Pending was not fully met because no further legal slot path remained.')
+    reasons.push({ text: 'Pending was not fully met because no further legal slot path remained.' })
   }
 
-  return Array.from(new Set(reasons))
+  return dedupeReasonLines(reasons)
 }
 
 export function buildStep34TeamDetailViewModel(args: {
