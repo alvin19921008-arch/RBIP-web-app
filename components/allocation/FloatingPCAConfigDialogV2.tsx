@@ -105,6 +105,12 @@ const STEP34_RAISED_TARGET_BADGE_CLASS =
 const STEP34_EXTRA_AFTER_NEEDS_BADGE_CLASS =
   'border-violet-600/85 bg-violet-50 font-semibold text-violet-950 shadow-sm hover:bg-violet-50 dark:border-violet-400 dark:bg-violet-950/60 dark:text-violet-50 dark:hover:bg-violet-950/70'
 
+/** Step 3.1 flat literacy (match Step 3.4 chip hues; use violet, not purple). */
+const STEP31_RAISED_TARGET_TEXT_CLASS =
+  'font-semibold text-emerald-800 dark:text-emerald-200'
+const STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS =
+  'font-semibold text-violet-800 dark:text-violet-200'
+
 type Step33Decision = 'use' | 'skip'
 
 function getStepDisplayLabel(step: Step3V2Step): string {
@@ -1279,14 +1285,6 @@ export function FloatingPCAConfigDialogV2({
                       </div>
                     </div>
                   </div>
-                  {scarcitySummary.showProjectedExtraSlots ? (
-                    <div className="mt-3 text-xs text-muted-foreground">
-                      Preview: up to {scarcitySummary.projectedExtraSlots} optional slot
-                      {scarcitySummary.projectedExtraSlots === 1 ? '' : 's'} after needs are met in Step 3.4 (
-                      <span className="font-medium text-foreground">Extra after needs</span> — not the same as{' '}
-                      <span className="font-medium text-foreground">Raised target</span> from rounding the pool).
-                    </div>
-                  ) : null}
                 </>
               ) : null}
             </div>
@@ -1352,130 +1350,176 @@ export function FloatingPCAConfigDialogV2({
         </div>
       </div>
 
-      {(() => {
-        const bs = step31BootstrapSummary
-        const grants = bs?.realizedSurplusSlotGrantsByTeam
-        if (!grants) return null
-        const teamsWithShare = teamOrder.filter((t) => teamHasPositiveSurplusGrant(grants, t))
-        if (teamsWithShare.length === 0) return null
+      <div className="mt-2 space-y-2">
+        {(() => {
+          const bs = step31BootstrapSummary
+          const grants = bs?.realizedSurplusSlotGrantsByTeam
+          if (!grants) return null
+          const teamsWithShare = teamOrder.filter((t) => teamHasPositiveSurplusGrant(grants, t))
+          if (teamsWithShare.length === 0) return null
 
-        const spareSlots = bs.redistributableSlackSlots
-        const displayByTeam =
-          initialStep3ProjectionV2?.displayTargetByTeam ?? bs.rawAveragePCAPerTeamByTeam
-        const weightingSample = teamOrder
-          .map((t) => {
-            const v = displayByTeam?.[t]
-            if (v == null || !Number.isFinite(v)) return null
-            return `${t} ${v.toFixed(2)}`
-          })
-          .filter((s): s is string => s != null)
-        const weightingLine =
-          weightingSample.length > 0
-            ? `Current Avg PCA/team (display) weights used for sharing: ${weightingSample.join(', ')}.`
-            : null
+          const spareSlots = bs.redistributableSlackSlots
+          const displayByTeam =
+            initialStep3ProjectionV2?.displayTargetByTeam ?? bs.rawAveragePCAPerTeamByTeam
+          const weightingSample = teamOrder
+            .map((t) => {
+              const v = displayByTeam?.[t]
+              if (v == null || !Number.isFinite(v)) return null
+              return `${t} ${v.toFixed(2)}`
+            })
+            .filter((s): s is string => s != null)
+          const weightingLine =
+            weightingSample.length > 0
+              ? `Current Avg PCA/team (display) weights used for sharing: ${weightingSample.join(', ')}.`
+              : null
 
-        const grantSummary = teamsWithShare
-          .map((t) => `${t} +${(grants[t] ?? 0).toFixed(2)} FTE`)
-          .join(', ')
-        const onlyTeam = teamsWithShare.length === 1 ? teamsWithShare[0] : null
-        const bullet3 =
-          onlyTeam != null
-            ? `${onlyTeam}'s floating target includes that share (${(grants[onlyTeam] ?? 0).toFixed(2)} FTE).`
-            : `These teams' floating targets include that share: ${grantSummary}.`
+          const onlyTeam = teamsWithShare.length === 1 ? teamsWithShare[0] : null
+          const raisedTargetNumClass = cn(STEP31_RAISED_TARGET_TEXT_CLASS, 'tabular-nums')
 
-        return (
-          <div className="rounded-xl border border-border bg-muted/25 px-3 py-2.5">
-            <p className="text-sm text-foreground">
-              <span>Floating target includes a small raise from shared spare (rounding).</span>{' '}
-              <Link
-                href="/help/avg-and-slots"
-                className="text-primary underline-offset-2 hover:underline"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                What does this mean?
-              </Link>
-            </p>
-            <button
-              type="button"
-              aria-expanded={step31SharedSpareDetailsOpen}
-              onClick={() => setStep31SharedSpareDetailsOpen((v) => !v)}
-              className="mt-1.5 flex w-full max-w-full items-center gap-1.5 rounded-sm py-1 text-left text-[11px] font-medium text-foreground/90 outline-none ring-offset-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            >
-              <ChevronDown
-                className={cn(
-                  'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
-                  step31SharedSpareDetailsOpen && 'rotate-180'
-                )}
-                aria-hidden
-              />
-              <span>Show details</span>
-            </button>
-            {step31SharedSpareDetailsOpen ? (
-              <ul className="mt-2 list-outside list-disc space-y-1.5 pl-5 text-[11px] leading-snug text-muted-foreground marker:text-muted-foreground">
-                <li className="pl-1">
-                  The floating pool had spare placeable slot(s) after each team{"'"}s need was rounded to slots
-                  {typeof spareSlots === 'number' && Number.isFinite(spareSlots)
-                    ? ` (${spareSlots} spare slot${spareSlots === 1 ? '' : 's'}).`
-                    : '.'}
-                </li>
-                <li className="pl-1">
-                  Those spare slot(s) were shared using each team{"'"}s Avg PCA/team weighting (not an equal split).
-                  {weightingLine ? <> {weightingLine}</> : null}
-                </li>
-                <li className="pl-1">{bullet3}</li>
-                <li className="pl-1">
-                  This is not the same as <span className="font-medium text-foreground">Extra after needs</span>
-                  {' in Step 3.4.'}
-                </li>
-              </ul>
-            ) : null}
-            {step31SharedSpareDetailsOpen ? (
-              <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
-                <span className="font-medium text-foreground">Avg PCA/team</span> here was not increased — it stays the
-                Step 2 average.
+          return (
+            <div className="space-y-1.5">
+              <p className="text-sm text-muted-foreground">
+                <span className={STEP31_RAISED_TARGET_TEXT_CLASS}>Raised target (shared spare).</span>{' '}
+                Floating target includes a small raise from shared spare (rounding).{' '}
+                <Link
+                  href="/help/avg-and-slots"
+                  className="text-primary underline-offset-2 hover:underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  What does this mean?
+                </Link>
               </p>
-            ) : null}
-          </div>
-        )
-      })()}
+              <button
+                type="button"
+                aria-expanded={step31SharedSpareDetailsOpen}
+                onClick={() => setStep31SharedSpareDetailsOpen((v) => !v)}
+                className="flex w-full max-w-full items-center gap-1.5 rounded-sm py-1 text-left text-[11px] font-medium text-foreground/90 outline-none ring-offset-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                <ChevronDown
+                  className={cn(
+                    'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
+                    step31SharedSpareDetailsOpen && 'rotate-180'
+                  )}
+                  aria-hidden
+                />
+                <span>Show details</span>
+              </button>
+              {step31SharedSpareDetailsOpen ? (
+                <ul className="mt-2 list-outside list-disc space-y-1.5 pl-5 text-[11px] leading-snug text-muted-foreground marker:text-muted-foreground">
+                  <li className="pl-1">
+                    The floating pool had spare placeable slot(s) after each team{"'"}s need was rounded to slots
+                    {typeof spareSlots === 'number' && Number.isFinite(spareSlots) ? (
+                      <>
+                        {' '}
+                        (
+                        <span className={raisedTargetNumClass}>{spareSlots}</span>
+                        {' '}
+                        spare slot{spareSlots === 1 ? '' : 's'}).
+                      </>
+                    ) : (
+                      '.'
+                    )}
+                  </li>
+                  <li className="pl-1">
+                    Those spare slot(s) were shared using each team{"'"}s Avg PCA/team weighting (not an equal split).
+                    {weightingLine ? <> {weightingLine}</> : null}
+                  </li>
+                  <li className="pl-1">
+                    {onlyTeam != null ? (
+                      <>
+                        {onlyTeam}
+                        {"'"}s floating target includes that share (
+                        <span className={raisedTargetNumClass}>
+                          {(grants[onlyTeam] ?? 0).toFixed(2)}
+                        </span>{' '}
+                        FTE).
+                      </>
+                    ) : (
+                      <>
+                        These teams{"'"} floating targets include that share:{' '}
+                        {teamsWithShare.map((t, i) => (
+                          <span key={t}>
+                            {i > 0 ? ', ' : null}
+                            {t}{' '}
+                            <span className={raisedTargetNumClass}>+{(grants[t] ?? 0).toFixed(2)}</span> FTE
+                          </span>
+                        ))}
+                        .
+                      </>
+                    )}
+                  </li>
+                  <li className="pl-1">
+                    This is not the same as{' '}
+                    <span className={STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS}>Extra after needs</span>
+                    {' in Step 3.4.'}
+                  </li>
+                </ul>
+              ) : null}
+              {step31SharedSpareDetailsOpen ? (
+                <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+                  <span className="font-medium text-foreground">Avg PCA/team</span> here was not increased — it stays
+                  the Step 2 average.
+                </p>
+              ) : null}
+            </div>
+          )
+        })()}
 
-      <div className="mt-2">
-        <button
-          type="button"
-          id="step31-card-legend-trigger"
-          aria-expanded={step31CardLegendOpen}
-          aria-controls="step31-card-legend"
-          onClick={() => setStep31CardLegendOpen((open) => !open)}
-          className="flex w-full max-w-full items-center gap-1.5 rounded-sm py-1 text-left text-[11px] font-medium text-foreground/90 outline-none ring-offset-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-        >
-          <ChevronDown
-            className={cn(
-              'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
-              step31CardLegendOpen && 'rotate-180'
-            )}
-            aria-hidden
-          />
-          <span>What the card numbers mean</span>
-        </button>
-        {step31CardLegendOpen ? (
-          <div
-            id="step31-card-legend"
-            role="region"
-            aria-labelledby="step31-card-legend-trigger"
-            className="mt-1.5 space-y-1.5 pl-5 text-[11px] leading-snug text-muted-foreground"
+        {step31Preview.status === 'ready' && step31Preview.standardProjectedExtraSlots > 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Preview: up to{' '}
+            <span className={cn(STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS, 'tabular-nums')}>
+              {step31Preview.standardProjectedExtraSlots}
+            </span>{' '}
+            optional slot
+            {step31Preview.standardProjectedExtraSlots === 1 ? '' : 's'} in Step 3.4 after needs are met (
+            <span className={STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS}>Extra after needs</span>).{' '}
+            <Link
+              href="/help/avg-and-slots"
+              className="text-primary underline-offset-2 hover:underline"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              What does this mean?
+            </Link>
+          </p>
+        ) : null}
+
+        <div>
+          <button
+            type="button"
+            id="step31-card-legend-trigger"
+            aria-expanded={step31CardLegendOpen}
+            aria-controls="step31-card-legend"
+            onClick={() => setStep31CardLegendOpen((open) => !open)}
+            className="flex w-full max-w-full items-center gap-1.5 rounded-sm py-1 text-left text-[11px] font-medium text-foreground/90 outline-none ring-offset-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
+            <ChevronDown
+              className={cn(
+                'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
+                step31CardLegendOpen && 'rotate-180'
+              )}
+              aria-hidden
+            />
+            <span>What the card numbers mean</span>
+          </button>
+          {step31CardLegendOpen ? (
+            <div
+              id="step31-card-legend"
+              role="region"
+              aria-labelledby="step31-card-legend-trigger"
+              className="mt-1.5 space-y-1.5 pl-5 text-[11px] leading-snug text-muted-foreground"
+            >
             <p>
               <span className="font-medium text-foreground">Avg</span> — Target PCA per team (same as the dashboard).
             </p>
             <p>
-              <span className="font-medium text-foreground">Raw floating</span> — What is still needed toward that
-              target after non-floating PCA, before rounding to quarters.
+              <span className="font-medium text-foreground">Raw floating</span> — Avg – non-floating PCA.
             </p>
             <p>
-              <span className="font-medium text-foreground">Rounded floating</span> — Quarter-rounded bootstrap floating
-              pending from the Step 2→3 projection (`round(pending)` at open). In Step 3.1 only, ± on pending moves this by
-              the same quarter step; from Step 3.2 onward that adjusted target stays fixed until you return to Step 3.1.
+              <span className="font-medium text-foreground">Rounded floating</span> — Round the &ldquo;Raw floating&rdquo;
+              to nearest 0.25. Allow editable in Step 3.1; and stay fixed from Step 3.2 onwards.
             </p>
             <p>
               <span className="font-medium text-foreground">Non-floating</span> — PCA on this team from Step 2 (often{' '}
@@ -1490,8 +1534,9 @@ export function FloatingPCAConfigDialogV2({
               <span className="font-medium text-foreground">Assigned floating</span> — Floating PCA already placed on
               this team in Steps 3.2–3.4.
             </p>
-          </div>
-        ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   )
@@ -1822,7 +1867,19 @@ export function FloatingPCAConfigDialogV2({
                 <li key={reason.text} className="pl-1">
                   {reason.tone === 'extra-after-needs' ? (
                     <span className="block rounded-md border border-violet-200/90 bg-violet-50/95 px-2.5 py-1.5 text-violet-950 dark:border-violet-600 dark:bg-violet-950/45 dark:text-violet-100">
-                      {reason.text}
+                      {reason.extraAfterNeedsCount != null ? (
+                        <>
+                          This team has{' '}
+                          <span className={cn(STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS, 'tabular-nums')}>
+                            {reason.extraAfterNeedsCount}
+                          </span>{' '}
+                          Step 3.4 {reason.extraAfterNeedsCount === 1 ? 'row' : 'rows'} from{' '}
+                          <span className={STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS}>Extra after needs</span>{' '}
+                          (required floating need was already satisfied).
+                        </>
+                      ) : (
+                        reason.text
+                      )}
                     </span>
                   ) : (
                     reason.text

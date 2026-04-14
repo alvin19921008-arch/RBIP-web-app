@@ -159,7 +159,13 @@ export interface SlotAssignmentLog {
   pcaName: string                 // PCA name for display
   assignedIn: 'step30' | 'step32' | 'step33' | 'step34'  // Which step made this assignment
   allocationStage?: 'draft' | 'repair' | 'extra-coverage'
-  repairReason?: 'ranked-coverage' | 'fairness-floor' | 'duplicate-reduction' | 'continuity-reduction' | null
+  repairReason?:
+    | 'ranked-coverage'
+    | 'fairness-floor'
+    | 'duplicate-reduction'
+    | 'continuity-reduction'
+    | 'ranked-promotion'
+    | null
   
   // Step 3.4 specific tracking
   cycle?: 1 | 2 | 3              // Which cycle (only for step34)

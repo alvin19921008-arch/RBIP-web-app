@@ -31,6 +31,17 @@ alwaysApply: false
 | Elevation | Single subtle shadow level max |
 | Borders | Use `border-border` or `divide-y`, not harsh solid borders |
 
+## Step 3 — Raised target vs Extra after needs (semantic colors)
+
+Use **emerald** vs **violet** consistently for these two meanings everywhere (badges, inline text, table hints, Step 3.1 copy above the card legend). **Do not** use Tailwind `purple-*` for **Extra after needs** — unify on `violet-*` so it matches Step 3.4 outline badges (`STEP34_EXTRA_AFTER_NEEDS_BADGE_CLASS`).
+
+| Meaning | Hue | Typical tokens |
+|---------|-----|----------------|
+| **Raised target (shared spare)** — Step 2→3 rounding slack shared in the pool | Emerald | Badges: `border-emerald-600/85 bg-emerald-50 text-emerald-950` (see `STEP34_RAISED_TARGET_BADGE_CLASS`). Flat copy: `text-emerald-800 dark:text-emerald-200` (see `STEP31_RAISED_TARGET_TEXT_CLASS` in `FloatingPCAConfigDialogV2`). |
+| **Extra after needs** — optional Step 3.4 slot(s) after basic floating need is met | Violet | Badges: `border-violet-600/85 bg-violet-50 text-violet-950` (`STEP34_EXTRA_AFTER_NEEDS_BADGE_CLASS`). Flat copy: `text-violet-800 dark:text-violet-200` (`STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS`). Small labels: `text-violet-700 dark:text-violet-300`. |
+
+**Step 3.1 layout:** Keep scarcity preview (amber) for shortage only. Place **Raised target** literacy and **Extra after needs** preview in the same flat `space-y-2` block **above** “What the card numbers mean” — no nested card-on-card for those two lines.
+
 ## Banner Panel Design
 
 For inline informational banners and confirmation panels:
@@ -72,8 +83,9 @@ Controls and their associated metadata (labels, status values, summaries) must s
 - ❌ Emoji icons (ℹ️ ⚠️ ✓)
 - ❌ `max-w-4xl`+ dialogs without justification
 - ❌ 3+ nested border levels
-- ❌ Multiple accent colors
+- ❌ Multiple accent colors (except the fixed **emerald vs violet** pair for Raised target vs Extra after needs above)
 - ❌ Different hues for different surfaces
+- ❌ `purple-*` for **Extra after needs** (use `violet-*` only)
 
 ## Quick Reference: Spacing Scale
 

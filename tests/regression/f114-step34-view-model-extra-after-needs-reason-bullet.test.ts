@@ -58,6 +58,7 @@ async function main() {
   const extraBullet = detail.reasons.find((r) => r.text.includes('Extra after needs'))
   assert.ok(extraBullet, 'expected Extra after needs reason bullet')
   assert.equal(extraBullet?.tone, 'extra-after-needs')
+  assert.equal(extraBullet?.extraAfterNeedsCount, 1)
   assert.ok(
     extraBullet.text.includes('required floating need was already satisfied'),
     `expected satisfaction clause in reason, got: ${extraBullet.text}`

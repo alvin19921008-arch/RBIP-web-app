@@ -975,7 +975,7 @@ export const PCABlock = memo(function PCABlock({
               <div className="space-y-0.5">
                 {slotDisplayNode}
                 <div
-                  className="text-[10px] font-semibold text-purple-700 dark:text-purple-300"
+                  className="text-[10px] font-semibold text-violet-700 dark:text-violet-300"
                   title="Extra after needs: optional Step 3.4 slot(s) after basic floating need was met. Not the same as Raised target (shared spare)."
                 >
                   Extra after needs: slots {extraSlotsForTeam.join(', ')}
@@ -1021,7 +1021,7 @@ export const PCABlock = memo(function PCABlock({
                   if (extraSlotsForTeam.length === 0) return null
                   return (
                     <span
-                      className="text-[10px] font-semibold text-purple-700 dark:text-purple-300 whitespace-nowrap"
+                      className="text-[10px] font-semibold text-violet-700 dark:text-violet-300 whitespace-nowrap"
                       title="Extra after needs (Step 3.4). Not Raised target (shared spare)."
                     >
                       Extra after needs

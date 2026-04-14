@@ -3,8 +3,10 @@ import type { PCAAllocation } from '@/types/schedule'
 import type { PCAData } from '@/lib/algorithms/pcaAllocationTypes'
 import {
   buildRankedV2RepairAuditState,
+  detectRankedV2RepairDefects,
   donorHasTrueStep3Ownership,
   teamCanDonateBoundedly,
+  type RankedV2OptionalPromotionOpportunity,
   type RankedV2RepairDefect,
 } from '@/lib/algorithms/floatingPcaV2/repairAudit'
 import { TEAMS, type TeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
@@ -24,12 +26,21 @@ export type RepairAssignment = {
   slot: Slot
 }
 
+export type RepairCandidateDefectKind = RankedV2RepairDefect['kind'] | 'P1'
+
 export type RepairCandidate = {
-  defectKind: RankedV2RepairDefect['kind']
-  reason: RankedV2RepairDefect['kind']
+  defectKind: RepairCandidateDefectKind
+  reason: RepairCandidateDefectKind
   sortKey: string
   allocations: PCAAllocation[]
   repairAssignments: RepairAssignment[]
+}
+
+/** Step 3.2 / 3.3 user commits — must not move or retarget (Constraint 6c). */
+export type Step3CommittedFloatingAnchor = {
+  team: Team
+  slot: Slot
+  pcaId: string
 }
 
 export type GenerateRepairCandidatesContext = {
@@ -41,6 +52,8 @@ export type GenerateRepairCandidatesContext = {
   initialPendingFTE?: Record<Team, number>
   pendingFTE?: Record<Team, number>
   baselineAllocations?: PCAAllocation[]
+  /** Step 3.2 + 3.3 frozen anchors (preferred PCA+slot / adjacent); repair must not alter these cells. */
+  committedStep3Anchors?: Step3CommittedFloatingAnchor[]
 }
 
 const VALID_SLOTS: Slot[] = [1, 2, 3, 4]
@@ -245,15 +258,29 @@ function applyUpdates(
   return next
 }
 
+function committedAnchorsStillHold(
+  allocations: PCAAllocation[],
+  anchors?: Step3CommittedFloatingAnchor[]
+): boolean {
+  if (!anchors?.length) return true
+  for (const anchor of anchors) {
+    const row = allocations.find((allocation) => allocation.staff_id === anchor.pcaId)
+    if (getSlotOwner(row, anchor.slot) !== anchor.team) return false
+  }
+  return true
+}
+
 function buildCandidate(
-  defectKind: RankedV2RepairDefect['kind'],
+  defectKind: RepairCandidateDefectKind,
   sortKey: string,
   allocations: PCAAllocation[],
   pcaPool: PCAData[],
-  updates: SlotOwnerUpdate[]
+  updates: SlotOwnerUpdate[],
+  committedAnchors?: Step3CommittedFloatingAnchor[]
 ): RepairCandidate | null {
   const next = applyUpdates(allocations, pcaPool, updates)
   if (!next) return null
+  if (!committedAnchorsStillHold(next, committedAnchors)) return null
   return {
     defectKind,
     reason: defectKind,
@@ -264,7 +291,7 @@ function buildCandidate(
 }
 
 export function applyOneSlotMove(args: {
-  defectKind: RankedV2RepairDefect['kind']
+  defectKind: RepairCandidateDefectKind
   sortKey: string
   allocations: PCAAllocation[]
   pcaPool: PCAData[]
@@ -275,6 +302,7 @@ export function applyOneSlotMove(args: {
   fallbackPcaId?: string
   fallbackSlot?: Slot
   fallbackTeam?: Team
+  committedStep3Anchors?: Step3CommittedFloatingAnchor[]
 }): RepairCandidate | null {
   const updates: SlotOwnerUpdate[] = [
     {
@@ -294,11 +322,18 @@ export function applyOneSlotMove(args: {
     })
   }
 
-  return buildCandidate(args.defectKind, args.sortKey, args.allocations, args.pcaPool, updates)
+  return buildCandidate(
+    args.defectKind,
+    args.sortKey,
+    args.allocations,
+    args.pcaPool,
+    updates,
+    args.committedStep3Anchors
+  )
 }
 
 export function applyOneSlotSwap(args: {
-  defectKind: RankedV2RepairDefect['kind']
+  defectKind: RepairCandidateDefectKind
   sortKey: string
   allocations: PCAAllocation[]
   pcaPool: PCAData[]
@@ -310,6 +345,7 @@ export function applyOneSlotSwap(args: {
   donorSlot: Slot
   donorOwner: Team
   newDonorOwner: Team
+  committedStep3Anchors?: Step3CommittedFloatingAnchor[]
 }): RepairCandidate | null {
   return buildCandidate(args.defectKind, args.sortKey, args.allocations, args.pcaPool, [
     {
@@ -324,7 +360,7 @@ export function applyOneSlotSwap(args: {
       fromTeam: args.donorOwner,
       toTeam: args.newDonorOwner,
     },
-  ])
+  ], args.committedStep3Anchors)
 }
 
 export function applyContinuityCollapse(args: {
@@ -333,6 +369,7 @@ export function applyContinuityCollapse(args: {
   team: Team
   targetPcaId: string
   pcaPool: PCAData[]
+  committedStep3Anchors?: Step3CommittedFloatingAnchor[]
 }): RepairCandidate | null {
   const targetPca = getPcaById(args.pcaPool, args.targetPcaId)
   const targetAllocation = getAllocationByStaffId(args.allocations, args.targetPcaId)
@@ -365,7 +402,14 @@ export function applyContinuityCollapse(args: {
   }
 
   if (updates.length === 0) return null
-  return buildCandidate('C1', args.sortKey, args.allocations, args.pcaPool, updates)
+  return buildCandidate(
+    'C1',
+    args.sortKey,
+    args.allocations,
+    args.pcaPool,
+    updates,
+    args.committedStep3Anchors
+  )
 }
 
 function isUsefulOpenSlotForTeam(
@@ -451,6 +495,7 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
   const sortedPcas = [...pcaPool].sort((a, b) => String(a.id).localeCompare(String(b.id)))
   const floatingPcaIds = buildFloatingPcaIdSet(pcaPool)
   const auditState = buildAuditStateForRepairCandidates(context)
+  const anchors = context.committedStep3Anchors
   const debugFoCandidates:
     | {
         currentFloatingSlots: Slot[]
@@ -509,7 +554,8 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
               fromTeam: targetOwner,
               toTeam: requestingTeam,
             },
-          ]
+          ],
+          anchors
         )
         if (donation) {
           candidates.push(donation)
@@ -560,6 +606,7 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
             fallbackPcaId: fallbackPca.id,
             fallbackSlot,
             fallbackTeam: targetOwner,
+            committedStep3Anchors: anchors,
           })
           if (candidate) {
             candidates.push(candidate)
@@ -599,6 +646,7 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
             donorSlot,
             donorOwner: requestingTeam,
             newDonorOwner: targetOwner,
+            committedStep3Anchors: anchors,
           })
           if (candidate) {
             candidates.push(candidate)
@@ -655,6 +703,7 @@ function generateA1Candidates(context: GenerateRepairCandidatesContext): RepairC
   if (defect.kind !== 'A1') return []
 
   const duplicateTeam = defect.team
+  const anchors = context.committedStep3Anchors
   const candidates: RepairCandidate[] = []
   const teamSlots = getAssignedSlotsForTeam(allocations, duplicateTeam)
   const duplicateSlots = [...new Set(teamSlots.filter((slot, index) => teamSlots.indexOf(slot) !== index))].sort(
@@ -686,7 +735,8 @@ function generateA1Candidates(context: GenerateRepairCandidatesContext): RepairC
               fromTeam: duplicateTeam,
               toTeam: rescueTeam,
             },
-          ]
+          ],
+          anchors
         )
         if (candidate) candidates.push(candidate)
       }
@@ -700,6 +750,7 @@ function generateA2Candidates(context: GenerateRepairCandidatesContext): RepairC
   const { defect, allocations, pcaPool, teamPrefs } = context
   if (defect.kind !== 'A2') return []
 
+  const anchors = context.committedStep3Anchors
   const targetAllocation = getAllocationByStaffId(allocations, defect.pcaId)
   if (!targetAllocation) return []
 
@@ -738,7 +789,8 @@ function generateA2Candidates(context: GenerateRepairCandidatesContext): RepairC
               fromTeam: defect.team,
               toTeam: rescueTeam,
             },
-          ]
+          ],
+          anchors
         )
         if (directCandidate) candidates.push(directCandidate)
       }
@@ -758,6 +810,7 @@ function generateA2Candidates(context: GenerateRepairCandidatesContext): RepairC
           rescuePcaId: defect.pcaId,
           rescueSlot: slot,
           rescueTeam,
+          committedStep3Anchors: anchors,
         })
         if (fallbackCandidate) candidates.push(fallbackCandidate)
       }
@@ -771,6 +824,7 @@ function generateF1Candidates(context: GenerateRepairCandidatesContext): RepairC
   const { defect, allocations, pcaPool, teamPrefs } = context
   if (defect.kind !== 'F1') return []
 
+  const anchors = context.committedStep3Anchors
   const candidates: RepairCandidate[] = []
   const orderedAllocations = [...allocations].sort((a, b) => String(a.staff_id).localeCompare(String(b.staff_id)))
   const floatingPcaIds = buildFloatingPcaIdSet(pcaPool)
@@ -808,7 +862,8 @@ function generateF1Candidates(context: GenerateRepairCandidatesContext): RepairC
               fromTeam: null,
               toTeam: defect.team,
             },
-          ]
+          ],
+          anchors
         )
         if (candidate) candidates.push(candidate)
         continue
@@ -833,7 +888,8 @@ function generateF1Candidates(context: GenerateRepairCandidatesContext): RepairC
               fromTeam: rescueOwner,
               toTeam: defect.team,
             },
-          ]
+          ],
+          anchors
         )
         if (donation) candidates.push(donation)
       }
@@ -857,6 +913,7 @@ function generateF1Candidates(context: GenerateRepairCandidatesContext): RepairC
             donorSlot,
             donorOwner: defect.team,
             newDonorOwner: rescueOwner,
+            committedStep3Anchors: anchors,
           })
           if (candidate) candidates.push(candidate)
         }
@@ -874,6 +931,7 @@ function generateF1Candidates(context: GenerateRepairCandidatesContext): RepairC
         rescuePcaId: rescuePca.id,
         rescueSlot,
         rescueTeam: defect.team,
+        committedStep3Anchors: anchors,
       })
       if (fallbackCandidate) candidates.push(fallbackCandidate)
     }
@@ -894,6 +952,7 @@ function buildFallbackMoveCandidate(args: {
   rescuePcaId: string
   rescueSlot: Slot
   rescueTeam: Team
+  committedStep3Anchors?: Step3CommittedFloatingAnchor[]
 }): RepairCandidate | null {
   const sortedPcas = [...args.pcaPool].sort((a, b) => String(a.id).localeCompare(String(b.id)))
   for (const fallbackPca of sortedPcas) {
@@ -919,6 +978,7 @@ function buildFallbackMoveCandidate(args: {
         fallbackPcaId: fallbackPca.id,
         fallbackSlot,
         fallbackTeam: args.sourceTeam,
+        committedStep3Anchors: args.committedStep3Anchors,
       })
       if (candidate) return candidate
     }
@@ -943,11 +1003,303 @@ function generateC1Candidates(context: GenerateRepairCandidatesContext): RepairC
       team,
       targetPcaId,
       pcaPool,
+      committedStep3Anchors: context.committedStep3Anchors,
     })
     if (candidate) candidates.push(candidate)
   }
 
   return candidates
+}
+
+const MAX_OPTIONAL_PROMOTION_CANDIDATES = 400
+
+function countAssignedSlotsByTeamSnapshot(allocations: PCAAllocation[]): Record<Team, number> {
+  const counts = {} as Record<Team, number>
+  for (const team of TEAMS) {
+    counts[team] = 0
+  }
+  for (const allocation of allocations) {
+    if (allocation.slot1) counts[allocation.slot1] += 1
+    if (allocation.slot2) counts[allocation.slot2] += 1
+    if (allocation.slot3) counts[allocation.slot3] += 1
+    if (allocation.slot4) counts[allocation.slot4] += 1
+  }
+  return counts
+}
+
+function computePendingFromAllocationsSnapshot(
+  initialPendingFTE: Record<Team, number>,
+  baselineAssignedSlots: Record<Team, number>,
+  allocations: PCAAllocation[]
+): Record<Team, number> {
+  const finalAssignedCounts = countAssignedSlotsByTeamSnapshot(allocations)
+  const next = {} as Record<Team, number>
+  for (const team of TEAMS) {
+    const pendingSlotsAtStep34Start = Math.round(((initialPendingFTE[team] ?? 0) + 1e-9) / 0.25)
+    const newlyCoveredSlots = finalAssignedCounts[team] - baselineAssignedSlots[team]
+    const remainingSlots = Math.max(0, pendingSlotsAtStep34Start - newlyCoveredSlots)
+    next[team] = remainingSlots * 0.25
+  }
+  return next
+}
+
+function isTrueStep3FloatingCell(
+  allocations: PCAAllocation[],
+  baselineByStaffId: Map<string, PCAAllocation | undefined>,
+  floatingPcaIds: Set<string>,
+  team: Team,
+  pcaId: string,
+  slot: Slot
+): boolean {
+  if (!floatingPcaIds.has(pcaId)) return false
+  const allocation = getAllocationByStaffId(allocations, pcaId)
+  if (!allocation) return false
+  const baseline = baselineByStaffId.get(pcaId)
+  if (getSlotOwner(allocation, slot) !== team) return false
+  if (getSlotOwner(baseline, slot) === team) return false
+  return true
+}
+
+export type OptionalPromotionDetectionArgs = {
+  teamOrder: Team[]
+  initialPendingFTE: Record<Team, number>
+  pendingFTE: Record<Team, number>
+  allocations: PCAAllocation[]
+  pcaPool: PCAData[]
+  teamPrefs: Record<Team, TeamPreferenceInfo>
+  baselineAllocations: PCAAllocation[]
+  committedStep3Anchors?: Step3CommittedFloatingAnchor[]
+}
+
+export function generateOptionalPromotionCandidates(
+  args: OptionalPromotionDetectionArgs
+): RepairCandidate[] {
+  const baselineByStaffId = new Map<string, PCAAllocation | undefined>()
+  for (const row of args.baselineAllocations) {
+    baselineByStaffId.set(row.staff_id, row)
+  }
+  const floatingPcaIds = buildFloatingPcaIdSet(args.pcaPool)
+  const anchors = args.committedStep3Anchors
+  const sortedPcas = [...args.pcaPool].sort((a, b) => String(a.id).localeCompare(String(b.id)))
+  const candidates: RepairCandidate[] = []
+  const teamOrder = args.teamOrder ?? TEAMS
+  const baselineAssignedSlots = countAssignedSlotsByTeamSnapshot(args.baselineAllocations)
+
+  const isValidPromotionOutcome = (next: PCAAllocation[]): boolean => {
+    if (!committedAnchorsStillHold(next, anchors)) return false
+    const nextPending = computePendingFromAllocationsSnapshot(
+      args.initialPendingFTE,
+      baselineAssignedSlots,
+      next
+    )
+    const defects = detectRankedV2RepairDefects({
+      teamOrder,
+      initialPendingFTE: args.initialPendingFTE,
+      pendingFTE: nextPending,
+      allocations: next,
+      pcaPool: args.pcaPool,
+      teamPrefs: args.teamPrefs,
+      baselineAllocations: args.baselineAllocations,
+    })
+    return defects.length === 0
+  }
+
+  const tryPush = (candidate: RepairCandidate | null) => {
+    if (!candidate) return
+    if (!isValidPromotionOutcome(candidate.allocations)) return
+    if (candidates.length >= MAX_OPTIONAL_PROMOTION_CANDIDATES) return
+    candidates.push(candidate)
+  }
+
+  for (const pcaA of sortedPcas) {
+    const allocA = getAllocationByStaffId(args.allocations, pcaA.id)
+    if (!allocA) continue
+    for (const slotA of VALID_SLOTS) {
+      const ownerA = getSlotOwner(allocA, slotA)
+      if (!ownerA) continue
+      if (
+        !isTrueStep3FloatingCell(
+          args.allocations,
+          baselineByStaffId,
+          floatingPcaIds,
+          ownerA,
+          pcaA.id,
+          slotA
+        )
+      ) {
+        continue
+      }
+
+      for (const pcaB of sortedPcas) {
+        if (pcaA.id >= pcaB.id) continue
+        const allocB = getAllocationByStaffId(args.allocations, pcaB.id)
+        if (!allocB) continue
+        for (const slotB of VALID_SLOTS) {
+          const ownerB = getSlotOwner(allocB, slotB)
+          if (!ownerB) continue
+          if (ownerA === ownerB) continue
+          if (
+            !isTrueStep3FloatingCell(
+              args.allocations,
+              baselineByStaffId,
+              floatingPcaIds,
+              ownerB,
+              pcaB.id,
+              slotB
+            )
+          ) {
+            continue
+          }
+
+          tryPush(
+            applyOneSlotSwap({
+              defectKind: 'P1',
+              sortKey: `p1:cross:${pcaA.id}:${slotA}:${pcaB.id}:${slotB}`,
+              allocations: args.allocations,
+              pcaPool: args.pcaPool,
+              targetPcaId: pcaA.id,
+              targetSlot: slotA,
+              targetOwner: ownerA,
+              newTargetOwner: ownerB,
+              donorPcaId: pcaB.id,
+              donorSlot: slotB,
+              donorOwner: ownerB,
+              newDonorOwner: ownerA,
+              committedStep3Anchors: anchors,
+            })
+          )
+        }
+      }
+    }
+  }
+
+  const sortedTeams = [...TEAMS].sort((a, b) => a.localeCompare(b))
+
+  for (const team of sortedTeams) {
+    const occupied: Array<{ pcaId: string; slot: Slot }> = []
+    for (const pca of sortedPcas) {
+      for (const slot of VALID_SLOTS) {
+        if (
+          isTrueStep3FloatingCell(
+            args.allocations,
+            baselineByStaffId,
+            floatingPcaIds,
+            team,
+            pca.id,
+            slot
+          )
+        ) {
+          occupied.push({ pcaId: pca.id, slot })
+        }
+      }
+    }
+    for (let i = 0; i < occupied.length; i += 1) {
+      for (let j = i + 1; j < occupied.length; j += 1) {
+        const a = occupied[i]
+        const b = occupied[j]
+        if (a.pcaId === b.pcaId || a.slot === b.slot) continue
+        tryPush(
+          buildCandidate(
+            'P1',
+            `p1:sameteam:${team}:${a.pcaId}:${a.slot}:${b.pcaId}:${b.slot}`,
+            args.allocations,
+            args.pcaPool,
+            [
+              { pcaId: a.pcaId, slot: a.slot, fromTeam: team, toTeam: null },
+              { pcaId: b.pcaId, slot: b.slot, fromTeam: team, toTeam: null },
+              { pcaId: a.pcaId, slot: b.slot, fromTeam: null, toTeam: team },
+              { pcaId: b.pcaId, slot: a.slot, fromTeam: null, toTeam: team },
+            ],
+            anchors
+          )
+        )
+      }
+    }
+  }
+
+  for (const pca of sortedPcas) {
+    const allocation = getAllocationByStaffId(args.allocations, pca.id)
+    if (!allocation) continue
+    for (const slotA of VALID_SLOTS) {
+      for (const slotB of VALID_SLOTS) {
+        if (slotA >= slotB) continue
+        const ownerA = getSlotOwner(allocation, slotA)
+        const ownerB = getSlotOwner(allocation, slotB)
+        if (!ownerA || !ownerB) continue
+        if (ownerA === ownerB) continue
+        if (
+          !isTrueStep3FloatingCell(
+            args.allocations,
+            baselineByStaffId,
+            floatingPcaIds,
+            ownerA,
+            pca.id,
+            slotA
+          )
+        ) {
+          continue
+        }
+        if (
+          !isTrueStep3FloatingCell(
+            args.allocations,
+            baselineByStaffId,
+            floatingPcaIds,
+            ownerB,
+            pca.id,
+            slotB
+          )
+        ) {
+          continue
+        }
+
+        tryPush(
+          buildCandidate(
+            'P1',
+            `p1:samepca:${pca.id}:${slotA}:${slotB}:${ownerA}:${ownerB}`,
+            args.allocations,
+            args.pcaPool,
+            [
+              { pcaId: pca.id, slot: slotA, fromTeam: ownerA, toTeam: ownerB },
+              { pcaId: pca.id, slot: slotB, fromTeam: ownerB, toTeam: ownerA },
+            ],
+            anchors
+          )
+        )
+      }
+    }
+  }
+
+  candidates.sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+  return candidates
+}
+
+export function detectOptionalRankedPromotionOpportunities(
+  args: OptionalPromotionDetectionArgs
+): RankedV2OptionalPromotionOpportunity[] {
+  const teamOrder = args.teamOrder ?? TEAMS
+  const defects = detectRankedV2RepairDefects({
+    teamOrder,
+    initialPendingFTE: args.initialPendingFTE,
+    pendingFTE: args.pendingFTE,
+    allocations: args.allocations,
+    pcaPool: args.pcaPool,
+    teamPrefs: args.teamPrefs,
+    baselineAllocations: args.baselineAllocations,
+  })
+  if (defects.length > 0) return []
+
+  const cands = generateOptionalPromotionCandidates(args)
+  if (cands.length === 0) return []
+
+  const teams = new Set<Team>()
+  for (const candidate of cands) {
+    for (const assignment of candidate.repairAssignments) {
+      teams.add(assignment.team)
+    }
+  }
+  return [...teams]
+    .sort((a, b) => a.localeCompare(b))
+    .map((team) => ({ kind: 'P1' as const, team }))
 }
 
 export function generateRepairCandidates(

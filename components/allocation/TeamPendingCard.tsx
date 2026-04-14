@@ -13,7 +13,7 @@ const TIE_BREAKER_COLORS = [
   { border: 'border-orange-400', bg: 'bg-orange-50 dark:bg-orange-950/30', text: 'text-orange-700 dark:text-orange-300' },
   { border: 'border-amber-400', bg: 'bg-amber-50 dark:bg-amber-950/30', text: 'text-amber-700 dark:text-amber-300' },
   { border: 'border-teal-400', bg: 'bg-teal-50 dark:bg-teal-950/30', text: 'text-teal-700 dark:text-teal-300' },
-  { border: 'border-purple-400', bg: 'bg-purple-50 dark:bg-purple-950/30', text: 'text-purple-700 dark:text-purple-300' },
+  { border: 'border-violet-400', bg: 'bg-violet-50 dark:bg-violet-950/30', text: 'text-violet-700 dark:text-violet-300' },
 ]
 
 interface TeamPendingCardProps {
@@ -28,7 +28,7 @@ interface TeamPendingCardProps {
   isDragging?: boolean
   /** Display average PCA/team (same as dashboard — [Step3ProjectionV2.displayTargetByTeam] / raw bootstrap target). */
   avgPcaPerTeam?: number | null
-  /** Raw floating need before quarter rounding: max(0, avg − non-floating). */
+  /** Raw floating: Avg – non-floating PCA (continuous; max(0, …) when the UI hides negative need). */
   rawFloatingFTE?: number | null
   /** Non-floating PCA FTE on team from Step 2 (shown as “Non-floating”). */
   assignedFromSlotsFTE?: number | null
@@ -168,14 +168,19 @@ export function TeamPendingCard({
                 ) : null}
                 {rawFloatingFTE != null && !Number.isNaN(rawFloatingFTE) ? (
                   <div className="flex justify-between gap-0.5 tabular-nums">
-                    <span className="min-w-0 shrink text-muted-foreground/90">Raw floating</span>
+                    <span
+                      className="min-w-0 shrink text-muted-foreground/90"
+                      title="Avg – non-floating PCA."
+                    >
+                      Raw floating
+                    </span>
                     <span className="font-medium text-foreground">{rawFloatingFTE.toFixed(2)}</span>
                   </div>
                 ) : null}
                 <div className="flex justify-between gap-0.5 tabular-nums">
                   <span
                     className="text-muted-foreground/90"
-                    title="Fixed rounded floating target from the Step 2→3 projection at open; Step 3.1 ± moves it by the same quarter change as pending. Locked from Step 3.2 onward unless you return to Step 3.1."
+                    title='Round the "Raw floating" to nearest 0.25. Allow editable in Step 3.1; and stay fixed from Step 3.2 onwards.'
                   >
                     Rounded floating
                   </span>
@@ -192,7 +197,7 @@ export function TeamPendingCard({
               <div className="flex justify-between gap-0.5 tabular-nums">
                 <span
                   className="text-muted-foreground/90"
-                  title="Fixed rounded floating target from the Step 2→3 projection at open; Step 3.1 ± moves it by the same quarter change as pending. Locked from Step 3.2 onward unless you return to Step 3.1."
+                  title='Round the "Raw floating" to nearest 0.25. Allow editable in Step 3.1; and stay fixed from Step 3.2 onwards.'
                 >
                   Rounded floating
                 </span>

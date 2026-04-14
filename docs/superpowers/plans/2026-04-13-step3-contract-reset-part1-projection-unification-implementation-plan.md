@@ -62,7 +62,7 @@ flowchart TD
 
 ### Projection fields (minimum contract)
 
-**Shared glossary (product language + step lifecycle):** [2026-04-13-step3-floating-nonfloating-contract-table.md](../specs/2026-04-13-step3-floating-nonfloating-contract-table.md) — table of **Avg**, **non-floating FTE**, **raw floating**, **rounded floating**, **pending floating**, **assigned floating**, **remaining pending**, plus surplus-in-raw-space rules and a **non-floating typing** note (display often `1.0`; engine should classify substitution / backfill to prevent bugs). Use that doc as common ground when naming UI rows or evolving `Step3ProjectionV2` fields.
+**Shared glossary (product language + step lifecycle):** [Step 3 floating vs non-floating glossary](../../glossary/step3-floating-nonfloating.md) — table of **Avg**, **non-floating FTE**, **raw floating**, **rounded floating**, **pending floating**, **assigned floating**, **remaining pending**, plus surplus-in-raw-space rules and a **non-floating typing** note (display often `1.0`; engine should classify substitution / backfill to prevent bugs). Use that doc as common ground when naming UI rows or evolving `Step3ProjectionV2` fields.
 
 Implement a single object (type in `types/schedule.ts` or colocated module) exposing at least:
 
@@ -115,7 +115,7 @@ Secondary (only if required by type or prop threading):
 
 - [x] `PCABlock` / schedule page: **one** code path for "Avg PCA/team" display = `displayTargetByTeam` via shared helper (e.g. `getStep3AveragePcaDisplayTargets` migrated to accept projection or thin adapter).
 - [x] Step 3.1: raw avg display and fixed rounded target both from projection; dynamic pending updates only from assignment flow.
-- [x] **Correct `fixedRoundedFloatingTargetByTeam` semantics:** `roundToNearestQuarterWithMidpoint(pendingByTeam)` (surplus-aware bootstrap pending per f109), **not** `roundedAdjustedTeamTargets` nor `round(teamTargets)` as a team-total surrogate. Dialog fallback when projection is absent must use the same pending-first rule (see contract table spec).
+- [x] **Correct `fixedRoundedFloatingTargetByTeam` semantics:** `roundToNearestQuarterWithMidpoint(pendingByTeam)` (surplus-aware bootstrap pending per f109), **not** `roundedAdjustedTeamTargets` nor `round(teamTargets)` as a team-total surrogate. Dialog fallback when projection is absent must use the same pending-first rule (see [Step 3 floating vs non-floating glossary](../../glossary/step3-floating-nonfloating.md)).
 - [x] Eliminate mixed reads of `calculations.average_pca_per_team` vs `step2Result.rawAveragePCAPerTeam` vs ad-hoc bootstrap for **the same conceptual number**; `calculations` may remain for non-Step-3 metrics.
 - [x] **Non-floating typing / breakdown:** `Step3NonFloatingCoverageKind`, `computeStep3NonFloatingFteBreakdownByTeamFromAllocations`, `nonFloatingFteBreakdownByTeam` on `Step3BootstrapSummary`; controller + schedule page + V2 dialog (`step31BootstrapStaff`) wired; regression **f115** + **f18** extension.
 

@@ -8,10 +8,15 @@ import type { PCAPreference } from '../../types/allocation'
 function score(partial: Partial<RankedSlotAllocationScore>): RankedSlotAllocationScore {
   return {
     highestRankCoverage: 0,
+    rankedCoverageSatisfied: 0,
     fairnessSatisfied: 0,
     totalFulfilledPendingQuarterSlots: 0,
+    gymLastResortCount: 0,
+    rankedSlotMatchCount: 0,
     duplicateFloatingCount: 0,
     splitPenalty: 0,
+    promotionTrueStep3RankScore: 0,
+    promotionTrueStep3PreferredPcaHits: 0,
     ...partial,
   }
 }
@@ -130,6 +135,50 @@ async function main() {
   const tieDup = { ...tiePending, duplicateFloatingCount: 1 }
   assert.ok(compareScores(score({ ...tieDup, splitPenalty: 1 }), score({ ...tieDup, splitPenalty: 4 })) < 0)
   assert.ok(compareScores(score({ ...tieDup, splitPenalty: 5 }), score({ ...tieDup, splitPenalty: 2 })) > 0)
+
+  const tieSplit = { ...tieDup, splitPenalty: 1 }
+  assert.ok(
+    compareScores(
+      score({
+        ...tieSplit,
+        highestRankCoverage: 2,
+        promotionTrueStep3RankScore: 0,
+        promotionTrueStep3PreferredPcaHits: 9,
+      }),
+      score({
+        ...tieSplit,
+        highestRankCoverage: 1,
+        promotionTrueStep3RankScore: 99,
+        promotionTrueStep3PreferredPcaHits: 0,
+      }),
+      { includeOptionalPromotionTieBreak: true }
+    ) < 0,
+    'Primary objectives must dominate optional promotion tie-break layers.'
+  )
+  assert.equal(
+    compareScores(
+      score({ ...tieSplit, promotionTrueStep3RankScore: 9, promotionTrueStep3PreferredPcaHits: 9 }),
+      score({ ...tieSplit, promotionTrueStep3RankScore: 1, promotionTrueStep3PreferredPcaHits: 1 })
+    ),
+    0,
+    'Without includeOptionalPromotionTieBreak, promotion sub-metrics are ignored when the primary tuple is tied.'
+  )
+  assert.ok(
+    compareScores(
+      score({ ...tieSplit, promotionTrueStep3RankScore: 3, promotionTrueStep3PreferredPcaHits: 0 }),
+      score({ ...tieSplit, promotionTrueStep3RankScore: 1, promotionTrueStep3PreferredPcaHits: 0 }),
+      { includeOptionalPromotionTieBreak: true }
+    ) < 0,
+    'Optional promotion: higher promotionTrueStep3RankScore should win when the primary tuple is tied.'
+  )
+  assert.ok(
+    compareScores(
+      score({ ...tieSplit, promotionTrueStep3RankScore: 1, promotionTrueStep3PreferredPcaHits: 2 }),
+      score({ ...tieSplit, promotionTrueStep3RankScore: 1, promotionTrueStep3PreferredPcaHits: 0 }),
+      { includeOptionalPromotionTieBreak: true }
+    ) < 0,
+    'Optional promotion: preferred-PCA hits break rank-score ties (rank uplift first, preferred PCA second).'
+  )
 
   assert.equal(compareScores(score({ highestRankCoverage: 3 }), score({ highestRankCoverage: 3 })), 0)
 }

@@ -24,6 +24,7 @@ export function formatV2RepairReasonLabel(
   if (reason === 'fairness-floor') return 'Fairness'
   if (reason === 'duplicate-reduction') return 'Duplicate reduction'
   if (reason === 'continuity-reduction') return 'Continuity'
+  if (reason === 'ranked-promotion') return 'Ranked promotion via bounded swap'
   return null
 }
 

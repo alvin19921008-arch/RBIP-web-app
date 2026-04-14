@@ -16,6 +16,10 @@ export type RankedSlotAllocationScore = {
   rankedSlotMatchCount: number
   duplicateFloatingCount: number
   splitPenalty: number
+  /** True Step 3–owned: higher first-rank coverage (lower first fulfilled index) for optional promotion tie-break. */
+  promotionTrueStep3RankScore: number
+  /** True Step 3–owned slots on preferred PCAs (tier 2 after rank score). */
+  promotionTrueStep3PreferredPcaHits: number
 }
 
 /**
@@ -31,8 +35,16 @@ export type RankedSlotAllocationScore = {
  * 6. preserve ranked-slot ownership — `rankedSlotMatchCount`
  * 7. duplicates — `duplicateFloatingCount`
  * 8. split count — `splitPenalty`
+ *
+ * Optional ranked promotion (Part II): when `includeOptionalPromotionTieBreak` is true and all of the
+ * above are equal, compare `promotionTrueStep3RankScore` then `promotionTrueStep3PreferredPcaHits`
+ * (rank uplift before preferred PCA; Constraint 6d — no AM/PM here).
  */
-export function compareScores(a: RankedSlotAllocationScore, b: RankedSlotAllocationScore): number {
+export function compareScores(
+  a: RankedSlotAllocationScore,
+  b: RankedSlotAllocationScore,
+  options?: { includeOptionalPromotionTieBreak?: boolean }
+): number {
   if (a.highestRankCoverage !== b.highestRankCoverage) {
     return b.highestRankCoverage - a.highestRankCoverage
   }
@@ -54,7 +66,18 @@ export function compareScores(a: RankedSlotAllocationScore, b: RankedSlotAllocat
   if (a.duplicateFloatingCount !== b.duplicateFloatingCount) {
     return a.duplicateFloatingCount - b.duplicateFloatingCount
   }
-  return a.splitPenalty - b.splitPenalty
+  if (a.splitPenalty !== b.splitPenalty) {
+    return a.splitPenalty - b.splitPenalty
+  }
+  if (options?.includeOptionalPromotionTieBreak) {
+    if (a.promotionTrueStep3RankScore !== b.promotionTrueStep3RankScore) {
+      return b.promotionTrueStep3RankScore - a.promotionTrueStep3RankScore
+    }
+    if (a.promotionTrueStep3PreferredPcaHits !== b.promotionTrueStep3PreferredPcaHits) {
+      return b.promotionTrueStep3PreferredPcaHits - a.promotionTrueStep3PreferredPcaHits
+    }
+  }
+  return 0
 }
 
 type BuildScoreArgs = {
@@ -64,6 +87,9 @@ type BuildScoreArgs = {
   teamOrder: Team[]
   defects: RankedV2RepairDefect[]
   teamPrefs: Record<Team, TeamPreferenceInfo>
+  /** When set with [floatingPcaIds], promotion tie-break metrics use true Step 3–owned floating only. */
+  baselineAllocations?: PCAAllocation[]
+  floatingPcaIds?: Set<string>
 }
 
 const VALID_SLOTS = [1, 2, 3, 4] as const
@@ -80,6 +106,77 @@ function getSlotOwner(
   if (slot === 2) return allocation.slot2
   if (slot === 3) return allocation.slot3
   return allocation.slot4
+}
+
+function getBaselineSlotTeam(
+  allocation: PCAAllocation | undefined,
+  slot: (typeof VALID_SLOTS)[number]
+): Team | null {
+  if (!allocation) return null
+  return getSlotOwner(allocation, slot)
+}
+
+function getTrueStep3FloatingSlotsForTeam(
+  allocations: PCAAllocation[],
+  baselineByStaffId: Map<string, PCAAllocation | undefined>,
+  floatingPcaIds: Set<string>,
+  team: Team
+): Set<(typeof VALID_SLOTS)[number]> {
+  const slots = new Set<(typeof VALID_SLOTS)[number]>()
+  for (const allocation of allocations) {
+    if (!floatingPcaIds.has(allocation.staff_id)) continue
+    const baseline = baselineByStaffId.get(allocation.staff_id)
+    for (const slot of VALID_SLOTS) {
+      if (getSlotOwner(allocation, slot) !== team) continue
+      if (getBaselineSlotTeam(baseline, slot) === team) continue
+      slots.add(slot)
+    }
+  }
+  return slots
+}
+
+function computePromotionTrueStep3Metrics(
+  args: BuildScoreArgs,
+  baselineByStaffId: Map<string, PCAAllocation | undefined>,
+  floatingPcaIds: Set<string>
+): { promotionTrueStep3RankScore: number; promotionTrueStep3PreferredPcaHits: number } {
+  let promotionTrueStep3RankScore = 0
+  let promotionTrueStep3PreferredPcaHits = 0
+
+  for (const team of args.teamOrder) {
+    if (!hasMeaningfulPending(args.initialPendingFTE[team])) continue
+    const pref = args.teamPrefs[team]
+    const rankedSlots = pref.rankedSlots.filter(
+      (slot): slot is (typeof VALID_SLOTS)[number] =>
+        VALID_SLOTS.includes(slot as (typeof VALID_SLOTS)[number]) &&
+        !(pref.avoidGym && pref.gymSlot === slot)
+    )
+    if (rankedSlots.length === 0) continue
+
+    const trueSlots = getTrueStep3FloatingSlotsForTeam(
+      args.allocations,
+      baselineByStaffId,
+      floatingPcaIds,
+      team
+    )
+    const firstIdx = rankedSlots.findIndex((slot) => trueSlots.has(slot))
+    if (firstIdx >= 0) {
+      promotionTrueStep3RankScore += rankedSlots.length - firstIdx
+    }
+
+    for (const allocation of args.allocations) {
+      if (!floatingPcaIds.has(allocation.staff_id)) continue
+      if (!pref.preferredPCAIds.includes(allocation.staff_id)) continue
+      const baseline = baselineByStaffId.get(allocation.staff_id)
+      for (const slot of VALID_SLOTS) {
+        if (getSlotOwner(allocation, slot) !== team) continue
+        if (getBaselineSlotTeam(baseline, slot) === team) continue
+        promotionTrueStep3PreferredPcaHits += 1
+      }
+    }
+  }
+
+  return { promotionTrueStep3RankScore, promotionTrueStep3PreferredPcaHits }
 }
 
 function getAssignedSlotsForTeam(allocations: PCAAllocation[], team: Team): number[] {
@@ -138,6 +235,8 @@ export function buildRankedSlotAllocationScore(args: BuildScoreArgs): RankedSlot
   let rankedSlotMatchCount = 0
   let duplicateFloatingCount = 0
   let splitPenalty = 0
+  let promotionTrueStep3RankScore = 0
+  let promotionTrueStep3PreferredPcaHits = 0
 
   for (const team of args.teamOrder) {
     const pref = args.teamPrefs[team]
@@ -181,6 +280,16 @@ export function buildRankedSlotAllocationScore(args: BuildScoreArgs): RankedSlot
   rankedCoverageSatisfied = Math.max(0, rankedPendingTeams - rankedViolationCount)
   const fairnessSatisfied = Math.max(0, fairnessPendingTeams - fairnessViolationCount)
 
+  if (args.baselineAllocations != null && args.floatingPcaIds != null) {
+    const baselineByStaffId = new Map<string, PCAAllocation | undefined>()
+    for (const row of args.baselineAllocations) {
+      baselineByStaffId.set(row.staff_id, row)
+    }
+    const promo = computePromotionTrueStep3Metrics(args, baselineByStaffId, args.floatingPcaIds)
+    promotionTrueStep3RankScore = promo.promotionTrueStep3RankScore
+    promotionTrueStep3PreferredPcaHits = promo.promotionTrueStep3PreferredPcaHits
+  }
+
   return {
     highestRankCoverage,
     rankedCoverageSatisfied,
@@ -190,6 +299,8 @@ export function buildRankedSlotAllocationScore(args: BuildScoreArgs): RankedSlot
     rankedSlotMatchCount,
     duplicateFloatingCount,
     splitPenalty,
+    promotionTrueStep3RankScore,
+    promotionTrueStep3PreferredPcaHits,
   }
 }
 

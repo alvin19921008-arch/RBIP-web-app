@@ -585,7 +585,7 @@ export function PCADedicatedScheduleTable({
           <div className={`${commonLine1} ${teamClass}`}>
             {teamLabel}
             {cell.isExtraCoverage ? (
-              <span className="ml-1 text-[10px] font-semibold text-purple-700 dark:text-purple-300">Extra</span>
+              <span className="ml-1 text-[10px] font-semibold text-violet-700 dark:text-violet-300">Extra</span>
             ) : null}
           </div>
           <div className={`${commonLine2} text-blue-600 text-xs`}>
@@ -603,7 +603,7 @@ export function PCADedicatedScheduleTable({
           <div className={`${commonLine1} ${teamClass}`}>
             {teamLabel}
             {cell.isExtraCoverage ? (
-              <span className="ml-1 text-[10px] font-semibold text-purple-700 dark:text-purple-300">Extra</span>
+              <span className="ml-1 text-[10px] font-semibold text-violet-700 dark:text-violet-300">Extra</span>
             ) : null}
           </div>
           <div className={`${commonLine2} text-red-600 text-xs font-medium`}>{cell.programName}</div>
@@ -619,7 +619,7 @@ export function PCADedicatedScheduleTable({
           <div className={`${commonLine1} ${teamClass}`}>
             {teamLabel}
             {cell.isExtraCoverage ? (
-              <span className="ml-1 text-[10px] font-semibold text-purple-700 dark:text-purple-300">Extra</span>
+              <span className="ml-1 text-[10px] font-semibold text-violet-700 dark:text-violet-300">Extra</span>
             ) : null}
           </div>
         </div>

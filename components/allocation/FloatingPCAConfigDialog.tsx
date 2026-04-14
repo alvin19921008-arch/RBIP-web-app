@@ -1593,7 +1593,7 @@ export function FloatingPCAConfigDialog({
                           zIndex={120000}
                           className="whitespace-normal max-w-[260px]"
                         >
-                          <span className="text-[11px] text-purple-700 dark:text-purple-300 shrink-0">
+                          <span className="text-[11px] text-violet-700 dark:text-violet-300 shrink-0">
                             · projected extra slots: {step31Preview.standardProjectedExtraSlots}
                           </span>
                         </Tooltip>
@@ -1620,7 +1620,7 @@ export function FloatingPCAConfigDialog({
                           zIndex={120000}
                           className="whitespace-normal max-w-[260px]"
                         >
-                          <span className="text-[11px] text-purple-700 dark:text-purple-300 shrink-0">
+                          <span className="text-[11px] text-violet-700 dark:text-violet-300 shrink-0">
                             · projected extra slots: {step31Preview.balancedProjectedExtraSlots}
                           </span>
                         </Tooltip>

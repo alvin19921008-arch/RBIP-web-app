@@ -15,6 +15,9 @@ export type RankedV2RepairDefect =
   | { kind: 'C1'; team: Team }
   | { kind: 'F1'; team: Team }
 
+/** Optional ranked promotion opportunity (Constraint 5 — not a B1 defect). */
+export type RankedV2OptionalPromotionOpportunity = { kind: 'P1'; team: Team }
+
 export type DetectRankedV2RepairDefectsContext = {
   teamOrder: Team[]
   initialPendingFTE: Record<Team, number>

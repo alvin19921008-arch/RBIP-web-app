@@ -63,7 +63,7 @@ alwaysApply: true
 
 ## Step 3 projection: Avg vs floating chain (essential)
 
-**Full field table:** `docs/superpowers/specs/2026-04-13-step3-floating-nonfloating-contract-table.md`
+**Full glossary (floating vs non-floating):** `docs/glossary/step3-floating-nonfloating.md`
 
 - **`Step3ProjectionV2` / one builder:** Built when Step 2 is settled for Step 3 entry (controller); pass **one** reference into schedule page, `PCABlock`, `FloatingPCAConfigDialogV2`, etc. Do not recompute `computeStep3BootstrapSummary` in parallel with different args for the **same** dashboard vs Step 3.1 display numbers.
 

@@ -25,6 +25,8 @@ export type Step34ReasonTone = 'default' | 'extra-after-needs'
 export interface Step34ReasonLine {
   text: string
   tone?: Step34ReasonTone
+  /** With `tone: 'extra-after-needs'`, row count for violet emphasis in the dialog. */
+  extraAfterNeedsCount?: number
 }
 
 export interface Step34TeamDetailViewModel {
@@ -283,9 +285,11 @@ function buildReasons(args: {
     (a) => a.assignedIn === 'step34' && a.allocationStage === 'extra-coverage'
   )
   if (extraCoverageRows.length > 0) {
+    const n = extraCoverageRows.length
     reasons.push({
-      text: `This team has ${extraCoverageRows.length} Step 3.4 ${extraCoverageRows.length === 1 ? 'row' : 'rows'} from Extra after needs (required floating need was already satisfied).`,
+      text: `This team has ${n} Step 3.4 ${n === 1 ? 'row' : 'rows'} from Extra after needs (required floating need was already satisfied).`,
       tone: 'extra-after-needs',
+      extraAfterNeedsCount: n,
     })
   }
 

@@ -11,17 +11,18 @@ This spec adds two linked but separable refinements to the V2 Step 3 floating PC
 
 Part I introduces a surplus-aware Step 3 target pipeline so the floating pending shown after Step 2 and at Step 3.1 comes from one shared projection that absorbs executable global slack before final quarter-rounding. The main product goal is to make the displayed rounded floating target feel more human and less like a late extra-coverage patch, while keeping the internal model debuggable by separating raw therapist-weighted demand from surplus-adjusted operational targets.
 
-Part II adds a bounded ranked-slot promotion layer after required coverage has already been satisfied. This allows a team that already has enough floating coverage to improve from a lower-ranked slot to a higher-ranked slot only through no-net-loss swap or safe move behavior, never through harmful donation. The goal is to preserve the user's approved idea that ranked promotion remains possible, but only when it does not create a worse outcome for the donor team.
+Part II adds a bounded ranked-slot promotion layer after required coverage has already been satisfied. This allows a team that already has enough floating coverage to improve from a lower-ranked slot to a higher-ranked slot only through no-net-loss swap or safe move behavior, never through harmful donation. The goal is to preserve the user's approved idea that ranked promotion remains possible, but only when it does not create a worse outcome for the donor team. Optional promotion scoring prefers **ranked-slot uplift** first, then **preferred PCA** among ties; **Step 3.2** and **Step 3.3** user commits are **immutable** for repair and promotion (see Part II). **AM/PM session balance** as an allocator objective is **forthgoing** only (see **Forward-looking: AM / PM balance**).
 
 Both parts are explicitly V2-only. This spec also adds a hard V1/V2 boundary contract so future agents do not chaotically edit both engines together.
 
 ## Relationship To Existing Specs
-- **Floating / non-floating glossary and Avg PCA unification (read first for vocabulary):** `docs/superpowers/specs/2026-04-13-step3-floating-nonfloating-contract-table.md`
+- **Floating / non-floating glossary and Avg PCA unification (read first for vocabulary):** `docs/glossary/step3-floating-nonfloating.md`
 - **Step 3 projection boundary (Part 1 — single handoff object):** `docs/superpowers/plans/2026-04-13-step3-contract-reset-part1-projection-unification-implementation-plan.md`
 - Base ranked V2 allocator design: `docs/superpowers/specs/2026-04-06-floating-pca-ranked-slot-allocation-design.md`
 - V2 Step 3.2 review surface: `docs/superpowers/specs/2026-04-11-v2-step32-preferred-review-design.md`
 - V1/V2 extraction boundary: `docs/superpowers/specs/2026-04-10-floating-pca-v1-v2-extraction-design.md`
 - Duplicate-floating semantics alignment: `docs/superpowers/specs/2026-04-10-v2-duplicate-floating-semantics-alignment-design.md`
+- **Paired implementation plan (Part I + II tasks, constraints, regressions):** `docs/superpowers/plans/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-implementation-plan.md`
 
 ## Scope
 
@@ -41,6 +42,7 @@ Both parts are explicitly V2-only. This spec also adds a hard V1/V2 boundary con
 - redesigning the visible Step 3.1 or Step 3.4 UI beyond tiny tooltip/provenance hints (allowed: dedicated Help article + popover educational text as above)
 - replacing the existing V2 draft-pass philosophy
 - turning optional ranked promotion into a full unconstrained optimizer
+- unbounded or lingering optional-promotion passes that delay residual extra coverage or final freeze (bounded pass only; see Part II **Phase termination**)
 - exposing a large new front-facing "surplus" feature concept to users
 
 ## Problem Statement
@@ -59,9 +61,9 @@ Second, the recent ranked-gap cap fixed one class of over-requesting, but it als
 
 This section addresses **Group A / Part I** confusion: *Step 2 already settled therapists, special programs, and non-floating coverage, and `average_pca_per_team` was updated — so why does “surplus” show up later (e.g. after Step 3.4 tooltips)? Shouldn’t those extra slots have been “in” the post–Step 2 Avg PCA/team?*
 
-### Two different objects (see contract table)
+### Two different objects (see glossary)
 
-Use the glossary in `2026-04-13-step3-floating-nonfloating-contract-table.md`:
+Use the glossary in `docs/glossary/step3-floating-nonfloating.md`:
 
 - **Avg** (display / therapist-weighted **raw** team requirement) answers *bed-weighted demand per team*. It is **not** defined as “total floating FTE divided by teams,” and **Part 1 + product contract** keep **dashboard / Step 3.1 “Avg”** aligned to that **raw** scalar (`displayTargetByTeam`), **not** to surplus-inflated operational totals (regression: `f113-step3-dashboard-avg-pca-uses-raw-bootstrap-target`).
 - **Surplus-aware operational targets** (rounded floating / pending seeds after grants) answer *how many **executable quarter-slots** the floating pool must place*, after **global** realizability and **sum-preserving** reconciliation. That layer **may** be **higher** than `round(Avg − non-floating)` for some teams when **redistributable slack** exists — without changing the **display Avg** number the user reasons about at a glance.
@@ -71,7 +73,7 @@ So: **0.5 FTE “extra” in the pool** is **not** required to appear as +0.5 on
 ### Where slack actually comes from (upstream vs engine)
 
 - **Legitimate Part I “surplus” (slack redistribution):** After Step 2, the schedule has a **fixed** set of floating PCAs and slot topology. **Local** rounding of each team’s **raw floating** gap can **under-use** the **global** count of placeable quarter-slots. The **difference** (executable slack) is **not** an error in Step 2’s Avg formula — it is a **discretization + global capacity** phenomenon. Part I **folds that slack into operational targets** (before / as part of the single Step 3 projection handoff), not by silently rewriting **display Avg**.
-- **Upstream bug (different diagnosis):** If **non-floating FTE** or **typed coverage** is wrong (e.g. naive headcount, substitution misclassified), then **raw floating** and every downstream number are wrong. That is **not** “surplus after 3.4” — it is **wrong gap math**; fix **Step 2 attribution / bootstrap inputs** per the contract table’s “non-floating display vs typing” note.
+- **Upstream bug (different diagnosis):** If **non-floating FTE** or **typed coverage** is wrong (e.g. naive headcount, substitution misclassified), then **raw floating** and every downstream number are wrong. That is **not** “surplus after 3.4” — it is **wrong gap math**; fix **Step 2 attribution / bootstrap inputs** per the glossary’s “Non-floating display vs typing” section.
 
 ### After Step 3.4
 
@@ -403,9 +405,9 @@ Step 2 remains the first **authoritative** projection point; Step 3.1 is the **l
 Staff confusion often mixes **display Avg** (continuous, raw therapist-weighted), **raised target (shared spare)** at Step 2→3, and **extra after needs** in Step 3.4. Part I keeps **tracker tooltips** ultra-short; **product education** lives in `/help/avg-and-slots` and the **Avg PCA/team formula popover**, using the **Approved copy deck** under **Locked decision 2**. **A0b** adds Step 3.1 / Step 3.4 micro-lines and chips per that deck.
 
 #### Engineering field glossary (stable names; map to product language)
-Do **not** mass-rename bootstrap/projection identifiers solely for naming aesthetics; churn breaks tests and reviews. Instead keep **this spec + contract table** as the glossary.
+Do **not** mass-rename bootstrap/projection identifiers solely for naming aesthetics; churn breaks tests and reviews. Instead keep **this spec +** `docs/glossary/step3-floating-nonfloating.md` as the shared glossary.
 
-| Typical code / spec field | Role in one sentence | Nearest product glossary (contract table) |
+| Typical code / spec field | Role in one sentence | Nearest product glossary (`docs/glossary/step3-floating-nonfloating.md`) |
 |---------------------------|----------------------|-------------------------------------------|
 | `rawSurplusFte` | Continuous surplus used as **weighting input** for fair shares | Not a row on the card; informs **shared slack** math |
 | `idealWeightedSurplusShareByTeam` | Each team’s **fair share** of `rawSurplusFte` before slot cap | Same — internal |
@@ -414,7 +416,7 @@ Do **not** mass-rename bootstrap/projection identifiers solely for naming aesthe
 | `surplusAdjustedTeamTargets` | Continuous-layer targets after grants, pre-final quarter snap | Between **raw floating** story and **rounded** operational |
 | `roundedAdjustedTeamTargets` / `roundedPendingByTeam` | Quarter-grid **operational** outputs consumed by Step 3.1 / allocator | Align with **Pending floating** / operational obligation (after surplus), not necessarily the **Rounded floating** row if that row is **pre-surplus** `round(raw floating)` only |
 
-Full code-name definitions also live in `2026-04-13-step3-floating-nonfloating-contract-table.md` § **V2 surplus / projection field glossary**.
+Full code-name definitions also live in `docs/glossary/step3-floating-nonfloating.md` § **V2 surplus / projection field glossary (code names)**.
 
 #### Step 2 delta semantics
 The Step 2 completion toast must surface **both** the **context line** (`describeStep3BootstrapDelta.main` — see **Locked decision 2** copy deck) **and** per-team slot deltas (`details`), so readers see *why* before *who*. Deltas use **operational** rounded targets (surplus-aware when V2 metadata exists), not pre-surplus raw targets only.
@@ -434,6 +436,8 @@ Approved scope:
 
 ### Part II. Optional Ranked Promotion Via Bounded Swap Optimization
 
+**Paired implementation doc:** Engineering tasks, **Constraints 6–6d** (including **6c**: Step **3.2** + **3.3** user-commit immutability), regression filenames, and `compareScores` ordering for Part II live in `docs/superpowers/plans/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-implementation-plan.md` (Task Group B). **Read both** this spec and that plan—this file is the product/design contract; the plan is the execution checklist.
+
 #### Intent
 After required pending and required ranked coverage are satisfied, the V2 engine may still improve schedule quality by promoting a team from a lower-ranked slot to a higher-ranked slot. This should remain possible, but only through bounded no-net-loss reshaping.
 
@@ -449,15 +453,18 @@ This phase evaluates whether a requester team with adequate coverage can improve
 
 #### Allowed promotion shapes
 Allowed:
-- bounded slot swap
-- donor-safe move with acceptable replacement
-- same-PCA sway when the donor remains whole and final coverage is not harmed
+- **bounded slot swap:** two (or more) teams exchange placements so each side’s Step-3–owned coverage and ranked outcomes stay within the donor rules after the move.
+- **donor-safe move with acceptable replacement:** the donor releases a slot only when the same move gives an acceptable replacement (coverage and ranked outcome rules still pass).
+- **same-PCA sway:** a small coordinated reshuffle that changes **only which team and/or clock slot** one **named floating PCA** occupies—no new PCA enters the picture. The requester’s **ranked** placement improves; the donor stays **whole** (still satisfies required pending, fairness floor, and must not drop to a worse **preference rank** unless the same move restores an equally good ranked outcome, e.g. via a linked swap leg).
+
+  Example: donor team *D* holds PCA *Alex* on slot 3 (*D*’s **#1** preference) and *Alex* again on slot 4. Requester *R* wants *Alex* on slot 3 for *R*’s **#1**. A valid **sway** might move *Alex* from *D*@3 to *D*@5 and place *Alex* on *R*@3 **only if** *D* still satisfies the donor rules (including keeping *D*’s **#1** ranked outcome—often this shape instead requires a **bounded swap**, not a one-way sway). A one-way sway that would strip *D*’s **#1** for *R*’s gain remains **disallowed**.
 
 Disallowed:
 - pure donation that causes donor net loss
-- promotion that strips the donor's stronger ranked result
+- promotion that strips the donor’s **best satisfied ranked preference** (preference-order **#1** vs **#2**, not a higher numeric schedule score) unless the same bounded move restores an equally good ranked outcome for the donor
 - promotion that removes donor fairness-floor protection
 - promotion that trades one bug for another surplus/fairness regression
+- any repair or promotion move that **removes, retargets, or replaces** a **Step 3.2** or **Step 3.3** user commit (see **User commit immutability**)
 
 #### Requester eligibility
 A requester team is eligible for optional promotion only if:
@@ -468,15 +475,15 @@ A requester team is eligible for optional promotion only if:
 This preserves the user's approved intent: a team that already got a lower-ranked slot does not lose the possibility of promotion, but that promotion is no longer allowed to harm another team through donation.
 
 #### Donor protection
-The donor-side contract must remain explicit.
+The donor-side contract must remain explicit. All donor harm checks in this phase use **Step-3–owned floating** assignments (same notion as *true Step-3-owned floating* in ranked V2 duplicate-floating and bounded-donation documentation), **not** raw slot occupancy: Step-2-only coverage on a clock slot does not count as the donor “still having” Step 3 fulfillment there.
 
-The donor may participate only if the final state does not cause unacceptable harm, including:
-- losing its stronger ranked outcome
-- losing meaningful first true Step 3 floating coverage
-- falling below fairness protection
-- suffering a net loss that the requester is not also accepting
+The donor may participate only if the final state does not cause unacceptable harm:
 
-This phase should reason using true Step 3 floating ownership semantics, not raw occupancy.
+- **Ranked preference:** the donor must not end with a worse **satisfied ranked preference** than before (e.g. it already had **#1** on a slot; giving that slot away so another team upgrades from **#2** to **#1** is blocked unless the **same** bounded move restores the donor to an equally good **#1** outcome).
+- **Fairness floor:** the donor must not fall below fairness protection.
+- **Net loss:** the donor must not suffer a net loss that the requester does not symmetrically accept in the same move (e.g. uncompensated one-way donation).
+
+There is no separate bullet for “meaningful true Step 3 floating”: minimum Step-3–owned presence is already enforced by the fairness-floor and net-loss rules above when those checks are implemented on **Step-3–owned** rows, not on total bodies per slot.
 
 #### Score and audit separation
 The implementation should avoid encoding optional promotion as a fake "missing ranked defect."
@@ -499,6 +506,35 @@ Part II should run in a place where it is not hidden by accidental surplus behav
 
 The implementation plan may refine the exact ordering, but optional ranked promotion must not be silently disabled by the earlier cap fix nor reintroduced as harmful donation.
 
+#### Phase termination (anti-churn)
+Optional ranked promotion must **not** run as an open-ended “until every theoretical upgrade is exhausted” loop that could delay **residual extra coverage** (extra after needs) or thrash the schedule.
+
+Requirements:
+- Run optional promotion as a **single bounded pass**: enumerate a **finite** candidate set (swap / safe-move / same-PCA sway), apply **zero or more** acceptable moves under a **deterministic** ordering and an explicit **cap** on moves per freeze (e.g. one improvement pass, or at most *K* accepted moves with fixed tie-breaks), then **close** the phase.
+- Do **not** leave a lingering internal state that blocks step 5 (residual extra coverage) or final freeze because “an upgrade might still exist” under a deeper search.
+- An audit flag such as `P1` (“optional promotion opportunity”) means **“worth running the bounded pass once”**, not a persistent defect queue analogous to required repair.
+
+#### User commit immutability (Step 3.2 and Step 3.3)
+Assignments the user **explicitly commits** before Step 3.4 must not be undone by the backend allocator, audit, required repair, bounded donation, optional promotion, swap, or sway—otherwise Step 3.2 / 3.3 lose meaning.
+
+**Frozen anchors (V2 handoff metadata, e.g. `committedStep3Assignments` + explicit `source` / phase):**
+
+1. **Step 3.2:** a **preferred PCA** bound to a **specific clock slot** (user’s preferred review choice).
+2. **Step 3.3:** an **adjacent slot** assignment the user committed in the adjacent-slot step (same immutability: the engine must not “take that away” to satisfy promotion or repair elsewhere).
+
+Implementation must distinguish these sources from draft-only Step 3.4 rows. If metadata does not yet split sub-steps, extend the handoff so **both** 3.2 and 3.3 commits are identifiable and filtered from destructive candidates.
+
+#### Promotion scoring (Part II summary)
+Among schedules that already satisfy **required** ranked coverage, fairness, and pending, optional promotion compares candidates using a **bounded pass** only (see **Phase termination**). **Lexicographic intent:** improve **first fulfilled ranked preference** (rank uplift) **before** optimizing **preferred PCA** hits on Step-3–owned rows; then retain existing tail goals (e.g. fewer gym last-resort uses, duplicate/split penalties) per the ranked V2 design. **Preferred PCA** must not be traded away at the cost of **rank** when rank can still improve without that trade. **AM/PM balance** is **not** part of Part II scoring—see **Forward-looking: AM / PM balance**.
+
+#### Gym avoidable defect (post-draft repair)
+**Not Part II optional promotion.** “Avoid gym” is a **preference**, not an absolute ban: when pending still forces coverage, a team may still land on the gym slot as **true last resort**. After the **draft** (and required repair where applicable), product treats the following as a **quality defect** worth surfacing and fixing in a **separate bounded pass**: the schedule places a team **on its gym slot** while **avoid-gym is on** **and** a **feasible non-gym reshuffle** exists (swap / bounded donation / sway—same family as required repair), without conflating that work with **Part II** rank uplift when pending and rank requirements are already met. Implementation of this audit + repair path is **forthgoing**; keep it distinct from optional ranked promotion scoring.
+
+#### Forward-looking: AM / PM balance in allocation
+**Status:** Not in scope for Part II optional promotion or the current surplus target work; document here so a **later** spec/plan can add it without rediscovering context.
+
+**Intent (forthgoing):** When a team’s **pending floating** implies **multiple** quarter slots (e.g. **0.5 FTE** → two slots), product may want the allocator to **prefer spreading** coverage across **AM vs PM** clock bands (e.g. slots 1–2 vs 3–4) as a **soft** quality layer—after ranked preference, preferred PCA, and continuity/gym rules are respected. Single-slot pending (**0.25 FTE**) has no meaningful AM/PM split; higher pending (e.g. **0.75**, **≥1.0**) may need different heuristics (pattern coverage, continuity, duplicate-last-resort) before AM/PM tuning. The V2 tracker may already surface session-oriented hints for staff; **scoring changes** for AM/PM belong in a **follow-up** task group with their own regressions—do not fold them into Part II `compareScores` work until that follow-up is approved.
+
 ## Scenario Guidance
 
 ### Scenario A: Surplus absorbed before Step 3.1
@@ -514,7 +550,7 @@ If raw continuous surplus exists but executable slot capacity cannot realize an 
 If a team already has enough floating coverage and holds a lower-ranked slot, it may still pursue a higher-ranked slot later, but only via bounded no-net-loss reshaping.
 
 ### Scenario E: Harmful donation stays blocked
-If a higher-ranked promotion would require the donor team to give up its own meaningful protection or suffer net loss, the promotion must stay blocked even if the requester's rank would improve.
+If a higher-ranked promotion would require the donor team to give up its **best satisfied ranked preference**, fall below the **fairness floor**, or suffer an **uncompensated net loss**, the promotion must stay blocked even if the requester's rank would improve.
 
 ## Error Handling and Edge Cases
 - If executable slack is zero or negative, Part I should produce zero surplus uplift and behave like the ordinary target path.
@@ -523,6 +559,7 @@ If a higher-ranked promotion would require the donor team to give up its own mea
 - If Step 2 data changes after the user sees the toast, Step 3.1 must recompute and use live state rather than trusting stale projection state.
 - If a team's target is uplifted by surplus but no final Step 3.4 allocation results from that uplift, tooltip/provenance should stay silent rather than implying a surplus-driven slot existed.
 - If optional ranked promotion has no bounded no-net-loss path, the final result should remain at the required-coverage state without manufacturing a promotion.
+- If optional ranked promotion applies some moves then exhausts its bounded pass, orchestration must still proceed to residual extra coverage and final audit; it must not loop until `P1` can no longer be detected at any search depth.
 
 ## Testing Guidance
 This design should be implemented with focused regressions around:
@@ -537,6 +574,8 @@ This design should be implemented with focused regressions around:
 - optional ranked promotion remains possible after required coverage is satisfied
 - optional ranked promotion succeeds for bounded swap/safe-move cases
 - optional ranked promotion rejects harmful donation cases
+- optional ranked promotion runs in a **single bounded pass** and always yields to residual extra coverage + final audit (no unbounded `P1` loop)
+- Step 3.2 preferred PCA+slot and Step 3.3 adjacent-slot commits stay immutable under repair and optional promotion
 - required ranked-gap repair remains distinct from optional ranked promotion
 - V1 behavior stays unchanged when only V2-owned files are touched
 
@@ -555,9 +594,11 @@ This design should be implemented with focused regressions around:
 - shared contracts/types only where needed to carry metadata safely across consumers
 
 ## Implementation Notes
+- **Execution checklist:** `docs/superpowers/plans/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-implementation-plan.md` (Task Group A/B, constraints, regressions). Implementers should follow **this spec + that plan** together.
 - This is a V2-only design unless a later approved spec explicitly expands scope.
 - `rawAveragePCAPerTeam` stays the base developer-facing value and must not be overwritten by surplus-adjusted targets.
 - The target pipeline should be explainable as raw input -> weighted redistribution -> quarter-based operational output.
 - The tooltip/provenance hint is intentionally tiny and should not become a new major UI concept.
 - Part I is foundational and may be implemented first on its own.
 - Part II should remain separable so a later session can implement ranked swap optimization without having to rediscover the design context from scratch.
+- AM / PM balance as an allocator objective is **forthgoing** (see Part II **Forward-looking: AM / PM balance**); keep paired with a future plan when implemented.
