@@ -14,6 +14,8 @@ export type RankedV2RepairDefect =
   | { kind: 'A2'; team: Team; pcaId: string }
   | { kind: 'C1'; team: Team }
   | { kind: 'F1'; team: Team }
+  /** Part III gym-avoidable audit only — never returned from `detectRankedV2RepairDefects` (Constraint 6e). */
+  | { kind: 'G1'; team: Team }
 
 /** Optional ranked promotion opportunity (Constraint 5 — not a B1 defect). */
 export type RankedV2OptionalPromotionOpportunity = { kind: 'P1'; team: Team }
@@ -26,6 +28,17 @@ export type DetectRankedV2RepairDefectsContext = {
   pcaPool: PCAData[]
   teamPrefs: Record<Team, TeamPreferenceInfo>
   baselineAllocations?: PCAAllocation[]
+}
+
+/** Same fields as `Step3CommittedFloatingAnchor` in `repairMoves` (defined here to avoid circular imports). */
+export type RankedV2CommittedStep3FloatingAnchor = {
+  team: Team
+  slot: Slot
+  pcaId: string
+}
+
+export type DetectRankedV2GymAvoidableDefectsContext = DetectRankedV2RepairDefectsContext & {
+  committedStep3Anchors?: RankedV2CommittedStep3FloatingAnchor[]
 }
 
 export type RankedV2RepairAuditState = {
@@ -237,49 +250,6 @@ export function detectRankedV2RepairDefects(
 ): RankedV2RepairDefect[] {
   const state = buildAuditState(context)
   const defects: RankedV2RepairDefect[] = []
-
-  // #region agent log (H1) FO multi-rank defect snapshot
-  if (state.teamPrefs.FO.rankedSlots.length > 1) {
-    const rankedSlots = state.teamPrefs.FO.rankedSlots.filter((slot): slot is Slot => isValidSlot(slot))
-    const coveredRankedSlots = rankedSlots.filter((slot) => teamHasFloatingCoverageOnSlot(state, 'FO', slot))
-    const missingRankedSlots = getMissingRankedSlots(state, 'FO')
-    const initialTargetSlots = Math.round(((state.initialPendingFTE.FO ?? 0) + 1e-9) / 0.25)
-    const firstCoveredRank = rankedSlots.findIndex((slot) => coveredRankedSlots.includes(slot))
-    const coveredHigherRankSlots = rankedSlots.slice(0, Math.max(firstCoveredRank, 0))
-    ;(typeof fetch === 'function'
-      ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9381e2' },
-          body: JSON.stringify({
-            sessionId: '9381e2',
-            runId: 'fo-4-3-investigation',
-            hypothesisId: 'H1',
-            location: 'lib/algorithms/floatingPcaV2/repairAudit.ts:detectRankedV2RepairDefects',
-            message: 'FO multi-rank B1 defect snapshot',
-            data: {
-              team: 'FO',
-              initialPendingFTE: state.initialPendingFTE.FO ?? null,
-              pendingFTE: state.pendingFTE.FO ?? null,
-              initialTargetSlots,
-              rankedSlots,
-              coveredRankedSlots,
-              missingRankedSlots,
-              recoverableMissingRankedSlots: missingRankedSlots.map((slot) => ({
-                slot,
-                canRescue: canRescueSlotForTeam(state, 'FO', slot),
-              })),
-              assignedSlots: state.assignedSlotsByTeam.FO,
-              trueStep3AssignedSlots: state.trueStep3AssignedSlotsByTeam.FO,
-              alreadyHasLowerRankedCoverageWhileHigherMissing:
-                coveredRankedSlots.length > 0 && coveredHigherRankSlots.some((slot) => missingRankedSlots.includes(slot)),
-              wouldTriggerB1: missingRankedSlots.some((slot) => canRescueSlotForTeam(state, 'FO', slot)),
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {})
-      : Promise.resolve())
-  }
-  // #endregion
 
   for (const team of state.orderedTeams) {
     if (!teamHadMeaningfulPending(state, team)) continue
@@ -829,4 +799,635 @@ function canAcquireUsefulNonDuplicateSlot(state: AuditState, team: Team): boolea
   }
 
   return false
+}
+
+/** Upper bound on generated gym-feasibility patterns per team (existence + repair listing). */
+export const MAX_GYM_FEASIBILITY_PROBE_CANDIDATES = 400
+
+export type RankedV2GymFeasibilitySlotUpdate = {
+  pcaId: string
+  slot: Slot
+  fromTeam: Team | null
+  toTeam: Team | null
+}
+
+type GymFeasibilitySlotUpdate = RankedV2GymFeasibilitySlotUpdate
+
+function cloneAllocationsForGymProbe(allocations: PCAAllocation[]): PCAAllocation[] {
+  return allocations.map((allocation) => ({ ...allocation }))
+}
+
+function setSlotTeamOnAllocation(allocation: PCAAllocation, slot: Slot, team: Team | null): void {
+  if (slot === 1) allocation.slot1 = team
+  else if (slot === 2) allocation.slot2 = team
+  else if (slot === 3) allocation.slot3 = team
+  else allocation.slot4 = team
+}
+
+function countAssignedSlotsOnAllocationForGym(allocation: PCAAllocation): number {
+  return VALID_SLOTS.filter((slot) => getSlotTeam(allocation, slot) != null).length
+}
+
+function updateDerivedAllocationFieldsForGym(allocation: PCAAllocation): void {
+  const assigned = countAssignedSlotsOnAllocationForGym(allocation)
+  allocation.slot_assigned = assigned * 0.25
+  allocation.fte_remaining = Math.max(0, allocation.fte_pca - allocation.slot_assigned)
+}
+
+function isAllocationWithinCapacityForGym(allocation: PCAAllocation): boolean {
+  return countAssignedSlotsOnAllocationForGym(allocation) * 0.25 <= allocation.fte_pca + 1e-9
+}
+
+function getOrCreateAllocationForGymProbe(
+  allocations: PCAAllocation[],
+  pcaPool: PCAData[],
+  pcaId: string
+): PCAAllocation | null {
+  const existing = allocations.find((allocation) => allocation.staff_id === pcaId)
+  if (existing) return existing
+  const pca = pcaPool.find((candidate) => candidate.id === pcaId)
+  if (!pca) return null
+  const created: PCAAllocation = {
+    id: `gym-probe-${String(pca.id)}`,
+    schedule_id: '',
+    staff_id: pca.id,
+    team: 'FO',
+    fte_pca: pca.fte_pca,
+    fte_remaining: pca.fte_pca,
+    slot_assigned: 0,
+    slot_whole: null,
+    slot1: null,
+    slot2: null,
+    slot3: null,
+    slot4: null,
+    leave_type: pca.leave_type,
+    special_program_ids: null,
+  }
+  allocations.push(created)
+  return created
+}
+
+function applyGymFeasibilityUpdates(
+  base: PCAAllocation[],
+  pcaPool: PCAData[],
+  updates: GymFeasibilitySlotUpdate[]
+): PCAAllocation[] | null {
+  const next = cloneAllocationsForGymProbe(base)
+  for (const update of updates) {
+    const allocation = getOrCreateAllocationForGymProbe(next, pcaPool, update.pcaId)
+    if (!allocation) return null
+    if (getSlotTeam(allocation, update.slot) !== update.fromTeam) return null
+    setSlotTeamOnAllocation(allocation, update.slot, update.toTeam)
+    updateDerivedAllocationFieldsForGym(allocation)
+    if (!isAllocationWithinCapacityForGym(allocation)) return null
+  }
+  return next
+}
+
+function committedAnchorsStillHoldForGymProbe(
+  allocations: PCAAllocation[],
+  anchors?: RankedV2CommittedStep3FloatingAnchor[]
+): boolean {
+  if (!anchors?.length) return true
+  for (const anchor of anchors) {
+    const row = allocations.find((allocation) => allocation.staff_id === anchor.pcaId)
+    if (getSlotTeam(row, anchor.slot) !== anchor.team) return false
+  }
+  return true
+}
+
+function countAssignedSlotsByTeamForGym(allocations: PCAAllocation[]): Record<Team, number> {
+  const counts = createTeamRecord(() => 0)
+  for (const allocation of allocations) {
+    for (const slot of VALID_SLOTS) {
+      const owner = getSlotTeam(allocation, slot)
+      if (owner) counts[owner] += 1
+    }
+  }
+  return counts
+}
+
+function computePendingFromAllocationsForGymProbe(
+  initialPendingFTE: Record<Team, number>,
+  baselineAssignedSlots: Record<Team, number>,
+  allocations: PCAAllocation[]
+): Record<Team, number> {
+  const finalAssignedCounts = countAssignedSlotsByTeamForGym(allocations)
+  const next = createTeamRecord(() => 0)
+  for (const team of TEAMS) {
+    const pendingSlotsAtStep34Start = Math.round(((initialPendingFTE[team] ?? 0) + 1e-9) / 0.25)
+    const newlyCoveredSlots = finalAssignedCounts[team] - baselineAssignedSlots[team]
+    const remainingSlots = Math.max(0, pendingSlotsAtStep34Start - newlyCoveredSlots)
+    next[team] = remainingSlots * 0.25
+  }
+  return next
+}
+
+function isTrueStep3FloatingCellForGym(
+  allocations: PCAAllocation[],
+  baselineByStaffId: Map<string, PCAAllocation | undefined>,
+  floatingPcaIds: Set<string>,
+  team: Team,
+  pcaId: string,
+  slot: Slot
+): boolean {
+  if (!floatingPcaIds.has(pcaId)) return false
+  const row = allocations.find((allocation) => allocation.staff_id === pcaId)
+  const baseline = baselineByStaffId.get(pcaId)
+  if (!row || getSlotTeam(row, slot) !== team) return false
+  if (getSlotTeam(baseline, slot) === team) return false
+  return true
+}
+
+function countGlobalGymLastResortTrueStep3ForGym(
+  allocations: PCAAllocation[],
+  teamPrefs: Record<Team, TeamPreferenceInfo>,
+  baselineByStaffId: Map<string, PCAAllocation | undefined>,
+  floatingPcaIds: Set<string>
+): number {
+  let count = 0
+  for (const allocation of allocations) {
+    if (!floatingPcaIds.has(allocation.staff_id)) continue
+    const baseline = baselineByStaffId.get(allocation.staff_id)
+    for (const slot of VALID_SLOTS) {
+      const owner = getSlotTeam(allocation, slot)
+      if (!owner) continue
+      const pref = teamPrefs[owner]
+      if (!pref?.avoidGym || pref.gymSlot == null || !isValidSlot(pref.gymSlot)) continue
+      if (pref.gymSlot !== slot) continue
+      if (getSlotTeam(baseline, slot) === owner) continue
+      count += 1
+    }
+  }
+  return count
+}
+
+function teamHasTrueStep3OnConfiguredGymSlot(
+  allocations: PCAAllocation[],
+  baselineByStaffId: Map<string, PCAAllocation | undefined>,
+  floatingPcaIds: Set<string>,
+  team: Team,
+  gymSlot: Slot
+): boolean {
+  for (const allocation of allocations) {
+    if (!floatingPcaIds.has(allocation.staff_id)) continue
+    if (isTrueStep3FloatingCellForGym(allocations, baselineByStaffId, floatingPcaIds, team, allocation.staff_id, gymSlot)) {
+      return true
+    }
+  }
+  return false
+}
+
+function isNonGymSlotForAvoidTeam(teamPrefs: Record<Team, TeamPreferenceInfo>, team: Team, slot: Slot): boolean {
+  const pref = teamPrefs[team]
+  if (pref.avoidGym && pref.gymSlot === slot) return false
+  return true
+}
+
+function gymStoryImprovesForTargetTeam(
+  beforeAllocations: PCAAllocation[],
+  afterAllocations: PCAAllocation[],
+  targetTeam: Team,
+  teamPrefs: Record<Team, TeamPreferenceInfo>,
+  baselineByStaffId: Map<string, PCAAllocation | undefined>,
+  floatingPcaIds: Set<string>,
+  initialPendingFTE: Record<Team, number>,
+  baselineAssignedSlots: Record<Team, number>
+): boolean {
+  const pref = teamPrefs[targetTeam]
+  if (!pref?.avoidGym || pref.gymSlot == null || !isValidSlot(pref.gymSlot)) return false
+  const gymSlot = pref.gymSlot
+
+  const onBefore = teamHasTrueStep3OnConfiguredGymSlot(
+    beforeAllocations,
+    baselineByStaffId,
+    floatingPcaIds,
+    targetTeam,
+    gymSlot
+  )
+  const onAfter = teamHasTrueStep3OnConfiguredGymSlot(
+    afterAllocations,
+    baselineByStaffId,
+    floatingPcaIds,
+    targetTeam,
+    gymSlot
+  )
+  const globalBefore = countGlobalGymLastResortTrueStep3ForGym(
+    beforeAllocations,
+    teamPrefs,
+    baselineByStaffId,
+    floatingPcaIds
+  )
+  const globalAfter = countGlobalGymLastResortTrueStep3ForGym(
+    afterAllocations,
+    teamPrefs,
+    baselineByStaffId,
+    floatingPcaIds
+  )
+
+  const nextPending = computePendingFromAllocationsForGymProbe(
+    initialPendingFTE,
+    baselineAssignedSlots,
+    afterAllocations
+  )
+  const targetMeetsPending =
+    roundToNearestQuarterWithMidpoint(nextPending[targetTeam] ?? 0) < 0.25
+
+  if (onBefore && !onAfter) return true
+  if (onBefore && onAfter) {
+    return globalAfter < globalBefore && targetMeetsPending
+  }
+  return false
+}
+
+function requiredRepairDefectsClearForGymProbe(
+  ctx: DetectRankedV2RepairDefectsContext,
+  nextAllocations: PCAAllocation[],
+  nextPendingFTE: Record<Team, number>
+): boolean {
+  return (
+    detectRankedV2RepairDefects({
+      teamOrder: ctx.teamOrder,
+      initialPendingFTE: ctx.initialPendingFTE,
+      pendingFTE: nextPendingFTE,
+      allocations: nextAllocations,
+      pcaPool: ctx.pcaPool,
+      teamPrefs: ctx.teamPrefs,
+      baselineAllocations: ctx.baselineAllocations,
+    }).length === 0
+  )
+}
+
+function tryGymFeasibilityOutcome(
+  beforeAllocations: PCAAllocation[],
+  nextAllocations: PCAAllocation[] | null,
+  targetTeam: Team,
+  ctx: DetectRankedV2GymAvoidableDefectsContext,
+  baselineByStaffId: Map<string, PCAAllocation | undefined>,
+  floatingPcaIds: Set<string>,
+  baselineAssignedSlots: Record<Team, number>
+): boolean {
+  if (!nextAllocations) return false
+  if (!committedAnchorsStillHoldForGymProbe(nextAllocations, ctx.committedStep3Anchors)) return false
+
+  const nextPending = computePendingFromAllocationsForGymProbe(
+    ctx.initialPendingFTE,
+    baselineAssignedSlots,
+    nextAllocations
+  )
+  if (!requiredRepairDefectsClearForGymProbe(ctx, nextAllocations, nextPending)) return false
+  if (
+    !gymStoryImprovesForTargetTeam(
+      beforeAllocations,
+      nextAllocations,
+      targetTeam,
+      ctx.teamPrefs,
+      baselineByStaffId,
+      floatingPcaIds,
+      ctx.initialPendingFTE,
+      baselineAssignedSlots
+    )
+  ) {
+    return false
+  }
+
+  return true
+}
+
+/** Slot update batch for Part III gym-avoidance repair (same bounded family as G1 feasibility). */
+export type RankedV2GymFeasibilityReshuffleBatch = ReadonlyArray<RankedV2GymFeasibilitySlotUpdate>
+
+function forEachRankedV2GymFeasibilityValidBatch(
+  ctx: DetectRankedV2GymAvoidableDefectsContext,
+  targetTeam: Team,
+  auditState: RankedV2RepairAuditState,
+  onValidBatch: (updates: GymFeasibilitySlotUpdate[]) => boolean
+): boolean {
+  const beforeAllocations = ctx.allocations
+  const baselineRows = ctx.baselineAllocations ?? []
+  const baselineByStaffId = new Map<string, PCAAllocation | undefined>()
+  for (const row of baselineRows) {
+    baselineByStaffId.set(row.staff_id, row)
+  }
+  const floatingPcaIds = new Set(auditState.orderedPcas.map((pca) => pca.id))
+  const baselineAssignedSlots = countAssignedSlotsByTeamForGym(baselineRows)
+
+  let generated = 0
+
+  const probeValid = (updates: GymFeasibilitySlotUpdate[]): boolean => {
+    if (generated >= MAX_GYM_FEASIBILITY_PROBE_CANDIDATES) return false
+    generated += 1
+    const next = applyGymFeasibilityUpdates(beforeAllocations, ctx.pcaPool, updates)
+    if (
+      !tryGymFeasibilityOutcome(
+        beforeAllocations,
+        next,
+        targetTeam,
+        ctx,
+        baselineByStaffId,
+        floatingPcaIds,
+        baselineAssignedSlots
+      )
+    ) {
+      return false
+    }
+    return onValidBatch(updates)
+  }
+
+  const pref = ctx.teamPrefs[targetTeam]
+  const gymSlot = pref.gymSlot
+  if (gymSlot == null || !isValidSlot(gymSlot)) return false
+
+  const sortedPcaIds = [...auditState.orderedPcas]
+    .map((pca) => pca.id)
+    .sort((a, b) => String(a).localeCompare(String(b)))
+
+  for (const pcaId of sortedPcaIds) {
+    if (
+      !isTrueStep3FloatingCellForGym(
+        beforeAllocations,
+        baselineByStaffId,
+        floatingPcaIds,
+        targetTeam,
+        pcaId,
+        gymSlot
+      )
+    ) {
+      continue
+    }
+
+    const pcaData = auditState.orderedPcas.find((p) => p.id === pcaId)
+    if (!pcaData) continue
+    const supported = getNormalizedAvailableSlots(pcaData)
+
+    for (const destSlot of VALID_SLOTS) {
+      if (destSlot === gymSlot) continue
+      if (!supported.includes(destSlot)) continue
+      if (!isNonGymSlotForAvoidTeam(ctx.teamPrefs, targetTeam, destSlot)) continue
+
+      const destRow = beforeAllocations.find((a) => a.staff_id === pcaId)
+      if (!destRow || getSlotTeam(destRow, destSlot) != null) continue
+
+      if (
+        probeValid([
+          { pcaId, slot: gymSlot, fromTeam: targetTeam, toTeam: null },
+          { pcaId, slot: destSlot, fromTeam: null, toTeam: targetTeam },
+        ])
+      ) {
+        return true
+      }
+    }
+  }
+
+  for (const pcaId of sortedPcaIds) {
+    if (
+      !isTrueStep3FloatingCellForGym(
+        beforeAllocations,
+        baselineByStaffId,
+        floatingPcaIds,
+        targetTeam,
+        pcaId,
+        gymSlot
+      )
+    ) {
+      continue
+    }
+
+    const pcaData = auditState.orderedPcas.find((p) => p.id === pcaId)
+    if (!pcaData) continue
+    const supported = getNormalizedAvailableSlots(pcaData)
+    const row = beforeAllocations.find((a) => a.staff_id === pcaId)
+    if (!row) continue
+
+    for (const otherSlot of VALID_SLOTS) {
+      if (otherSlot === gymSlot) continue
+      if (!supported.includes(otherSlot) || !supported.includes(gymSlot)) continue
+
+      const ownerOther = getSlotTeam(row, otherSlot)
+      if (!ownerOther || ownerOther === targetTeam) continue
+      if (
+        !isTrueStep3FloatingCellForGym(
+          beforeAllocations,
+          baselineByStaffId,
+          floatingPcaIds,
+          ownerOther,
+          pcaId,
+          otherSlot
+        )
+      ) {
+        continue
+      }
+
+      if (
+        probeValid([
+          { pcaId, slot: gymSlot, fromTeam: targetTeam, toTeam: ownerOther },
+          { pcaId, slot: otherSlot, fromTeam: ownerOther, toTeam: targetTeam },
+        ])
+      ) {
+        return true
+      }
+    }
+  }
+
+  for (const pcaA of sortedPcaIds) {
+    if (
+      !isTrueStep3FloatingCellForGym(
+        beforeAllocations,
+        baselineByStaffId,
+        floatingPcaIds,
+        targetTeam,
+        pcaA,
+        gymSlot
+      )
+    ) {
+      continue
+    }
+
+    const rowA = beforeAllocations.find((a) => a.staff_id === pcaA)
+    const pcaDataA = auditState.orderedPcas.find((p) => p.id === pcaA)
+    if (!rowA || !pcaDataA) continue
+    if (!getNormalizedAvailableSlots(pcaDataA).includes(gymSlot)) continue
+
+    for (const pcaB of sortedPcaIds) {
+      if (pcaA === pcaB) continue
+      const rowB = beforeAllocations.find((a) => a.staff_id === pcaB)
+      const pcaDataB = auditState.orderedPcas.find((p) => p.id === pcaB)
+      if (!rowB || !pcaDataB) continue
+
+      for (const slotB of VALID_SLOTS) {
+        const ownerB = getSlotTeam(rowB, slotB)
+        if (!ownerB || ownerB === targetTeam) continue
+        if (
+          !isTrueStep3FloatingCellForGym(
+            beforeAllocations,
+            baselineByStaffId,
+            floatingPcaIds,
+            ownerB,
+            pcaB,
+            slotB
+          )
+        ) {
+          continue
+        }
+        if (!getNormalizedAvailableSlots(pcaDataB).includes(slotB)) continue
+
+        if (
+          probeValid([
+            { pcaId: pcaA, slot: gymSlot, fromTeam: targetTeam, toTeam: ownerB },
+            { pcaId: pcaB, slot: slotB, fromTeam: ownerB, toTeam: targetTeam },
+          ])
+        ) {
+          return true
+        }
+      }
+    }
+  }
+
+  for (const pcaId of sortedPcaIds) {
+    if (
+      !donorHasTrueStep3Ownership(auditState, targetTeam, pcaId, gymSlot) ||
+      !teamCanDonateBoundedly(auditState, targetTeam, pcaId, gymSlot)
+    ) {
+      continue
+    }
+
+    for (const recipient of TEAMS) {
+      if (recipient === targetTeam) continue
+      if (probeValid([{ pcaId, slot: gymSlot, fromTeam: targetTeam, toTeam: recipient }])) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+/**
+ * Lists update batches that satisfy Part III feasibility (anchors, required-repair clear, gym story)
+ * in the same enumeration order as `detectRankedV2GymAvoidableDefects` feasibility.
+ */
+export function listRankedV2GymFeasibilityValidReshuffleBatches(
+  ctx: DetectRankedV2GymAvoidableDefectsContext,
+  targetTeam: Team,
+  maxBatches: number
+): RankedV2GymFeasibilitySlotUpdate[][] {
+  const auditState = buildAuditState(ctx)
+  const out: RankedV2GymFeasibilitySlotUpdate[][] = []
+  forEachRankedV2GymFeasibilityValidBatch(ctx, targetTeam, auditState, (updates) => {
+    out.push([...updates])
+    return out.length >= maxBatches
+  })
+  return out
+}
+
+/** Lexicographic gym-only outcome comparison for Part III repair candidate selection (lower is better). */
+export function compareRankedV2GymAvoidanceRepairOutcomes(
+  a: { targetOffGym: boolean; globalGymLastResort: number; sortKey: string },
+  b: { targetOffGym: boolean; globalGymLastResort: number; sortKey: string }
+): number {
+  if (a.targetOffGym !== b.targetOffGym) {
+    return a.targetOffGym ? -1 : 1
+  }
+  if (a.globalGymLastResort !== b.globalGymLastResort) {
+    return a.globalGymLastResort - b.globalGymLastResort
+  }
+  return a.sortKey.localeCompare(b.sortKey)
+}
+
+export function gymFeasibilityBatchSortKey(
+  targetTeam: Team,
+  updates: ReadonlyArray<RankedV2GymFeasibilitySlotUpdate>
+): string {
+  return `g1:${targetTeam}:${updates
+    .map((u) => `${u.pcaId}:${u.slot}:${String(u.fromTeam)}->${String(u.toTeam)}`)
+    .join('|')}`
+}
+
+/** Gym-only scoring keys for Part III repair candidate ordering (lower global / off-gym preferred). */
+export function getRankedV2GymAvoidanceRepairOutcomeMetrics(
+  allocations: PCAAllocation[],
+  targetTeam: Team,
+  ctx: Pick<DetectRankedV2GymAvoidableDefectsContext, 'teamPrefs' | 'baselineAllocations' | 'pcaPool'>
+): { targetOnConfiguredGym: boolean; globalGymLastResortCount: number } {
+  const baselineRows = ctx.baselineAllocations ?? []
+  const baselineByStaffId = new Map<string, PCAAllocation | undefined>()
+  for (const row of baselineRows) {
+    baselineByStaffId.set(row.staff_id, row)
+  }
+  const floatingPcaIds = new Set(ctx.pcaPool.map((pca) => pca.id))
+  const pref = ctx.teamPrefs[targetTeam]
+  const gymSlot = pref?.gymSlot
+  const targetOnConfiguredGym =
+    gymSlot != null && isValidSlot(gymSlot)
+      ? teamHasTrueStep3OnConfiguredGymSlot(
+          allocations,
+          baselineByStaffId,
+          floatingPcaIds,
+          targetTeam,
+          gymSlot
+        )
+      : false
+  return {
+    targetOnConfiguredGym,
+    globalGymLastResortCount: countGlobalGymLastResortTrueStep3ForGym(
+      allocations,
+      ctx.teamPrefs,
+      baselineByStaffId,
+      floatingPcaIds
+    ),
+  }
+}
+
+function enumerateFeasibleNonGymReshuffleExists(
+  ctx: DetectRankedV2GymAvoidableDefectsContext,
+  targetTeam: Team,
+  auditState: RankedV2RepairAuditState
+): boolean {
+  return forEachRankedV2GymFeasibilityValidBatch(ctx, targetTeam, auditState, () => true)
+}
+
+/**
+ * Part III (`G1`) — teams with avoid-gym on a configured gym clock slot, Step-3–owned floating
+ * on that slot, and a feasible bounded reshuffle (swap / bounded safe donation / sway) that
+ * keeps committed Step 3.2/3.3 anchors when provided, clears required repair defects, and improves
+ * the gym story for the target team per `gymStoryImprovesForTargetTeam`.
+ *
+ * Not used by `detectOptionalRankedPromotionOpportunities` / required-repair gates (Constraint 6e).
+ */
+export function detectRankedV2GymAvoidableDefects(
+  ctx: DetectRankedV2GymAvoidableDefectsContext
+): RankedV2RepairDefect[] {
+  const auditState = buildAuditState(ctx)
+  const defects: RankedV2RepairDefect[] = []
+
+  for (const team of auditState.orderedTeams) {
+    const pref = auditState.teamPrefs[team]
+    if (!pref?.avoidGym || pref.gymSlot == null || !isValidSlot(pref.gymSlot)) continue
+
+    const gymSlot = pref.gymSlot
+    const baselineRows = ctx.baselineAllocations ?? []
+    const baselineByStaffId = new Map<string, PCAAllocation | undefined>()
+    for (const row of baselineRows) {
+      baselineByStaffId.set(row.staff_id, row)
+    }
+    const floatingPcaIds = new Set(auditState.orderedPcas.map((pca) => pca.id))
+
+    if (
+      !teamHasTrueStep3OnConfiguredGymSlot(
+        ctx.allocations,
+        baselineByStaffId,
+        floatingPcaIds,
+        team,
+        gymSlot
+      )
+    ) {
+      continue
+    }
+
+    if (enumerateFeasibleNonGymReshuffleExists(ctx, team, auditState)) {
+      defects.push({ kind: 'G1', team })
+    }
+  }
+
+  return defects
 }

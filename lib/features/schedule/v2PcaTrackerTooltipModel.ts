@@ -4,6 +4,7 @@ import {
   formatV2RepairReasonLabel,
   formatV2SlotSelectionPhaseLabel,
 } from '@/lib/features/schedule/pcaTrackerTooltip'
+import { V2_GYM_UI_UNAVOIDABLE_GYM_SHORT } from '@/lib/features/schedule/v2GymUiStrings'
 import {
   formatStep3FulfillmentSemanticsCompactLine,
   type Step3FloatingFulfillmentSemantics,
@@ -119,7 +120,7 @@ function buildStatusCell(allocationLog?: TeamAllocationLog): Pick<V2PcaTrackerSu
   const amPmLabel = allocationLog.summary.amPmBalanced ? 'AM/PM balanced' : 'AM/PM mixed'
   const gymStatus = resolveFinalGymUsageStatus(allocationLog.summary)
   const gymLabel =
-    gymStatus === 'used-last-resort' ? 'Gym used only as last resort' : 'Gym avoided'
+    gymStatus === 'used-last-resort' ? V2_GYM_UI_UNAVOIDABLE_GYM_SHORT : 'Gym avoided'
   return {
     value,
     subvalue: `${amPmLabel} · ${gymLabel}`,
@@ -418,7 +419,7 @@ export function buildV2PcaTrackerTooltipModel(args: {
       }
       return true
     })
-    .map((defect) => formatV2RepairAuditDefectLabel(defect as 'B1' | 'A1' | 'A2' | 'C1' | 'F1'))
+    .map((defect) => formatV2RepairAuditDefectLabel(defect as 'B1' | 'A1' | 'A2' | 'C1' | 'F1' | 'G1'))
   const repairIssuePills = [
     ...new Set([...(usedDuplicateFloatingSlot ? ['Duplicate pressure'] : []), ...defectPills]),
   ]

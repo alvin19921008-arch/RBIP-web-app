@@ -1,5 +1,11 @@
 import type { FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
 import { getQualifyingDuplicateFloatingAssignmentsForSlot } from '@/lib/features/schedule/duplicateFloatingSemantics'
+import {
+  V2_GYM_UI_AVOIDANCE_REPAIR_APPLIED,
+  V2_GYM_UI_UNAVOIDABLE_GYM_LONG,
+  v2GymLastResortResultLineWithActor,
+  v2GymUnavoidableDetailWithActor,
+} from '@/lib/features/schedule/v2GymUiStrings'
 import { getTeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
 import type { PCAPreference } from '@/types/allocation'
 import type { GymUsageStatus, SlotAssignmentLog, TeamAllocationLog } from '@/types/schedule'
@@ -110,8 +116,11 @@ function buildDuplicateFloatingReasonLines(args: {
 
 function buildAssignmentResultLabel(assignment: SlotAssignmentLog): string {
   const who = displayPcaName(assignment)
+  if (assignment.allocationStage === 'repair' && assignment.repairReason === 'gym-avoidance') {
+    return `${V2_GYM_UI_AVOIDANCE_REPAIR_APPLIED} · ${who}`
+  }
   if (assignment.slotSelectionPhase === 'gym-last-resort') {
-    return `Gym last resort · ${who}`
+    return v2GymLastResortResultLineWithActor(who)
   }
   if (assignment.pcaSelectionTier === 'preferred') {
     return `Preferred PCA ${who}`
@@ -163,7 +172,11 @@ function buildAssignmentDetailLabel(
   })
 
   if (assignment.slotSelectionPhase === 'gym-last-resort') {
-    return `Gym used only as last resort (${who})`
+    return v2GymUnavoidableDetailWithActor(who)
+  }
+
+  if (assignment.allocationStage === 'repair' && assignment.repairReason === 'gym-avoidance') {
+    return V2_GYM_UI_AVOIDANCE_REPAIR_APPLIED
   }
 
   const algorithmSaysStacked =
@@ -267,7 +280,7 @@ function buildReasons(args: {
 
   if (avoidGym) {
     if (resolveFinalGymUsageStatus(teamLog.summary) === 'used-last-resort') {
-      reasons.push({ text: 'Gym was used only because no non-gym path remained.' })
+      reasons.push({ text: V2_GYM_UI_UNAVOIDABLE_GYM_LONG })
     } else if (gymSlot === 1 || gymSlot === 2 || gymSlot === 3 || gymSlot === 4) {
       reasons.push({
         text: `Gym slot (${getTimeRange(gymSlot)}) was not used because pending could still be covered using other slots first.`,

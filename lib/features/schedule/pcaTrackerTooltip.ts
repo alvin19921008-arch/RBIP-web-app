@@ -1,5 +1,6 @@
-import type { Step3FlowChoice } from './step3DialogFlow'
 import type { TeamAllocationLog } from '../../../types/schedule'
+import type { Step3FlowChoice } from './step3DialogFlow'
+import { V2_GYM_UI_AVOIDANCE_REPAIR_APPLIED, V2_GYM_UI_LAST_RESORT_SLOT_PATH } from './v2GymUiStrings'
 
 export type PcaTrackerTooltipVariant = 'v1' | 'v2'
 
@@ -12,7 +13,7 @@ export function formatV2SlotSelectionPhaseLabel(
   if (phase === 'ranked-unused') return 'Ranked unassigned slot'
   if (phase === 'unranked-unused') return 'Unranked non-gym unassigned slot'
   if (phase === 'ranked-duplicate') return 'Ranked duplicate assignment'
-  if (phase === 'gym-last-resort') return 'Gym (last resort)'
+  if (phase === 'gym-last-resort') return V2_GYM_UI_LAST_RESORT_SLOT_PATH
   return null
 }
 
@@ -25,10 +26,11 @@ export function formatV2RepairReasonLabel(
   if (reason === 'duplicate-reduction') return 'Duplicate reduction'
   if (reason === 'continuity-reduction') return 'Continuity'
   if (reason === 'ranked-promotion') return 'Ranked promotion via bounded swap'
+  if (reason === 'gym-avoidance') return V2_GYM_UI_AVOIDANCE_REPAIR_APPLIED
   return null
 }
 
-export function formatV2RepairAuditDefectLabel(kind: 'B1' | 'A1' | 'A2' | 'C1' | 'F1'): string {
+export function formatV2RepairAuditDefectLabel(kind: 'B1' | 'A1' | 'A2' | 'C1' | 'F1' | 'G1'): string {
   switch (kind) {
     case 'B1':
       return 'Ranked coverage gap'
@@ -39,6 +41,8 @@ export function formatV2RepairAuditDefectLabel(kind: 'B1' | 'A1' | 'A2' | 'C1' |
       return 'Continuity'
     case 'F1':
       return 'Fairness floor'
+    case 'G1':
+      return 'Avoidable gym (bounded off-gym reshuffle exists)'
     default:
       return kind
   }

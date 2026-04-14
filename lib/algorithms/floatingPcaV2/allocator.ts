@@ -22,10 +22,16 @@ import { applyInvalidSlotPairingForDisplay } from '@/lib/algorithms/floatingPcaS
 import { finalizeRankedSlotFloatingTracker } from '@/lib/algorithms/floatingPcaV2/trackerSummaryDerivations'
 import { buildEffectiveRankedPreferences } from '@/lib/algorithms/floatingPcaV2/effectivePreferences'
 import { runRankedV2DraftAllocation } from '@/lib/algorithms/floatingPcaV2/draftAllocation'
-import { detectRankedV2RepairDefects, type RankedV2RepairDefect } from '@/lib/algorithms/floatingPcaV2/repairAudit'
+import {
+  detectRankedV2GymAvoidableDefects,
+  detectRankedV2RepairDefects,
+  type RankedV2RepairDefect,
+} from '@/lib/algorithms/floatingPcaV2/repairAudit'
 import {
   generateOptionalPromotionCandidates,
   generateRepairCandidates,
+  runGymAvoidanceRepairLoop,
+  MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS,
   type Step3CommittedFloatingAnchor,
 } from '@/lib/algorithms/floatingPcaV2/repairMoves'
 import {
@@ -34,7 +40,10 @@ import {
 } from '@/lib/algorithms/floatingPcaV2/scoreSchedule'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 
+/** Bounded iterations for required-repair loop (`runRepairLoop`). */
 const MAX_REPAIR_ITERATIONS = 8
+/** Part III gym-avoidance cap (=6); passed into `runGymAvoidanceRepairLoop` — Task Group C / Task C3 spec. */
+const MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS_ALLOCATOR = MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS
 const MAX_CANDIDATES_PER_DEFECT = 24
 
 function createEmptyPendingFTE(): Record<Team, number> {
@@ -80,10 +89,11 @@ function computePendingFromAllocations(
 
 function getRepairReason(
   kind: RankedV2RepairDefect['kind']
-): 'ranked-coverage' | 'fairness-floor' | 'duplicate-reduction' | 'continuity-reduction' {
+): 'ranked-coverage' | 'fairness-floor' | 'duplicate-reduction' | 'continuity-reduction' | 'gym-avoidance' {
   if (kind === 'B1') return 'ranked-coverage'
   if (kind === 'C1') return 'continuity-reduction'
   if (kind === 'A1' || kind === 'A2') return 'duplicate-reduction'
+  if (kind === 'G1') return 'gym-avoidance'
   return 'fairness-floor'
 }
 
@@ -165,6 +175,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
     | 'duplicate-reduction'
     | 'continuity-reduction'
     | 'ranked-promotion'
+    | 'gym-avoidance'
   >()
 
   runRankedV2DraftAllocation({
@@ -192,7 +203,8 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
   }
 
   const sortDefects = (defects: RankedV2RepairDefect[]): RankedV2RepairDefect[] => {
-    const kindOrder: RankedV2RepairDefect['kind'][] = ['B1', 'F1', 'A1', 'A2', 'C1']
+    // G1 is Part III only and is never returned from detectRankedV2RepairDefects (6e); listed last so merged lists sort deterministically.
+    const kindOrder: RankedV2RepairDefect['kind'][] = ['B1', 'F1', 'A1', 'A2', 'C1', 'G1']
     return [...defects].sort((a, b) => {
       const kindDiff = kindOrder.indexOf(a.kind) - kindOrder.indexOf(b.kind)
       if (kindDiff !== 0) return kindDiff
@@ -406,6 +418,22 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
         })
         if (candidateDefects.length > 0) continue
 
+        // Constraint 6f: optional promotion must not accept a post-state that would raise Part III `G1`.
+        if (
+          detectRankedV2GymAvoidableDefects({
+            teamOrder,
+            initialPendingFTE,
+            pendingFTE: candidatePendingFTE,
+            allocations: candidate.allocations,
+            pcaPool,
+            teamPrefs,
+            baselineAllocations: existingAllocations,
+            committedStep3Anchors,
+          }).length > 0
+        ) {
+          continue
+        }
+
         const candidateScore = buildRankedSlotAllocationScore({
           allocations: candidate.allocations,
           initialPendingFTE,
@@ -474,6 +502,48 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
   }
 
   runRepairLoop()
+
+  runGymAvoidanceRepairLoop({
+    teamOrder,
+    initialPendingFTE,
+    pendingFTE,
+    allocations,
+    pcaPool,
+    teamPrefs,
+    baselineAllocations: existingAllocations,
+    baselineAssignedSlots,
+    committedStep3Anchors,
+    maxIterations: MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS_ALLOCATOR,
+    onAcceptedMove: (candidate) => {
+      for (const assignment of candidate.repairAssignments) {
+        acceptedRepairReasons.set(
+          `${assignment.team}:${assignment.pcaId}:${assignment.slot}`,
+          'gym-avoidance'
+        )
+      }
+    },
+  })
+
+  repairAuditDefects = detectRankedV2RepairDefects({
+    teamOrder,
+    initialPendingFTE,
+    pendingFTE,
+    allocations,
+    pcaPool,
+    teamPrefs,
+    baselineAllocations: existingAllocations,
+  })
+  setRepairAuditDefects(repairAuditDefects)
+  bestScore = buildRankedSlotAllocationScore({
+    allocations,
+    initialPendingFTE,
+    pendingFTE,
+    teamOrder,
+    defects: repairAuditDefects,
+    teamPrefs,
+    baselineAllocations: existingAllocations,
+    floatingPcaIds,
+  })
 
   runOptionalRankedPromotionPass()
 

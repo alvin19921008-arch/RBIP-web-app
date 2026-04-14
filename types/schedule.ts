@@ -165,6 +165,7 @@ export interface SlotAssignmentLog {
     | 'duplicate-reduction'
     | 'continuity-reduction'
     | 'ranked-promotion'
+    | 'gym-avoidance'
     | null
   
   // Step 3.4 specific tracking
@@ -237,7 +238,7 @@ export interface TeamAllocationLog {
     preferredPCAUsed?: boolean
     fulfilledByBuffer?: boolean     // true if team's pending was wholly fulfilled by buffer assignments
     allocationMode?: 'standard' | 'balanced' // Which Step 3.4 mode produced this tracker
-    repairAuditDefects?: Array<'B1' | 'A1' | 'A2' | 'C1' | 'F1'>
+    repairAuditDefects?: Array<'B1' | 'A1' | 'A2' | 'C1' | 'F1' | 'G1'>
     preStep34RoundedPendingFte?: number
     /**
      * V2-only: quarter slots granted to this team from surplus redistribution

@@ -3,8 +3,14 @@ import type { PCAAllocation } from '@/types/schedule'
 import type { PCAData } from '@/lib/algorithms/pcaAllocationTypes'
 import {
   buildRankedV2RepairAuditState,
+  compareRankedV2GymAvoidanceRepairOutcomes,
+  detectRankedV2GymAvoidableDefects,
   detectRankedV2RepairDefects,
   donorHasTrueStep3Ownership,
+  getRankedV2GymAvoidanceRepairOutcomeMetrics,
+  gymFeasibilityBatchSortKey,
+  listRankedV2GymFeasibilityValidReshuffleBatches,
+  MAX_GYM_FEASIBILITY_PROBE_CANDIDATES,
   teamCanDonateBoundedly,
   type RankedV2OptionalPromotionOpportunity,
   type RankedV2RepairDefect,
@@ -1320,4 +1326,179 @@ export function generateRepairCandidates(
 
   candidates.sort((a, b) => a.sortKey.localeCompare(b.sortKey))
   return candidates
+}
+
+/** Part III gym pass cap (spec); keep ≤ `MAX_REPAIR_ITERATIONS` in allocator. */
+export const MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS = 6
+
+function countAssignedSlotsByTeamForGymRepairLoop(allocations: PCAAllocation[]): Record<Team, number> {
+  const counts = zeroPendingFTE()
+  for (const allocation of allocations) {
+    if (allocation.slot1) counts[allocation.slot1] += 1
+    if (allocation.slot2) counts[allocation.slot2] += 1
+    if (allocation.slot3) counts[allocation.slot3] += 1
+    if (allocation.slot4) counts[allocation.slot4] += 1
+  }
+  return counts
+}
+
+function computePendingFTEForGymRepairLoop(
+  initialPendingFTE: Record<Team, number>,
+  baselineAssignedSlots: Record<Team, number>,
+  allocations: PCAAllocation[]
+): Record<Team, number> {
+  const finalAssignedCounts = countAssignedSlotsByTeamForGymRepairLoop(allocations)
+  const next = zeroPendingFTE()
+  for (const team of TEAMS) {
+    const pendingSlotsAtStep34Start = Math.round(((initialPendingFTE[team] ?? 0) + 1e-9) / 0.25)
+    const newlyCoveredSlots = finalAssignedCounts[team] - baselineAssignedSlots[team]
+    const remainingSlots = Math.max(0, pendingSlotsAtStep34Start - newlyCoveredSlots)
+    next[team] = remainingSlots * 0.25
+  }
+  return next
+}
+
+export type RunGymAvoidanceRepairLoopArgs = {
+  teamOrder: Team[]
+  initialPendingFTE: Record<Team, number>
+  pendingFTE: Record<Team, number>
+  allocations: PCAAllocation[]
+  pcaPool: PCAData[]
+  teamPrefs: Record<Team, TeamPreferenceInfo>
+  baselineAllocations?: PCAAllocation[]
+  baselineAssignedSlots: Record<Team, number>
+  committedStep3Anchors?: Step3CommittedFloatingAnchor[]
+  onAcceptedMove?: (candidate: RepairCandidate) => void
+  /** Defaults to `MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS` (6). Allocator passes this explicitly for spec traceability (Task C3). */
+  maxIterations?: number
+}
+
+/**
+ * Part III bounded gym-avoidance repair: accepts moves that improve the gym story for a `G1`
+ * target while keeping required-repair defects clear (same bar as feasibility in `repairAudit`).
+ * Respects [committedStep3Anchors] identically to required repair / optional promotion (Constraint 6c).
+ */
+export function runGymAvoidanceRepairLoop(args: RunGymAvoidanceRepairLoopArgs): number {
+  let accepted = 0
+  const gymIterationCap = args.maxIterations ?? MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS
+  for (let iteration = 0; iteration < gymIterationCap; iteration += 1) {
+    const gymCtx = {
+      teamOrder: args.teamOrder,
+      initialPendingFTE: args.initialPendingFTE,
+      pendingFTE: args.pendingFTE,
+      allocations: args.allocations,
+      pcaPool: args.pcaPool,
+      teamPrefs: args.teamPrefs,
+      baselineAllocations: args.baselineAllocations,
+      committedStep3Anchors: args.committedStep3Anchors,
+    }
+
+    const gymDefects = detectRankedV2GymAvoidableDefects(gymCtx)
+    if (gymDefects.length === 0) break
+
+    type BestRow = {
+      candidate: RepairCandidate
+      targetOffGym: boolean
+      globalGymLastResort: number
+      sortKey: string
+    }
+    let best: BestRow | null = null
+
+    const sortedG1 = [...gymDefects]
+      .filter((d): d is Extract<RankedV2RepairDefect, { kind: 'G1' }> => d.kind === 'G1')
+      .sort((a, b) => String(a.team).localeCompare(String(b.team)))
+
+    for (const defect of sortedG1) {
+      const batches = listRankedV2GymFeasibilityValidReshuffleBatches(
+        gymCtx,
+        defect.team,
+        MAX_GYM_FEASIBILITY_PROBE_CANDIDATES
+      )
+      for (const batch of batches) {
+        const sortKey = gymFeasibilityBatchSortKey(defect.team, batch)
+        const updates: SlotOwnerUpdate[] = batch.map((u) => ({
+          pcaId: u.pcaId,
+          slot: u.slot,
+          fromTeam: u.fromTeam,
+          toTeam: u.toTeam,
+        }))
+        const candidate = buildCandidate(
+          'G1',
+          sortKey,
+          args.allocations,
+          args.pcaPool,
+          updates,
+          args.committedStep3Anchors
+        )
+        if (!candidate) continue
+
+        const nextPending = computePendingFTEForGymRepairLoop(
+          args.initialPendingFTE,
+          args.baselineAssignedSlots,
+          candidate.allocations
+        )
+        const requiredAfter = detectRankedV2RepairDefects({
+          teamOrder: args.teamOrder,
+          initialPendingFTE: args.initialPendingFTE,
+          pendingFTE: nextPending,
+          allocations: candidate.allocations,
+          pcaPool: args.pcaPool,
+          teamPrefs: args.teamPrefs,
+          baselineAllocations: args.baselineAllocations,
+        })
+        if (requiredAfter.length > 0) continue
+
+        const metrics = getRankedV2GymAvoidanceRepairOutcomeMetrics(candidate.allocations, defect.team, {
+          teamPrefs: args.teamPrefs,
+          baselineAllocations: args.baselineAllocations,
+          pcaPool: args.pcaPool,
+        })
+        const row: BestRow = {
+          candidate,
+          targetOffGym: !metrics.targetOnConfiguredGym,
+          globalGymLastResort: metrics.globalGymLastResortCount,
+          sortKey,
+        }
+        if (!best) {
+          best = row
+          continue
+        }
+        const cmp = compareRankedV2GymAvoidanceRepairOutcomes(
+          {
+            targetOffGym: row.targetOffGym,
+            globalGymLastResort: row.globalGymLastResort,
+            sortKey: row.sortKey,
+          },
+          {
+            targetOffGym: best.targetOffGym,
+            globalGymLastResort: best.globalGymLastResort,
+            sortKey: best.sortKey,
+          }
+        )
+        if (cmp < 0) {
+          best = row
+        }
+      }
+    }
+
+    if (!best) break
+
+    args.allocations.splice(
+      0,
+      args.allocations.length,
+      ...best.candidate.allocations.map((allocation) => ({ ...allocation }))
+    )
+    Object.assign(
+      args.pendingFTE,
+      computePendingFTEForGymRepairLoop(
+        args.initialPendingFTE,
+        args.baselineAssignedSlots,
+        args.allocations
+      )
+    )
+    accepted += 1
+    args.onAcceptedMove?.(best.candidate)
+  }
+
+  return accepted
 }
