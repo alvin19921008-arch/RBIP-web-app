@@ -176,11 +176,11 @@ Use focused regression commands and file-scoped lints. Do not rely on repo-wide 
 | Help `/help/avg-and-slots` | Section headings and body use approved names; still teach continuous FTE vs **slots** (0.25 FTE each) |
 | Tracker tooltip value | `Raised floating target (shared spare).` |
 
-- [ ] **Step 1:** Add the Help article route and shared formula fragments; wire Help Center “Guides” card; align guide + popover wording with copy deck.
-- [ ] **Step 2:** Refactor both Avg PCA popovers to use `AvgPcaFormulaPopoverContent`; preserve schedule page **live** sanity-check numbers via `sanityCheckFooter`; popover link text **What does this mean?** where applicable.
-- [ ] **Step 3:** Wire Step 2 toast body to include `describeStep3BootstrapDelta().main` before team details; update `v2PcaTrackerTooltipModel` provenance string; align Step 3.1 projected post-need line with **Extra after needs** vs raised target.
+- [x] **Step 1:** Add the Help article route and shared formula fragments; wire Help Center “Guides” card; align guide + popover wording with copy deck.
+- [x] **Step 2:** Refactor both Avg PCA popovers to use `AvgPcaFormulaPopoverContent`; preserve schedule page **live** sanity-check numbers via `sanityCheckFooter`; popover link text **What does this mean?** where applicable.
+- [x] **Step 3:** Wire Step 2 toast body to include `describeStep3BootstrapDelta().main` before team details; update `v2PcaTrackerTooltipModel` provenance string; align Step 3.1 projected post-need line with **Extra after needs** vs raised target.
 - [ ] **Step 4:** Manually verify `/help/avg-and-slots`, popover scroll on small viewports, Link from dashboard + schedule PCA Calculations block, and Step 2 toast shows context line + team deltas.
-- [ ] **Step 5:** Run `npx tsx tests/regression/f36-step3-handoff-summary-and-delta.test.ts` and `npx tsx tests/regression/f110-step34-tooltip-surplus-adjusted-target-provenance-contract.test.ts` (and any other touched regression snippets).
+- [x] **Step 5:** Run `npx tsx tests/regression/f36-step3-handoff-summary-and-delta.test.ts` and `npx tsx tests/regression/f110-step34-tooltip-surplus-adjusted-target-provenance-contract.test.ts` (and any other touched regression snippets).
 
 ### Task A0b: Planned micro-lines — Step 3.1 / Step 3.4 (deferred)
 
