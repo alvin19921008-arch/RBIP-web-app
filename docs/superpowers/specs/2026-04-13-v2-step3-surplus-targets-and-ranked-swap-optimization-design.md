@@ -30,7 +30,7 @@ Both parts are explicitly V2-only. This spec also adds a hard V1/V2 boundary con
 - one shared surplus-aware projection used by the Step 2 delta/toast path and Step 3.1 initial pending target state
 - therapist-weighted redistribution of executable global slack before final quarter-rounding
 - explicit target/provenance fields so Step 3.4 tooltip text can explain surplus-adjusted assignments in a tiny, debug-friendly way
-- optional **user-facing literacy** copy: Help Center guide `/help/avg-and-slots` plus a short “continuous vs quarter slots” section in the existing Avg PCA/team formula popover (no new dashboard badges)
+- optional **user-facing literacy** copy: Help Center guide `/help/avg-and-slots` plus a short “continuous FTE vs slots” section in the existing Avg PCA/team formula popover (no new dashboard badges)
 - a separate optional ranked-promotion layer in the V2 repair/orchestration path that permits bounded swap-only or safe-move upgrades after required coverage is already met
 - regression and harness coverage for both layers
 - a V2-only editing contract so future work stays out of V1 unless explicitly approved
@@ -75,7 +75,7 @@ So: **0.5 FTE “extra” in the pool** is **not** required to appear as +0.5 on
 
 ### After Step 3.4
 
-Tooltips that mention **surplus-adjusted target** refer to **operational** provenance (grants on the floating obligation), not a claim that **Avg** was retroactively wrong at Step 2. Optional **extra coverage** after allocation is **separate** from Part I surplus metadata; do not treat `Extra` as proof of Part I surplus grants.
+Tooltips that explain a **raised target (shared spare)** row refer to **operational** provenance (grants on the floating obligation), not a claim that **Avg** was retroactively wrong at Step 2. Optional **extra after needs** after allocation is **separate** from Part I shared-spare metadata; do not treat `Extra` as proof of Part I grants.
 
 ## Goals
 - Keep `rawAveragePCAPerTeam` as the developer-facing therapist-weighted base demand.
@@ -111,19 +111,70 @@ For implementation and debugging, the system must keep separate layers:
 
 This separation is mandatory even if the front-facing experience hides most of it.
 
-### 2. Surplus hint: tracker tooltip + Help/popover literacy (no new badges)
-If a final Step 3.4 outcome exists because the team's target was uplifted by surplus adjustment, that should be explained in **Step 3.4 tracker tooltip/provenance** text.
+### 2. Literacy + hints: Help, popover, toast, tracker (minimal on-screen chrome)
+If a final Step 3.4 outcome exists because the team’s **operational floating target** was raised by **shared spare from rounding** (engine: surplus-aware grants), that should be explainable in **tiny** tracker tooltip text and in **Help / formula popover**. **Do not** imply the dashboard **Avg PCA/team** row was wrong at Step 2.
 
-Allowed:
-- a short provenance line such as `Surplus-adjusted target`
-- a tiny explanatory sentence such as `This team received 1 extra quarter-slot from therapist-weighted global surplus adjustment.`
-- **Help Center** page `/help/avg-and-slots` and a **short** subsection in the existing **Avg PCA/team formula** popover (dashboard + schedule) linking to that guide: continuous vs quarter slots, why slack/scarcity can appear, **surplus-adjusted** (target built at Step 2→3 / projection) vs **post-need extra** (optional placement after need met in Step 3.4). Copy must stay **plain language** and must **not** imply display Avg was wrong at Step 2.
-- **Planned (not necessarily in first Part I ship):** a **single discreet line** of copy in **Step 3.1** (`FloatingPCAConfigDialogV2`) when this team’s **pending / operational floating seed** includes a **surplus-adjusted** component (e.g. one line under the team card or near **Pending floating**, wording like “Includes shared slack” / “Surplus-adjusted target” — exact string TBD). **Do not** add a new badge or second hero control.
-- **Planned (not necessarily in first Part I ship):** a **single discreet line** in the **Step 3.4** preview / tracker area when **post-need extra** coverage is relevant for the current view (distinct from surplus-adjusted target provenance — e.g. “Optional slot after need met”). **Do not** conflate with surplus-adjusted tooltip text.
+**Approved user-facing names (English, HK clinical audience — no bilingual requirement for now):**
+
+| Engineering / internal | User-facing label |
+|------------------------|-------------------|
+| Surplus-adjusted target / grant | **Raised target** (short chip) — full phrase **Raised target (shared spare)** where space allows |
+| Post-need extra coverage | **Extra after needs** |
+
+**Never show “shared spare” alone without context** in a one-off string; pair with Step 2, **rounding**, or **floating pool** (see copy deck below).
+
+#### Approved copy deck (implement exactly unless UX review changes this spec)
+
+**Step 2 completion toast — context line** (when a floating handoff delta exists; precedes per-team slot lines):
+
+`Floating targets updated after Step 2 + shared spare from rounding the floating pool.`
+
+**Optional alternate one-liner** (e.g. marketing / release notes; same meaning):
+
+`Floating targets updated after Step 2 — includes shared spare from rounding the floating pool`
+
+Implementation: `describeStep3BootstrapDelta` returns this as **`main`**; schedule toast body must show **`main` then team `details`** (not `details` only). Per-team lines stay scannable, e.g. `MC +1 PCA slot`.
+
+**Step 3.1 — collapsed line** (when this team’s seed includes shared spare / grant from projection):
+
+`Floating target includes a small raise from shared spare (rounding).`
+
+Trailing link: **`What does this mean?`** → `/help/avg-and-slots`.
+
+**Step 3.1 — “Show details” expander** (bullets; prefer numeric lines **quoted from** `Step3BootstrapSummary` / `Step3ProjectionV2` when available):
+
+1. The floating pool had spare placeable slot(s) after each team’s need was rounded to slots.
+2. Those spare slot(s) were shared using each team’s Avg PCA/team weighting (not an equal split).
+3. This team’s floating target includes that share.
+4. This is not the same as **Extra after needs** in Step 3.4.
+
+Closing line: **Avg PCA/team** here was not increased — it stays the Step 2 average.
+
+**Post-need — default one line** (Step 3.4 context or preview; not the same as raised target):
+
+`After every team’s basic floating need was met, rounding still left spare slot(s), so the system could place extra slot(s).`
+
+**Step 3.4 — header row chips** (minimal text only):
+
+- Shared-spare path: pill label **`Raised target`** only (essential info on chip).
+- Post-need path: pill label **`Extra after needs`**.
+
+**Micro-caption** (one line, **full width** of the detail header row — spans the same horizontal band as **Pending floating** / **Assigned floating** badges and any other summary pills, so occasional readers see context once):
+
+`“Raised target” is from Step 2→3 rounding in the floating pool. “Extra after needs” is from Step 3.4 after needs were met.`
+
+**PCA block / tracker tooltip — ultra-short provenance value** (when grant + row flag apply):
+
+`Raised floating target (shared spare).`
+
+Allowed surfaces:
+- **Help Center** `/help/avg-and-slots` and **Avg PCA/team formula popover** (dashboard + schedule): use the **approved names** above; link **What does this mean?** to the guide where appropriate.
+- **Planned (A0b):** Step 3.1 collapsed + expander as above; Step 3.4 chips + micro-caption as above. **Do not** add a second hero control or engineer-only debug panel.
 
 Disallowed:
-- new visible badges on Step 3.4 summary cards
+- large new **hero** badge rows or summary-card **surplus** marketing strips
 - a new standalone control whose primary purpose is engineer-only surplus debugging
+- user-facing strings that use internal-only names (`rawSurplusFte`, `redistributableSlackSlots`, `provenance`, `bootstrap`) without mapping to this copy deck
 
 ### 3. Raw/base values must absorb surplus before rounding
 The approved order is:
@@ -349,7 +400,7 @@ Step 3.1 should:
 Step 2 remains the first **authoritative** projection point; Step 3.1 is the **live** consumer (and re-validator when inputs change).
 
 #### User-facing literacy (Part I, non-blocking)
-Staff confusion often mixes **display Avg** (continuous, raw therapist-weighted), **surplus-adjusted operational floating targets** (slack shared at handoff), and **post-need extra** (allocator optional coverage after need is met). Part I implementation should keep **tooltips** tiny; **product education** belongs in `/help/avg-and-slots` and the **formula popover** cross-link, aligned with `2026-04-13-step3-floating-nonfloating-contract-table.md`. **Optional follow-up:** one **small line** each in Step 3.1 and Step 3.4 per **Locked decision 2** (planned, not mandatory for first ship).
+Staff confusion often mixes **display Avg** (continuous, raw therapist-weighted), **raised target (shared spare)** at Step 2→3, and **extra after needs** in Step 3.4. Part I keeps **tracker tooltips** ultra-short; **product education** lives in `/help/avg-and-slots` and the **Avg PCA/team formula popover**, using the **Approved copy deck** under **Locked decision 2**. **A0b** adds Step 3.1 / Step 3.4 micro-lines and chips per that deck.
 
 #### Engineering field glossary (stable names; map to product language)
 Do **not** mass-rename bootstrap/projection identifiers solely for naming aesthetics; churn breaks tests and reviews. Instead keep **this spec + contract table** as the glossary.
@@ -359,29 +410,27 @@ Do **not** mass-rename bootstrap/projection identifiers solely for naming aesthe
 | `rawSurplusFte` | Continuous surplus used as **weighting input** for fair shares | Not a row on the card; informs **shared slack** math |
 | `idealWeightedSurplusShareByTeam` | Each team’s **fair share** of `rawSurplusFte` before slot cap | Same — internal |
 | `redistributableSlackSlots` | **Max count** of quarter slots that may be **materialized** in this pass | Bridges to “how many slots the pool can still place” vs sum of needs |
-| `realizedSurplusSlotGrantsByTeam` (or equivalent) | Actual **0.25** grants applied per team after cap + reconciliation | Feeds **operational** floating target / pending seed, not **display Avg** |
+| `realizedSurplusSlotGrantsByTeam` (or equivalent) | Actual **0.25** grants applied per team after cap + reconciliation | Feeds **operational** floating target / pending seed; user copy **Raised target** / **shared spare** — not **display Avg** |
 | `surplusAdjustedTeamTargets` | Continuous-layer targets after grants, pre-final quarter snap | Between **raw floating** story and **rounded** operational |
 | `roundedAdjustedTeamTargets` / `roundedPendingByTeam` | Quarter-grid **operational** outputs consumed by Step 3.1 / allocator | Align with **Pending floating** / operational obligation (after surplus), not necessarily the **Rounded floating** row if that row is **pre-surplus** `round(raw floating)` only |
 
 Full code-name definitions also live in `2026-04-13-step3-floating-nonfloating-contract-table.md` § **V2 surplus / projection field glossary**.
 
 #### Step 2 delta semantics
-The existing "Step 3 target updated" delta path should describe the final surplus-aware rounded target change, not only the pre-surplus raw target change.
+The Step 2 completion toast must surface **both** the **context line** (`describeStep3BootstrapDelta.main` — see **Locked decision 2** copy deck) **and** per-team slot deltas (`details`), so readers see *why* before *who*. Deltas use **operational** rounded targets (surplus-aware when V2 metadata exists), not pre-surplus raw targets only.
 
-Example tone:
+Example `details` tone:
 - `FO +1 PCA slot`
 - `DRO -1 PCA slot`
 
 The message should reflect the projection the user will actually see at Step 3.1.
 
 #### Tooltip/provenance integration
-If a Step 3.4 assignment exists because a team's target was increased by surplus redistribution, final tracker/provenance data may expose that reason in tiny form.
+If a Step 3.4 assignment exists because a team’s target was raised by **shared spare** grants, tracker provenance uses the **ultra-short** string in **Locked decision 2** (`Raised floating target (shared spare).`), derived from grant / row metadata — not reconstructed heuristically from allocations alone.
 
 Approved scope:
-- tooltip/provenance text on the tracker
-- Help article + popover literacy per **Locked decision 2** (no new summary-card badges)
-
-The provenance should be derived from target adjustment metadata, not reconstructed heuristically from final allocations alone.
+- tooltip/provenance text on the tracker (PCA block)
+- Help article + popover literacy per **Locked decision 2**; minimal **Raised target** / **Extra after needs** chips in Step 3.4 detail plus **full-width micro-caption** under the header badge row (A0b)
 
 ### Part II. Optional Ranked Promotion Via Bounded Swap Optimization
 
@@ -484,7 +533,7 @@ This design should be implemented with focused regressions around:
 - executable slack is the realizability cap for quarter-slot grants
 - the global redistributed slack-slot sum is preserved after rounding reconciliation
 - therapist-weighted redistribution favors teams according to demand share rather than round-robin order
-- Step 3.4 tooltip/provenance can explain a surplus-adjusted final slot without adding a visible badge
+- Step 3.4 tooltip/provenance can explain a **raised target (shared spare)** final slot without adding a large new badge; minimal chips per **Locked decision 2**
 - optional ranked promotion remains possible after required coverage is satisfied
 - optional ranked promotion succeeds for bounded swap/safe-move cases
 - optional ranked promotion rejects harmful donation cases

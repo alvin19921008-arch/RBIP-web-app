@@ -63,8 +63,8 @@ function main() {
   const provenance = step34Row?.details.find((detail) => detail.label === 'Target provenance')
   assert.equal(
     provenance?.value,
-    'Surplus-adjusted rounded target enabled this slot.',
-    'When surplus grant exists and a Step 3.4 row is flagged, tooltip details should explain surplus-adjusted target provenance.'
+    'Raised floating target (shared spare).',
+    'When surplus grant exists and a Step 3.4 row is flagged, tooltip details should explain raised-target (shared spare) provenance.'
   )
 
   const noGrantLog: TeamAllocationLog = {

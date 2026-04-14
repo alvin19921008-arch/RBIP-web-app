@@ -1247,9 +1247,10 @@ export function FloatingPCAConfigDialogV2({
                   </div>
                   {scarcitySummary.showProjectedExtraSlots ? (
                     <div className="mt-3 text-xs text-muted-foreground">
-                      Projected optional slots after core needs: {scarcitySummary.projectedExtraSlots} slot
-                      {scarcitySummary.projectedExtraSlots === 1 ? '' : 's'} (Step 3.4 post-need pass — not surplus
-                      redistribution).
+                      Preview: up to {scarcitySummary.projectedExtraSlots} optional slot
+                      {scarcitySummary.projectedExtraSlots === 1 ? '' : 's'} after needs are met in Step 3.4 (
+                      <span className="font-medium text-foreground">Extra after needs</span> — not the same as{' '}
+                      <span className="font-medium text-foreground">Raised target</span> from rounding the pool).
                     </div>
                   ) : null}
                 </>

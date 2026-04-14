@@ -179,7 +179,7 @@ function getSourceTag(assignment: AllocationAssignment): string | null {
   if (assignment.assignedIn === 'step34') {
     if (assignment.allocationStage === 'draft') return 'Draft'
     if (assignment.allocationStage === 'repair') return 'Repair'
-    if (assignment.allocationStage === 'extra-coverage') return 'Post-need extra'
+    if (assignment.allocationStage === 'extra-coverage') return 'Extra after needs'
   }
   return null
 }
@@ -229,8 +229,8 @@ function getSlotPathLabel(args: {
 }
 
 const SURPLUS_ADJUSTED_TARGET_PROVENANCE_LABEL = 'Target provenance'
-const SURPLUS_ADJUSTED_TARGET_PROVENANCE_VALUE =
-  'Surplus-adjusted rounded target enabled this slot.'
+/** User-facing ultra-short line; sync with surplus spec Locked decision 2 copy deck. */
+const SURPLUS_ADJUSTED_TARGET_PROVENANCE_VALUE = 'Raised floating target (shared spare).'
 
 function appendSurplusAdjustedTargetProvenanceIfApplicable(args: {
   team: Team

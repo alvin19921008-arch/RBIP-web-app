@@ -4,6 +4,8 @@
 
 **Related:** Part 1 projection work — [2026-04-13-step3-contract-reset-part1-projection-unification-implementation-plan.md](../plans/2026-04-13-step3-contract-reset-part1-projection-unification-implementation-plan.md). Surplus mechanics — [2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md](./2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md). **In-app** plain-language guide for staff: route `/help/avg-and-slots` (Help Center → Guides).
 
+**Staff-facing UI (English):** Use **Raised target** / **Raised target (shared spare)** and **Extra after needs** in toasts, Help, popovers, and tracker labels. Engineering prose may still say *surplus-adjusted* / *post-need extra*; map to the approved deck in the surplus spec **Locked decision 2**.
+
 ---
 
 ## Contract table

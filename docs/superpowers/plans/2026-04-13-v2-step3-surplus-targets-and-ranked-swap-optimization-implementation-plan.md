@@ -31,7 +31,7 @@
 
 ### Task Group A: Surplus-aware target pipeline
 - Add: `app/(dashboard)/help/avg-and-slots/page.tsx`
-  - Plain-language guide: continuous vs quarter slots; scarcity/slack; surplus-adjusted vs post-need extra (per Part I spec).
+  - Plain-language guide: continuous FTE vs slots; scarcity/slack; raised target (shared spare) vs extra after needs (per Part I spec copy deck).
 - Add: `components/help/avgPcaFormulaSteps.tsx`, `components/help/AvgPcaFormulaPopoverContent.tsx`
   - Shared formula copy + popover body (formula, sanity check slot, teaser + link to full guide).
 - Modify: `components/help/HelpCenterContent.tsx`
@@ -49,7 +49,7 @@
 - Modify if needed: `types/schedule.ts` or nearby shared contracts
   - Carry tiny V2-only target/provenance metadata needed by tooltip consumers.
 - Modify: `lib/features/schedule/v2PcaTrackerTooltipModel.ts`
-  - Add tooltip/provenance wording for surplus-adjusted target outcomes without adding visible new badges.
+  - Add tooltip/provenance wording for raised target (shared spare) outcomes without adding visible new badges.
 
 ### Task Group B: Optional ranked promotion via bounded swap optimization
 - Modify: `lib/algorithms/floatingPcaV2/repairAudit.ts`
@@ -154,29 +154,46 @@ Use focused regression commands and file-scoped lints. Do not rely on repo-wide 
 
 ### Task A0: User literacy — Help page + Avg PCA popover (Part I)
 
-**Goal:** Reduce confusion between **display Avg** (continuous/raw), **surplus-adjusted floating targets** (Step 2→3 projection), and **post-need extra** (optional Step 3.4 placement). Align copy with `2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md` Part I and `2026-04-13-step3-floating-nonfloating-contract-table.md`.
+**Goal:** Reduce confusion between **display Avg** (continuous/raw), **raised target (shared spare)** (Step 2→3 projection), and **extra after needs** (optional Step 3.4 placement). All user-facing English strings follow the **Approved copy deck** in `docs/superpowers/specs/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md` **Locked decision 2** (HK clinical audience; FTE and “slot” wording allowed). Engineering identifiers in code and regression names stay unchanged per contract table glossary.
 
 **Files:**
 - Add: `app/(dashboard)/help/avg-and-slots/page.tsx`
 - Add: `components/help/avgPcaFormulaSteps.tsx`, `components/help/AvgPcaFormulaPopoverContent.tsx`
 - Modify: `components/help/HelpCenterContent.tsx`, `components/schedule/ScheduleBlocks1To6.tsx`, `app/(dashboard)/schedule/page.tsx`
+- Modify: `lib/features/schedule/step3Bootstrap.ts` (`describeStep3BootstrapDelta.main` + exported constant per copy deck); same PR touch `app/(dashboard)/schedule/page.tsx` so Step 2 success toast shows `handoffDelta.main` **and** `handoffDelta.details` when a handoff exists
+- Modify: `lib/features/schedule/v2PcaTrackerTooltipModel.ts` (provenance value: ultra-short deck string)
+- Modify: `components/allocation/FloatingPCAConfigDialogV2.tsx` (Step 3.1 scarcity / post-need preview line — align terms with deck)
+- Optional polish: `components/allocation/PCABlock.tsx` (titles for extra coverage — align with **Extra after needs**)
 
-- [ ] **Step 1:** Add the Help article route and shared formula fragments; wire Help Center “Guides” card.
-- [ ] **Step 2:** Refactor both Avg PCA popovers to use `AvgPcaFormulaPopoverContent`; preserve schedule page **live** sanity-check numbers via `sanityCheckFooter`.
-- [ ] **Step 3:** Manually verify `/help/avg-and-slots`, popover scroll on small viewports, and Link from dashboard + schedule PCA Calculations block.
+**Copy deck (authoritative — duplicate of spec; keep in sync):**
+
+| Surface | String |
+|---------|--------|
+| Step 2 toast `main` | `Floating targets updated after Step 2 + shared spare from rounding the floating pool.` |
+| Step 2 toast `details` | Unchanged pattern: `TEAM ±N PCA slot(s)` comma-separated |
+| Popover collapsed subsection | Use names **Raised target (shared spare)** and **Extra after needs**; explain Avg unchanged |
+| Popover link | `What does this mean?` → `/help/avg-and-slots` |
+| Help `/help/avg-and-slots` | Section headings and body use approved names; still teach continuous FTE vs **slots** (0.25 FTE each) |
+| Tracker tooltip value | `Raised floating target (shared spare).` |
+
+- [ ] **Step 1:** Add the Help article route and shared formula fragments; wire Help Center “Guides” card; align guide + popover wording with copy deck.
+- [ ] **Step 2:** Refactor both Avg PCA popovers to use `AvgPcaFormulaPopoverContent`; preserve schedule page **live** sanity-check numbers via `sanityCheckFooter`; popover link text **What does this mean?** where applicable.
+- [ ] **Step 3:** Wire Step 2 toast body to include `describeStep3BootstrapDelta().main` before team details; update `v2PcaTrackerTooltipModel` provenance string; align Step 3.1 projected post-need line with **Extra after needs** vs raised target.
+- [ ] **Step 4:** Manually verify `/help/avg-and-slots`, popover scroll on small viewports, Link from dashboard + schedule PCA Calculations block, and Step 2 toast shows context line + team deltas.
+- [ ] **Step 5:** Run `npx tsx tests/regression/f36-step3-handoff-summary-and-delta.test.ts` and `npx tsx tests/regression/f110-step34-tooltip-surplus-adjusted-target-provenance-contract.test.ts` (and any other touched regression snippets).
 
 ### Task A0b: Planned micro-lines — Step 3.1 / Step 3.4 (deferred)
 
-**Status:** Spec-only unless explicitly picked up. **Do not implement** until Task Group A projection semantics and Help/popover literacy are stable.
+**Status:** Spec + copy deck finalized under **Locked decision 2**. **UI implementation** still deferred until explicitly picked up after A0 strings ship and stabilize.
 
-**Goal:** One **discreet** line each: **surplus-adjusted** context in **Step 3.1**, **post-need extra** context in **Step 3.4** (distinct wording), per `2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md` Locked decision 2.
+**Goal:** Step 3.1 **collapsed + optional expander** (bullets may quote bootstrap/projection numbers). Step 3.4 **minimal chips**: pill **`Raised target`** only for shared-spare path; pill **`Extra after needs`** for post-need; **one full-width micro-caption** under the entire header badge row (Pending floating / Assigned floating / other pills) so occasional readers see: `“Raised target” is from Step 2→3 rounding in the floating pool. “Extra after needs” is from Step 3.4 after needs were met.` Post-need **default one line** (when relevant): `After every team’s basic floating need was met, rounding still left spare slot(s), so the system could place extra slot(s).` Step 3.1 **collapsed** line: `Floating target includes a small raise from shared spare (rounding).` + link **What does this mean?** → `/help/avg-and-slots`.
 
 **Files (expected when implemented):**
-- `components/allocation/FloatingPCAConfigDialogV2.tsx` (e.g. per-team or footer line when surplus-adjusted seed applies — flag from projection / `realizedSurplusSlotGrantsByTeam` or equivalent)
-- Step 3.4 preview / tracker shell (exact component TBD — line when post-need / extra-coverage preview applies)
+- `components/allocation/FloatingPCAConfigDialogV2.tsx` (3.1 line + expander; 3.4 chips + full-width caption under header row)
+- `components/allocation/step34/step34ViewModel.ts` or sibling (optional **Why this happened** bullet sourced from extra-coverage metadata — keep distinct from raised-target copy)
 
-- [ ] **Step 1:** Add non-intrusive line in 3.1 when surplus-adjusted seed applies; optional “?” link to `/help/avg-and-slots`.
-- [ ] **Step 2:** Add non-intrusive line in 3.4 when post-need / extra-coverage preview applies; must **not** reuse surplus-adjusted wording.
+- [ ] **Step 1:** Add 3.1 collapsed line + expander when `realizedSurplusSlotGrantsByTeam` / projection indicates shared spare for that team.
+- [ ] **Step 2:** Add 3.4 chips + full-width micro-caption; post-need default line when preview shows extra coverage — wording must **not** reuse raised-target phrasing.
 - [ ] **Step 3:** Manual check on a fixture date with and without grants / extra coverage.
 
 **Docs / naming:** Maintain the **engineering field glossary** in the contract table + surplus spec; **no mass rename** of projection fields for this task.

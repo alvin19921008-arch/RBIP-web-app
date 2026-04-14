@@ -976,9 +976,9 @@ export const PCABlock = memo(function PCABlock({
                 {slotDisplayNode}
                 <div
                   className="text-[10px] font-semibold text-purple-700 dark:text-purple-300"
-                  title="Optional Step 3.4 slot after team floating need was met. Separate from surplus-adjusted targets."
+                  title="Extra after needs: optional Step 3.4 slot(s) after basic floating need was met. Not the same as Raised target (shared spare)."
                 >
-                  Post-need extra: slots {extraSlotsForTeam.join(', ')}
+                  Extra after needs: slots {extraSlotsForTeam.join(', ')}
                 </div>
               </div>
             ) : slotDisplayNode
@@ -1022,9 +1022,9 @@ export const PCABlock = memo(function PCABlock({
                   return (
                     <span
                       className="text-[10px] font-semibold text-purple-700 dark:text-purple-300 whitespace-nowrap"
-                      title="Post-need optional coverage (Step 3.4). Not surplus redistribution."
+                      title="Extra after needs (Step 3.4). Not Raised target (shared spare)."
                     >
-                      Post-need
+                      Extra after needs
                     </span>
                   )
                 })()}

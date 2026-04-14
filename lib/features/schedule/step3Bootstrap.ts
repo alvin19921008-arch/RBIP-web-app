@@ -726,6 +726,13 @@ const operationalTargetForStep3Handoff = (summary: Step3BootstrapSummary, team: 
   return summary.teamTargets[team] ?? 0
 }
 
+/**
+ * User-facing context line when Step 2 completes and a Step 3 floating handoff delta exists.
+ * Keep in sync with `docs/superpowers/specs/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md` Locked decision 2.
+ */
+export const STEP2_HANDOFF_FLOATING_TARGET_TOAST_MAIN =
+  'Floating targets updated after Step 2 + shared spare from rounding the floating pool.'
+
 /** Returns structured lines for toast: main (short), details (second line). */
 export function describeStep3BootstrapDelta(
   previous: Step3BootstrapSummary | null | undefined,
@@ -748,7 +755,7 @@ export function describeStep3BootstrapDelta(
   }
 
   return {
-    main: 'Step 3 target updated.',
+    main: STEP2_HANDOFF_FLOATING_TARGET_TOAST_MAIN,
     details: teamDeltas.join(', '),
   }
 }

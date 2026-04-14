@@ -6277,9 +6277,9 @@ function SchedulePageContent() {
     )
     const description =
       payload.description && handoffDelta
-        ? `${payload.description}\n${handoffDelta.details}`
+        ? `${payload.description}\n${handoffDelta.main}\n${handoffDelta.details}`
         : handoffDelta
-          ? handoffDelta.details
+          ? `${handoffDelta.main}\n${handoffDelta.details}`
           : payload.description
 
     // Apply extended toast (longer dismiss, countdown bar, hover-pause) only when there is

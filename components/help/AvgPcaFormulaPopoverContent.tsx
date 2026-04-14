@@ -23,28 +23,29 @@ export function AvgPcaFormulaPopoverContent({ className, sanityCheckFooter }: Av
       </div>
 
       <div className="border-t border-amber-200/80 pt-2 space-y-2">
-        <div className="font-semibold">Continuous vs quarter slots</div>
+        <div className="font-semibold">Continuous FTE vs slots</div>
         <p className="text-muted-foreground">
           Avg PCA/team is computed in <span className="font-medium text-foreground">continuous</span> FTE (fractions).
-          Step 3 placement uses <span className="font-medium text-foreground">quarter slots</span> (0.25 FTE each).
-          Snapping many teams to the grid and adding them up can leave a small global mismatch: sometimes extra
-          placeable slots remain (slack), sometimes the pool is tight (scarcity). That is normal—not necessarily an
-          error in the Avg formula.
+          Step 3 placement uses <span className="font-medium text-foreground">slots</span> (each 0.25 FTE). Snapping
+          many teams to the grid and adding them up can leave a small global mismatch: sometimes extra placeable slots
+          remain, sometimes the pool is tight. That is normal—not necessarily an error in the Avg formula.
         </p>
         <p className="text-muted-foreground">
-          <span className="font-medium text-foreground">Surplus-adjusted</span> (V2) means slack was shared into a
-          team’s <span className="font-medium text-foreground">floating target</span> at the Step 2→3 handoff; the
-          dashboard Avg row stays the raw therapist-weighted value. <span className="font-medium text-foreground">
-            Post-need extra
+          <span className="font-medium text-foreground">Raised target (shared spare)</span> (V2) means spare capacity in
+          the floating pool was shared at the Step 2→3 handoff so a team’s <span className="font-medium text-foreground">
+            floating target
           </span>{' '}
-          is different: optional coverage after a team’s stated need is already met (Step 3.4), and depends on how
-          allocation runs—not the same label as surplus-adjusted targets.
+          can be slightly higher after rounding; the dashboard <span className="font-medium text-foreground">Avg</span>{' '}
+          row stays the raw therapist-weighted value.{' '}
+          <span className="font-medium text-foreground">Extra after needs</span> is different: optional slots placed in
+          Step 3.4 after basic floating needs were met—depends on how allocation runs, not the same as a raised target
+          from rounding.
         </p>
         <Link
           href="/help/avg-and-slots"
           className="inline-flex text-xs font-medium text-primary underline-offset-4 hover:underline"
         >
-          Open full guide: Avg PCA and quarter slots
+          What does this mean?
         </Link>
       </div>
     </div>

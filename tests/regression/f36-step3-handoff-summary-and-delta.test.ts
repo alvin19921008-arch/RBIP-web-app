@@ -4,6 +4,7 @@ import type { PCAData } from '../../lib/algorithms/pcaAllocation'
 import {
   computeStep3BootstrapSummary,
   describeStep3BootstrapDelta,
+  STEP2_HANDOFF_FLOATING_TARGET_TOAST_MAIN,
 } from '../../lib/features/schedule/step3Bootstrap'
 import type { PCAAllocation } from '../../types/schedule'
 import type { Team } from '../../types/staff'
@@ -108,7 +109,11 @@ async function main() {
   const delta = describeStep3BootstrapDelta(beforeSummary, afterSummary)
 
   assert.ok(delta, 'Expected non-null delta')
-  assert.equal(delta?.main, 'Step 3 target updated.', `Expected main line, but got: ${delta?.main}`)
+  assert.equal(
+    delta?.main,
+    STEP2_HANDOFF_FLOATING_TARGET_TOAST_MAIN,
+    `Expected main line, but got: ${delta?.main}`
+  )
   assert.equal(
     delta?.details,
     'FO -1 PCA slot, SMM +1 PCA slot, DRO -1 PCA slot',

@@ -2,9 +2,9 @@ import Link from 'next/link'
 import { AvgPcaFormulaSteps, AvgPcaSanityCheckStaticDescription } from '@/components/help/avgPcaFormulaSteps'
 
 export const metadata = {
-  title: 'Avg PCA and quarter slots',
+  title: 'Avg PCA and slots',
   description:
-    'Why Avg PCA/team uses continuous FTE while Step 3 uses quarter slots, and how surplus-adjusted targets differ from post-need extra coverage.',
+    'Why Avg PCA/team uses continuous FTE while Step 3 uses slots, and how raised target (shared spare) differs from extra after needs.',
 }
 
 export default function AvgAndSlotsHelpPage() {
@@ -18,7 +18,7 @@ export default function AvgAndSlotsHelpPage() {
           >
             ← Back to Help Center
           </Link>
-          <h1 className="text-2xl font-bold tracking-tight">Avg PCA/team and quarter slots</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Avg PCA/team and slots</h1>
           <p className="text-sm text-muted-foreground">
             A short, plain-language guide to how the dashboard formula relates to Step 3 floating coverage (V2).
           </p>
@@ -34,9 +34,9 @@ export default function AvgAndSlotsHelpPage() {
               about (for example 1.35 FTE).
             </li>
             <li>
-              <span className="font-medium text-foreground">Quarter slots (chunks)</span> — Real assignments move in
-              steps of <span className="font-medium text-foreground">0.25 FTE</span> (one slot). Anything the allocator
-              must place has to land on that grid.
+              <span className="font-medium text-foreground">Slots (chunks)</span> — Real assignments move in steps of{' '}
+              <span className="font-medium text-foreground">0.25 FTE</span> (one slot). Anything the allocator must place
+              has to land on that grid.
             </li>
           </ul>
           <p className="text-muted-foreground">
@@ -54,8 +54,8 @@ export default function AvgAndSlotsHelpPage() {
           </p>
           <ul className="list-disc space-y-2 pl-5 text-muted-foreground">
             <li>
-              How many <span className="font-medium text-foreground">floating quarter-slots</span> the roster can still
-              place (the pool), and
+              How many <span className="font-medium text-foreground">floating slots</span> the roster can still place
+              (the pool), and
             </li>
             <li>
               How many slots teams <span className="font-medium text-foreground">need</span> on that same grid after
@@ -71,30 +71,35 @@ export default function AvgAndSlotsHelpPage() {
         </section>
 
         <section className="space-y-3 rounded-lg border border-border bg-card p-4 text-sm leading-relaxed">
-          <h2 className="text-base font-semibold">Surplus-adjusted targets (early — Step 2→3 / projection)</h2>
+          <h2 className="text-base font-semibold">Raised target (shared spare) — early, Step 2→3</h2>
           <p className="text-muted-foreground">
-            In V2, when slack is shared fairly into teams’ <span className="font-medium text-foreground">floating</span>{' '}
-            obligations, a team’s <span className="font-medium text-foreground">operational</span> target can be higher
-            than “round(Avg − non-floating)” would suggest. Tooltips may say{' '}
-            <span className="font-medium text-foreground">surplus-adjusted</span> to explain that uplift.
+            In V2, when spare placeable slots in the <span className="font-medium text-foreground">floating pool</span>{' '}
+            are shared fairly after rounding, a team’s <span className="font-medium text-foreground">operational</span>{' '}
+            floating target can be slightly higher than a naive “Avg minus non-floating” mental sum. The app may show a
+            short line such as <span className="font-medium text-foreground">Raised target</span> or a tooltip like{' '}
+            <span className="font-medium text-foreground">Raised floating target (shared spare).</span>
           </p>
           <p className="text-muted-foreground">
-            The <span className="font-medium text-foreground">Avg PCA/team</span> line you see on the dashboard and Step
-            3.1 stays the <span className="font-medium text-foreground">raw</span> therapist-weighted value so the
-            headline number stays stable and easy to compare day to day.
+            The <span className="font-medium text-foreground">Avg PCA/team</span> line on the dashboard and Step 3.1
+            stays the <span className="font-medium text-foreground">raw</span> therapist-weighted value so the
+            headline number stays stable day to day.
           </p>
         </section>
 
         <section className="space-y-3 rounded-lg border border-border bg-card p-4 text-sm leading-relaxed">
-          <h2 className="text-base font-semibold">Post-need extra (later — Step 3.4)</h2>
+          <h2 className="text-base font-semibold">Extra after needs — later, Step 3.4</h2>
           <p className="text-muted-foreground">
-            Sometimes the allocator places an <span className="font-medium text-foreground">optional</span> floating slot{' '}
-            <span className="font-medium text-foreground">after</span> a team’s stated floating need is already met.
-            That is often labeled <span className="font-medium text-foreground">post-need extra</span> (or similar). It
-            is <span className="font-medium text-foreground">not</span> the same thing as surplus-adjusted targets:
-            surplus-adjusted is about <span className="font-medium text-foreground">how the target was built</span>;
-            post-need extra is about <span className="font-medium text-foreground">what happened during allocation</span>{' '}
-            after needs were satisfied (order, repair, extra-coverage pass, etc.).
+            Sometimes the allocator places <span className="font-medium text-foreground">optional</span> floating slot(s){' '}
+            <span className="font-medium text-foreground">after</span> basic floating needs are already met. That is{' '}
+            <span className="font-medium text-foreground">extra after needs</span>. It is{' '}
+            <span className="font-medium text-foreground">not</span> the same as a raised target from rounding: raised
+            target is about <span className="font-medium text-foreground">how the target was set at handoff</span>;
+            extra after needs is about <span className="font-medium text-foreground">what happened during allocation</span>{' '}
+            (order, repair, extra-coverage pass, etc.).
+          </p>
+          <p className="text-muted-foreground">
+            Default one-line framing: “After every team’s basic floating need was met, rounding still left spare
+            slot(s), so the system could place extra slot(s).”
           </p>
         </section>
 
