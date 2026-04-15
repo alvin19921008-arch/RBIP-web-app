@@ -2,6 +2,7 @@
 
 **Status:** Draft for review  
 **Date:** 2026-04-15  
+**Visual draft (static HTML):** [`../mockups/2026-04-15-step32-v2-visual-draft.html`](../mockups/2026-04-15-step32-v2-visual-draft.html) — open in a browser.  
 **Scope:** Floating PCA wizard — Step 3.2 preferred + ranked slot reservation UX (`Step32PreferredReviewLane`, `Step32PreferredReviewDetailPanel`, related copy/model).
 
 ---
