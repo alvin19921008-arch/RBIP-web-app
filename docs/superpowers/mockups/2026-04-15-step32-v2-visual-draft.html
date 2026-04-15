@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Step 3.2 V2 — Visual draft (combined outcome + PCA)</title>
+    <style>
+      :root {
+        --bg: #f8fafc;
+        --surface: #ffffff;
+        --muted: #64748b;
+        --fg: #0f172a;
+        --border: #e2e8f0;
+        --sky-50: #f0f9ff;
+        --sky-100: #e0f2fe;
+        --sky-200: #bae6fd;
+        --sky-500: #0ea5e9;
+        --sky-900: #0c4a6e;
+        --emerald-bg: #ecfdf5;
+        --emerald-border: #6ee7b7;
+        --emerald-fg: #064e3b;
+        --radius-lg: 16px;
+        --radius-md: 12px;
+        --radius-sm: 8px;
+        --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: var(--font);
+        background: #0f172a33;
+        color: var(--fg);
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 24px 16px 48px;
+      }
+      .caption {
+        max-width: 960px;
+        margin: 0 auto 12px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .modal {
+        width: min(960px, 100%);
+        background: var(--surface);
+        border-radius: var(--radius-lg);
+        box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+        border: 1px solid var(--border);
+        overflow: hidden;
+      }
+      .modal-hd {
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--border);
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .modal-bd {
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+      /* Lane */
+      .lane-wrap {
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 12px 16px;
+        background: var(--surface);
+      }
+      .lane-scroll {
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        padding: 4px 0;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      .lane-chip {
+        min-width: 88px;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border);
+        padding: 8px 10px;
+        font-size: 13px;
+        text-align: left;
+        background: #fff;
+        cursor: default;
+      }
+      .lane-chip strong {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .lane-chip .sub {
+        margin-top: 4px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--fg);
+      }
+      .lane-chip.active {
+        border-color: var(--sky-500);
+        box-shadow: 0 0 0 2px rgb(14 165 233 / 0.25);
+        background: var(--sky-50);
+      }
+      .lane-chip.matched .sub {
+        color: var(--emerald-fg);
+      }
+      .icon-check {
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        border: 2px solid var(--emerald-border);
+        background: var(--emerald-bg);
+        flex-shrink: 0;
+      }
+      /* Detail shell */
+      .detail {
+        position: relative;
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--sky-200);
+        background: linear-gradient(180deg, var(--sky-50) 0%, #fff 48%);
+        padding: 20px;
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+      }
+      .detail-top {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      .detail-top h2 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--sky-900);
+      }
+      .pill {
+        font-size: 11px;
+        font-weight: 600;
+        padding: 6px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--sky-200);
+        background: #fff;
+        color: var(--sky-900);
+      }
+      .meta {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      .context {
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.5;
+        margin-bottom: 16px;
+      }
+      .context .label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: var(--sky-900);
+        opacity: 0.75;
+        margin-bottom: 6px;
+      }
+      .context .pref {
+        margin-top: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+      .context .name {
+        font-weight: 600;
+        color: var(--fg);
+      }
+      .chip {
+        font-size: 11px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--sky-200);
+        background: #fff;
+        color: var(--fg);
+      }
+      /* Combined block */
+      .combined {
+        border: 1px solid var(--sky-200);
+        border-radius: var(--radius-md);
+        background: #fff;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        min-height: 260px;
+      }
+      @media (max-width: 720px) {
+        .combined {
+          grid-template-columns: 1fr;
+        }
+        .split {
+          border-right: none !important;
+          border-bottom: 1px solid var(--sky-200);
+        }
+      }
+      .split {
+        padding: 14px 16px;
+        border-right: 1px solid var(--sky-200);
+      }
+      .split:last-child {
+        border-right: none;
+        border-bottom: none;
+      }
+      @media (max-width: 720px) {
+        .split {
+          border-bottom: 1px solid var(--sky-200);
+        }
+        .split:last-child {
+          border-bottom: none;
+        }
+      }
+      .split-h {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        text-transform: uppercase;
+        margin-bottom: 10px;
+      }
+      .outcomes {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .outcome {
+        text-align: left;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border);
+        padding: 10px 12px;
+        background: #fff;
+        cursor: pointer;
+        font: inherit;
+        color: inherit;
+        transition: border-color 0.15s, box-shadow 0.15s;
+      }
+      .outcome:hover {
+        border-color: var(--sky-200);
+      }
+      .outcome.selected {
+        border-color: var(--sky-500);
+        box-shadow: 0 0 0 2px rgb(14 165 233 / 0.2);
+      }
+      .outcome .title-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 8px;
+      }
+      .outcome .title {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .badge-suggested {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: var(--sky-100);
+        color: var(--sky-900);
+        border: 1px solid var(--sky-200);
+      }
+      .ranked-mini {
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+      .ranked-mini span {
+        color: var(--fg);
+        font-weight: 500;
+      }
+      .reserved {
+        font-size: 12px;
+        background: var(--sky-50);
+        border: 1px solid var(--sky-200);
+        border-radius: var(--radius-sm);
+        padding: 8px 10px;
+        margin-bottom: 8px;
+      }
+      .reserved strong {
+        display: block;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        color: var(--sky-900);
+        margin-bottom: 4px;
+      }
+      .reserved .line {
+        color: var(--fg);
+        font-weight: 600;
+      }
+      .fine {
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+      select.pca {
+        width: 100%;
+        margin-top: 8px;
+        padding: 10px 12px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border);
+        font-size: 13px;
+        background: #fff;
+      }
+      .pca-hint {
+        margin-top: 10px;
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.45;
+        padding: 8px 10px;
+        border-radius: var(--radius-sm);
+        border: 1px dashed var(--border);
+        background: #f8fafc;
+      }
+      /* Commit */
+      .commit {
+        margin-top: 4px;
+      }
+      .commit-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: flex-start;
+      }
+      .btn {
+        border-radius: var(--radius-sm);
+        padding: 10px 16px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        border: 1px solid var(--border);
+        background: #fff;
+        font-family: inherit;
+      }
+      .btn:hover {
+        border-color: var(--sky-200);
+        background: #f8fafc;
+      }
+      .btn-primary {
+        border-color: var(--sky-500);
+        background: var(--sky-50);
+        color: var(--sky-900);
+      }
+      .btn-primary:hover {
+        background: var(--sky-100);
+      }
+      .save-hint {
+        flex: 1;
+        min-width: 200px;
+        font-size: 11px;
+        color: var(--muted);
+        padding-top: 2px;
+        line-height: 1.45;
+      }
+      .save-hint em {
+        font-style: normal;
+        font-weight: 600;
+        color: var(--fg);
+      }
+      footer.note {
+        margin-top: 16px;
+        font-size: 11px;
+        color: var(--muted);
+        max-width: 960px;
+      }
+    </style>
+  </head>
+  <body>
+    <div style="width: min(960px, 100%)">
+      <p class="caption">
+        Visual draft only — not wired to the app. Open this file in a browser. Toggle outcomes to see the
+        reserved row + PCA coupling.
+      </p>
+      <div class="modal">
+        <div class="modal-hd">Floating PCA (V2) · Step 3.2 — Preferred review</div>
+        <div class="modal-bd">
+          <!-- Lane -->
+          <div class="lane-wrap">
+            <div class="lane-scroll" aria-label="Team order lane (mock)">
+              <div class="lane-chip"><strong>1st</strong>DRO <span class="sub">N/A</span></div>
+              <div class="lane-chip"><strong>2nd</strong>FO <span class="sub">N/A</span></div>
+              <div class="lane-chip"><strong>3rd</strong>SMM <span class="sub">N/A</span></div>
+              <div class="lane-chip active matched">
+                <strong>4th</strong>MC
+                <span class="sub"><span class="icon-check" aria-hidden="true"></span> Matched</span>
+              </div>
+              <div class="lane-chip"><strong>5th</strong>GMC <span class="sub">N/A</span></div>
+              <div class="lane-chip"><strong>6th</strong>NSM <span class="sub">N/A</span></div>
+              <div class="lane-chip matched">
+                <strong>7th</strong>CPPC
+                <span class="sub"><span class="icon-check" aria-hidden="true"></span> Matched</span>
+              </div>
+              <div class="lane-chip"><strong>8th</strong>SFM <span class="sub">N/A</span></div>
+            </div>
+          </div>
+
+          <!-- Detail -->
+          <div class="detail">
+            <div class="detail-top">
+              <div>
+                <h2>MC · 4th in order</h2>
+                <div class="meta">Pending floating 1.00 · Assigned floating 0.75</div>
+              </div>
+              <div class="pill">Matched</div>
+            </div>
+
+            <div class="context">
+              <div class="label">Your dashboard</div>
+              <div>
+                <strong style="color: var(--fg); font-size: 13px">Ranked slots:</strong>
+                #1 <span>1030–1200</span> (slot 2) · #2 <span>0900–1030</span> (slot 1)
+              </div>
+              <div class="pref">
+                <span class="label" style="margin: 0">Preferred PCA</span>
+                <span class="name">光劭</span>
+                <span class="chip">Available on rank #1</span>
+                <span style="font-size: 11px">Feasible on your 1st ranked slot.</span>
+              </div>
+            </div>
+
+            <!-- Combined: Outcome | PCA -->
+            <div class="combined" role="group" aria-labelledby="res-block-title">
+              <div class="split">
+                <div id="res-block-title" class="split-h">Outcome</div>
+                <div class="outcomes" id="outcomes">
+                  <button type="button" class="outcome selected" data-outcome="a" aria-pressed="true">
+                    <div class="title-row">
+                      <span class="title">Preferred on rank #1</span>
+                      <span class="badge-suggested">Suggested</span>
+                    </div>
+                    <div class="ranked-mini">Ranked context: <span>#1 slot 2</span> · <span>#2 slot 1</span></div>
+                    <div class="reserved">
+                      <strong>Reserved for Step 3.4</strong>
+                      <div class="line" id="res-a">#1 · 1030–1200 (slot 2) · <span id="name-a">光劭</span></div>
+                    </div>
+                    <div class="fine">Other slots: filled in Steps 3.3–3.4 (not fixed here).</div>
+                  </button>
+                  <button type="button" class="outcome" data-outcome="b" aria-pressed="false">
+                    <div class="title-row">
+                      <span class="title">Floor on rank #1</span>
+                    </div>
+                    <div class="ranked-mini">Ranked context: <span>#1 slot 2</span> · <span>#2 slot 1</span></div>
+                    <div class="reserved">
+                      <strong>Reserved for Step 3.4</strong>
+                      <div class="line" id="res-b" style="display: none">
+                        #1 · 1030–1200 (slot 2) · <span id="name-b">Floor pool</span>
+                      </div>
+                    </div>
+                    <div class="fine">Other slots: filled in Steps 3.3–3.4 (not fixed here).</div>
+                  </button>
+                </div>
+              </div>
+              <div class="split">
+                <div class="split-h">Who fills the reserved slot?</div>
+                <label for="pca" class="fine" style="display: block; color: var(--fg); font-weight: 500"
+                  >PCA for this reservation</label
+                >
+                <select class="pca" id="pca" aria-label="Who fills the reserved slot">
+                  <option value="guang">光劭 (preferred)</option>
+                  <option value="floor">Floor PCA</option>
+                  <option value="other">陳大文 (non-floor)</option>
+                </select>
+                <p class="pca-hint">
+                  Changing PCA updates the <strong>Reserved for Step 3.4</strong> name in the selected outcome
+                  — both sides are one decision.
+                </p>
+              </div>
+            </div>
+
+            <div class="commit">
+              <div class="commit-row">
+                <button type="button" class="btn">Leave open for Step 3.4</button>
+                <button type="button" class="btn btn-primary">Save selected outcome</button>
+                <p class="save-hint">
+                  <em>Save</em> reserves only the row under “Reserved for Step 3.4” — not the whole day and not
+                  every ranked line above.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <footer class="note">
+        Draft B (optional): when only one outcome exists, hide the “Suggested” badge and use a neutral title
+        (“Reserve preferred on rank #1”) — this mock shows the two-outcome case only.
+      </footer>
+    </div>
+
+    <script>
+      (function () {
+        var outcomes = document.querySelectorAll(".outcome");
+        var pca = document.getElementById("pca");
+        var nameA = document.getElementById("name-a");
+        var nameB = document.getElementById("name-b");
+        var resB = document.getElementById("res-b");
+
+        function labelForPca(v) {
+          if (v === "floor") return "Floor pool";
+          if (v === "other") return "陳大文";
+          return "光劭";
+        }
+
+        function syncNames() {
+          var t = labelForPca(pca.value);
+          nameA.textContent = t;
+          nameB.textContent = pca.value === "floor" ? "Floor pool" : t;
+        }
+
+        outcomes.forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            outcomes.forEach(function (b) {
+              b.classList.remove("selected");
+              b.setAttribute("aria-pressed", "false");
+            });
+            btn.classList.add("selected");
+            btn.setAttribute("aria-pressed", "true");
+            var key = btn.getAttribute("data-outcome");
+            document.getElementById("res-a").style.display = key === "a" ? "" : "none";
+            resB.style.display = key === "b" ? "" : "none";
+            syncNames();
+          });
+        });
+
+        pca.addEventListener("change", syncNames);
+        syncNames();
+      })();
+    </script>
+  </body>
+</html>
