@@ -3,6 +3,7 @@
 **Status:** Draft for review  
 **Date:** 2026-04-15  
 **Visual draft (static HTML):** [`../mockups/2026-04-15-step32-v2-visual-draft.html`](../mockups/2026-04-15-step32-v2-visual-draft.html) — open in a browser.  
+**Implementation plan:** [`../plans/2026-04-15-step32-v2-combined-ui-implementation-plan.md`](../plans/2026-04-15-step32-v2-combined-ui-implementation-plan.md)  
 **Scope:** Floating PCA wizard — Step 3.2 preferred + ranked slot reservation UX (`Step32PreferredReviewLane`, `Step32PreferredReviewDetailPanel`, related copy/model).
 
 ---
@@ -45,7 +46,7 @@ Additionally, **“1. Choose outcome”** and **“2. Change PCA”** are laid o
 
 1. **Header strip (existing):** team, queue position, pending vs assigned floating, high-level pill (Matched / Alt / Unavailable).
 2. **Context (read-only, flat):**
-   - **Ranked slots** from dashboard (ordered list or one line: `#1 time (slot n) · #2 …`).
+   - **Ranked slots** from dashboard: use **ordinal rank + interval only**, e.g. `1st rank: 1030–1200 · 2nd rank: 0900–1030`. Do **not** mix `#1` / `#2` with `slot 1`–`slot 4` in one line (confusing). If internal slot index must appear, use **`Slot n (interval)`** — never bare `slot n` without the interval. (See implementation plan §0.)
    - **Preferred PCA(s):** per-person row **only when statuses diverge**; otherwise one merged line (see §6).
 3. **Primary block — “Reservation” (combined Action 1 + Action 2):**
    - **Same-level subheaders** (not nested cards inside cards): e.g. **Outcome** | **Who fills the reserved slot?** inside **one** rounded container with a **vertical divider** (desktop) or **stacked** sections with a single outer border (narrow).
@@ -109,7 +110,7 @@ Out of scope for the combined bar’s inner layout detail, but **locked product 
 
 | Situation | UI |
 |-----------|-----|
-| **Two outcomes** | Mark **one** as **Suggested** (or keep internal allocator label in subtitle **only if** product still wants continuity language). Primary title = **human outcome** (“Preferred on rank #1” / “Floor on rank #1”), not allocator jargon alone. |
+| **Two outcomes** | Mark **one** as **Suggested** (or keep internal allocator label in subtitle **only if** product still wants continuity language). Primary title = **human outcome** using ordinals (e.g. “Preferred on **1st rank**” / “Floor on **1st rank**”), not allocator jargon alone. |
 | **One outcome** | **No** “Recommended” chip. Title = neutral description of what Save reserves. |
 
 Do **not** rely on continuity vocabulary alone to imply Save scope.
@@ -156,4 +157,4 @@ Do **not** rely on continuity vocabulary alone to imply Save scope.
 
 ## Next step
 
-After you approve this spec (or request edits), use **writing-plans** to produce an implementation plan (model shape changes, component structure, copy keys, regression tests).
+Implementation plan: [`../plans/2026-04-15-step32-v2-combined-ui-implementation-plan.md`](../plans/2026-04-15-step32-v2-combined-ui-implementation-plan.md). After review, execute that plan in an Agent session (or extend it via **writing-plans** if you want more granular tasks).

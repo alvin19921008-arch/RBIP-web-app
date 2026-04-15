@@ -386,7 +386,8 @@
     <div style="width: min(960px, 100%)">
       <p class="caption">
         Visual draft only — not wired to the app. Open this file in a browser. Toggle outcomes to see the
-        reserved row + PCA coupling.
+        reserved row + PCA coupling. Rank/slot copy follows
+        <code>docs/superpowers/plans/2026-04-15-step32-v2-combined-ui-implementation-plan.md</code> §0.
       </p>
       <div class="modal">
         <div class="modal-hd">Floating PCA (V2) · Step 3.2 — Preferred review</div>
@@ -425,13 +426,13 @@
               <div class="label">Your dashboard</div>
               <div>
                 <strong style="color: var(--fg); font-size: 13px">Ranked slots:</strong>
-                #1 <span>1030–1200</span> (slot 2) · #2 <span>0900–1030</span> (slot 1)
+                1st rank: 1030–1200 · 2nd rank: 0900–1030
               </div>
               <div class="pref">
                 <span class="label" style="margin: 0">Preferred PCA</span>
                 <span class="name">光劭</span>
-                <span class="chip">Available on rank #1</span>
-                <span style="font-size: 11px">Feasible on your 1st ranked slot.</span>
+                <span class="chip">Available on 1st rank</span>
+                <span style="font-size: 11px">Feasible on your 1st rank.</span>
               </div>
             </div>
 
@@ -442,25 +443,25 @@
                 <div class="outcomes" id="outcomes">
                   <button type="button" class="outcome selected" data-outcome="a" aria-pressed="true">
                     <div class="title-row">
-                      <span class="title">Preferred on rank #1</span>
+                      <span class="title">Preferred on 1st rank</span>
                       <span class="badge-suggested">Suggested</span>
                     </div>
-                    <div class="ranked-mini">Ranked context: <span>#1 slot 2</span> · <span>#2 slot 1</span></div>
+                    <div class="ranked-mini">1st rank: 1030–1200 · 2nd rank: 0900–1030</div>
                     <div class="reserved">
                       <strong>Reserved for Step 3.4</strong>
-                      <div class="line" id="res-a">#1 · 1030–1200 (slot 2) · <span id="name-a">光劭</span></div>
+                      <div class="line" id="res-a">1st rank: 1030–1200 · <span id="name-a">光劭</span></div>
                     </div>
                     <div class="fine">Other slots: filled in Steps 3.3–3.4 (not fixed here).</div>
                   </button>
                   <button type="button" class="outcome" data-outcome="b" aria-pressed="false">
                     <div class="title-row">
-                      <span class="title">Floor on rank #1</span>
+                      <span class="title">Floor on 1st rank</span>
                     </div>
-                    <div class="ranked-mini">Ranked context: <span>#1 slot 2</span> · <span>#2 slot 1</span></div>
+                    <div class="ranked-mini">1st rank: 1030–1200 · 2nd rank: 0900–1030</div>
                     <div class="reserved">
                       <strong>Reserved for Step 3.4</strong>
                       <div class="line" id="res-b" style="display: none">
-                        #1 · 1030–1200 (slot 2) · <span id="name-b">Floor pool</span>
+                        1st rank: 1030–1200 · <span id="name-b">Floor pool</span>
                       </div>
                     </div>
                     <div class="fine">Other slots: filled in Steps 3.3–3.4 (not fixed here).</div>
@@ -500,7 +501,8 @@
 
       <footer class="note">
         Draft B (optional): when only one outcome exists, hide the “Suggested” badge and use a neutral title
-        (“Reserve preferred on rank #1”) — this mock shows the two-outcome case only.
+        (“Reserve preferred on 1st rank”) — this mock shows the two-outcome case only. Rank lines use ordinals
+        (1st rank, 2nd rank) and intervals only; internal slot index is never shown bare without its interval.
       </footer>
     </div>
 
