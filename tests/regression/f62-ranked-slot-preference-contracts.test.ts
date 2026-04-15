@@ -17,6 +17,8 @@ function score(partial: Partial<RankedSlotAllocationScore>): RankedSlotAllocatio
     splitPenalty: 0,
     promotionTrueStep3RankScore: 0,
     promotionTrueStep3PreferredPcaHits: 0,
+    amPmSessionBalanceSpreadScore: 0,
+    amPmSessionBalanceDetailScore: 0,
     ...partial,
   }
 }

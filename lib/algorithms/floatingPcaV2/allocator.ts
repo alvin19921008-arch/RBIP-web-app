@@ -46,6 +46,12 @@ const MAX_REPAIR_ITERATIONS = 8
 const MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS_ALLOCATOR = MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS
 const MAX_CANDIDATES_PER_DEFECT = 24
 
+const RANKED_V2_REPAIR_SCORE_COMPARE_OPTIONS = { includeAmPmSessionBalanceTieBreak: true } as const
+const RANKED_V2_PROMOTION_SCORE_COMPARE_OPTIONS = {
+  includeOptionalPromotionTieBreak: true,
+  includeAmPmSessionBalanceTieBreak: true,
+} as const
+
 function createEmptyPendingFTE(): Record<Team, number> {
   return {
     FO: 0,
@@ -300,7 +306,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
             floatingPcaIds,
           })
 
-          if (compareScores(candidateScore, bestScore) >= 0) continue
+          if (compareScores(candidateScore, bestScore, RANKED_V2_REPAIR_SCORE_COMPARE_OPTIONS) >= 0) continue
           if (!bestCandidate) {
             bestCandidate = {
               ...candidate,
@@ -311,7 +317,11 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
             continue
           }
 
-          const candidateVsBest = compareScores(candidateScore, bestCandidate.score)
+          const candidateVsBest = compareScores(
+            candidateScore,
+            bestCandidate.score,
+            RANKED_V2_REPAIR_SCORE_COMPARE_OPTIONS
+          )
           if (candidateVsBest < 0) {
             bestCandidate = {
               ...candidate,
@@ -445,7 +455,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
           floatingPcaIds,
         })
 
-        if (compareScores(candidateScore, baseScore, { includeOptionalPromotionTieBreak: true }) >= 0) {
+        if (compareScores(candidateScore, baseScore, RANKED_V2_PROMOTION_SCORE_COMPARE_OPTIONS) >= 0) {
           continue
         }
         if (!bestPromotion) {
@@ -457,9 +467,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
           }
           continue
         }
-        const vsBest = compareScores(candidateScore, bestPromotion.score, {
-          includeOptionalPromotionTieBreak: true,
-        })
+        const vsBest = compareScores(candidateScore, bestPromotion.score, RANKED_V2_PROMOTION_SCORE_COMPARE_OPTIONS)
         if (vsBest < 0) {
           bestPromotion = {
             ...candidate,

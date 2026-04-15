@@ -1,18 +1,27 @@
 import assert from 'node:assert/strict'
 
 import { detectRankedV2RepairDefects } from '../../lib/algorithms/floatingPcaV2/repairAudit'
+import { compareScores, type RankedSlotAllocationScore } from '../../lib/algorithms/floatingPcaV2/scoreSchedule'
 import {
-  detectOptionalRankedPromotionOpportunities,
   generateOptionalPromotionCandidates,
+  type Step3CommittedFloatingAnchor,
 } from '../../lib/algorithms/floatingPcaV2/repairMoves'
-import { formatV2RepairReasonLabel } from '../../lib/features/schedule/pcaTrackerTooltip'
 import { type PCAData } from '../../lib/algorithms/pcaAllocation'
 import { TEAMS, getTeamPreferenceInfo } from '../../lib/utils/floatingPCAHelpers'
 import type { PCAPreference } from '../../types/allocation'
 import type { PCAAllocation } from '../../types/schedule'
 import type { Team } from '../../types/staff'
 
-/** P1 optional promotion is discovered separately; a clean audit must not fabricate B1 gaps. */
+/**
+ * AM/PM session balance is **scoring-only** (`compareScores` / `buildRankedSlotAllocationScore`).
+ * Optional promotion and repair **never** emit moves that relocate Step 3.2 / 3.3 commits
+ * (`committedStep3Anchors`), regardless of `includeAmPmSessionBalanceTieBreak` in the allocator.
+ *
+ * (i) Reuse the f120 immutability fixture: with anchors, optional promotion candidate list is empty.
+ * (ii) Lexicographic AM/PM can strictly prefer a synthetic score tuple with higher spread/detail, but
+ * that preference cannot be realized by relocating an anchor — the better layout is unreachable
+ * through gated candidate generators.
+ */
 
 function emptyTeamRecord<T>(value: T): Record<Team, T> {
   return {
@@ -93,15 +102,32 @@ function computePendingLikeAllocator(
 
 function main() {
   const teamOrder: Team[] = ['CPPC', 'GMC', 'FO', 'SMM', 'SFM', 'MC', 'NSM', 'DRO']
-  const initialPendingFTE = { ...emptyTeamRecord(0) }
-  const baselineAllocations: PCAAllocation[] = []
+  const initialPendingFTE = { ...emptyTeamRecord(0), CPPC: 0.5 }
+  const baselineAllocations: PCAAllocation[] = [
+    {
+      id: 'baseline-pref',
+      schedule_id: '',
+      staff_id: 'pref-pca',
+      team: null,
+      fte_pca: 1,
+      fte_remaining: 0.75,
+      slot_assigned: 0.25,
+      slot_whole: null,
+      slot1: null,
+      slot2: null,
+      slot3: null,
+      slot4: 'CPPC',
+      leave_type: null,
+      special_program_ids: null,
+    },
+  ]
   const baselineAssignedSlots = countAssignedSlotsByTeam(baselineAllocations)
 
   const pcaPreferences: PCAPreference[] = [
     {
       id: 'pref-cppc',
       team: 'CPPC',
-      preferred_pca_ids: ['sway-pca'],
+      preferred_pca_ids: ['pref-pca'],
       preferred_slots: [1, 4],
       gym_schedule: 3,
       avoid_gym_schedule: true,
@@ -116,11 +142,16 @@ function main() {
     {} as Record<Team, ReturnType<typeof getTeamPreferenceInfo>>
   )
 
-  const pcaPool = [makePca('sway-pca', [1, 2, 3, 4])]
-  const allocations = [makeAllocation('sway-pca', { slot1: 'CPPC', slot4: 'GMC' })]
+  const pcaPool = [makePca('pref-pca', [1, 4]), makePca('other-pca', [1, 4])]
+  const allocations: PCAAllocation[] = [
+    makeAllocation('pref-pca', { slot2: 'CPPC', slot4: 'CPPC' }),
+    makeAllocation('other-pca', { slot1: 'CPPC' }),
+  ]
   const pendingFTE = computePendingLikeAllocator(initialPendingFTE, baselineAssignedSlots, allocations)
 
-  const args = {
+  const committedStep3Anchors: Step3CommittedFloatingAnchor[] = [{ team: 'CPPC', slot: 2, pcaId: 'pref-pca' }]
+
+  const withAnchors = generateOptionalPromotionCandidates({
     teamOrder,
     initialPendingFTE,
     pendingFTE,
@@ -128,23 +159,59 @@ function main() {
     pcaPool,
     teamPrefs,
     baselineAllocations,
+    committedStep3Anchors,
+  })
+  assert.equal(
+    withAnchors.length,
+    0,
+    'Optional promotion must not emit candidates that relocate a Step 3.2 preferred PCA+slot anchor (f120 / Constraint 6c).'
+  )
+
+  const defects = detectRankedV2RepairDefects({
+    teamOrder,
+    initialPendingFTE,
+    pendingFTE,
+    allocations,
+    pcaPool,
+    teamPrefs,
+    baselineAllocations,
+  })
+  assert.equal(defects.length, 0)
+
+  const baseLex: Omit<RankedSlotAllocationScore, 'amPmSessionBalanceSpreadScore' | 'amPmSessionBalanceDetailScore'> = {
+    highestRankCoverage: 0,
+    rankedCoverageSatisfied: 8,
+    fairnessSatisfied: 8,
+    totalFulfilledPendingQuarterSlots: 0,
+    gymLastResortCount: 0,
+    rankedSlotMatchCount: 0,
+    duplicateFloatingCount: 0,
+    splitPenalty: 0,
+    promotionTrueStep3RankScore: 0,
+    promotionTrueStep3PreferredPcaHits: 0,
+  }
+  const scoreAnchorRespecting: RankedSlotAllocationScore = {
+    ...baseLex,
+    amPmSessionBalanceSpreadScore: 0,
+    amPmSessionBalanceDetailScore: 0,
+  }
+  const scoreHypotheticalIfAnchorsIgnored: RankedSlotAllocationScore = {
+    ...baseLex,
+    amPmSessionBalanceSpreadScore: 1,
+    amPmSessionBalanceDetailScore: 99,
   }
 
-  const defects = detectRankedV2RepairDefects(args)
-  assert.equal(defects.some((d) => d.kind === 'B1'), false)
-
-  const candidates = generateOptionalPromotionCandidates(args)
-  assert.ok(candidates.length > 0, 'Fixture should admit optional promotion candidates without inventing B1.')
-
-  const opportunities = detectOptionalRankedPromotionOpportunities(args)
-  assert.ok(opportunities.length > 0)
-  assert.ok(opportunities.every((o) => o.kind === 'P1'))
-
-  assert.equal(
-    formatV2RepairReasonLabel('ranked-promotion'),
-    'Ranked promotion',
-    'Tracker copy for ranked-promotion rows (B4).'
+  assert.ok(
+    compareScores(scoreHypotheticalIfAnchorsIgnored, scoreAnchorRespecting, {
+      includeAmPmSessionBalanceTieBreak: true,
+    }) < 0,
+    'Pure lexicographic AM/PM can favor a post-state that would require relocating a frozen anchor; that state is unreachable because candidate generation excludes anchor moves before scoring.'
   )
 }
 
-main()
+try {
+  main()
+} catch (error) {
+  console.error(error)
+  process.exitCode = 1
+}

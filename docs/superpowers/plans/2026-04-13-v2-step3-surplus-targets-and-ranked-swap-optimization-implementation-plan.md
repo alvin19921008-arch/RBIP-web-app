@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement the new V2-only Step 3 target pipeline so surplus-aware rounded pending is projected consistently from Step 2 into Step 3.1, then add a separate optional ranked-promotion phase that allows bounded no-net-loss swap optimization without harmful donation, with **promotion scoring** that prefers **ranked-slot uplift** first and **preferred PCA** satisfaction second (AM/PM deferred), and **immutable** user commits from **Step 3.2** (preferred PCA on a slot) and **Step 3.3** (adjacent slot) for repair and promotion (**Constraint 6c**). See design spec **Forward-looking: AM / PM balance** for deferred session-balance work.
+**Goal:** Implement the new V2-only Step 3 target pipeline so surplus-aware rounded pending is projected consistently from Step 2 into Step 3.1, then add a separate optional ranked-promotion phase that allows bounded no-net-loss swap optimization without harmful donation, with **promotion scoring** that prefers **ranked-slot uplift** first and **preferred PCA** satisfaction second, then **AM/PM session balance** as a **soft** tie-break (**Task Group D**, **Constraint 6d**). **Immutable** user commits from **Step 3.2** (preferred PCA on a slot) and **Step 3.3** (adjacent slot) apply to repair, promotion, Part III gym repair, and AM/PM tie logic (**Constraint 6c**). **Task Group C (Part III)** adds gym-avoidable `G1` audit + bounded repair + shared Step 3.4 / tooltip copy — see design spec **Part III** and [Task Group C](#task-group-c-part-iii-gym-avoidable-defect-post-draft-repair) below. **Task Group D** ships **AM/PM session balance** per design spec **AM / PM session balance (approved — Task Group D)** and [Task Group D](#task-group-d-am--pm-session-balance) below.
 
-**Architecture:** Treat the work as two separable task groups. Task Group A introduces a shared `Step3TargetProjection`-style surplus-aware target calculation that keeps raw therapist-weighted demand separate from realized quarter-slot output while making Step 2 deltas and Step 3.1 initialization consume the same projection. Task Group B adds a V2-only optional ranked-promotion phase after required repair, encoded as a distinct audit/scoring concept rather than as a fake ranked-gap defect; promotion compares candidates with **rank-first** then **preferred-PCA** tie metrics (AM/PM out of scope for this plan—**Forthgoing: AM / PM balance**); **Step 3.2** and **Step 3.3** user commits stay **frozen** for repair and promotion; tiny provenance text goes to the Step 3.4 tooltip only.
+**Architecture:** Treat the work as **four** engineering task groups (A–D). Task Group A introduces a shared `Step3TargetProjection`-style surplus-aware target calculation that keeps raw therapist-weighted demand separate from realized quarter-slot output while making Step 2 deltas and Step 3.1 initialization consume the same projection. Task Group B implements **Part II** optional ranked promotion (bounded pass, distinct from `B1`). Task Group C implements **Part III** gym avoidance (`G1`, **`MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS = 6`**); **Constraint 6e** forbids changing Part II promotion **eligibility** contracts to satisfy gym goals. **Task Group D** implements **AM/PM session balance**: new metrics + `compareScores` / optional-promotion tie extension + optional **draft**-level soft preference — **no** new mandatory repair loop and **no** change to **`R → G → P`** allocator phase order (**Constraint 6d**). **Repo task order (A → B → C → D) is not allocator order.** **Locked allocator orchestration** after draft + required repair remains **`R → G → P`**: **R**equired repair → **G**ym pass (**Part III**, `G1`) → **P**romotion (**Part II**) → residual extra coverage → final audit. **Spec Roman numerals II vs III are chapter titles only — `allocator.ts` must run Part III before Part II.** Promotion compares candidates with **rank-first** then **preferred-PCA** tie metrics, then **session-balance** when **Task Group D** wiring enables that tier (**Constraint 6d**). **Step 3.2** and **Step 3.3** user commits stay **frozen** for repair, promotion, gym repair, and AM/PM resolution. Tiny provenance text for surplus/promotion/gym stories feeds **both** Step 3.4 and tracker tooltips from one module (`v2PcaTrackerTooltipModel.ts` or a thin re-export consumed by `step34ViewModel.ts`).
 
 **Tech Stack:** TypeScript, React/Next.js, V2 ranked-slot allocator in `lib/algorithms/floatingPcaV2/`, Step 3 feature logic in `lib/features/schedule/`, shared rounding helpers, focused Node/`tsx` regression tests, IDE lints for touched TS/TSX files.
 
@@ -57,11 +57,39 @@
 - Modify: `lib/algorithms/floatingPcaV2/repairMoves.ts`
   - Generate bounded swap/safe-move/same-PCA-sway candidates for optional ranked promotion; **exclude** any candidate that would move **Step 3.2** or **Step 3.3** user-commit anchors (**Constraint 6c**).
 - Modify: `lib/algorithms/floatingPcaV2/scoreSchedule.ts`
-  - Score optional promotion outcomes separately from required ranked-gap satisfaction.
+  - Score optional promotion outcomes separately from required ranked-gap satisfaction; **Task Group D** adds AM/PM session-balance metrics and `compareScores` ordering per **Constraint 6d** (do **not** reorder objectives ahead of promotion rank / preferred PCA).
 - Modify: `lib/algorithms/floatingPcaV2/allocator.ts`
-  - Insert the optional promotion phase at the approved point in orchestration.
+  - Insert the optional promotion phase **after** the Part III gym pass (**`R → G → P`** — see **Task Group C** and design **Locked allocator order**).
 - Modify: `lib/features/schedule/v2PcaTrackerTooltipModel.ts`
   - Surface tiny provenance text for ranked-promotion outcomes when a repair/promotion row should explain itself.
+
+### Task Group C (Part III): Gym avoidable defect (post-draft repair)
+**Status in this worktree:** **Not started** — design + plan are authoritative; implement in a dedicated session.
+
+- Modify: `lib/algorithms/floatingPcaV2/repairAudit.ts`
+  - Add **`G1`** to `RankedV2RepairDefect`; implement `detectRankedV2GymAvoidableDefects` (or equivalent) per design spec **Feasible non-gym reshuffle**; **`G1` must not** be mixed into `detectOptionalRankedPromotionOpportunities` or `B1` repair defect sorting unless product explicitly merges them later.
+- Modify: `lib/algorithms/floatingPcaV2/repairMoves.ts`
+  - Reuse or fork bounded candidate generation for **gym-only objective** moves (swap / safe donation / sway); exclude Step 3.2 / 3.3 anchors (**Constraint 6c**).
+- Modify: `lib/algorithms/floatingPcaV2/scoreSchedule.ts` (if needed)
+  - Auxiliary scoring or tie-break for gym-avoidance pass only — **do not** reuse Part II `includeOptionalPromotionTieBreak` for `G1` repair.
+- Modify: `lib/algorithms/floatingPcaV2/allocator.ts`
+  - Insert **Part III** pass at **locked order** (design spec **Locked allocator order**): **after** required repair, **before** Part II optional promotion, **before** `applyExtraCoverageRoundRobin`; constant **`MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS = 6`**.
+- Modify: `lib/features/schedule/v2PcaTrackerTooltipModel.ts` and **`components/allocation/step34/step34ViewModel.ts`** (and/or `FloatingPCAConfigDialogV2.tsx`)
+  - **Single source** for user-visible gym-avoidance / gym-last-resort / unavoidable strings so Step 3.4 and tracker tooltips stay aligned.
+
+### Task Group D: AM / PM session balance (soft lexicographic layer)
+**Status:** **Ship in this plan** — design contract: `docs/superpowers/specs/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md` → **AM / PM session balance (approved — Task Group D)**.
+
+- Add (recommended): `lib/algorithms/floatingPcaV2/amPmSessionBalance.ts` (or equivalent)
+  - **Single source** for default **session bands** (slots **1–2** vs **3–4**), Step-3–owned floating slot counts per team per band, and a deterministic **session balance score** per **Constraint 6d** / design: **neutral** for 1, 4, or **≥5** quarters pending; **2** quarters → **1+1**; **3** quarters → AM/PM sub-tier **2+1** vs **3+0** only (0.75 **narrative** tier 2/3 lives in **duplicate**/**split** first).
+- Modify: `lib/algorithms/floatingPcaV2/scoreSchedule.ts`
+  - Extend `RankedSlotAllocationScore` with session-balance fields; extend `compareScores` with an option such as `includeAmPmSessionBalanceTieBreak` that runs **only after** existing tiers through **split penalty** and **after** `includeOptionalPromotionTieBreak` rank + preferred PCA comparisons when both schedules are tied there.
+- Modify: `lib/algorithms/floatingPcaV2/allocator.ts`
+  - Thread the new `compareScores` option anywhere promotion (and, if applicable, repair move acceptance) compares **tied** candidate schedules — **never** accept a worse required-repair / `G1` outcome for session balance (**Constraint 6c**, **Constraint 6f**).
+- Modify: `lib/algorithms/floatingPcaV2/draftAllocation.ts` (optional but recommended)
+  - When the draft stage chooses among **ties** at the pre-existing score resolution, prefer better session balance **without** violating ranked preference, anchors, or donor rules.
+- Modify (optional): `lib/features/schedule/v2PcaTrackerTooltipModel.ts`
+  - Only if product wants a visible “why” line; otherwise allocator-only.
 
 ### Regression tests
 
@@ -80,6 +108,51 @@
 - Create: `tests/regression/f120-step34-v2-optional-promotion-and-repair-respect-step32-step33-commit-immutability.test.ts` (filename illustrative — **pick next free `f11x`** per repository note; asserts optional promotion + repair never relocate **Step 3.2** preferred PCA+slot or **Step 3.3** adjacent-slot commits)
 
 **Repository note:** The original sketch used `f111`–`f115`; this repo already used those numbers for other contracts, so Task Group B tests are **`f116`–`f120`** (see bullets above and **Implementation status** under Task Group B).
+
+#### Task Group C tests (Part III — reserved filenames)
+Create when executing Task Group C (names are **locked**; do not reuse for unrelated contracts):
+
+- Create: `tests/regression/f121-step34-v2-g1-detected-when-avoid-gym-and-feasible-non-gym-reshuffle-exists.test.ts`
+- Create: `tests/regression/f122-step34-v2-g1-not-raised-when-gym-is-true-last-resort-only.test.ts`
+- Create: `tests/regression/f123-step34-v2-gym-avoidance-repair-moves-off-gym-without-reintroducing-required-repair-defects.test.ts`
+- Create: `tests/regression/f124-step34-v2-gym-avoidance-repair-respects-step32-step33-commit-immutability.test.ts`
+- Create: `tests/regression/f125-step34-v2-part-ii-optional-promotion-defect-gates-unchanged-by-part-iii.test.ts` (assert optional promotion still requires **zero** required-repair defects for its pass; Part III does not relax `isValidPromotionOutcome` / allocator promotion `break` conditions)
+
+**Repository note (Task Group C):** **`f121`–`f125`** are reserved for Part III.
+
+#### Task Group D tests (AM / PM — reserved filenames)
+Create when executing **Task Group D** (names **locked** for this contract):
+
+- Create: `tests/regression/f126-step34-v2-am-pm-session-balance-prefers-spread-for-half-fte-two-slots.test.ts` (fixture: **0.5 FTE** pending → two slots; among otherwise tied placements, outcome spreads across **1–2** vs **3–4** bands when feasible)
+- Create: `tests/regression/f127-step34-v2-am-pm-session-balance-neutral-for-quarter-fte.test.ts` (**0.25 FTE** — session metric must not force artificial preference)
+- Create: `tests/regression/f128-step34-v2-am-pm-session-balance-does-not-override-step32-step33-anchors.test.ts` (anchors from **Constraint 6c**; session balance may not justify moving committed 3.2 / 3.3 rows)
+
+#### 0.75 FTE — locked regression matrix (tiers **1 → 2 → 3**)
+
+These files exist so **lexicographic behavior is provable**, not only described in **Constraint 6d**. Each test constructs **two** (or three) schedules with **controlled** `RankedSlotAllocationScore` fields (via `buildRankedSlotAllocationScore` / real minimal allocations — whichever is already used in sibling regressions). **Tier names** match the design spec **0.75 pending: product outcome ladder**. **Duplicate discipline:** **tier 1** and **tier 2** are both **no-duplicate**; **only tier 3** worsens **`duplicateFloatingCount`** relative to them.
+
+| File | Tiers compared | What must be **identical** (match on these first) | What must **differ** (the discriminant) | Assertion |
+|------|----------------|-----------------------------------------------------|------------------------------------------|------------|
+| **f129** | **1 vs 2** | **`duplicateFloatingCount` (tier 7) identical** — **tier 1** and **tier 2** are both **no-duplicate** outcomes (conventionally both **0** duplicate pressure for the focal slice; assert equality explicitly in the test). All objectives **through tier 7** match. | **`splitPenalty`** (tier 8): **tier 1** = one PCA holds all **three** quarter slots (non-split triple); **tier 2** = **PCA A** holds **0.5** in one band **(slots 1&2 *or* 3&4)** and **PCA B** holds **0.25** in the **other** band (split across PCAs). | `compareScores(tier1, tier2, opts) < 0` — **tier 1 wins on split alone**; **do not** pass `includeAmPmSessionBalanceTieBreak` unless promotion flags are required for equality above tier 8. |
+| **f130** | **2 vs 3** | Through **`splitPenalty`** inclusive: **split** matches; every objective **strictly before** tier 7 matches. **Tier 2** remains **no-duplicate** (same as tier 1 on duplicate policy). | **`duplicateFloatingCount`** (tier 7): **tier 2** strictly **lower** (better) than **tier 3** — **only tier 3** carries the relaxed / worse duplicate pattern per ranked V2. | `compareScores(tier2, tier3, opts) < 0` — **tier 2 wins on duplicate** before AM/PM runs. |
+| **f131** | **AM/PM sub-tier only** | **`duplicateFloatingCount`**, **`splitPenalty`**, and all objectives **above** tier 8 match; optional promotion tie fields match if used in the call site under test. | **Band histogram only:** **2+1** (both bands used) vs **3+0** (all three slots in one band) for the same team’s Step-3–owned floating. | With `includeAmPmSessionBalanceTieBreak: true` (final flag name per implementation), `compareScores(twoPlusOne, threePlusZero, fullOpts) < 0`. |
+| **f132** | **1 vs 3** (integration) | N/A — end-to-end ordering on constructed pair. | Composite: **tier 1** must lexicographically beat **tier 3** without relying on AM/PM (duplicate and/or split already differ). | `compareScores(tier1, tier3, opts) < 0`; document in test which **first differing tier** is (expect **7 or 8** for chosen fixtures). |
+
+**Fixture discipline (all of f129–f132):**
+- Focal team pending floating = **0.75 FTE** (**three** quarter slots) for the scenario under test.
+- Document in each file: **which PCA ids** occupy **which slots** for tier 1 / 2 / 3; keep all **non-focal** teams/slots **identical** between compared schedules so diffs are only the tier story.
+- Prefer **real minimal allocations** from the same harness style as **f116**–**f120**; use **synthetic score objects** only if an existing regression already does and code owners agree — if synthetic, add a one-line comment that allocator integration is covered separately.
+
+**Additional locked filenames (0.75 tier contract):**
+
+- Create: `tests/regression/f129-step34-v2-am-pm-075-tier1-non-split-beats-tier2-split-when-duplicate-tied.test.ts` (matrix row **f129** — filename means **`duplicateFloatingCount` tied** — **tier 1** & **tier 2** both **no duplicate**, typically **0**)
+- Create: `tests/regression/f130-step34-v2-am-pm-075-tier2-no-dup-beats-tier3-dup-when-split-tied.test.ts` (row **f130**)
+- Create: `tests/regression/f131-step34-v2-am-pm-075-am-pm-two-plus-one-beats-three-plus-zero-when-dup-split-tied.test.ts` (row **f131**)
+- Create: `tests/regression/f132-step34-v2-am-pm-075-tier1-beats-tier3-lexicographic-order.test.ts` (row **f132**)
+
+**1.0 / >1.0 chunk (recommended next; lock filenames when added):** AM/PM neutral on band-only permutations; **`splitPenalty`** distinguishes **chunky** vs **four×0.25** when duplicate tied — reserve **`f133+`** for those until promoted to locked names beside **`f126`–`f132`**.
+
+**Repository note (Task Group D):** **`f126`–`f132`** are reserved for AM/PM (including **0.75** tier matrix); pick **`f133+`** for **≥1.0** chunk tests or unrelated regressions.
 
 ### Files that must stay untouched
 - Do not modify: `lib/algorithms/floatingPcaLegacy/allocator.ts`
@@ -150,8 +223,8 @@ Donor checks must use **Step-3–owned floating** semantics (not raw slot occupa
 - Do **not** implement `while (promotionOpportunity) { … }` without a hard cap; do **not** block extra-after-needs placement on “promotion might still exist” at a deeper search depth.
 - `P1` (or equivalent) is an opportunity signal for **one** bounded pass, not a persistent required-defect queue.
 
-### Constraint 6c: Step 3.2 and Step 3.3 user commits are immutable for repair and optional promotion
-End users commit concrete placements **before** Step 3.4. Those choices must not be undone later by audit, required repair, bounded donation, optional ranked promotion, swap, or sway.
+### Constraint 6c: Step 3.2 and Step 3.3 user commits are immutable for repair, optional promotion, and Part III gym repair
+End users commit concrete placements **before** Step 3.4. Those choices must not be undone later by audit, required repair, bounded donation, optional ranked promotion, **Part III gym-avoidance repair**, swap, or sway.
 
 **Frozen anchors (both equally protected):**
 
@@ -165,19 +238,47 @@ End users commit concrete placements **before** Step 3.4. Those choices must not
 
 **Regression:** add a dedicated test (see Task Group B tests — `f115` placeholder name; pick next free `f11x` per repository note) that fails if optional promotion or repair moves **either** a Step 3.2 preferred anchor **or** a Step 3.3 adjacent anchor.
 
-### Constraint 6d: AM / PM session balance is out of scope for Task Group B scoring
-Do **not** add AM/PM balance terms to optional-promotion or `compareScores` work in this plan. Defer to **Forthgoing: AM / PM balance** below and a future approved plan.
+### Constraint 6d: AM / PM session balance (Task Group D — locked lexicographic order)
+**Ship:** **Task Group D** implements AM/PM as a **soft** preference only. **Product mirror:** design spec **AM / PM session balance (approved — Task Group D)** (FTE tier table, **0.75 PCA/band narrative + lexicographic mapping**, **≥1.0 chunk vs fragment**).
 
-### Forthgoing: AM / PM balance in allocation (introduction only)
-**Not implemented in this plan.** Capture intent so a later agent does not re-litigate basics.
+**Ordering (non-negotiable):** Session balance compares **only after** all of the following are already equal between two candidate schedules:
+1. Every existing `compareScores` objective through **`splitPenalty`** (ranked coverage, ranked-gap satisfaction, fairness, fulfilled pending, gym last resort, ranked-slot match, **tier 7** `duplicateFloatingCount`, **tier 8** `splitPenalty` — same stack as today).
+2. When optional promotion tie-break is in play, **after** `promotionTrueStep3RankScore` **and** `promotionTrueStep3PreferredPcaHits` are equal.
 
-- **Problem:** For multi-slot pending (e.g. **0.5 FTE** → two quarter slots), schedules may want **AM vs PM** spread (e.g. slots 1–2 vs 3–4) as a **soft** quality goal after rank, preferred PCA, continuity, and gym-last-resort rules.
-- **Scope later:** New `compareScores` / draft heuristics tier, product-approved ordering vs existing duplicate/split/gym stack; dedicated regressions. **0.25 FTE** has no meaningful AM/PM split; **0.75** / **≥1.0** may need different patterns before AM/PM tuning.
-- **Tracker:** V2 surfaces may already show session-oriented hints; allocator scoring change is **not** required for parity on day one.
-- **Design mirror:** `docs/superpowers/specs/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md` Part II **Forward-looking: AM / PM balance** stays the product-facing stub; keep both documents aligned when AM/PM ships.
+**0.75 pending — product narrative vs code (implementers must not conflate):**
+- **Tier 1 vs tier 2 — both no duplicate:** **Most optimal** and **2nd tier** both satisfy **no duplicate-floating pressure** (`duplicateFloatingCount` tied, typically **0**). The quality gap between them is **`splitPenalty`** only (non-split single PCA vs split A+B).
+- **Most optimal (tier 1):** **2+1** bands + **one PCA** non-split triple + **no duplicate** (design examples: slots **1–2–3**, **1–2–4** when feasible).
+- **2nd tier:** **2+1** bands + **no duplicate** (same duplicate tier as tier 1), **split** across PCAs (e.g. PCA A **(1&2)** or **(3&4)** for 0.5, PCA B other band for 0.25).
+- **3rd tier:** **duplicate** allowed for pending only when tier 2 infeasible — **strictly worse** `duplicateFloatingCount` than tier 1/2; AM/PM does **not** implement this trade-off.
+- **Draft heuristic:** try **most optimal → 2nd → 3rd** when generating candidates; **`compareScores` wins** if the search misses a better schedule.
 
-### Forthgoing: Gym avoidable defect (post-draft repair)
-**Not implemented in this plan.** Spec stub **next to Part II** in the paired design doc: **Gym avoidable defect (post-draft repair)** — audit + bounded repair when avoid-gym is on but a non-gym reshuffle exists; **do not** fold into Part II optional promotion. Align both documents when this ships.
+**FTE tier → metric (implement exactly):**
+- **1 quarter (0.25 FTE):** session-balance component **neutral** for that team.
+- **2 quarters (0.5 FTE):** primary spread — prefer **1+1** across bands when feasible at this tier (regression **f126**).
+- **3 quarters (0.75 FTE):** **AM/PM sub-tier only** among schedules **already tied** on duplicate + split + …: (a) prefer **2+1** over **3+0**; (b) among **2+1**, deterministic tie-break (document in code). **Never** rank **3+0** above **2+1** at this sub-tier. **Do not** use AM/PM to bypass better duplicate/split outcomes from tier 2 vs 3.
+- **4 quarters (1.0 FTE):** session-balance component **neutral** — prefer **chunky** staffing (**one PCA 1.0**, or **0.75+0.25**, etc.) via **`splitPenalty`** / **`duplicateFloatingCount`**, **not** by mandating “one PCA owns all four slots.”
+- **≥ 5 quarters (> 1.0 FTE):** session-balance component **neutral** — same **chunk vs four×0.25** story via **duplicate** + **split** + continuity **above** AM/PM.
+
+**Rules:**
+- **Bands:** default slots **1–2** vs **3–4** (see design spec **AM / PM session balance**); centralize constants/helpers so draft + promotion + tests cannot drift.
+- **Safety:** AM/PM must **never** override required repair validity, **Constraint 6c** user commits, **Constraint 6f** / `G1` post-promotion guard, or harmful-donation / donor-protection rules. If anchors or higher objectives force **3+0** for 0.75, **accept** it.
+- **Task Group B scope:** Do **not** interleave AM/PM **before** promotion rank + preferred PCA inside `includeOptionalPromotionTieBreak`; add a **separate** `compareScores` flag or tier **after** that block (see **Task Group D**).
+
+### Constraint 6e: Part III must not change Part II optional promotion contracts
+Task Group C (**gym avoidance**, `G1`) must **not**:
+
+- relax `detectOptionalRankedPromotionOpportunities`, `isValidPromotionOutcome`, or allocator branches so optional promotion runs while **any** required-repair defect remains (including **A2-only** residual lists);
+- encode gym improvement as a **P1** / `B1` hybrid or reuse Part II `compareScores(..., { includeOptionalPromotionTieBreak: true })` for `G1` move selection unless product opens a new approved spec.
+
+Gym-only repair uses its **own** bounded loop, cap, and scoring slice per design spec **Part III**.
+
+### Constraint 6f: Optional promotion must not reintroduce avoidable gym (`G1`)
+**Allocator order reminder:** Part III (**G**) runs **before** Part II optional promotion (**P**) — **`R → G → P`**.
+
+After the **Part III** pass has **completed**, Part II **must reject** any promotion candidate whose **post-move** schedule would **trigger `G1`** for any team (same **`G1`** definition and **Feasible non-gym reshuffle** test as the design spec **Optional promotion guard**). Intuition: do not trade rank polish for **avoidable** gym occupancy when Part III already established the guardrail.
+
+### Part III handoff (gym avoidable defect)
+**Not implemented in Task Groups A/B.** Full product contract: design spec **`### Part III. Gym avoidable defect (post-draft repair)`**. Full execution checklist, locked allocator order (**`R → G → P`** — gym **before** optional promotion; spec **Part I/II/III** = chapters, not call order), `G1` definition, **`MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS = 6`**, UI/tooltip single-source rule, and reserved regressions **`f121`–`f125`**: **[Task Group C](#task-group-c-part-iii-gym-avoidable-defect-post-draft-repair)** (below Task Group B). **Constraint 6e** applies.
 
 ### Constraint 7: Preserve V1 behavior
 Any shared contract/type change must be proven behavior-neutral for V1.
@@ -212,6 +313,9 @@ Use focused regression commands and file-scoped lints. Do not rely on repo-wide 
 | Popover link | `What does this mean?` → `/help/avg-and-slots` |
 | Help `/help/avg-and-slots` | Section headings and body use approved names; still teach continuous FTE vs **slots** (0.25 FTE each) |
 | Tracker tooltip value | `Raised floating target (shared spare).` |
+| Tracker **Repair reason** (`repairReason` **`continuity-reduction`**) | `Continuity (fewer PCA handoffs).` (SSOT: `formatV2RepairReasonLabel` in `lib/features/schedule/pcaTrackerTooltip.ts`) |
+| Tracker **Repair reason** (`repairReason` **`ranked-promotion`**) | `Ranked promotion.` (SSOT: `formatV2RepairReasonLabel` in same file) |
+| Tracker audit pill **`C1`** | `Continuity (fewer PCA handoffs).` (SSOT: `formatV2RepairAuditDefectLabel` in same file) |
 
 - [x] **Step 1:** Add the Help article route and shared formula fragments; wire Help Center “Guides” card; align guide + popover wording with copy deck.
 - [x] **Step 2:** Refactor both Avg PCA popovers to use `AvgPcaFormulaPopoverContent`; preserve schedule page **live** sanity-check numbers via `sanityCheckFooter`; popover link text **What does this mean?** where applicable.
@@ -777,7 +881,7 @@ git commit -m "feat: add optional ranked promotion to v2 repair"
 Modify tooltip detail generation so promotion-origin repair rows can say something like:
 
 ```ts
-{ label: 'Repair reason', value: 'Ranked promotion via bounded swap' }
+{ label: 'Repair reason', value: 'Ranked promotion' }
 ```
 
 Only do this when the final repair/provenance metadata proves that the row came from the optional-promotion phase.
@@ -814,6 +918,109 @@ git commit -m "feat: explain ranked promotion in v2 tracker tooltip"
 
 ---
 
+## Task Group C (Part III): Gym avoidable defect (post-draft repair)
+
+> **Status:** **Not started** in this worktree. **Do not** implement opportunistically while touching Task Group B files — follow **Constraint 6e** and the design spec **Part III** as a unit.
+
+**Goal:** After **required repair** has cleared and **Part I** targets are in effect, run **Part III** gym-avoidable detection and a **separate bounded repair** pass (`G1`, gym-only objective) **before** **Part II** optional ranked promotion **begins**. Then run Part II’s bounded promotion pass (with **Optional promotion guard** / **Constraint 6f**), then residual extra coverage and final audit per design **Locked allocator order**. **Task Group C** is the engineering checklist for Part III; **allocator call order is `R → G → P`**, not Roman-numeral document order.
+
+**Authoritative references (read in order):**
+1. Design spec `docs/superpowers/specs/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md` → **`### Part III. Gym avoidable defect (post-draft repair)`** (includes **`G1`**, **Feasible non-gym reshuffle**, **Locked allocator order**, **UI and tooltip**, cap **`6`**).
+2. This plan → **Constraint 6e**, **Task Group C** file list above, regression filenames **`f121`–`f125`** below.
+
+### Locked orchestration (allocator checklist)
+Implement exactly this relative ordering inside `allocateFloatingPCA_v2RankedSlotImpl` / `allocator.ts` (or successor). **Mnemonic:** **`R → G → P`** — spec **Part I/II/III** are **chapters**; **G (Part III) runs before P (Part II)** in code.
+
+1. Draft allocation  
+2. Required repair loop (existing) **(R)**  
+3. **Part III:** compute `G1` defects → run gym-avoidance repair loop with **`MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS = 6`** **(G)** — **must complete** before step 4  
+4. **Part II** optional ranked promotion — existing bounded pass **(P)**; candidates must pass **Optional promotion guard** (no post-move `G1` for any team)  
+5. `applyExtraCoverageRoundRobin` (or equivalent residual extra coverage)  
+6. Second repair / finalize path already used for **f99** discipline  
+
+### Task C1: `G1` audit (`repairAudit.ts`)
+- [ ] Extend `RankedV2RepairDefect` with `{ kind: 'G1'; team: Team }`.
+- [ ] Implement detection per design **Feasible non-gym reshuffle** (prove feasibility by search over bounded candidates — may reuse `generateRepairCandidates` machinery with a filtered objective or a dedicated enumerator; **no harmful donation**).
+- [ ] Ensure `G1` is **not** returned from the same function that powers optional promotion opportunity detection.
+
+### Task C2: Gym-avoidance candidates + repair loop (`repairMoves.ts`, possibly `allocator.ts`)
+- [ ] Add candidate generation and/or a small `runGymAvoidanceRepairLoop` helper that only accepts moves improving the gym story while preserving **zero** required-repair defects after each accept (per design default: full `detectRankedV2RepairDefects` clear — align with spec if implementation discovers a narrower invariant).
+- [ ] Respect **Constraint 6c** (Step 3.2 / 3.3 anchors) identically to required repair / Part II.
+
+### Task C3: Orchestration (`allocator.ts`)
+- [ ] Call Part III pass **after** required repair and **before** `runOptionalRankedPromotionPass` / equivalent; then run optional promotion, then extra coverage.
+- [ ] Wire **`MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS = 6`** as a named constant beside `MAX_REPAIR_ITERATIONS`.
+
+### Task C4: UI + tooltip parity (`v2PcaTrackerTooltipModel.ts`, `step34ViewModel.ts`, `FloatingPCAConfigDialogV2.tsx` as needed)
+- [ ] Centralize user-visible strings for: gym last resort, gym avoidance repair applied, gym unavoidable (true last resort with avoid-gym on).
+- [ ] Consume the same strings from **both** tracker tooltips and Step 3.4 detail surfaces (no duplicated English literals).
+
+### Task C5: Regressions + verification commands
+Run after implementation:
+
+```bash
+npx tsx tests/regression/f121-step34-v2-g1-detected-when-avoid-gym-and-feasible-non-gym-reshuffle-exists.test.ts
+npx tsx tests/regression/f122-step34-v2-g1-not-raised-when-gym-is-true-last-resort-only.test.ts
+npx tsx tests/regression/f123-step34-v2-gym-avoidance-repair-moves-off-gym-without-reintroducing-required-repair-defects.test.ts
+npx tsx tests/regression/f124-step34-v2-gym-avoidance-repair-respects-step32-step33-commit-immutability.test.ts
+npx tsx tests/regression/f125-step34-v2-part-ii-optional-promotion-defect-gates-unchanged-by-part-iii.test.ts
+```
+
+Also rerun **f95–f99**, **f116–f120**, and IDE lints on all touched V2 files.
+
+- [ ] **Step 1:** Land `G1` + detection + allocator order with **f121** / **f122** / **f125** (minimal) first.  
+- [ ] **Step 2:** Land repair + **f123** / **f124**.  
+- [ ] **Step 3:** Land UI parity (**f121**–**f125** green) + manual Step 3.4 vs tracker string compare.
+
+---
+
+## Task Group D: AM / PM session balance
+
+> **Status:** **Shipped** in this worktree (scoring + repair/promotion `compareScores` wiring + **f126**–**f132**). Optional **draft** AM/PM tie (**D3** below) **not** implemented — product decision: keep AM/PM for later passes only. Must **not** change **`R → G → P`** phase order.
+
+**Goal:** Match design **AM / PM session balance**: **0.5** → **1+1** when tied above; **0.75** → **`splitPenalty`** distinguishes **tier 1 vs tier 2** (both **no duplicate**); **`duplicateFloatingCount`** distinguishes **tier 2 vs tier 3** (**no duplicate** vs duplicate); AM/PM then prefers **2+1** over **3+0** among remaining ties; **1.0** / **`>1.0`** → **neutral** AM/PM with **chunk vs four×0.25** via **`splitPenalty`** / **`duplicateFloatingCount`**. See **Constraint 6d** above.
+
+**Authoritative references (read in order):**
+1. Design spec → **AM / PM session balance (approved — Task Group D)** (product rules, band defaults, eligibility).
+2. This plan → **Constraint 6d**, **File structure → Task Group D**, regressions **`f126`–`f132`** below (including **0.75** tier matrix **f129**–**f132**).
+
+### Task D1: Session-band model + metrics
+- [x] Add `lib/algorithms/floatingPcaV2/amPmSessionBalance.ts` (or keep helpers colocated in `scoreSchedule.ts` if truly tiny — prefer **one import site** for bands).
+- [x] Implement deterministic per-schedule metrics consumed by `buildRankedSlotAllocationScore` (or equivalent), **per team** from **pending floating quarter count**: **1 or 4 or ≥5** → **neutral** AM/PM contribution; **2** → prefer **1+1**; **3** → **only** the **2+1** vs **3+0** + deterministic **2+1** tie-break at the AM/PM sub-tier (after duplicate+split+… ties). **Do not** fold **single-PCA non-split** vs **A+B split** into AM/PM — those are **`splitPenalty`** / duplicate semantics per design narrative.
+
+### Task D2: `compareScores` extension (`scoreSchedule.ts`)
+- [x] Extend `RankedSlotAllocationScore` with numeric session-balance fields (document invariants: higher = better spread per **Constraint 6d**).
+- [x] Extend `compareScores` with `includeAmPmSessionBalanceTieBreak?: boolean` (exact name up to implementer) that runs **only after** `includeOptionalPromotionTieBreak` branch has exhausted **or** when both `includeOptionalPromotionTieBreak` scores are equal — **never** before promotion rank / preferred PCA when promotion tie-break is enabled.
+- [x] Update file header comments to reference **Constraint 6d** (remove any stale “no AM/PM here” wording that contradicted shipped scope).
+
+### Task D3: Wire allocator + promotion (`allocator.ts`, optional `draftAllocation.ts`)
+- [x] Pass the new tie flag when **optional promotion** compares candidate schedules that are tied today.
+- [ ] Optionally use the same metric at **draft** placement when multiple placements are otherwise equivalent — **must not** override ranked-slot choice, user anchors, or gym last-resort ordering encoded above session balance in `compareScores`. *(Not implemented — product decision: AM/PM only in repair/promotion `compareScores`, not draft.)*
+- [ ] When enumerating **0.75** placements, **prefer trying** design narrative order (**most optimal → 2nd tier → 3rd tier**) so duplicate-heavy tier 3 is rare; lexicographic `compareScores` remains authoritative.
+
+### Task D4: Regressions + verification commands
+Run after implementation:
+
+```bash
+npx tsx tests/regression/f126-step34-v2-am-pm-session-balance-prefers-spread-for-half-fte-two-slots.test.ts
+npx tsx tests/regression/f127-step34-v2-am-pm-session-balance-neutral-for-quarter-fte.test.ts
+npx tsx tests/regression/f128-step34-v2-am-pm-session-balance-does-not-override-step32-step33-anchors.test.ts
+npx tsx tests/regression/f129-step34-v2-am-pm-075-tier1-non-split-beats-tier2-split-when-duplicate-tied.test.ts
+npx tsx tests/regression/f130-step34-v2-am-pm-075-tier2-no-dup-beats-tier3-dup-when-split-tied.test.ts
+npx tsx tests/regression/f131-step34-v2-am-pm-075-am-pm-two-plus-one-beats-three-plus-zero-when-dup-split-tied.test.ts
+npx tsx tests/regression/f132-step34-v2-am-pm-075-tier1-beats-tier3-lexicographic-order.test.ts
+```
+
+Also rerun **f116–f120**, **f95–f99**, and (when Part III exists in branch) **f121–f125**; IDE lints on touched V2 files.
+
+- [x] **Step 1:** Land metrics + `compareScores` + **f127** (neutral case) first.  
+- [x] **Step 2:** Land **f126** + promotion wiring.  
+- [x] **Step 3:** Land **f128** + optional draft tie. *(**f128** shipped; optional draft tie skipped — same product decision as **D3** draft bullet.)*  
+- [x] **Step 4:** Land **0.75** tier matrix **f129**–**f132** (in **f129**, assert **tier 1** and **tier 2** both **no duplicate** — `duplicateFloatingCount` equal, typically **0**).  
+- [x] **Step 5:** Full regression block above — all **f126**–**f132** green.
+
+---
+
 ## Verification Checklist
 
 ### Task Group A minimum verification
@@ -833,7 +1040,27 @@ git commit -m "feat: explain ranked promotion in v2 tracker tooltip"
 - run the existing nearby V2 regressions that protect current ranked/gym/repair behavior
 - IDE lints on Task Group B files
 
-### Existing regression anchors to rerun after both groups
+### Task Group C minimum verification (when Part III ships)
+- `npx tsx tests/regression/f121-step34-v2-g1-detected-when-avoid-gym-and-feasible-non-gym-reshuffle-exists.test.ts`
+- `npx tsx tests/regression/f122-step34-v2-g1-not-raised-when-gym-is-true-last-resort-only.test.ts`
+- `npx tsx tests/regression/f123-step34-v2-gym-avoidance-repair-moves-off-gym-without-reintroducing-required-repair-defects.test.ts`
+- `npx tsx tests/regression/f124-step34-v2-gym-avoidance-repair-respects-step32-step33-commit-immutability.test.ts`
+- `npx tsx tests/regression/f125-step34-v2-part-ii-optional-promotion-defect-gates-unchanged-by-part-iii.test.ts`
+- rerun **f116–f120** and **f95–f99** to guard regressions
+- IDE lints on Task Group C files
+
+### Task Group D minimum verification (AM / PM session balance)
+- `npx tsx tests/regression/f126-step34-v2-am-pm-session-balance-prefers-spread-for-half-fte-two-slots.test.ts`
+- `npx tsx tests/regression/f127-step34-v2-am-pm-session-balance-neutral-for-quarter-fte.test.ts`
+- `npx tsx tests/regression/f128-step34-v2-am-pm-session-balance-does-not-override-step32-step33-anchors.test.ts`
+- `npx tsx tests/regression/f129-step34-v2-am-pm-075-tier1-non-split-beats-tier2-split-when-duplicate-tied.test.ts` (**tier 1** & **tier 2** both **no duplicate**; split discriminates)
+- `npx tsx tests/regression/f130-step34-v2-am-pm-075-tier2-no-dup-beats-tier3-dup-when-split-tied.test.ts`
+- `npx tsx tests/regression/f131-step34-v2-am-pm-075-am-pm-two-plus-one-beats-three-plus-zero-when-dup-split-tied.test.ts`
+- `npx tsx tests/regression/f132-step34-v2-am-pm-075-tier1-beats-tier3-lexicographic-order.test.ts`
+- rerun **f116–f120** and **f95–f99** (and **f121–f125** when Part III is present on the branch)
+- IDE lints on Task Group D files (`scoreSchedule.ts`, `allocator.ts`, `draftAllocation.ts` if touched, new helper module)
+
+### Existing regression anchors to rerun after Task Groups A/B (and again after C when Part III ships)
 - `tests/regression/f95-step34-gym-source-of-truth-contract.test.ts`
 - `tests/regression/f96-step34-gym-remains-blocked-until-final-last-resort.test.ts`
 - `tests/regression/f97-step34-v2-bounded-repair-allows-safe-donor-donation.test.ts`
@@ -845,20 +1072,23 @@ git commit -m "feat: explain ranked promotion in v2 tracker tooltip"
 
 ### Spec coverage
 - Part I is covered by Task Group A through bootstrap math, Step 2/Step 3.1 contract, and tooltip provenance.
-- Part II is covered by Task Group B through separate audit concept, candidate generation, orchestration, scoring (rank-first promotion block, then preferred-PCA tie layer; AM/PM **Constraint 6d** + **Forthgoing: AM / PM balance**), **Constraint 6c** Step **3.2** + **3.3** commit immutability, and tooltip wording. Design spec Part II should stay aligned (paired doc).
+- Part II is covered by Task Group B through separate audit concept, candidate generation, orchestration, scoring (rank-first promotion block, then preferred-PCA tie layer), **Constraint 6c** Step **3.2** + **3.3** commit immutability, and tooltip wording. Design spec Part II should stay aligned (paired doc).
+- Part III is specified in the design spec and **Task Group C** in this plan (`G1`, locked orchestration **`R → G → P`** — gym **before** promotion, cap **`6`**, UI parity, **`f121`–`f125`**, **Constraint 6e**, **Constraint 6f**). Implementation is **out of scope** for the completed A/B tranche until Task Group C is executed.
+- **AM/PM session balance** is specified in the design spec **AM / PM session balance (approved — Task Group D)** and **Task Group D** / **Constraint 6d** in this plan (**`f126`–`f132`**, including **0.75** tier matrix **f129**–**f132**).
 - V1/V2 boundary discipline is explicitly called out in scope, constraints, and untouched-file lists.
 
 ### Placeholder scan
 - Every task includes exact files and concrete commands.
-- New regression filenames are specified for both groups.
-- No "TBD" or "implement later" placeholders remain, except **AM/PM balance scoring**, intentionally deferred per **Constraint 6d** and the **Forthgoing: AM / PM balance** section (design spec stub cross-linked).
+- New regression filenames are specified for Task Groups A, B, C, and D (**`f121`–`f125`** Part III; **`f126`–`f132`** AM/PM including **0.75** tiers **f129**–**f132**).
+- No "TBD" or "implement later" placeholders remain for AM/PM — **Task Group D** is the execution checklist. Remaining deferral is **Task Group C implementation** only (checklist exists; code **not started** in this worktree until Part III is scheduled).
 
 ### Type consistency
 - Task Group A consistently uses `rawSurplusFte`, `idealWeightedSurplusShareByTeam`, `redistributableSlackSlots`, and `realizedSurplusSlotGrantsByTeam`.
 - Task Group B consistently treats optional ranked promotion as a concept distinct from `B1`.
+- Task Group D extends `compareScores` and related wiring without reordering objectives ahead of **Constraint 6d**.
 
 ## Execution Handoff
-Plan complete and saved to `docs/superpowers/plans/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-implementation-plan.md`. **Product/design contract (read together):** `docs/superpowers/specs/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md` — especially Part II (immutability, promotion scoring summary, AM/PM forward-looking). Two execution options:
+Plan complete and saved to `docs/superpowers/plans/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-implementation-plan.md`. **Product/design contract (read together):** `docs/superpowers/specs/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md` — Part I (targets), Part II (optional promotion + immutability), **Part III (`G1` gym avoidance)**, **AM/PM session balance (approved — Task Group D)**. **Roman numerals = spec chapters; allocator after required repair is `R → G → P`.** **Task Group C** is the execution checklist for Part III; **Task Group D** ships AM/PM as **soft** scoring per **Constraint 6d**. Two execution options:
 
 **1. Subagent-Driven (recommended)** - I dispatch a fresh subagent per task, review between tasks, fast iteration
 

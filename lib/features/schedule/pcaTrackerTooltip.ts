@@ -24,8 +24,8 @@ export function formatV2RepairReasonLabel(
   if (reason === 'ranked-coverage') return 'Ranked coverage'
   if (reason === 'fairness-floor') return 'Fairness'
   if (reason === 'duplicate-reduction') return 'Duplicate reduction'
-  if (reason === 'continuity-reduction') return 'Continuity'
-  if (reason === 'ranked-promotion') return 'Ranked promotion via bounded swap'
+  if (reason === 'continuity-reduction') return 'Continuity (fewer PCA handoffs)'
+  if (reason === 'ranked-promotion') return 'Ranked promotion'
   if (reason === 'gym-avoidance') return V2_GYM_UI_AVOIDANCE_REPAIR_APPLIED
   return null
 }
@@ -38,7 +38,7 @@ export function formatV2RepairAuditDefectLabel(kind: 'B1' | 'A1' | 'A2' | 'C1' |
     case 'A2':
       return 'Duplicate pressure'
     case 'C1':
-      return 'Continuity'
+      return 'Continuity (fewer PCA handoffs)'
     case 'F1':
       return 'Fairness floor'
     case 'G1':

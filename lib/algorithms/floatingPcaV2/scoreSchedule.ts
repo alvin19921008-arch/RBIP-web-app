@@ -6,6 +6,7 @@ import type { Team } from '@/types/staff'
 import type { PCAAllocation } from '@/types/schedule'
 import type { RankedV2RepairDefect } from '@/lib/algorithms/floatingPcaV2/repairAudit'
 import type { TeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
+import { computeAmPmSessionBalanceTeamScores } from '@/lib/algorithms/floatingPcaV2/amPmSessionBalance'
 
 export type RankedSlotAllocationScore = {
   highestRankCoverage: number
@@ -20,6 +21,10 @@ export type RankedSlotAllocationScore = {
   promotionTrueStep3RankScore: number
   /** True Step 3–owned slots on preferred PCAs (tier 2 after rank score). */
   promotionTrueStep3PreferredPcaHits: number
+  /** Task Group D: summed per-team spread preference (higher better); neutral tiers contribute 0. */
+  amPmSessionBalanceSpreadScore: number
+  /** Task Group D: summed per-team deterministic tie among same spread class (higher better). */
+  amPmSessionBalanceDetailScore: number
 }
 
 /**
@@ -38,12 +43,20 @@ export type RankedSlotAllocationScore = {
  *
  * Optional ranked promotion (Part II): when `includeOptionalPromotionTieBreak` is true and all of the
  * above are equal, compare `promotionTrueStep3RankScore` then `promotionTrueStep3PreferredPcaHits`
- * (rank uplift before preferred PCA; Constraint 6d — no AM/PM here).
+ * (rank uplift before preferred PCA).
+ *
+ * AM/PM session balance (Task Group D): when `includeAmPmSessionBalanceTieBreak` is true, compare
+ * `amPmSessionBalanceSpreadScore` then `amPmSessionBalanceDetailScore` **after** `splitPenalty`.
+ * If `includeOptionalPromotionTieBreak` is also true, those AM/PM fields run **only after** the
+ * promotion pair ties (never before promotion rank / preferred PCA when promotion tie-break is on).
  */
 export function compareScores(
   a: RankedSlotAllocationScore,
   b: RankedSlotAllocationScore,
-  options?: { includeOptionalPromotionTieBreak?: boolean }
+  options?: {
+    includeOptionalPromotionTieBreak?: boolean
+    includeAmPmSessionBalanceTieBreak?: boolean
+  }
 ): number {
   if (a.highestRankCoverage !== b.highestRankCoverage) {
     return b.highestRankCoverage - a.highestRankCoverage
@@ -75,6 +88,14 @@ export function compareScores(
     }
     if (a.promotionTrueStep3PreferredPcaHits !== b.promotionTrueStep3PreferredPcaHits) {
       return b.promotionTrueStep3PreferredPcaHits - a.promotionTrueStep3PreferredPcaHits
+    }
+  }
+  if (options?.includeAmPmSessionBalanceTieBreak) {
+    if (a.amPmSessionBalanceSpreadScore !== b.amPmSessionBalanceSpreadScore) {
+      return b.amPmSessionBalanceSpreadScore - a.amPmSessionBalanceSpreadScore
+    }
+    if (a.amPmSessionBalanceDetailScore !== b.amPmSessionBalanceDetailScore) {
+      return b.amPmSessionBalanceDetailScore - a.amPmSessionBalanceDetailScore
     }
   }
   return 0
@@ -191,6 +212,24 @@ function getAssignedSlotsForTeam(allocations: PCAAllocation[], team: Team): numb
   return slots
 }
 
+/** Step-3 floating PCA rows only — used for AM/PM session balance when [floatingPcaIds] is supplied. */
+function getAssignedSlotsForTeamFromFloatingPcasOnly(
+  allocations: PCAAllocation[],
+  team: Team,
+  floatingPcaIds: Set<string>
+): number[] {
+  const slots: number[] = []
+  for (const allocation of allocations) {
+    if (!floatingPcaIds.has(allocation.staff_id)) continue
+    for (const slot of VALID_SLOTS) {
+      if (getSlotOwner(allocation, slot) === team) {
+        slots.push(slot)
+      }
+    }
+  }
+  return slots
+}
+
 function getRankedSlotMatchCountForTeam(
   allocations: PCAAllocation[],
   team: Team,
@@ -237,11 +276,17 @@ export function buildRankedSlotAllocationScore(args: BuildScoreArgs): RankedSlot
   let splitPenalty = 0
   let promotionTrueStep3RankScore = 0
   let promotionTrueStep3PreferredPcaHits = 0
+  let amPmSessionBalanceSpreadScore = 0
+  let amPmSessionBalanceDetailScore = 0
 
   for (const team of args.teamOrder) {
     const pref = args.teamPrefs[team]
     const assignedSlots = getAssignedSlotsForTeam(args.allocations, team)
     const assignedSlotSet = new Set(assignedSlots)
+    const assignedSlotsForSessionBalance =
+      args.floatingPcaIds != null
+        ? getAssignedSlotsForTeamFromFloatingPcasOnly(args.allocations, team, args.floatingPcaIds)
+        : assignedSlots
 
     const firstRankIndex = pref.rankedSlots.findIndex((slot) => assignedSlotSet.has(slot))
     if (firstRankIndex >= 0) {
@@ -267,6 +312,13 @@ export function buildRankedSlotAllocationScore(args: BuildScoreArgs): RankedSlot
 
     const distinctPcas = getDistinctPcaCountForTeam(args.allocations, team)
     if (distinctPcas > 1) splitPenalty += distinctPcas - 1
+
+    const amPm = computeAmPmSessionBalanceTeamScores(
+      args.initialPendingFTE[team] ?? 0,
+      assignedSlotsForSessionBalance
+    )
+    amPmSessionBalanceSpreadScore += amPm.spreadScore
+    amPmSessionBalanceDetailScore += amPm.detailScore
   }
 
   const fairnessPendingTeams = args.teamOrder.filter((team) =>
@@ -301,6 +353,8 @@ export function buildRankedSlotAllocationScore(args: BuildScoreArgs): RankedSlot
     splitPenalty,
     promotionTrueStep3RankScore,
     promotionTrueStep3PreferredPcaHits,
+    amPmSessionBalanceSpreadScore,
+    amPmSessionBalanceDetailScore,
   }
 }
 
