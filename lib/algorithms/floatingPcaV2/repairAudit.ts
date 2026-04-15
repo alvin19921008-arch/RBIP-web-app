@@ -20,6 +20,13 @@ export type RankedV2RepairDefect =
 /** Optional ranked promotion opportunity (Constraint 5 — not a B1 defect). */
 export type RankedV2OptionalPromotionOpportunity = { kind: 'P1'; team: Team }
 
+/** Same fields as `Step3CommittedFloatingAnchor` in `repairMoves` (defined here to avoid circular imports). */
+export type RankedV2CommittedStep3FloatingAnchor = {
+  team: Team
+  slot: Slot
+  pcaId: string
+}
+
 export type DetectRankedV2RepairDefectsContext = {
   teamOrder: Team[]
   initialPendingFTE: Record<Team, number>
@@ -28,18 +35,11 @@ export type DetectRankedV2RepairDefectsContext = {
   pcaPool: PCAData[]
   teamPrefs: Record<Team, TeamPreferenceInfo>
   baselineAllocations?: PCAAllocation[]
-}
-
-/** Same fields as `Step3CommittedFloatingAnchor` in `repairMoves` (defined here to avoid circular imports). */
-export type RankedV2CommittedStep3FloatingAnchor = {
-  team: Team
-  slot: Slot
-  pcaId: string
-}
-
-export type DetectRankedV2GymAvoidableDefectsContext = DetectRankedV2RepairDefectsContext & {
+  /** Step 3.2 / 3.3 user commits — refines B1 when remaining pending is already satisfied. */
   committedStep3Anchors?: RankedV2CommittedStep3FloatingAnchor[]
 }
+
+export type DetectRankedV2GymAvoidableDefectsContext = DetectRankedV2RepairDefectsContext
 
 export type RankedV2RepairAuditState = {
   orderedTeams: Team[]
@@ -65,6 +65,25 @@ export function buildRankedV2RepairAuditState(
   context: DetectRankedV2RepairDefectsContext
 ): RankedV2RepairAuditState {
   return buildAuditState(context)
+}
+
+/** True Step 3 floating slot instances per team (for optional-promotion net-slot gates). */
+export function countTrueStep3FloatingSlotsByTeam(
+  context: DetectRankedV2RepairDefectsContext
+): Record<Team, number> {
+  const state = buildAuditState(context)
+  const result = {} as Record<Team, number>
+  for (const team of TEAMS) {
+    result[team] = countTrueStep3FloatingSlotInstances(state, team)
+  }
+  return result
+}
+
+function teamHasCommittedStep3FloatingAnchor(
+  anchors: RankedV2CommittedStep3FloatingAnchor[] | undefined,
+  team: Team
+): boolean {
+  return (anchors ?? []).some((anchor) => anchor.team === team)
 }
 
 /**
@@ -253,6 +272,16 @@ export function detectRankedV2RepairDefects(
 
   for (const team of state.orderedTeams) {
     if (!teamHadMeaningfulPending(state, team)) continue
+    const pendingRounded = roundToNearestQuarterWithMidpoint(state.pendingFTE[team] ?? 0)
+    // When remaining pending is already satisfied, only suppress B1 if the user explicitly
+    // committed Step 3.2/3.3 floating anchors for that team (draft-only low-rank coverage must
+    // still surface B1 for repair).
+    if (
+      pendingRounded < 0.25 &&
+      teamHasCommittedStep3FloatingAnchor(context.committedStep3Anchors, team)
+    ) {
+      continue
+    }
     if (hasRecoverableHigherRankedSlot(state, team)) {
       defects.push({ kind: 'B1', team })
     }
@@ -1054,6 +1083,7 @@ function requiredRepairDefectsClearForGymProbe(
       pcaPool: ctx.pcaPool,
       teamPrefs: ctx.teamPrefs,
       baselineAllocations: ctx.baselineAllocations,
+      committedStep3Anchors: ctx.committedStep3Anchors,
     }).length === 0
   )
 }

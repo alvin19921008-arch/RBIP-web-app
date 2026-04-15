@@ -174,6 +174,22 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
   }
 
   const baselineAssignedSlots = countAssignedSlotsByTeam(existingAllocations)
+
+  const detectRepairDefects = (
+    pendingFTEArg: Record<Team, number>,
+    allocationsArg: PCAAllocation[]
+  ) =>
+    detectRankedV2RepairDefects({
+      teamOrder,
+      initialPendingFTE,
+      pendingFTE: pendingFTEArg,
+      allocations: allocationsArg,
+      pcaPool,
+      teamPrefs,
+      baselineAllocations: existingAllocations,
+      ...(committedStep3Anchors.length > 0 ? { committedStep3Anchors } : {}),
+    })
+
   const acceptedRepairReasons = new Map<
     string,
     | 'ranked-coverage'
@@ -236,15 +252,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
   })
 
   const runRepairLoop = () => {
-    repairAuditDefects = detectRankedV2RepairDefects({
-      teamOrder,
-      initialPendingFTE: initialPendingFTE,
-      pendingFTE,
-      allocations,
-      pcaPool,
-      teamPrefs,
-      baselineAllocations: existingAllocations,
-    })
+    repairAuditDefects = detectRepairDefects(pendingFTE, allocations)
     setRepairAuditDefects(repairAuditDefects)
 
     bestScore = buildRankedSlotAllocationScore({
@@ -286,15 +294,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
             baselineAssignedSlots,
             candidate.allocations
           )
-          const candidateDefects = detectRankedV2RepairDefects({
-            teamOrder,
-            initialPendingFTE,
-            pendingFTE: candidatePendingFTE,
-            allocations: candidate.allocations,
-            pcaPool,
-            teamPrefs,
-            baselineAllocations: existingAllocations,
-          })
+          const candidateDefects = detectRepairDefects(candidatePendingFTE, candidate.allocations)
           const candidateScore = buildRankedSlotAllocationScore({
             allocations: candidate.allocations,
             initialPendingFTE,
@@ -370,15 +370,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
   const runOptionalRankedPromotionPass = () => {
     let accepted = 0
     while (accepted < MAX_OPTIONAL_PROMOTION_ACCEPTS) {
-      repairAuditDefects = detectRankedV2RepairDefects({
-        teamOrder,
-        initialPendingFTE,
-        pendingFTE,
-        allocations,
-        pcaPool,
-        teamPrefs,
-        baselineAllocations: existingAllocations,
-      })
+      repairAuditDefects = detectRepairDefects(pendingFTE, allocations)
       if (repairAuditDefects.length > 0) break
 
       const baseScore = buildRankedSlotAllocationScore({
@@ -417,15 +409,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
           baselineAssignedSlots,
           candidate.allocations
         )
-        const candidateDefects = detectRankedV2RepairDefects({
-          teamOrder,
-          initialPendingFTE,
-          pendingFTE: candidatePendingFTE,
-          allocations: candidate.allocations,
-          pcaPool,
-          teamPrefs,
-          baselineAllocations: existingAllocations,
-        })
+        const candidateDefects = detectRepairDefects(candidatePendingFTE, candidate.allocations)
         if (candidateDefects.length > 0) continue
 
         // Constraint 6f: optional promotion must not accept a post-state that would raise Part III `G1`.
@@ -532,15 +516,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
     },
   })
 
-  repairAuditDefects = detectRankedV2RepairDefects({
-    teamOrder,
-    initialPendingFTE,
-    pendingFTE,
-    allocations,
-    pcaPool,
-    teamPrefs,
-    baselineAllocations: existingAllocations,
-  })
+  repairAuditDefects = detectRepairDefects(pendingFTE, allocations)
   setRepairAuditDefects(repairAuditDefects)
   bestScore = buildRankedSlotAllocationScore({
     allocations,

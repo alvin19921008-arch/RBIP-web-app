@@ -4,6 +4,7 @@ import type { PCAData } from '@/lib/algorithms/pcaAllocationTypes'
 import {
   buildRankedV2RepairAuditState,
   compareRankedV2GymAvoidanceRepairOutcomes,
+  countTrueStep3FloatingSlotsByTeam,
   detectRankedV2GymAvoidableDefects,
   detectRankedV2RepairDefects,
   donorHasTrueStep3Ownership,
@@ -16,6 +17,7 @@ import {
   type RankedV2RepairDefect,
 } from '@/lib/algorithms/floatingPcaV2/repairAudit'
 import { TEAMS, type TeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
+import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 
 type Slot = 1 | 2 | 3 | 4
 
@@ -502,33 +504,6 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
   const floatingPcaIds = buildFloatingPcaIdSet(pcaPool)
   const auditState = buildAuditStateForRepairCandidates(context)
   const anchors = context.committedStep3Anchors
-  const debugFoCandidates:
-    | {
-        currentFloatingSlots: Slot[]
-        missingRankedSlots: Slot[]
-        candidateSummaries: Array<{
-          sortKey: string
-          shape: 'donate' | 'move' | 'swap'
-          targetSlot: Slot
-          targetOwner: Team | null
-          donorSlot: Slot | null
-          repairAssignments: RepairAssignment[]
-        }>
-      }
-    | null =
-    requestingTeam === 'FO'
-      ? {
-          currentFloatingSlots: getAssignedFloatingSlotsForTeam(allocations, requestingTeam, floatingPcaIds),
-          missingRankedSlots: getRankedMissingSlots(
-            allocations,
-            requestingTeam,
-            teamPrefs,
-            floatingPcaIds,
-            context.initialPendingFTE
-          ),
-          candidateSummaries: [],
-        }
-      : null
   for (
     const targetSlot of getRankedMissingSlots(
       allocations,
@@ -565,16 +540,6 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
         )
         if (donation) {
           candidates.push(donation)
-          if (debugFoCandidates && debugFoCandidates.candidateSummaries.length < 16) {
-            debugFoCandidates.candidateSummaries.push({
-              sortKey: donation.sortKey,
-              shape: 'donate',
-              targetSlot,
-              targetOwner,
-              donorSlot: null,
-              repairAssignments: donation.repairAssignments,
-            })
-          }
         }
       }
 
@@ -616,16 +581,6 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
           })
           if (candidate) {
             candidates.push(candidate)
-            if (debugFoCandidates && debugFoCandidates.candidateSummaries.length < 16) {
-              debugFoCandidates.candidateSummaries.push({
-                sortKey: candidate.sortKey,
-                shape: 'move',
-                targetSlot,
-                targetOwner,
-                donorSlot: fallbackSlot,
-                repairAssignments: candidate.repairAssignments,
-              })
-            }
           }
         }
       }
@@ -656,50 +611,11 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
           })
           if (candidate) {
             candidates.push(candidate)
-            if (debugFoCandidates && debugFoCandidates.candidateSummaries.length < 16) {
-              debugFoCandidates.candidateSummaries.push({
-                sortKey: candidate.sortKey,
-                shape: 'swap',
-                targetSlot,
-                targetOwner,
-                donorSlot,
-                repairAssignments: candidate.repairAssignments,
-              })
-            }
           }
         }
       }
     }
   }
-
-  // #region agent log (H3) FO B1 candidate generation
-  if (debugFoCandidates) {
-    ;(typeof fetch === 'function'
-      ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9381e2' },
-          body: JSON.stringify({
-            sessionId: '9381e2',
-            runId: 'fo-4-3-investigation',
-            hypothesisId: 'H3',
-            location: 'lib/algorithms/floatingPcaV2/repairMoves.ts:generateB1Candidates',
-            message: 'FO B1 candidate generation snapshot',
-            data: {
-              team: requestingTeam,
-              rankedSlots: teamPrefs[requestingTeam].rankedSlots,
-              currentFloatingSlots: debugFoCandidates.currentFloatingSlots,
-              missingRankedSlots: debugFoCandidates.missingRankedSlots,
-              donationCount: debugFoCandidates.candidateSummaries.filter((entry) => entry.shape === 'donate').length,
-              moveCount: debugFoCandidates.candidateSummaries.filter((entry) => entry.shape === 'move').length,
-              swapCount: debugFoCandidates.candidateSummaries.filter((entry) => entry.shape === 'swap').length,
-              candidateSummaries: debugFoCandidates.candidateSummaries,
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {})
-      : Promise.resolve())
-  }
-  // #endregion
 
   return candidates
 }
@@ -1066,6 +982,56 @@ function isTrueStep3FloatingCell(
   return true
 }
 
+/** When pending is satisfied, true Step 3 floating for anchored teams must stay on committed anchor slots. */
+function findAnchoredSatisfiedTrueStep3OutsideAnchorSlotsViolation(
+  next: PCAAllocation[],
+  nextPending: Record<Team, number>,
+  anchors: Step3CommittedFloatingAnchor[] | undefined,
+  baselineAllocations: PCAAllocation[],
+  pcaPool: PCAData[]
+): {
+  team: Team
+  disallowedSlot: Slot
+  allowedAnchorSlots: Slot[]
+  afterTrueStep3Slots: Slot[]
+} | null {
+  if (!anchors?.length) return null
+  const baselineByStaffId = new Map<string, PCAAllocation | undefined>()
+  for (const row of baselineAllocations) {
+    baselineByStaffId.set(row.staff_id, row)
+  }
+  const floatingPcaIds = buildFloatingPcaIdSet(pcaPool)
+  const sortedPcas = [...pcaPool].sort((a, b) => String(a.id).localeCompare(String(b.id)))
+
+  for (const team of TEAMS) {
+    if (!anchors.some((a) => a.team === team)) continue
+    if (roundToNearestQuarterWithMidpoint(nextPending[team] ?? 0) >= 0.25) continue
+    const allowedAnchorSlots = [
+      ...new Set(anchors.filter((a) => a.team === team).map((a) => a.slot)),
+    ].sort((a, b) => a - b)
+    const allowed = new Set(allowedAnchorSlots)
+    const afterTrueStep3Slots = new Set<Slot>()
+    for (const pca of sortedPcas) {
+      for (const slot of VALID_SLOTS) {
+        if (isTrueStep3FloatingCell(next, baselineByStaffId, floatingPcaIds, team, pca.id, slot)) {
+          afterTrueStep3Slots.add(slot)
+        }
+      }
+    }
+    for (const slot of afterTrueStep3Slots) {
+      if (!allowed.has(slot)) {
+        return {
+          team,
+          disallowedSlot: slot,
+          allowedAnchorSlots,
+          afterTrueStep3Slots: [...afterTrueStep3Slots].sort((a, b) => a - b),
+        }
+      }
+    }
+  }
+  return null
+}
+
 export type OptionalPromotionDetectionArgs = {
   teamOrder: Team[]
   initialPendingFTE: Record<Team, number>
@@ -1106,8 +1072,56 @@ export function generateOptionalPromotionCandidates(
       pcaPool: args.pcaPool,
       teamPrefs: args.teamPrefs,
       baselineAllocations: args.baselineAllocations,
+      committedStep3Anchors: anchors,
     })
-    return defects.length === 0
+    if (defects.length > 0) return false
+
+    if (anchors && anchors.length > 0) {
+      const beforeCounts = countTrueStep3FloatingSlotsByTeam({
+        teamOrder,
+        initialPendingFTE: args.initialPendingFTE,
+        pendingFTE: args.pendingFTE,
+        allocations: args.allocations,
+        pcaPool: args.pcaPool,
+        teamPrefs: args.teamPrefs,
+        baselineAllocations: args.baselineAllocations,
+        committedStep3Anchors: anchors,
+      })
+      const afterCounts = countTrueStep3FloatingSlotsByTeam({
+        teamOrder,
+        initialPendingFTE: args.initialPendingFTE,
+        pendingFTE: nextPending,
+        allocations: next,
+        pcaPool: args.pcaPool,
+        teamPrefs: args.teamPrefs,
+        baselineAllocations: args.baselineAllocations,
+        committedStep3Anchors: anchors,
+      })
+      for (const team of TEAMS) {
+        if (!anchors.some((a) => a.team === team)) continue
+        const nextPRounded = roundToNearestQuarterWithMidpoint(nextPending[team] ?? 0)
+        if (nextPRounded >= 0.25) {
+          continue
+        }
+        if (afterCounts[team] > beforeCounts[team]) {
+          return false
+        }
+      }
+      // Satisfied pending + Step 3.2/3.3 anchors: true Step 3 floating may only occupy committed
+      // anchor clock slots (net-count alone allows rank-improving swaps onto non-anchor slots).
+      const anchorSlotViol = findAnchoredSatisfiedTrueStep3OutsideAnchorSlotsViolation(
+        next,
+        nextPending,
+        anchors,
+        args.baselineAllocations,
+        args.pcaPool
+      )
+      if (anchorSlotViol) {
+        return false
+      }
+    }
+
+    return true
   }
 
   const tryPush = (candidate: RepairCandidate | null) => {
@@ -1291,6 +1305,7 @@ export function detectOptionalRankedPromotionOpportunities(
     pcaPool: args.pcaPool,
     teamPrefs: args.teamPrefs,
     baselineAllocations: args.baselineAllocations,
+    committedStep3Anchors: args.committedStep3Anchors,
   })
   if (defects.length > 0) return []
 
@@ -1445,8 +1460,20 @@ export function runGymAvoidanceRepairLoop(args: RunGymAvoidanceRepairLoopArgs): 
           pcaPool: args.pcaPool,
           teamPrefs: args.teamPrefs,
           baselineAllocations: args.baselineAllocations,
+          committedStep3Anchors: args.committedStep3Anchors,
         })
         if (requiredAfter.length > 0) continue
+
+        const gymAnchorViol = findAnchoredSatisfiedTrueStep3OutsideAnchorSlotsViolation(
+          candidate.allocations,
+          nextPending,
+          args.committedStep3Anchors,
+          args.baselineAllocations ?? [],
+          args.pcaPool
+        )
+        if (gymAnchorViol) {
+          continue
+        }
 
         const metrics = getRankedV2GymAvoidanceRepairOutcomeMetrics(candidate.allocations, defect.team, {
           teamPrefs: args.teamPrefs,
