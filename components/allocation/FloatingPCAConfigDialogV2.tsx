@@ -32,7 +32,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
+import { rbipStep33, rbipStep34 } from '@/lib/design/rbipDesignTokens'
+import { useStep3V2DetailBeakCenter } from '@/lib/hooks/useStep3V2DetailBeakCenter'
+import { Step3V2LaneDetailShell } from '@/components/allocation/step3V2/Step3V2LaneDetailShell'
 import { TeamPendingCard, TIE_BREAKER_COLORS } from './TeamPendingCard'
 import {
   buildStep3V2VisibleSteps,
@@ -54,7 +58,19 @@ import { runStep3V2CommittedSelections } from '@/lib/features/schedule/step3V2Co
 import { computeStep3V2ReservationPreview } from '@/lib/features/schedule/step3V2ReservationPreview'
 import { Step32PreferredReviewDetailPanel } from '@/components/allocation/step32V2/Step32PreferredReviewDetailPanel'
 import { Step32PreferredReviewLane } from '@/components/allocation/step32V2/Step32PreferredReviewLane'
-import { computeAdjacentSlotReservations, type SlotAssignment } from '@/lib/utils/reservationLogic'
+import {
+  computeAdjacentSlotReservations,
+  type AdjacentSlotInfo,
+  type SlotAssignment,
+} from '@/lib/utils/reservationLogic'
+import { formatTimeRange, getSlotTime } from '@/lib/utils/slotHelpers'
+import {
+  buildReplaceEligibleTeamsFromScratchAssignments,
+  buildStep3V2ScratchAfterStep32,
+  buildStep32ScratchAssignmentsFromCommittedByTeam,
+  computeStep33AssignedFloating3233Preview,
+  shouldOmitStep32ForStep33ReplaceSave,
+} from '@/lib/features/schedule/step3V2ScratchPreview'
 import { buildStep34TeamDetailViewModel } from './step34/step34ViewModel'
 
 import type { FloatingPCAConfigDialogV1Props } from './FloatingPCAConfigDialogV1'
@@ -93,6 +109,74 @@ function teamHasPositiveSurplusGrant(
   return (grants?.[team] ?? 0) > 1e-9
 }
 
+/** Step 3.4 lane dots — tooltips mirror tracker / “Why this happened” semantics. */
+const STEP34_LANE_DOT_TOOLTIPS = {
+  step32:
+    'Floating coverage from Step 3.2 (preferred slot / outcome reservation) appears in the allocation tracker for this team.',
+  step33:
+    'Floating coverage from Step 3.3 (adjacent to special program) appears in the allocation tracker for this team.',
+  surplus:
+    'This team has a raised floating target from surplus redistribution (shared spare). Same signal as the Raised target chip.',
+  extra:
+    'Step 3.4 placed extra-after-needs slot(s) here: basic floating need was already satisfied before these rows.',
+} as const
+
+/** Popover legend — same order and colors as the lane dot cluster (hue = dot only). */
+const STEP34_LANE_DOT_LEGEND_ROWS = [
+  {
+    key: 'step32',
+    title: 'Step 3.2',
+    dotClass: `${rbipStep34.laneDot} ${rbipStep34.laneDotLg} ${rbipStep34.laneDotStep32}`,
+    body: 'Preferred slot / outcome reservation recorded.',
+  },
+  {
+    key: 'step33',
+    title: 'Step 3.3',
+    dotClass: `${rbipStep34.laneDot} ${rbipStep34.laneDotLg} ${rbipStep34.laneDotStep33}`,
+    body: 'Adjacent-to-special-program floating.',
+  },
+  {
+    key: 'surplus',
+    title: 'Surplus (raised target)',
+    dotClass: `${rbipStep34.laneDot} ${rbipStep34.laneDotLg} ${rbipStep34.laneDotSurplus}`,
+    body: "Surplus grant raised this team's floating headroom.",
+  },
+  {
+    key: 'extra',
+    title: 'Extra after needs',
+    dotClass: `${rbipStep34.laneDot} ${rbipStep34.laneDotLg} ${rbipStep34.laneDotExtra}`,
+    body: 'Step 3.4 extra rows after basic floating need was already met.',
+  },
+] as const
+
+function getStep34LaneDotFlagsForTeam(args: {
+  team: Team
+  step34PreviewResult: FloatingPCAAllocationResultV2 | null
+  grants: Record<Team, number> | undefined
+  step32Assignments: SlotAssignment[]
+  step33Assignments: SlotAssignment[]
+}): { step32: boolean; step33: boolean; surplus: boolean; extra: boolean } {
+  const { team, step34PreviewResult, grants, step32Assignments, step33Assignments } = args
+  const teamLog = step34PreviewResult?.tracker?.[team]
+  const assignments = teamLog?.assignments ?? []
+
+  if (teamLog) {
+    return {
+      step32: assignments.some((a) => a.assignedIn === 'step32'),
+      step33: assignments.some((a) => a.assignedIn === 'step33'),
+      surplus: teamHasPositiveSurplusGrant(grants, team),
+      extra: assignments.some((a) => a.assignedIn === 'step34' && a.allocationStage === 'extra-coverage'),
+    }
+  }
+
+  return {
+    step32: step32Assignments.some((a) => a.team === team),
+    step33: step33Assignments.some((a) => a.team === team),
+    surplus: teamHasPositiveSurplusGrant(grants, team),
+    extra: false,
+  }
+}
+
 /** Pending / Assigned + generic summary pills on the Step 3.4 detail panel. */
 const STEP34_DETAIL_BADGE_CLASS =
   'border-blue-400/90 bg-white font-semibold text-blue-950 shadow-sm hover:bg-white dark:border-blue-500 dark:bg-blue-950/70 dark:text-blue-50 dark:hover:bg-blue-950/80'
@@ -112,6 +196,15 @@ const STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS =
   'font-semibold text-violet-800 dark:text-violet-200'
 
 type Step33Decision = 'use' | 'skip'
+
+/** Step 3.3 decision buttons — same structure as Step 3.2 save choices (outline + `choiceSelected`). */
+const STEP33_CHOICE_BUTTON_BASE = cn(
+  rbipStep33.focusable,
+  rbipStep33.choiceIdleHover,
+  'border-border bg-background text-left text-foreground hover:bg-muted/40 hover:text-foreground',
+  'focus-visible:ring-0 focus-visible:ring-offset-0',
+  'disabled:pointer-events-none disabled:opacity-50'
+)
 
 function getStepDisplayLabel(step: Step3V2Step): string {
   if (step === '3.1') return '3.1 Adjust'
@@ -162,13 +255,6 @@ function stepLabel(step: Step3V2Step): string {
   }
 }
 
-function getSlotTime(slot: number): string {
-  if (slot === 1) return '0900-1030'
-  if (slot === 2) return '1030-1200'
-  if (slot === 3) return '1330-1500'
-  return '1500-1630'
-}
-
 function formatNoPreferredPcaAvailabilityLine(args: {
   team: Team
   firstChoiceSlot: number
@@ -199,15 +285,15 @@ function formatNoPreferredPcaAvailabilityLine(args: {
   return `No preferred PCAs ${list} are available for 1st choice ${time}.`
 }
 
-/** Step 3.3: one workplace-style line for special-program PCA + adjacent slot (avoids duplicating list + panel copy). */
-function formatAdjacentSpecialProgramSentence(option: {
-  pcaName: string
-  specialProgramName: string
-  specialProgramSlot: number
-  adjacentSlot: number
-}): string {
+function formatAdjacentOptionRowLabel(option: AdjacentSlotInfo): string {
   const program = option.specialProgramName?.trim() || 'special program'
-  return `${option.pcaName} covers ${program} at ${getSlotTime(option.specialProgramSlot)}, and is also available at adjacent slot ${getSlotTime(option.adjacentSlot)}.`
+  const adjacent = formatTimeRange(getSlotTime(option.adjacentSlot))
+  const programSlot = formatTimeRange(getSlotTime(option.specialProgramSlot))
+  return `${program} · ${option.pcaName} · adjacent slot ${adjacent} (next to ${program} ${programSlot})`
+}
+
+function formatAdjacentPcaTimeCompact(option: AdjacentSlotInfo): string {
+  return `${option.pcaName} · ${formatTimeRange(getSlotTime(option.adjacentSlot))}`
 }
 
 function emptyTeamRecord(value = 0): Record<Team, number> {
@@ -242,10 +328,12 @@ function getStep3FloatingAssignedFteForTeam(args: {
   step34PreviewResult: FloatingPCAAllocationResultV2 | null
   step32Assignments: SlotAssignment[]
   step33Assignments: SlotAssignment[]
+  /** Step 3.3 lane/detail must ignore Step 3.4 preview assignments for Assigned floating. */
+  assignedFloatingScope: 'steps-32-33' | 'through-step34'
 }): number {
-  const { team, step34PreviewResult, step32Assignments, step33Assignments } = args
+  const { team, step34PreviewResult, step32Assignments, step33Assignments, assignedFloatingScope } = args
   const teamLog = step34PreviewResult?.tracker?.[team]
-  if (teamLog) {
+  if (assignedFloatingScope === 'through-step34' && teamLog) {
     const logs = teamLog.assignments ?? []
     const n = logs.filter((a) => {
       const src = (a as { assignedIn?: string }).assignedIn
@@ -369,10 +457,10 @@ export function FloatingPCAConfigDialogV2({
   const [step34Loading, setStep34Loading] = useState(false)
   const step34DetailPanelRef = useRef<HTMLDivElement | null>(null)
   const step34TeamButtonRefs = useRef<Map<Team, HTMLButtonElement>>(new Map())
-  const [step34DetailBeakCenterX, setStep34DetailBeakCenterX] = useState<number | null>(null)
   const step32DetailPanelRef = useRef<HTMLDivElement | null>(null)
   const step32TeamButtonRefs = useRef<Map<Team, HTMLButtonElement>>(new Map())
-  const [step32DetailBeakCenterX, setStep32DetailBeakCenterX] = useState<number | null>(null)
+  const step33DetailPanelRef = useRef<HTMLDivElement | null>(null)
+  const step33TeamButtonRefs = useRef<Map<Team, HTMLButtonElement>>(new Map())
   const v2TeamLaneMeasureRef = useRef<HTMLDivElement | null>(null)
   const v2Step34SlotsRowMeasureRef = useRef<HTMLDivElement | null>(null)
   const v2DialogHeaderTitleRef = useRef<HTMLDivElement | null>(null)
@@ -663,17 +751,51 @@ export function FloatingPCAConfigDialogV2({
     [reservationPreview.teamReviews, teamOrder]
   )
 
+  const step32ScratchAssignments = useMemo(
+    () =>
+      buildStep32ScratchAssignmentsFromCommittedByTeam({
+        teamOrder,
+        step32CommittedAssignmentsByTeam,
+      }),
+    [teamOrder, step32CommittedAssignmentsByTeam]
+  )
+
+  const { scratchAllocations, pendingAfter32 } = useMemo(
+    () =>
+      buildStep3V2ScratchAfterStep32({
+        adjustedPendingFTE: adjustedFTE,
+        existingAllocations,
+        floatingPCAs,
+        step32Assignments: step32ScratchAssignments,
+      }),
+    [adjustedFTE, existingAllocations, floatingPCAs, step32ScratchAssignments]
+  )
+
+  const replaceEligibleTeams = useMemo(
+    () => buildReplaceEligibleTeamsFromScratchAssignments(step32ScratchAssignments),
+    [step32ScratchAssignments]
+  )
+
   const adjacentPreview = useMemo(
     () =>
       computeAdjacentSlotReservations(
-        adjustedFTE,
-        existingAllocations,
+        pendingAfter32,
+        scratchAllocations,
         floatingPCAs,
         specialPrograms,
         staffOverrides as Record<string, any>,
-        weekday
+        weekday,
+        { replaceEligibleTeams }
       ),
-    [adjustedFTE, existingAllocations, floatingPCAs, specialPrograms, staffOverrides, weekday]
+    [
+      pendingAfter32,
+      scratchAllocations,
+      floatingPCAs,
+      specialPrograms,
+      staffOverrides,
+      weekday,
+      replaceEligibleTeams,
+    ]
   )
 
   const visibleSteps = useMemo(
@@ -758,6 +880,27 @@ export function FloatingPCAConfigDialogV2({
 
     if (selectedStep32PcaId != null && validPcaIds.has(selectedStep32PcaId)) {
       return
+    }
+
+    if (selectedStep32PcaId != null) {
+      const supportingOutcomes = selectedStep32Review.outcomeOptions.filter((option) => {
+        const path = selectedStep32Review.pathOptions.find((p) => p.pathKey === option.primaryPathKey)
+        if (!path) return false
+        const ids = new Set(
+          [...path.preferredCandidates, ...path.floorCandidates, ...path.nonFloorCandidates].map((c) => c.id)
+        )
+        return ids.has(selectedStep32PcaId)
+      })
+      if (supportingOutcomes.length > 0) {
+        const pick = supportingOutcomes[0]
+        if (pick.outcomeKey !== selectedStep32OutcomeKey) {
+          setSelectedStep32OutcomeByTeam((prev) => ({
+            ...prev,
+            [selectedStep32Team]: pick.outcomeKey,
+          }))
+        }
+        return
+      }
     }
 
     const nextPcaId =
@@ -865,11 +1008,18 @@ export function FloatingPCAConfigDialogV2({
     return teamOrder.flatMap((team) => {
       const assignment = step32CommittedAssignmentsByTeam[team]
       if (!assignment) return []
-      return [
-        assignment,
-      ]
+      const pendingAfter32Rounded = roundToNearestQuarterWithMidpoint(pendingAfter32[team] || 0)
+      if (
+        shouldOmitStep32ForStep33ReplaceSave({
+          step33Decision: step33Decisions[team],
+          pendingAfter32Rounded,
+        })
+      ) {
+        return []
+      }
+      return [assignment]
     })
-  }, [step32CommittedAssignmentsByTeam, teamOrder])
+  }, [pendingAfter32, step32CommittedAssignmentsByTeam, step33Decisions, teamOrder])
 
   const step33AssignmentsForSave = useMemo<SlotAssignment[]>(() => {
     return adjacentTeams.flatMap((team) => {
@@ -891,16 +1041,24 @@ export function FloatingPCAConfigDialogV2({
 
   const step3FloatingAssignedFteByTeam = useMemo(() => {
     const record = emptyTeamRecord(0)
+    const assignedFloatingScope = currentStep === '3.3' ? 'steps-32-33' : 'through-step34'
     for (const team of activeTeams) {
       record[team] = getStep3FloatingAssignedFteForTeam({
         team,
         step34PreviewResult,
         step32Assignments: step32AssignmentsForSave,
         step33Assignments: step33AssignmentsForSave,
+        assignedFloatingScope,
       })
     }
     return record
-  }, [activeTeams, step34PreviewResult, step32AssignmentsForSave, step33AssignmentsForSave])
+  }, [
+    activeTeams,
+    currentStep,
+    step34PreviewResult,
+    step32AssignmentsForSave,
+    step33AssignmentsForSave,
+  ])
 
   const runStep34Preview = useCallback(async () => {
     setStep34Loading(true)
@@ -1049,31 +1207,6 @@ export function FloatingPCAConfigDialogV2({
     void runStep34Preview()
   }, [currentStep, open, runStep34Preview])
 
-  useLayoutEffect(() => {
-    if (currentStep !== '3.4' || step34Loading || !selectedStep34Team || !step34PreviewResult) {
-      setStep34DetailBeakCenterX(null)
-      return
-    }
-
-    const updateBeak = () => {
-      const detail = step34DetailPanelRef.current
-      const btn = step34TeamButtonRefs.current.get(selectedStep34Team)
-      if (!detail || !btn) {
-        setStep34DetailBeakCenterX(null)
-        return
-      }
-      const detailRect = detail.getBoundingClientRect()
-      const btnRect = btn.getBoundingClientRect()
-      const center = btnRect.left + btnRect.width / 2 - detailRect.left
-      const clamped = Math.min(Math.max(center, 24), Math.max(detailRect.width - 24, 24))
-      setStep34DetailBeakCenterX(clamped)
-    }
-
-    updateBeak()
-    window.addEventListener('resize', updateBeak)
-    return () => window.removeEventListener('resize', updateBeak)
-  }, [currentStep, step34Loading, selectedStep34Team, step34PreviewResult, teamOrder])
-
   const registerStep32TeamButtonRef = useCallback((team: Team, node: HTMLButtonElement | null) => {
     if (node) {
       step32TeamButtonRefs.current.set(team, node)
@@ -1082,40 +1215,13 @@ export function FloatingPCAConfigDialogV2({
     }
   }, [])
 
-  useLayoutEffect(() => {
-    if (currentStep !== '3.2' || !selectedStep32Team || !selectedStep32Review) {
-      setStep32DetailBeakCenterX(null)
-      return
+  const registerStep33TeamButtonRef = useCallback((team: Team, node: HTMLButtonElement | null) => {
+    if (node) {
+      step33TeamButtonRefs.current.set(team, node)
+    } else {
+      step33TeamButtonRefs.current.delete(team)
     }
-
-    const updateBeak = () => {
-      const detail = step32DetailPanelRef.current
-      const btn = step32TeamButtonRefs.current.get(selectedStep32Team)
-      if (!detail || !btn) {
-        setStep32DetailBeakCenterX(null)
-        return
-      }
-      const detailRect = detail.getBoundingClientRect()
-      const btnRect = btn.getBoundingClientRect()
-      const center = btnRect.left + btnRect.width / 2 - detailRect.left
-      const clamped = Math.min(Math.max(center, 24), Math.max(detailRect.width - 24, 24))
-      setStep32DetailBeakCenterX(clamped)
-    }
-
-    updateBeak()
-    window.addEventListener('resize', updateBeak)
-    window.addEventListener('scroll', updateBeak, true)
-    return () => {
-      window.removeEventListener('resize', updateBeak)
-      window.removeEventListener('scroll', updateBeak, true)
-    }
-  }, [
-    currentStep,
-    dialogFitWidthPx,
-    selectedStep32Review,
-    selectedStep32Team,
-    teamOrder,
-  ])
+  }, [])
 
   const selectedStep34Detail = useMemo(() => {
     if (!step34PreviewResult || !selectedStep34Team) return null
@@ -1140,6 +1246,57 @@ export function FloatingPCAConfigDialogV2({
     return { showRaisedTargetChip, showExtraAfterNeedsChip }
   }, [step31BootstrapSummary, step34PreviewResult, selectedStep34Team])
 
+  const step32DetailBeakCenterX = useStep3V2DetailBeakCenter(
+    currentStep === '3.2' && !!selectedStep32Team && !!selectedStep32Review,
+    step32DetailPanelRef,
+    step32TeamButtonRefs,
+    selectedStep32Team,
+    true,
+    [
+      currentStep,
+      dialogFitWidthPx,
+      selectedStep32Team,
+      teamOrder.join(','),
+      selectedStep32Review?.team ?? '',
+      selectedStep32Review?.reviewState ?? '',
+    ].join('|')
+  )
+
+  const step34DetailBeakCenterX = useStep3V2DetailBeakCenter(
+    currentStep === '3.4' && !step34Loading && !!selectedStep34Team && !!step34PreviewResult,
+    step34DetailPanelRef,
+    step34TeamButtonRefs,
+    selectedStep34Team,
+    false,
+    [
+      currentStep,
+      step34Loading,
+      dialogFitWidthPx,
+      selectedStep34Team,
+      teamOrder.join(','),
+      step34PreviewResult ? 'y' : 'n',
+    ].join('|')
+  )
+
+  const step33DetailBeakCenterX = useStep3V2DetailBeakCenter(
+    currentStep === '3.3' &&
+      !!selectedStep33Team &&
+      adjacentTeams.includes(selectedStep33Team),
+    step33DetailPanelRef,
+    step33TeamButtonRefs,
+    selectedStep33Team,
+    true,
+    [
+      currentStep,
+      dialogFitWidthPx,
+      selectedStep33Team,
+      teamOrder.join(','),
+      adjacentTeams.join(','),
+      selectedStep33Team ? (step33SelectedOptionByTeam[selectedStep33Team] ?? '') : '',
+      selectedStep33Team ? (step33Decisions[selectedStep33Team] ?? '') : '',
+    ].join('|')
+  )
+
   useLayoutEffect(() => {
     if (!open) {
       setDialogFitWidthPx(0)
@@ -1155,19 +1312,18 @@ export function FloatingPCAConfigDialogV2({
       const headerW =
         (titleEl?.offsetWidth ?? 0) + (stepperEl?.offsetWidth ?? 0) + 24
       let detailW = 0
-      let step32W = 0
+      let stepLaneRichW = 0
       if (currentStep === '3.4') {
         const slotsRow = v2Step34SlotsRowMeasureRef.current
         const slotsW = slotsRow?.offsetWidth ?? 0
         if (slotsW > 0) {
           detailW = slotsW + 40
         }
-      } else if (currentStep === '3.2') {
-        // Step 3.2 is a rich, two-surface UI (lane + detail). Keep it wide enough to avoid
-        // "narrow dialog" scroll fatigue, while still clamping to viewport.
-        step32W = 1160
+      } else if (currentStep === '3.2' || currentStep === '3.3') {
+        // Step 3.2 / 3.3: lane + beaked detail — keep dialog comfortably wide.
+        stepLaneRichW = 1160
       }
-      const innerContent = Math.max(laneW, headerW, detailW, step32W, 280)
+      const innerContent = Math.max(laneW, headerW, detailW, stepLaneRichW, 280)
       const horizontalChrome = 56
       const padded = innerContent + horizontalChrome
       const vw = typeof window !== 'undefined' ? window.innerWidth : 1280
@@ -1545,7 +1701,6 @@ export function FloatingPCAConfigDialogV2({
     <div className="space-y-4">
       <div className="min-w-0">
         <Step32PreferredReviewLane
-          gymRiskTeams={reservationPreview.summary.gymRiskTeams}
           teamOrder={teamOrder}
           teamReviews={reservationPreview.teamReviews}
           selectedTeam={selectedStep32Team}
@@ -1593,137 +1748,455 @@ export function FloatingPCAConfigDialogV2({
     </div>
   )
 
-  const renderStep33 = () => (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Info className="h-4 w-4 text-violet-600" />
-        <span>
-          {`Gray: no adjacent slot tied to a special program. Green: a special program's adjacent slot to review.`}
-        </span>
-      </div>
+  const renderStep33 = () => {
+    const wideLane = dialogFitWidthPx >= 720
 
-      <div className="flex justify-center pb-1">
-        <div className="max-w-full overflow-x-auto">
-          <div
-            ref={v2TeamLaneMeasureRef}
-            className="inline-flex flex-nowrap items-center gap-2"
-          >
-        {teamOrder.map((team, index) => {
-          const hasAdjacent = adjacentTeams.includes(team)
-          const isSelected = selectedStep33Team === team
-          const decision = step33Decisions[team]
-          return (
-            <button
-              key={team}
-              type="button"
-              onClick={() => hasAdjacent && setSelectedStep33Team(team)}
-              className={cn(
-                'min-w-[118px] rounded-xl border px-3 py-2 text-left text-sm transition-colors',
-                hasAdjacent ? 'border-emerald-300 bg-emerald-50/80 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100' : 'border-border bg-muted/10 text-muted-foreground opacity-60',
-                isSelected && 'ring-2 ring-emerald-500'
-              )}
+    return (
+      <div className="space-y-4">
+        <div className="flex items-start gap-2 text-sm text-muted-foreground">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-violet-600 dark:text-violet-400" aria-hidden />
+          <span className="min-w-0">
+            Gray: no adjacent special-program slot. Teal: a special program&apos;s adjacent slot to review.
+          </span>
+        </div>
+
+        {teamOrder.length === 0 ? (
+          <div className="text-sm text-muted-foreground">
+            No teams are in scope for this Step 3.3 review right now.
+          </div>
+        ) : null}
+
+        <div className="flex justify-center pb-1">
+          <div className="max-w-full overflow-x-auto">
+            <div ref={v2TeamLaneMeasureRef} className="inline-flex flex-nowrap items-center gap-2">
+              {teamOrder.map((team, index) => {
+                const hasAdjacent = adjacentTeams.includes(team)
+                const isSelected = selectedStep33Team === team
+                const decision = step33Decisions[team]
+                const pendingFloating = roundToNearestQuarterWithMidpoint(adjustedFTE[team] || 0)
+                const pendingAfter32Rounded = roundToNearestQuarterWithMidpoint(pendingAfter32[team] || 0)
+                const assignedFloating = computeStep33AssignedFloating3233Preview({
+                  committedStep32: step32CommittedAssignmentsByTeam[team],
+                  step33Decision: decision,
+                  pendingAfter32Rounded,
+                })
+                const remainingPending = Math.max(
+                  0,
+                  roundToNearestQuarterWithMidpoint(pendingFloating - assignedFloating)
+                )
+                const step32Commit = step32CommittedAssignmentsByTeam[team]
+                const step32LineWide = step32Commit
+                  ? `${step32Commit.pcaName} · ${formatTimeRange(getSlotTime(step32Commit.slot))}`
+                  : null
+                const step32LineNarrow = step32Commit ? `${step32Commit.pcaName} · Slot ${step32Commit.slot}` : null
+                const laneOptions = adjacentPreview.adjacentReservations[team] || []
+                const canAssignAdjacentAdditive =
+                  hasAdjacent && pendingAfter32Rounded >= 0.25 && laneOptions.length > 0
+                const replaceOnlyAdjacent =
+                  hasAdjacent && pendingAfter32Rounded < 0.25 && !!step32Commit && laneOptions.length > 0
+                const cannotAssignAdjacent =
+                  hasAdjacent && laneOptions.length === 0
+                return (
+                  <button
+                    key={team}
+                    type="button"
+                    ref={(node) => registerStep33TeamButtonRef(team, node)}
+                    onClick={() => hasAdjacent && setSelectedStep33Team(team)}
+                    className={cn(
+                      'rounded-xl border px-3 py-2 text-left text-sm transition-colors',
+                      hasAdjacent
+                        ? cn('min-w-[152px] max-w-[196px]', rbipStep33.laneChipActive)
+                        : 'min-w-[92px] shrink-0 border-border bg-muted/20 text-muted-foreground',
+                      isSelected && hasAdjacent && rbipStep33.laneChipSelected
+                    )}
+                  >
+                    <div className="text-[11px] text-muted-foreground">{getOrderLabel(index + 1)}</div>
+                    <div className="font-semibold text-foreground">{team}</div>
+                    {hasAdjacent ? (
+                      <>
+                        <div className="mt-1 whitespace-nowrap text-[11px] leading-4 text-foreground">{`Pending floating: ${pendingFloating.toFixed(2)}`}</div>
+                        <div className="whitespace-nowrap text-[11px] leading-4 text-foreground">{`Assigned floating: ${assignedFloating.toFixed(2)}`}</div>
+                        <div className="whitespace-nowrap text-[11px] leading-4 text-foreground">{`Remaining pending: ${remainingPending.toFixed(2)}`}</div>
+                        {step32Commit ? (
+                          <div className="mt-1 text-[11px] leading-4 text-foreground">
+                            {wideLane ? step32LineWide : step32LineNarrow}
+                          </div>
+                        ) : null}
+                        <div className="mt-2 flex items-center gap-1.5 text-[11px] font-medium leading-tight text-foreground">
+                          {cannotAssignAdjacent ? (
+                            <>
+                              <XCircle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                              <span>Cannot assign</span>
+                            </>
+                          ) : canAssignAdjacentAdditive ? (
+                            <>
+                              <CheckCircle2 className={cn('h-3.5 w-3.5 shrink-0', rbipStep33.iconCheck)} aria-hidden />
+                              <span>Can assign</span>
+                            </>
+                          ) : replaceOnlyAdjacent ? (
+                            <>
+                              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden />
+                              <span>Switch only</span>
+                            </>
+                          ) : (
+                            <>
+                              <XCircle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                              <span>Cannot assign</span>
+                            </>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="mt-2 text-[11px] font-semibold text-muted-foreground">N/A</div>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+
+        {selectedStep33Team ? (
+          <div className={cn('space-y-4 pt-4', rbipStep33.sectionDivider)}>
+            <Step3V2LaneDetailShell
+              theme="adjacent"
+              detailPanelRef={step33DetailPanelRef}
+              beakCenterX={step33DetailBeakCenterX}
+              className="space-y-4 p-4"
             >
-              <div className="text-[11px] text-muted-foreground">{getOrderLabel(index + 1)}</div>
-              <div className="font-semibold">{team}</div>
-              {hasAdjacent ? (
+            {(() => {
+              const team = selectedStep33Team
+              const pendingFloating = roundToNearestQuarterWithMidpoint(adjustedFTE[team] || 0)
+              const pendingAfter32Rounded = roundToNearestQuarterWithMidpoint(pendingAfter32[team] || 0)
+              const decision = step33Decisions[team]
+              const assignedFloating = computeStep33AssignedFloating3233Preview({
+                committedStep32: step32CommittedAssignmentsByTeam[team],
+                step33Decision: decision,
+                pendingAfter32Rounded,
+              })
+              const remainingPending = Math.max(
+                0,
+                roundToNearestQuarterWithMidpoint(pendingFloating - assignedFloating)
+              )
+              const step32Commit = step32CommittedAssignmentsByTeam[team]
+              const replacePath =
+                pendingAfter32Rounded < 0.25 && !!step32Commit && selectedAdjacentOptions.length > 0
+              const additivePath =
+                pendingAfter32Rounded >= 0.25 && selectedAdjacentOptions.length > 0
+              const noAdjacentRows = selectedAdjacentOptions.length === 0
+              const crossPcaMismatch =
+                replacePath &&
+                !!step32Commit &&
+                !!selectedAdjacentOption &&
+                selectedAdjacentOption.pcaId !== step32Commit.pcaId
+              const samePcaReplace =
+                replacePath && !!step32Commit && !!selectedAdjacentOption && !crossPcaMismatch
+
+              return (
                 <>
-                  <div className="mt-1 text-[11px] leading-4">{`Pending floating ${roundToNearestQuarterWithMidpoint(adjustedFTE[team] || 0).toFixed(2)}`}</div>
-                  <div className="text-[11px] leading-4">{`Assigned floating ${step3FloatingAssignedFteByTeam[team].toFixed(2)}`}</div>
-                  <div className="mt-2 text-[11px] font-medium leading-4">
-                    {decision === 'use'
-                      ? 'Will assign adjacent slot'
-                      : decision === 'skip'
-                        ? 'Will skip adjacent slot'
-                        : 'Adjacent slot available'}
+                  <div className="text-sm font-semibold text-foreground">{team}</div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline" className={rbipStep33.metricBadge}>
+                      {`Pending floating ${pendingFloating.toFixed(2)}`}
+                    </Badge>
+                    <Badge variant="outline" className={rbipStep33.metricBadge}>
+                      {`Assigned floating ${assignedFloating.toFixed(2)}`}
+                    </Badge>
+                    <Badge variant="outline" className={rbipStep33.metricBadge}>
+                      {`Remaining pending ${remainingPending.toFixed(2)}`}
+                    </Badge>
+                  </div>
+
+                  {pendingAfter32Rounded < 0.25 && step32Commit ? (
+                    <div className={cn('pl-3 text-sm text-foreground', rbipStep33.calloutAccent)}>
+                      <div>Floating need met for this team.</div>
+                      <div className="mt-1">
+                        Step 3.2 already placed assigned floating:{' '}
+                        <span className="font-semibold">
+                          {`${step32Commit.pcaName} · ${formatTimeRange(getSlotTime(step32Commit.slot))}`}
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-1 text-sm text-muted-foreground">
+                    {additivePath ? (
+                      <p>
+                        Choose an adjacent row below, then use{' '}
+                        <span className="font-medium text-foreground">Assign adjacent slot</span> or{' '}
+                        <span className="font-medium text-foreground">Skip adjacent slot</span>.
+                      </p>
+                    ) : null}
+                    {replacePath && step32Commit ? (
+                      <>
+                        <p>You can&apos;t assign more floating here because remaining floating is 0.</p>
+                        <p className="pt-1">
+                          You can switch Step 3.2 assignment{' ('}
+                          <span className="font-semibold text-foreground">
+                            {`${step32Commit.pcaName} · ${formatTimeRange(getSlotTime(step32Commit.slot))}`}
+                          </span>
+                          {') to the adjacent special-program slot ('}
+                          <span className="font-semibold text-foreground">
+                            {(() => {
+                              const opt = selectedAdjacentOption ?? selectedAdjacentOptions[0]
+                              return opt ? formatAdjacentPcaTimeCompact(opt) : '—'
+                            })()}
+                          </span>
+                          {') instead.'}
+                        </p>
+                      </>
+                    ) : null}
+                  </div>
+
+                  <div className={cn('pt-4', rbipStep33.sectionDivider)}>
+                    <div className="text-sm font-semibold text-foreground">Adjacent to special program</div>
+                    {selectedAdjacentOptions.length > 0 ? (
+                      <div className="mt-2 divide-y divide-border rounded-md border border-border">
+                        {selectedAdjacentOptions.map((option) => {
+                          const optionKey = getAdjacentOptionKey(option)
+                          const isChosen =
+                            selectedAdjacentOption != null &&
+                            getAdjacentOptionKey(selectedAdjacentOption) === optionKey
+                          return (
+                            <button
+                              key={`${option.pcaId}-${option.adjacentSlot}`}
+                              type="button"
+                              onClick={() =>
+                                setStep33SelectedOptionByTeam((prev) => ({
+                                  ...prev,
+                                  [team]: optionKey,
+                                }))
+                              }
+                              className={cn(
+                                'w-full px-2 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-muted/40',
+                                isChosen && rbipStep33.optionRowSelected
+                              )}
+                            >
+                              <span className="flex items-start gap-2">
+                                <CheckCircle2
+                                  className={cn('mt-0.5 h-4 w-4 shrink-0', rbipStep33.iconCheck)}
+                                  aria-hidden
+                                />
+                                <span className="min-w-0">
+                                  {formatAdjacentOptionRowLabel(option)} is available
+                                </span>
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <div className="mt-3 space-y-1 text-sm text-muted-foreground">
+                        {pendingAfter32Rounded < 0.25 && step32Commit ? (
+                          <>
+                            <div>No adjacent special-program slot is available to switch to.</div>
+                            <div>Nothing to do here unless you go back to Step 3.1.</div>
+                          </>
+                        ) : (
+                          <div>No adjacent special-program slot applies for this team in the current path.</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className={cn('pt-4', rbipStep33.sectionDivider)}>
+                    <div className="flex flex-col gap-3">
+                      {additivePath ? (
+                        <div className="flex flex-wrap gap-3">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={cn(
+                              STEP33_CHOICE_BUTTON_BASE,
+                              step33Decisions[team] === 'use' && rbipStep33.choiceSelected
+                            )}
+                            onClick={() =>
+                              setStep33Decisions((prev) => ({
+                                ...prev,
+                                [team]: 'use',
+                              }))
+                            }
+                          >
+                            Assign adjacent slot
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={cn(
+                              STEP33_CHOICE_BUTTON_BASE,
+                              step33Decisions[team] === 'skip' && rbipStep33.choiceSelected
+                            )}
+                            onClick={() =>
+                              setStep33Decisions((prev) => ({
+                                ...prev,
+                                [team]: 'skip',
+                              }))
+                            }
+                          >
+                            Skip adjacent slot
+                          </Button>
+                        </div>
+                      ) : null}
+
+                      {replacePath ? (
+                        <div className="flex flex-wrap gap-3">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={cn(
+                              STEP33_CHOICE_BUTTON_BASE,
+                              step33Decisions[team] === 'use' && rbipStep33.choiceSelected
+                            )}
+                            onClick={() =>
+                              setStep33Decisions((prev) => ({
+                                ...prev,
+                                [team]: 'use',
+                              }))
+                            }
+                          >
+                            Replace Step 3.2 with adjacent slot
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={cn(
+                              STEP33_CHOICE_BUTTON_BASE,
+                              step33Decisions[team] === 'skip' && rbipStep33.choiceSelected
+                            )}
+                            onClick={() =>
+                              setStep33Decisions((prev) => ({
+                                ...prev,
+                                [team]: 'skip',
+                              }))
+                            }
+                            aria-label="Keep Step 3.2, skip adjacent. Reverts to your Step 3.2 choice only."
+                          >
+                            Keep Step 3.2, skip adjacent
+                          </Button>
+                        </div>
+                      ) : null}
+
+                      {noAdjacentRows && pendingAfter32Rounded < 0.25 && step32Commit ? (
+                        <div className="flex flex-wrap gap-3">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={cn(STEP33_CHOICE_BUTTON_BASE, rbipStep33.choiceSelected)}
+                            onClick={() =>
+                              setStep33Decisions((prev) => ({
+                                ...prev,
+                                [team]: 'skip',
+                              }))
+                            }
+                            aria-label="Keep Step 3.2, skip adjacent. Reverts to your Step 3.2 choice only."
+                          >
+                            Keep Step 3.2, skip adjacent
+                          </Button>
+                        </div>
+                      ) : null}
+
+                      {additivePath ? (
+                        <div className="text-xs text-muted-foreground">Uses one slot of remaining pending.</div>
+                      ) : null}
+
+                      {replacePath ? (
+                        <div className="space-y-1 text-xs text-muted-foreground">
+                          {decision === 'use' && samePcaReplace && step32Commit ? (
+                            <div>
+                              Step 3.2 assignment{' ('}
+                              <span className="font-semibold text-foreground">
+                                {`${step32Commit.pcaName} · ${formatTimeRange(getSlotTime(step32Commit.slot))}`}
+                              </span>
+                              {') to the adjacent special-program slot ('}
+                              <span className="font-semibold text-foreground">
+                                {(() => {
+                                  const opt = selectedAdjacentOption ?? selectedAdjacentOptions[0]
+                                  return opt ? formatAdjacentPcaTimeCompact(opt) : '—'
+                                })()}
+                              </span>
+                              {').'}
+                            </div>
+                          ) : null}
+                          {decision === 'use' && crossPcaMismatch && step32Commit && selectedAdjacentOption ? (
+                            <div>
+                              Replacing removes {step32Commit.pcaName} from this assignment and uses{' '}
+                              {selectedAdjacentOption.pcaName} on the adjacent slot instead (Step 3.2 preferred PCA for
+                              that slot no longer applies).
+                            </div>
+                          ) : null}
+                          {decision === 'skip' && selectedAdjacentOptions.length > 0 ? (
+                            <div>
+                              Keeping Step 3.2: {(selectedAdjacentOption ?? selectedAdjacentOptions[0]).pcaName} is not
+                              assigned on the adjacent slot (
+                              {formatTimeRange(
+                                getSlotTime((selectedAdjacentOption ?? selectedAdjacentOptions[0]).adjacentSlot)
+                              )}
+                              ).
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 </>
-              ) : (
-                <div className="mt-1 text-[11px] font-medium leading-4 text-muted-foreground">
-                  No adjacent slot
-                </div>
-              )}
-            </button>
-          )
-        })}
+              )
+            })()}
+            </Step3V2LaneDetailShell>
           </div>
-        </div>
+        ) : null}
       </div>
-
-      {selectedStep33Team ? (
-        <div className="space-y-4 rounded-xl border border-emerald-200 bg-background p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-sm font-semibold text-foreground">{selectedStep33Team}</div>
-            <Badge variant="outline">{`Pending floating ${roundToNearestQuarterWithMidpoint(adjustedFTE[selectedStep33Team] || 0).toFixed(2)}`}</Badge>
-            <Badge variant="outline">{`Assigned floating ${step3FloatingAssignedFteByTeam[selectedStep33Team].toFixed(2)}`}</Badge>
-            <Badge>{`${selectedAdjacentOptions.length} adjacent slot(s)`}</Badge>
-          </div>
-
-          {selectedAdjacentOptions.length > 0 ? (
-            <>
-              <div className="text-sm font-semibold text-foreground">{`${selectedStep33Team} review`}</div>
-              <div className="space-y-2">
-                {selectedAdjacentOptions.map((option) => {
-                  const optionKey = getAdjacentOptionKey(option)
-                  const isChosen =
-                    selectedAdjacentOption != null && getAdjacentOptionKey(selectedAdjacentOption) === optionKey
-                  return (
-                    <button
-                      key={`${option.pcaId}-${option.adjacentSlot}`}
-                      type="button"
-                      onClick={() =>
-                        setStep33SelectedOptionByTeam((prev) => ({
-                          ...prev,
-                          [selectedStep33Team]: optionKey,
-                        }))
-                      }
-                      className={cn(
-                        'w-full rounded-lg border bg-muted/20 p-3 text-left text-sm text-muted-foreground transition-colors',
-                        isChosen && 'border-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/30'
-                      )}
-                    >
-                      {formatAdjacentSpecialProgramSentence(option)}
-                    </button>
-                  )
-                })}
-              </div>
-              <div className="flex flex-wrap gap-2 border-t border-emerald-200/70 pt-4 dark:border-emerald-900/50">
-                <Button
-                  variant={step33Decisions[selectedStep33Team] === 'use' ? 'default' : 'outline'}
-                  onClick={() =>
-                    setStep33Decisions((prev) => ({
-                      ...prev,
-                      [selectedStep33Team]: 'use',
-                    }))
-                  }
-                >
-                  Assign adjacent slot
-                </Button>
-                <Button
-                  variant={step33Decisions[selectedStep33Team] === 'skip' ? 'default' : 'outline'}
-                  onClick={() =>
-                    setStep33Decisions((prev) => ({
-                      ...prev,
-                      [selectedStep33Team]: 'skip',
-                    }))
-                  }
-                >
-                  Skip adjacent slot
-                </Button>
-              </div>
-            </>
-          ) : (
-            <div className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
-              No adjacent special-program slot applies for this team in the current path.
-            </div>
-          )}
-        </div>
-      ) : null}
-    </div>
-  )
+    )
+  }
 
   const renderStep34 = () => (
-    <div className="space-y-4">
-      <div className="text-sm text-muted-foreground">
+    <div className="relative space-y-4">
+      <Popover modal={false}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="absolute right-0 top-0 z-20 h-auto min-h-8 shrink-0 gap-1 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+            aria-label="What the team lane dots mean"
+          >
+            <span className="inline-flex items-center gap-1" aria-hidden>
+              <span className={cn(rbipStep34.laneDot, rbipStep34.laneDotLg, rbipStep34.laneDotStep32)} />
+              <span className={cn(rbipStep34.laneDot, rbipStep34.laneDotLg, rbipStep34.laneDotStep33)} />
+              <span className={cn(rbipStep34.laneDot, rbipStep34.laneDotLg, rbipStep34.laneDotSurplus)} />
+              <span className={cn(rbipStep34.laneDot, rbipStep34.laneDotLg, rbipStep34.laneDotExtra)} />
+            </span>
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="end"
+          side="bottom"
+          sideOffset={6}
+          className="z-[100] w-[min(18.5rem,calc(100vw-2rem))] border-border bg-popover p-3 text-popover-foreground shadow-lg"
+        >
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Team lane dots
+          </div>
+          <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+            Dots on each team card follow tracker order (left to right). Only shown when that signal applies.
+          </p>
+          <ul className="mt-3 space-y-2.5">
+            {STEP34_LANE_DOT_LEGEND_ROWS.map((row) => (
+              <li key={row.key} className="flex gap-2.5">
+                <span className="mt-1 shrink-0 self-start" aria-hidden>
+                  <span className={row.dotClass} />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-foreground">{row.title}</div>
+                  <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{row.body}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </PopoverContent>
+      </Popover>
+
+      <div className="pr-14 text-sm text-muted-foreground">
         Keep the selected team in focus to understand how Slots 1 to 4 were handled.
       </div>
 
@@ -1757,6 +2230,25 @@ export function FloatingPCAConfigDialogV2({
                 : pendingVisual === 'partial'
                   ? 'Partially met'
                   : 'Not met'
+          const laneDots = getStep34LaneDotFlagsForTeam({
+            team,
+            step34PreviewResult,
+            grants: step31BootstrapSummary?.realizedSurplusSlotGrantsByTeam,
+            step32Assignments: step32AssignmentsForSave,
+            step33Assignments: step33AssignmentsForSave,
+          })
+          const showAnyLaneDot =
+            laneDots.step32 || laneDots.step33 || laneDots.surplus || laneDots.extra
+          const laneDotAriaLabel = showAnyLaneDot
+            ? `Tracker signals for ${team}: ${[
+                laneDots.step32 && 'Step 3.2 reservation',
+                laneDots.step33 && 'Step 3.3 adjacent slot',
+                laneDots.surplus && 'raised target from surplus',
+                laneDots.extra && 'extra after needs in Step 3.4',
+              ]
+                .filter(Boolean)
+                .join('; ')}. Hover each dot for details.`
+            : undefined
           return (
             <button
               key={team}
@@ -1767,12 +2259,41 @@ export function FloatingPCAConfigDialogV2({
               }}
               onClick={() => setStep34SelectedTeam(team)}
               className={cn(
-                'min-w-[84px] max-w-[104px] shrink-0 rounded-lg border px-2 py-1.5 text-left text-xs transition-colors',
+                'relative min-w-[84px] max-w-[104px] shrink-0 rounded-lg border py-1.5 pl-2 text-left text-xs transition-colors',
+                showAnyLaneDot ? 'pr-5' : 'pr-2',
                 isSelected
                   ? 'border-sky-600 bg-sky-50 text-foreground shadow-sm ring-2 ring-sky-400/45 dark:border-sky-500 dark:bg-sky-950/45 dark:text-sky-50 dark:ring-sky-500/35'
                   : 'border-border bg-background text-muted-foreground hover:bg-muted/20'
               )}
             >
+              {showAnyLaneDot ? (
+                <span className={rbipStep34.laneDotCluster} role="group" aria-label={laneDotAriaLabel}>
+                  {laneDots.step32 ? (
+                    <span
+                      className={cn(rbipStep34.laneDot, rbipStep34.laneDotStep32)}
+                      title={STEP34_LANE_DOT_TOOLTIPS.step32}
+                    />
+                  ) : null}
+                  {laneDots.step33 ? (
+                    <span
+                      className={cn(rbipStep34.laneDot, rbipStep34.laneDotStep33)}
+                      title={STEP34_LANE_DOT_TOOLTIPS.step33}
+                    />
+                  ) : null}
+                  {laneDots.surplus ? (
+                    <span
+                      className={cn(rbipStep34.laneDot, rbipStep34.laneDotSurplus)}
+                      title={STEP34_LANE_DOT_TOOLTIPS.surplus}
+                    />
+                  ) : null}
+                  {laneDots.extra ? (
+                    <span
+                      className={cn(rbipStep34.laneDot, rbipStep34.laneDotExtra)}
+                      title={STEP34_LANE_DOT_TOOLTIPS.extra}
+                    />
+                  ) : null}
+                </span>
+              ) : null}
               <div className="text-[10px] text-muted-foreground">{getOrderLabel(index + 1)}</div>
               <div className="font-semibold leading-tight">{team}</div>
               <div className="mt-1 flex items-center gap-1 text-[10px] font-medium leading-tight">
@@ -1791,9 +2312,11 @@ export function FloatingPCAConfigDialogV2({
           Building the ranked-slot review...
         </div>
       ) : selectedStep34Detail ? (
-        <div
-          ref={step34DetailPanelRef}
-          className="relative rounded-2xl border border-blue-200 bg-blue-50/40 p-4 shadow-sm dark:bg-blue-950/10"
+        <Step3V2LaneDetailShell
+          theme="final"
+          detailPanelRef={step34DetailPanelRef}
+          beakCenterX={step34DetailBeakCenterX}
+          className="p-4"
         >
           <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
             <div className="min-w-0 flex-1 pr-2">
@@ -1888,13 +2411,7 @@ export function FloatingPCAConfigDialogV2({
               ))}
             </ul>
           </div>
-
-          <div
-            className="pointer-events-none absolute -top-1 z-10 h-4 w-4 -translate-x-1/2 rotate-45 border-l border-t border-blue-200 bg-blue-50/80 dark:border-blue-800 dark:bg-blue-950/40"
-            style={{ left: step34DetailBeakCenterX ?? 32 }}
-            aria-hidden
-          />
-        </div>
+        </Step3V2LaneDetailShell>
       ) : (
         <div className="rounded-xl border bg-background p-4 text-sm text-muted-foreground">
           No Step 3.4 preview is available yet.

@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "driver.js/dist/driver.css";
+@import "../styles/rbip-design-tokens.css";
 
 /* Force dark mode to be class-based (NOT prefers-color-scheme).
    This keeps the app light by default until we implement a theme toggle. */

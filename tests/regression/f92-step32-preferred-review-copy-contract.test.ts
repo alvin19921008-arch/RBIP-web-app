@@ -3,22 +3,34 @@ import assert from 'node:assert/strict'
 import {
   getOutcomeSummaryLines,
   getStep32CategoryHeading,
+  getStep32CombinedReservationGroupHeading,
   getStep32LaneLabel,
   getStep32LaterOutcomeTitle,
   getStep32LegendItems,
   getStep32LeaveOpenFor34ChoiceLabel,
+  getStep32OutcomePlainTitle,
+  getStep32OutcomeSectionHeading,
   getStep32PcaChangeStepHelper,
+  getStep32PcaFillSectionHeading,
   getStep32PcaSelectAllocatorGroupLabel,
   getStep32PcaSelectAriaLabel,
   getStep32PcaSelectLabel,
   getStep32PcaSelectPlaceholder,
+  getStep32PreferredAvailabilityLabel,
+  getStep32RankedSlotsContextLabel,
   getStep32RecommendedContinuityOutcomeTitle,
+  getStep32ReservedFor34RowPrefix,
+  getStep32ReservedOtherSlotsDisclaimer,
   getStep32SaveDecisionHelperLeaveOpenNoSave,
   getStep32SaveDecisionHelperSavedReservation,
   getStep32SaveDecisionHelperStaleCommit,
+  getStep32SaveDecisionSectionHeading,
   getStep32SaveDecisionTitle,
+  getStep32SaveHintPlaceholder,
+  getStep32SaveReservesOnlyHintFor34,
   getStep32SaveSelectedOutcomeLabel,
   getStep32StatusHelpLabel,
+  getStep32SuggestedOutcomeBadgeLabel,
   getTradeoffMessage,
 } from '../../lib/features/schedule/step32V2/step32PreferredReviewCopy'
 
@@ -42,7 +54,7 @@ async function main() {
 
   assert.equal(getStep32StatusHelpLabel(), 'How to read statuses')
   assert.equal(getStep32SaveDecisionTitle(), 'Save decision')
-  assert.equal(getStep32SaveSelectedOutcomeLabel(), 'Save selected outcome')
+  assert.equal(getStep32SaveSelectedOutcomeLabel(), 'Save reservation')
   assert.equal(getStep32LeaveOpenFor34ChoiceLabel(), 'Leave open for Step 3.4')
   assert.equal(
     getStep32SaveDecisionHelperLeaveOpenNoSave(),
@@ -61,10 +73,13 @@ async function main() {
     'Reservation on file no longer matches this preview. Save again to update, or leave open for Step 3.4.'
   )
 
-  assert.equal(getStep32PcaChangeStepHelper(), 'Pick the PCA for this path from the menu.')
-  assert.equal(getStep32PcaSelectLabel(), 'PCA for this path')
+  assert.equal(
+    getStep32PcaChangeStepHelper(),
+    'Changing PCA updates the reservation preview above.'
+  )
+  assert.equal(getStep32PcaSelectLabel(), 'PCA for the reserved slot')
   assert.equal(getStep32PcaSelectPlaceholder(), 'Choose PCA…')
-  assert.equal(getStep32PcaSelectAriaLabel(), 'PCA for this path')
+  assert.equal(getStep32PcaSelectAriaLabel(), 'Who fills the reserved slot')
   assert.equal(getStep32PcaSelectAllocatorGroupLabel(), 'Suggested')
   assert.equal(getStep32LaterOutcomeTitle({ isRanked: true }), 'Preferred on later rank')
   assert.equal(getStep32LaterOutcomeTitle({ isRanked: false }), 'Preferred on later slot')
@@ -75,6 +90,36 @@ async function main() {
   assert.equal(getStep32SaveSelectedOutcomeLabel().toLowerCase().includes('commit'), false)
   assert.equal(getStep32LaterOutcomeTitle({ isRanked: false }).toLowerCase().includes('fallback'), false)
   assert.equal(getStep32LaterOutcomeTitle({ isRanked: true }).toLowerCase().includes('fallback'), false)
+
+  assert.equal(getStep32CombinedReservationGroupHeading(), 'Build your reservation')
+  assert.equal(getStep32OutcomeSectionHeading(), '1. Outcome')
+  assert.equal(getStep32PcaFillSectionHeading(), '2. Who fills the reserved slot?')
+  assert.equal(getStep32SaveDecisionSectionHeading(), '3. Save decision')
+  assert.equal(getStep32RankedSlotsContextLabel(), 'Ranked slots')
+  assert.equal(getStep32ReservedFor34RowPrefix(), 'Reserved for Step 3.4')
+  assert.equal(
+    getStep32ReservedOtherSlotsDisclaimer(),
+    'Other slots: filled in Steps 3.3–3.4 (not fixed here).'
+  )
+  assert.equal(getStep32SuggestedOutcomeBadgeLabel(), 'Suggested')
+  assert.equal(
+    getStep32SaveReservesOnlyHintFor34({ pcaName: 'Ada', interval: '1030-1200' }),
+    'Save reserves only Ada · 1030-1200 for Step 3.4'
+  )
+  assert.equal(getStep32SaveHintPlaceholder().length > 0, true)
+  assert.equal(
+    getStep32OutcomePlainTitle({ highlight: 'preferred_pca', locationPhrase: '1st rank' }),
+    'Preferred PCA on 1st rank'
+  )
+  assert.equal(
+    getStep32OutcomePlainTitle({ highlight: 'floor_pca', locationPhrase: '1st rank' }),
+    'Floor PCA on 1st rank'
+  )
+
+  assert.equal(getStep32PreferredAvailabilityLabel('rank-1'), 'Available on 1st rank')
+  assert.equal(getStep32PreferredAvailabilityLabel('later-ranked'), 'Available on a lower rank only')
+  assert.equal(getStep32PreferredAvailabilityLabel('unranked'), 'Available on an unranked slot only')
+  assert.equal(getStep32PreferredAvailabilityLabel('unavailable'), 'Unavailable for ranked paths')
 
   assert.deepEqual(
     getOutcomeSummaryLines({

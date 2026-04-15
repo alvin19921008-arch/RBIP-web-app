@@ -136,8 +136,17 @@ export async function runStep3V2CommittedSelections(
     ...step32Result.executedAssignments.map((assignment) => ({ ...assignment, source: 'step32' as const }))
   )
 
+  const executedStep32Teams = new Set(step32Result.executedAssignments.map((assignment) => assignment.team))
+  const step33AssignmentsFiltered = args.step33Assignments.filter((assignment) => {
+    const pending = roundToNearestQuarterWithMidpoint(pendingFTE[assignment.team] || 0)
+    if (pending >= 0.25) return true
+    const hasExecutedStep32ForTeam = executedStep32Teams.has(assignment.team)
+    // Replace path: pending is exhausted after Step 3.2; allow Step 3.3 only if Step 3.2 did not execute for this team.
+    return !hasExecutedStep32ForTeam
+  })
+
   const step33Result = executeSlotAssignments(
-    args.step33Assignments,
+    step33AssignmentsFiltered,
     pendingFTE,
     allocations,
     args.floatingPCAs

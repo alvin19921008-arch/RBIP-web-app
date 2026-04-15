@@ -4,10 +4,14 @@ import type { PCAPreference } from '@/types/allocation'
 import type { Team } from '@/types/staff'
 import { TEAMS, findAvailablePCAs, getTeamPreferenceInfo, isFloorPCAForTeam, type StaffOverrideWithSubstitution } from '@/lib/utils/floatingPCAHelpers'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
+import { formatTimeRange, getSlotTime } from '@/lib/utils/slotHelpers'
+import {
+  formatStep32SlotLabelWithInterval,
+  getStep32DashboardRankOrdinalForSlot,
+} from '@/lib/features/schedule/step32V2/step32RankedSummaryFormat'
 import {
   getOutcomeSummaryLines,
-  getStep32LaterOutcomeTitle,
-  getStep32RecommendedContinuityOutcomeTitle,
+  getStep32OutcomePlainTitle,
   getStep32SaveEffectLabel,
   getTradeoffMessage,
 } from '@/lib/features/schedule/step32V2/step32PreferredReviewCopy'
@@ -59,6 +63,16 @@ export interface Step32OutcomeRow {
   pcaKind: 'preferred' | 'floor' | 'non_floor'
 }
 
+export type Step32OutcomeTitleHighlight = 'preferred_pca' | 'floor_pca'
+
+/** Static reservation slot metadata for Step 3.2 cards (interval + dashboard rank if any). */
+export interface Step32ReservedPreviewMeta {
+  slot: 1 | 2 | 3 | 4
+  intervalDisplay: string
+  /** e.g. `1st rank` when this slot is in the dashboard ranked list; otherwise null. */
+  dashboardRankOrdinal: string | null
+}
+
 export interface Step32OutcomeOption {
   outcomeKey: string
   title: string
@@ -68,6 +82,10 @@ export interface Step32OutcomeOption {
   commitState: Step32CommitState
   tradeoffKind?: Step32TradeoffKind
   isSystemRecommended: boolean
+  reservedPreview: Step32ReservedPreviewMeta
+  titleHighlight: Step32OutcomeTitleHighlight
+  /** Completes the human title after the highlighted PCA kind (e.g. `1st rank`, `a later slot`). */
+  titleLocationPhrase: string
 }
 
 export interface Step32TeamReview {
@@ -426,6 +444,25 @@ function buildOutcomeRowsForPcaAcrossPaths(args: {
   return rows
 }
 
+function buildReservedPreviewMetaForPath(
+  path: Step32PathOption,
+  rankedSlotsInDashboardOrder: number[]
+): Step32ReservedPreviewMeta {
+  const slot = path.slot
+  const intervalDisplay = formatTimeRange(getSlotTime(slot))
+  const dashboardRankOrdinal = getStep32DashboardRankOrdinalForSlot(rankedSlotsInDashboardOrder, slot)
+  return { slot, intervalDisplay, dashboardRankOrdinal }
+}
+
+function buildTitleLocationForReservedPreview(
+  reservedPreview: Step32ReservedPreviewMeta,
+  unrankedLaterFallback: 'later_slot' | 'slot_label'
+): string {
+  if (reservedPreview.dashboardRankOrdinal != null) return reservedPreview.dashboardRankOrdinal
+  if (unrankedLaterFallback === 'later_slot') return 'a later slot'
+  return formatStep32SlotLabelWithInterval(reservedPreview.slot, reservedPreview.intervalDisplay)
+}
+
 function buildRecommendedOutcome(args: {
   pathData: Array<{
     option: Step32PathOption
@@ -433,6 +470,7 @@ function buildRecommendedOutcome(args: {
   }>
   earliestPath: Step32PathOption
   systemSuggestedPcaId: string
+  rankedSlotsInDashboardOrder: number[]
 }): Step32OutcomeOption {
   const rows = buildOutcomeRowsForPcaAcrossPaths({
     pathData: args.pathData.filter((entry) => {
@@ -442,10 +480,15 @@ function buildRecommendedOutcome(args: {
     pcaId: args.systemSuggestedPcaId,
   })
 
-  const firstRow = rows[0]
+  const titleHighlight: Step32OutcomeTitleHighlight =
+    args.earliestPath.pathState === 'preferred_available' ? 'preferred_pca' : 'floor_pca'
+  const reservedPreview = buildReservedPreviewMetaForPath(args.earliestPath, args.rankedSlotsInDashboardOrder)
+  const titleLocationPhrase = buildTitleLocationForReservedPreview(reservedPreview, 'slot_label')
+  const title = getStep32OutcomePlainTitle({ highlight: titleHighlight, locationPhrase: titleLocationPhrase })
+
   return {
     outcomeKey: 'recommended-continuity',
-    title: getStep32RecommendedContinuityOutcomeTitle(),
+    title,
     primaryPathKey: args.earliestPath.pathKey,
     rows: rows.length > 0 ? rows : [{
       slot: args.earliestPath.slot,
@@ -460,6 +503,9 @@ function buildRecommendedOutcome(args: {
     commitState: 'committable',
     isSystemRecommended: true,
     tradeoffKind: undefined,
+    reservedPreview,
+    titleHighlight,
+    titleLocationPhrase,
   }
 }
 
@@ -467,6 +513,7 @@ function buildPreferredOutcome(args: {
   earliestPath: Step32PathOption
   laterPath: Step32PathOption
   laterCandidate: { id: string; name: string }
+  rankedSlotsInDashboardOrder: number[]
 }): Step32OutcomeOption {
   const variant = args.laterPath.kind === 'ranked' ? 'preferred_ranked' : 'preferred_later'
   const rows: Step32OutcomeRow[] = [
@@ -492,12 +539,19 @@ function buildPreferredOutcome(args: {
     },
   ]
 
+  const reservedPreview = buildReservedPreviewMetaForPath(args.laterPath, args.rankedSlotsInDashboardOrder)
+  const titleLocationPhrase = buildTitleLocationForReservedPreview(
+    reservedPreview,
+    args.laterPath.kind === 'ranked' ? 'slot_label' : 'later_slot'
+  )
+  const title = getStep32OutcomePlainTitle({ highlight: 'preferred_pca', locationPhrase: titleLocationPhrase })
+
   return {
     outcomeKey:
       args.laterPath.kind === 'ranked'
         ? `preferred-ranked:${args.laterPath.slot}`
         : `preferred-later:${args.laterPath.slot}`,
-    title: getStep32LaterOutcomeTitle({ isRanked: args.laterPath.kind === 'ranked' }),
+    title,
     primaryPathKey: args.laterPath.pathKey,
     rows,
     summaryLines: getOutcomeSummaryLines({
@@ -508,6 +562,9 @@ function buildPreferredOutcome(args: {
     commitState: 'committable_with_tradeoff',
     tradeoffKind: 'continuity',
     isSystemRecommended: false,
+    reservedPreview,
+    titleHighlight: 'preferred_pca',
+    titleLocationPhrase,
   }
 }
 
@@ -601,12 +658,15 @@ function buildReviewableReview(args: {
     return option
   })
 
+  const rankedSlotsInDashboardOrder = [...pref.rankedSlots]
+
   const outcomeOptions: Step32OutcomeOption[] = []
   if (earliestFeasible && systemSuggestedPca) {
     outcomeOptions.push(buildRecommendedOutcome({
       pathData,
       earliestPath: pathOptions[earliestFeasibleIndex] ?? earliestFeasible.option,
       systemSuggestedPcaId: systemSuggestedPca.id,
+      rankedSlotsInDashboardOrder,
     }))
   }
 
@@ -622,6 +682,7 @@ function buildReviewableReview(args: {
           earliestPath: pathOptions[earliestFeasibleIndex] ?? earliestFeasible.option,
           laterPath: pathOptions[laterPreferredIndex] ?? laterPreferred.option,
           laterCandidate,
+          rankedSlotsInDashboardOrder,
         })
       )
     }

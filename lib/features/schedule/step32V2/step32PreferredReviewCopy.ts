@@ -36,7 +36,7 @@ export function getStep32SaveDecisionTitle(): string {
 }
 
 export function getStep32SaveSelectedOutcomeLabel(): string {
-  return 'Save selected outcome'
+  return 'Save reservation'
 }
 
 /** Step 3 “leave open” choice — same label whether or not a reservation exists. */
@@ -62,12 +62,12 @@ export function getStep32SaveDecisionHelperStaleCommit(): string {
 
 /** Helper under the PCA select in Step 3.2 detail (Step 2). */
 export function getStep32PcaChangeStepHelper(): string {
-  return 'Pick the PCA for this path from the menu.'
+  return 'Changing PCA updates the reservation preview above.'
 }
 
 /** Visible label above the PCA select. */
 export function getStep32PcaSelectLabel(): string {
-  return 'PCA for this path'
+  return 'PCA for the reserved slot'
 }
 
 export function getStep32PcaSelectPlaceholder(): string {
@@ -75,7 +75,7 @@ export function getStep32PcaSelectPlaceholder(): string {
 }
 
 export function getStep32PcaSelectAriaLabel(): string {
-  return 'PCA for this path'
+  return 'Who fills the reserved slot'
 }
 
 /** Select group heading for the allocator’s suggested PCA row. */
@@ -89,6 +89,60 @@ export function getStep32LaterOutcomeTitle(args: { isRanked: boolean }): string 
 
 export function getStep32RecommendedContinuityOutcomeTitle(): string {
   return 'Recommended · Continuity'
+}
+
+/** Plain-text outcome title for model `title` / debugging (UI uses structured highlight + location). */
+export function getStep32OutcomePlainTitle(args: {
+  highlight: 'preferred_pca' | 'floor_pca'
+  locationPhrase: string
+}): string {
+  const lead = args.highlight === 'preferred_pca' ? 'Preferred PCA' : 'Floor PCA'
+  return `${lead} on ${args.locationPhrase}`
+}
+
+export function getStep32CombinedReservationGroupHeading(): string {
+  return 'Build your reservation'
+}
+
+export function getStep32OutcomeSectionHeading(): string {
+  return '1. Outcome'
+}
+
+export function getStep32PcaFillSectionHeading(): string {
+  return '2. Who fills the reserved slot?'
+}
+
+export function getStep32SaveDecisionSectionHeading(): string {
+  return '3. Save decision'
+}
+
+export function getStep32RankedSlotsContextLabel(): string {
+  return 'Ranked slots'
+}
+
+export function getStep32PreferredPcaContextLabel(): string {
+  return 'Preferred PCA'
+}
+
+export function getStep32ReservedFor34RowPrefix(): string {
+  return 'Reserved for Step 3.4'
+}
+
+export function getStep32ReservedOtherSlotsDisclaimer(): string {
+  return 'Other slots: filled in Steps 3.3–3.4 (not fixed here).'
+}
+
+export function getStep32SuggestedOutcomeBadgeLabel(): string {
+  return 'Suggested'
+}
+
+/** Parameterized save helper (plan §0.6) — values must be safe text from roster/state. */
+export function getStep32SaveReservesOnlyHintFor34(args: { pcaName: string; interval: string }): string {
+  return `Save reserves only ${args.pcaName} · ${args.interval} for Step 3.4`
+}
+
+export function getStep32SaveHintPlaceholder(): string {
+  return 'Choose an outcome and PCA to see what Save will reserve for Step 3.4.'
 }
 
 export function getOutcomeSummaryLines(args: {
@@ -120,10 +174,10 @@ export function getTradeoffMessage(kind: Step32TradeoffKind): string {
 }
 
 export function getStep32PreferredAvailabilityLabel(kind: Step32PreferredAvailability): string {
-  if (kind === 'rank-1') return 'Available on rank #1'
-  if (kind === 'later-ranked') return 'Available on later rank'
-  if (kind === 'unranked') return 'Available on unranked slot'
-  return 'Unavailable'
+  if (kind === 'rank-1') return 'Available on 1st rank'
+  if (kind === 'later-ranked') return 'Available on a lower rank only'
+  if (kind === 'unranked') return 'Available on an unranked slot only'
+  return 'Unavailable for ranked paths'
 }
 
 /** Wording for reservation scope in Step 3.2 scenario summaries (one quarter-slot). */

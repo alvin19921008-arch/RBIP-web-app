@@ -485,6 +485,15 @@ export interface AdjacentSlotResult {
   hasAnyAdjacentReservations: boolean
 }
 
+/** Optional tuning for Step 3.3 adjacent preview / replace path. */
+export interface ComputeAdjacentSlotReservationsOptions {
+  /**
+   * When a team has exhausted remaining pending after Step 3.2 (rounded &lt; 0.25) but still has a Step 3.2
+   * commit, allow adjacent rows to appear so the UI can offer **replace** (still one net slot).
+   */
+  replaceEligibleTeams?: ReadonlySet<Team>
+}
+
 function isSlotFromSpecialProgram(
   allocation: PCAAllocation,
   slot: number,
@@ -524,10 +533,11 @@ function getSpecialProgramNameForSlot(
  * IMPORTANT: Only considers slots that were actually assigned by the special program,
  * not slots assigned later (e.g., from Step 3.2 preferred slot assignment).
  * 
- * @param currentPendingFTE Current pending FTE after Step 3.2 assignments
- * @param existingAllocations Allocations including Step 2 and 3.2 assignments
+ * @param currentPendingFTE Remaining pending FTE after Step 3.2 (or scratch preview pending after 3.2)
+ * @param existingAllocations Allocations including Step 2 and simulated Step 3.2 scratch rows when previewing
  * @param floatingPCAs Floating PCA data for name lookup
  * @param specialPrograms Special program definitions to identify which slots are from special programs
+ * @param options Replace-path eligibility when pending is exhausted but Step 3.2 exists
  */
 export function computeAdjacentSlotReservations(
   currentPendingFTE: Record<Team, number>,
@@ -535,7 +545,8 @@ export function computeAdjacentSlotReservations(
   floatingPCAs: PCAData[],
   specialPrograms: SpecialProgram[],
   staffOverrides?: Record<string, StaffOverrideWithSubstitution>,
-  weekday?: Weekday
+  weekday?: Weekday,
+  options?: ComputeAdjacentSlotReservationsOptions
 ): AdjacentSlotResult {
   const specialProgramsByTeamCache = new Map<string, ReturnType<typeof buildReservationRuntimeProgramsById>>()
   const getSpecialProgramsByAllocationTeam = (allocationTeam: Team | null | undefined) => {
@@ -591,9 +602,10 @@ export function computeAdjacentSlotReservations(
         continue
       }
       
-      // Check if team's pending FTE > 0
       const pendingFTE = roundToNearestQuarterWithMidpoint(currentPendingFTE[team] || 0)
-      if (pendingFTE <= 0) {
+      const replaceEligible = options?.replaceEligibleTeams?.has(team) === true
+      // Additive path needs remaining pending for a new slot; replace path can surface rows at 0 pending.
+      if (pendingFTE < 0.25 && !replaceEligible) {
         continue
       }
       

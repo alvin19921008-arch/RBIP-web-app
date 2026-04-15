@@ -21,6 +21,12 @@ alwaysApply: false
 - Grouping: use `space-y-6`, `divide-y`, `gap-4` (not nested borders)
 - Dialog widths: `max-w-lg` default, `max-w-2xl` for tables/wide forms
 - Text: allow wrapping (never `whitespace-nowrap` unless icon/button)
+- **Flat over “AI box stacks”:** prefer one outer frame + `border-t` / `divide-y` + spacing between sections. Avoid nesting bordered cards for every block (status vs list vs actions). Use a **thin accent** (e.g. `border-l-2`) on text when emphasis is needed, not a second card.
+
+## Slot labels (density)
+
+- **Tight / lane / chip:** use **slot index** (`Slot 1` … `Slot 4` or `PCA · Slot N`) when horizontal space is small.
+- **Primary / wide detail:** show the **time interval** for that slot (e.g. `0900-1030`); reuse `@/lib/utils/slotHelpers` (`getSlotTime`, `formatTimeRange`) so intervals match the rest of allocation UI.
 
 ## Visual Tokens
 
@@ -85,7 +91,6 @@ Controls and their associated metadata (labels, status values, summaries) must s
 - ❌ 3+ nested border levels
 - ❌ Multiple accent colors (except the fixed **emerald vs violet** pair for Raised target vs Extra after needs above)
 - ❌ Different hues for different surfaces
-- ❌ `purple-*` for **Extra after needs** (use `violet-*` only)
 
 ## Quick Reference: Spacing Scale
 

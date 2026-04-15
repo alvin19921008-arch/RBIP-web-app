@@ -49,16 +49,19 @@ Additionally, **“1. Choose outcome”** and **“2. Change PCA”** are laid o
    - **Ranked slots** from dashboard: use **ordinal rank + interval only**, e.g. `1st rank: 1030–1200 · 2nd rank: 0900–1030`. Do **not** mix `#1` / `#2` with `slot 1`–`slot 4` in one line (confusing). If internal slot index must appear, use **`Slot n (interval)`** — never bare `slot n` without the interval. (See implementation plan §0.)
    - **Preferred PCA(s):** per-person row **only when statuses diverge**; otherwise one merged line (see §6).
 3. **Primary block — “Reservation” (combined Action 1 + Action 2):**
-   - **Same-level subheaders** (not nested cards inside cards): e.g. **Outcome** | **Who fills the reserved slot?** inside **one** rounded container with a **vertical divider** (desktop) or **stacked** sections with a single outer border (narrow).
+   - **Same-level subheaders** with step numbers: **`1. Outcome`** | **`2. Who fills the reserved slot?`** inside **one** rounded container with a **vertical divider** (desktop) or **stacked** sections with a single outer border (narrow).
    - **Outcome:** segmented control, radio group, or two equal cards **only** when there are two outcomes; each option shows:
-     - Short title (neutral for single outcome; optional **Suggested** badge when `n === 2`).
-     - **Ranked rows** that matter for *this team’s dashboard ranks* (not all four day slots).
-     - **One explicit “Reserved for Step 3.4” row:** slot label + time + **PCA name** (the PCA that fills the reservation after Action 2).
+     - Short title (**“Preferred PCA on 1st rank”** / **“Floor PCA on 1st rank”**); optional **subtle highlight** on the **Preferred PCA** / **Floor PCA** words only; optional **Suggested** badge when `n === 2`, placed **top-right** inside the card (not inline with the title).
+     - **Do not** repeat the dashboard ranked summary inside the card (already in context above).
+     - **One reservation preview row:** flat list-row treatment (Step **3.3**–style: `border` + optional `divide-y`, single line of text, **no** nested tinted panel and **no** extra icon inside the row), e.g. `Reserved for Step 3.4 · {interval} · {PCA name}`.
      - **One line:** “Other slots: filled in Steps 3.3–3.4 (not fixed here).”
    - **PCA:** labeled **“Who fills the reserved slot?”** — `Select` or equivalent bound to **the same preview** as the outcome. Changing PCA **updates** the reserved-row preview (and may disable or switch outcome if incompatible — behavior defined in §7).
 4. **Commit (existing step 3 semantics):**
+   - Section label **`3. Save decision`** above actions.
+   - **Helper paragraph first (DOM order):** parameterized line **“Save reserves only {PCA name} · {interval} for Step 3.4”**, then the **Leave open** / **Save** button row (full-width helper above buttons reads top-to-bottom: what Save does → then act).
    - **Leave open for Step 3.4** | **Save reservation** (or current exact labels if product prefers).
-   - Helper text **adjacent to Save**, not only at bottom: **Saving reserves only the slot shown in “Reserved for Step 3.4” — not the whole day.**
+
+**Preferred PCA availability (context):** one line with **icon + phrase** (success: e.g. check + “Available on 1st rank”; caution: e.g. alert + “Available on 2nd rank only”) — do not split into separate chip and second sentence. See implementation plan §0.5.
 
 ---
 
@@ -120,7 +123,7 @@ Do **not** rely on continuity vocabulary alone to imply Save scope.
 ## 9. Accessibility
 
 - Combined region: `role="group"` with `aria-labelledby` pointing to a visible **“Build your reservation”** (or similar) heading, or two `aria-label`s on outcome vs PCA subregions.
-- Reserved row: **programmatic association** with the Save button (e.g. description text including slot + name in `aria-describedby` on Save).
+- Save button: **`aria-describedby`** pointing at the parameterized save-hint element (PCA + interval), since the hint precedes the buttons in DOM order.
 - Keyboard: tab order **Outcome → PCA → Leave open → Save** (or Save order per product).
 
 ---
@@ -141,7 +144,7 @@ Do **not** rely on continuity vocabulary alone to imply Save scope.
 ## 11. Success criteria
 
 - Users can answer **after one read:** “What exactly does Save lock?” without inferring from a four-slot grid.
-- Outcome + PCA feel **one unit**; Save sits **directly under** that unit with **one** reservation scope sentence.
+- Outcome + PCA feel **one unit**; the commit block includes **one** parameterized save sentence **above** the action buttons, aligned with the reservation preview row.
 - Two-outcome case remains **comparable** without implying multi-slot commit.
 
 ---
