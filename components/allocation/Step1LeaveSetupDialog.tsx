@@ -15,7 +15,7 @@ import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import { SpecialProgram, SPTAllocation } from '@/types/allocation'
 import { LEAVE_TYPE_FTE_MAP, LeaveType, Staff, Weekday } from '@/types/staff'
 import { Check, CircleHelp, Plus, RotateCcw, Search, X } from 'lucide-react'
-import { getTeamBadgeClass } from '@/components/allocation/teamThemePalette'
+import { getTeamBadgeClass } from '@/features/schedule/ui/allocation/teamThemePalette'
 import { TimeIntervalSlider } from '@/components/allocation/TimeIntervalSlider'
 import { matchesStaffName } from '@/lib/utils/staffFilters'
 import {
