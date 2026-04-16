@@ -982,13 +982,24 @@ function isTrueStep3FloatingCell(
   return true
 }
 
-/** When pending is satisfied, true Step 3 floating for anchored teams must stay on committed anchor slots. */
+type AnchoredTrueStep3OutsideSlotsMode = 'anchorsOnly' | 'anchorsPlusDuplicateRankOrder'
+
+/** When pending is satisfied, true Step 3 floating for anchored teams must stay on allowed clock slots. */
 function findAnchoredSatisfiedTrueStep3OutsideAnchorSlotsViolation(
   next: PCAAllocation[],
   nextPending: Record<Team, number>,
   anchors: Step3CommittedFloatingAnchor[] | undefined,
   baselineAllocations: PCAAllocation[],
-  pcaPool: PCAData[]
+  pcaPool: PCAData[],
+  opts?: {
+    /**
+     * `anchorsOnly` (default): optional-promotion bar — true Step 3 may only occupy committed anchor slots.
+     * `anchorsPlusDuplicateRankOrder`: gym-avoidance repair may place floating on any team duplicate-rank
+     * slot (ranked ∪ unranked non-gym, gym omitted when avoided) while keeping anchors; see f124.
+     */
+    allowedSlotsMode?: AnchoredTrueStep3OutsideSlotsMode
+    teamPrefs?: Record<Team, TeamPreferenceInfo>
+  }
 ): {
   team: Team
   disallowedSlot: Slot
@@ -1002,6 +1013,7 @@ function findAnchoredSatisfiedTrueStep3OutsideAnchorSlotsViolation(
   }
   const floatingPcaIds = buildFloatingPcaIdSet(pcaPool)
   const sortedPcas = [...pcaPool].sort((a, b) => String(a.id).localeCompare(String(b.id)))
+  const mode: AnchoredTrueStep3OutsideSlotsMode = opts?.allowedSlotsMode ?? 'anchorsOnly'
 
   for (const team of TEAMS) {
     if (!anchors.some((a) => a.team === team)) continue
@@ -1009,7 +1021,15 @@ function findAnchoredSatisfiedTrueStep3OutsideAnchorSlotsViolation(
     const allowedAnchorSlots = [
       ...new Set(anchors.filter((a) => a.team === team).map((a) => a.slot)),
     ].sort((a, b) => a - b)
-    const allowed = new Set(allowedAnchorSlots)
+    const allowed = new Set<Slot>(allowedAnchorSlots)
+    if (mode === 'anchorsPlusDuplicateRankOrder' && opts?.teamPrefs) {
+      const pref = opts.teamPrefs[team]
+      for (const raw of pref?.duplicateRankOrder ?? []) {
+        if (raw === 1 || raw === 2 || raw === 3 || raw === 4) {
+          allowed.add(raw)
+        }
+      }
+    }
     const afterTrueStep3Slots = new Set<Slot>()
     for (const pca of sortedPcas) {
       for (const slot of VALID_SLOTS) {
@@ -1469,7 +1489,11 @@ export function runGymAvoidanceRepairLoop(args: RunGymAvoidanceRepairLoopArgs): 
           nextPending,
           args.committedStep3Anchors,
           args.baselineAllocations ?? [],
-          args.pcaPool
+          args.pcaPool,
+          {
+            allowedSlotsMode: 'anchorsPlusDuplicateRankOrder',
+            teamPrefs: args.teamPrefs,
+          }
         )
         if (gymAnchorViol) {
           continue
