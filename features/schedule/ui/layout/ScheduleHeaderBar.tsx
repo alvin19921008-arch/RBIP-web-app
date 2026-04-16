@@ -111,12 +111,12 @@ export function ScheduleHeaderBar(props: {
   const cacheBadgeClass = cn(
     'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium select-none',
     isDevMetaStale
-      ? 'border-red-200 bg-red-50 text-red-700'
+      ? 'border-destructive/30 bg-destructive/10 text-destructive dark:border-destructive/40 dark:bg-destructive/15'
       : isDevMetaPending
         ? 'border-border bg-muted text-muted-foreground'
         : devMeta?.cacheHit
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-          : 'border-amber-200 bg-amber-50 text-amber-700'
+          ? 'border-emerald-500/35 bg-emerald-500/[0.08] text-emerald-900 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-200'
+          : 'border-amber-500/35 bg-amber-500/[0.08] text-amber-950 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100'
   )
 
   return (
@@ -149,8 +149,8 @@ export function ScheduleHeaderBar(props: {
                       aria-label="Open saved setup reminder"
                       className={cn(
                         'inline-flex h-8 w-8 items-center justify-center rounded-md',
-                        'text-amber-700 hover:text-amber-800',
-                        'hover:bg-amber-50 transition-colors'
+                        'text-amber-700 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-200',
+                        'hover:bg-amber-500/10 dark:hover:bg-amber-500/15 transition-colors'
                       )}
                     >
                       <AlertCircle className="h-5 w-5" />
@@ -163,7 +163,7 @@ export function ScheduleHeaderBar(props: {
                   align="end"
                   sideOffset={8}
                   className={cn(
-                    'rounded-lg border border-amber-200 bg-amber-50/95 backdrop-blur-sm px-3.5 py-2.5 text-xs text-amber-950 leading-snug shadow-xl transition-[width,max-width] duration-300 ease-out',
+                    'rounded-lg border border-border bg-card/95 text-card-foreground backdrop-blur-sm px-3.5 py-2.5 text-xs leading-snug shadow-xl ring-1 ring-amber-500/15 dark:bg-card dark:ring-amber-400/20 transition-[width,max-width] duration-300 ease-out',
                     props.snapshotDiffExpanded ? 'w-[480px] max-w-[560px]' : 'w-[360px] max-w-[420px]'
                   )}
                 >
@@ -172,7 +172,7 @@ export function ScheduleHeaderBar(props: {
                     <div className="flex items-start justify-between gap-3 w-full">
                       <div className="min-w-0 flex-1 space-y-0.5">
                         <div className="font-semibold text-sm">Saved setup snapshot (this date)</div>
-                        <div className="text-amber-900/75">Showing differences: saved snapshot → current dashboard.</div>
+                        <div className="text-muted-foreground">Showing differences: saved snapshot → current dashboard.</div>
                       </div>
 
                       <button
@@ -181,7 +181,7 @@ export function ScheduleHeaderBar(props: {
                           e.stopPropagation()
                           props.onToggleSnapshotDiffExpanded()
                         }}
-                        className="group inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 hover:text-amber-900 transition-colors flex-shrink-0 mt-0.5 select-none"
+                        className="group inline-flex items-center gap-1 text-[11px] font-medium text-amber-800 hover:text-amber-950 dark:text-amber-300 dark:hover:text-amber-100 transition-colors flex-shrink-0 mt-0.5 select-none"
                       >
                         {props.snapshotDiffExpanded ? 'Hide' : 'Review'}
                         <ChevronDown
@@ -201,25 +201,25 @@ export function ScheduleHeaderBar(props: {
                     >
                       <div className="pt-1 pb-1 max-h-[62vh] overflow-y-auto pr-1">
                         {/* Divider */}
-                        <div className="h-px bg-amber-200/60 w-full mb-3" />
+                        <div className="h-px bg-border w-full mb-3" />
 
                         {props.snapshotDiffLoading ? (
-                          <div className="text-xs text-amber-950/70 py-2">Loading current dashboard config…</div>
+                          <div className="text-xs text-muted-foreground py-2">Loading current dashboard config…</div>
                         ) : props.snapshotDiffError ? (
                           <div className="text-xs text-destructive py-2">Failed to load differences: {props.snapshotDiffError}</div>
                         ) : props.snapshotDiffResult ? (
                           <SnapshotDiffDetails result={props.snapshotDiffResult} />
                         ) : (
-                          <div className="text-xs text-amber-950/70 py-2">No differences computed yet.</div>
+                          <div className="text-xs text-muted-foreground py-2">No differences computed yet.</div>
                         )}
                       </div>
 
                       {/* Go to Sync / Publish — pull dashboard config to this date */}
-                      <div className="pt-3 mt-3 border-t border-amber-200/60">
-                        <p className="text-[11px] text-amber-900/80 mb-2">Pull dashboard config to this date.</p>
+                      <div className="pt-3 mt-3 border-t border-border">
+                        <p className="text-[11px] text-muted-foreground mb-2">Pull dashboard config to this date.</p>
                         <Link
                           href="/dashboard?category=sync-publish"
-                          className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-100/90 px-2.5 py-1.5 text-xs font-medium text-amber-950 hover:bg-amber-200/90 hover:border-amber-400 transition-colors"
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/60 px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-muted hover:border-amber-500/40 dark:hover:border-amber-400/35 transition-colors"
                         >
                           <ArrowLeftRight className="h-3.5 w-3.5" />
                           Go to Sync / Publish
@@ -289,7 +289,7 @@ export function ScheduleHeaderBar(props: {
                   // Accessibility: focus ring only.
                   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                   props.isDateHighlighted
-                    ? 'bg-amber-50 ring-2 ring-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.55)]'
+                    ? 'bg-amber-500/12 ring-2 ring-amber-400/70 shadow-[0_0_12px_rgba(245,158,11,0.35)] dark:bg-amber-500/20 dark:ring-amber-400/55 dark:shadow-[0_0_14px_rgba(245,158,11,0.28)]'
                     : null
                 )}
               >
