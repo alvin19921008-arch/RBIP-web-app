@@ -3,7 +3,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, Fragment, useCallback, useTransition, Suspense, useMemo, Profiler, useOptimistic, type ReactNode } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import {
-  DndContext,
   DragOverlay,
   MouseSensor,
   TouchSensor,
@@ -49,6 +48,8 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
 import { useToast } from '@/components/ui/toast-context'
+import { ScheduleDndContextShell } from '@/features/schedule/ui/sections/ScheduleDndContextShell'
+import { ScheduleMainBoardChrome } from '@/features/schedule/ui/sections/ScheduleMainBoardChrome'
 import { ScheduleWorkflowStepShell } from '@/features/schedule/ui/sections/ScheduleWorkflowStepShell'
 import { PcaAllocationLegendPopover } from '@/components/allocation/PcaAllocationLegendPopover'
 import { AvgPcaFormulaPopoverContent } from '@/components/help/AvgPcaFormulaPopoverContent'
@@ -68,7 +69,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Tooltip } from '@/components/ui/tooltip'
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
-import { RBIP_APP_MIN_WIDTH_CLASS } from '@/lib/layoutWidth'
 import { COPY_ARRIVAL_ANIMATION_MS } from '@/lib/features/schedule/copyConstants'
 import { useAccessControl } from '@/lib/access/useAccessControl'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
@@ -8969,9 +8969,8 @@ function SchedulePageContent() {
   }
 
   return (
-    <DndContext
+    <ScheduleDndContextShell
       sensors={sensors}
-      autoScroll={false}
       onDragStart={handleDragStart}
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
@@ -10302,15 +10301,7 @@ function SchedulePageContent() {
         ) : null}
       </DragOverlay>
       
-      <div
-        className={cn(
-          'w-full px-8 py-4 bg-background',
-          RBIP_APP_MIN_WIDTH_CLASS,
-          // In split mode, behave like a full-viewport workspace (Arena/NotebookLM style):
-          // panes scroll independently; the page itself shouldn't require scrolling to reach pane B.
-          isSplitMode && 'h-[calc(100vh-64px)] flex flex-col min-h-0 overflow-hidden'
-        )}
-      >
+      <ScheduleMainBoardChrome isSplitMode={isSplitMode}>
         {exportPngLayerOpen ? (
           <div
             aria-hidden={true}
@@ -13330,8 +13321,8 @@ function SchedulePageContent() {
           </DialogContent>
         </Dialog>
         <HelpCenterDialog open={helpDialogOpen} onOpenChange={setHelpDialogOpen} />
-      </div>
-    </DndContext>
+      </ScheduleMainBoardChrome>
+    </ScheduleDndContextShell>
   )
 }
 

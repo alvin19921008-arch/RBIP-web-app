@@ -35,6 +35,10 @@ async function waitForScheduleReady(page: Page) {
   await expect(page.getByRole('button', { name: 'Previous step' })).toBeVisible({ timeout: 20000 })
 }
 
+function mainStepIndicator(page: Page) {
+  return page.locator('[data-tour="step-indicator"]').first()
+}
+
 async function openLeaveSimRunTab(page: Page) {
   const leaveSimButton = page.getByRole('button', { name: 'Leave Sim' }).first()
   test.skip((await leaveSimButton.count()) === 0, 'Leave Sim panel is unavailable in current role/environment.')
@@ -89,7 +93,7 @@ test.describe('Schedule Phase 3.4 algorithm smoke', () => {
     await waitForScheduleReady(page)
     await runLeaveSimAction(page, /^Run Step 2/i)
     await runLeaveSimAction(page, /^Run Step 3/i)
-    await expect(page.getByRole('button', { name: /Floating PCA/i }).first()).toBeVisible()
+    await expect(mainStepIndicator(page).getByRole('button', { name: /Floating PCA/i }).first()).toBeVisible()
   })
 
   test('saved step 3 can re-open after reload without forcing step 2 rerun @smoke', async ({ page }) => {
@@ -104,8 +108,9 @@ test.describe('Schedule Phase 3.4 algorithm smoke', () => {
     await page.reload({ waitUntil: 'domcontentloaded' })
     await waitForScheduleReady(page)
 
-    const floatingStepButton = page.getByRole('button', { name: /Floating PCA/i }).first()
+    const floatingStepButton = mainStepIndicator(page).getByRole('button', { name: /Floating PCA/i }).first()
     await expect(floatingStepButton).toBeVisible()
+    await expect(floatingStepButton).toBeEnabled({ timeout: 30000 })
     await floatingStepButton.click()
 
     const startStep3Button = page

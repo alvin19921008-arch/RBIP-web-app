@@ -186,12 +186,12 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (`components/allocation/Floating
 
 **Technical**
 
-- [ ] DnD + main layout composition extracted; props/callbacks explicit.
+- [x] DnD + main layout composition extracted; props/callbacks explicit.
 
 **Verification**
 
-- [ ] Mandatory gate passes.
-- [ ] Playwright: `schedule-phase3-1-dnd-metrics` scenarios still pass as part of `npm run test:smoke` if tagged `@smoke`, **or** run file directly:  
+- [x] Mandatory gate passes.
+- [x] Playwright: `schedule-phase3-1-dnd-metrics` scenarios still pass as part of `npm run test:smoke` if tagged `@smoke`, **or** run file directly:  
   `npx playwright test tests/smoke/schedule-phase3-1-dnd-metrics.smoke.spec.ts`  
   (uses same `playwright.config.ts` / webServer rules).
 

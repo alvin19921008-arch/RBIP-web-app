@@ -32,7 +32,7 @@
 | 1 | Thin route + `SchedulePageClient` shell | `done` | Default export client; `./actions` → `@/app/(dashboard)/schedule/actions`; `eslint` ignores `.worktrees/**` | `lint+build OK; f47 OK; smoke OK 2026-04-16` |
 | 2a | Extract Dev Leave Sim bridge | `done` | `ScheduleDevLeaveSimBridge.tsx`; `DevLeaveSimPanelProps` export | `lint+build+smoke OK 2026-04-16` |
 | 2b | Extract step indicator + navigation strip | `done` | `ScheduleWorkflowStepShell`; export `StepIndicatorProps` | `lint+build+smoke+f47 OK 2026-04-16` |
-| 2c | Extract DnD + main board shell | `todo` | `features/schedule/ui/sections/` | |
+| 2c | Extract DnD + main board shell | `done` | `ScheduleDndContextShell.tsx`, `ScheduleMainBoardChrome.tsx` | `lint+build+smoke OK 2026-04-16` |
 | 2d | Extract header / overlays / save strip | `todo` | `features/schedule/ui/sections/` | |
 | 2e | **Step / substep UI scaffold** (hybrid indexability) | `todo` | See § “UI step tree”; pilot one mini-step | |
 | 2f | **Design tokens + Tailwind** alignment for moved UI | `todo` | `styles/rbip-design-tokens.css`, `.cursor/rules/design-elements-commonality.mdc` | |
