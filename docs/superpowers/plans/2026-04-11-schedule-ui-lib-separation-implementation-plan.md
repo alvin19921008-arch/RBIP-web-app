@@ -203,7 +203,7 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (`components/allocation/Floating
 
 **Technical**
 
-- [x] Header, overlays, save control subtree extracted.
+- [x] Header right cluster + save controls + split main-pane header strip extracted (`SchedulePageHeaderRightActions`, `SchedulePageSplitMainPaneHeader`). `ScheduleOverlays` / `ScheduleDialogsLayer` remain single call sites in `SchedulePageClient` (optional later thin shell).
 
 **Verification**
 
