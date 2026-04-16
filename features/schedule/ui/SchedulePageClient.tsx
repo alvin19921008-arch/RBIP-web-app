@@ -250,6 +250,7 @@ import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import type { SlotAssignment } from '@/lib/utils/reservationLogic'
 import { executeStep3V2HarnessAuto } from '@/lib/features/schedule/step3Harness/runStep3V2Harness'
 import { Input } from '@/components/ui/input'
+import { ScheduleDevLeaveSimBridge } from '@/features/schedule/ui/dev/ScheduleDevLeaveSimBridge'
 
 const ScheduleCopyWizard = dynamic(
   () => import('@/components/allocation/ScheduleCopyWizard').then(m => m.ScheduleCopyWizard),
@@ -308,10 +309,6 @@ const ReferenceSchedulePane = dynamic(
 )
 const ScheduleBlocks1To6 = dynamic(
   () => import('@/components/schedule/ScheduleBlocks1To6').then(m => m.ScheduleBlocks1To6),
-  { ssr: false }
-)
-const DevLeaveSimPanel = dynamic(
-  () => import('@/components/schedule/DevLeaveSimPanel').then(m => m.DevLeaveSimPanel),
   { ssr: false }
 )
 const PCADedicatedScheduleTable = dynamic(
@@ -10724,8 +10721,7 @@ function SchedulePageContent() {
           onClearCache={handleDeveloperCacheClear}
         />
         )}
-        {userRole === 'developer' && devLeaveSimOpen ? (
-          <DevLeaveSimPanel
+        <ScheduleDevLeaveSimBridge
             open={devLeaveSimOpen}
             onOpenChange={setDevLeaveSimOpen}
             userRole={userRole}
@@ -10950,7 +10946,6 @@ function SchedulePageContent() {
             pcaAllocationsByTeam={pcaAllocations as any}
             calculationsByTeam={calculations as any}
           />
-        ) : null}
 
         {/* Step Indicator with Navigation */}
         {/* shrink-0: split-mode flex column + flex-1 main can otherwise shrink this strip. */}

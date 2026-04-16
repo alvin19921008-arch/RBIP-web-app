@@ -203,7 +203,7 @@ function getLocalKey(dateKey: string): string {
   return `rbip_dev_leave_sim:${dateKey}`
 }
 
-export function DevLeaveSimPanel(props: {
+export type DevLeaveSimPanelProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
 
@@ -258,7 +258,9 @@ export function DevLeaveSimPanel(props: {
   therapistAllocationsByTeam: Record<Team, Array<TherapistAllocation & { staff: Staff }>>
   pcaAllocationsByTeam: Record<Team, Array<PCAAllocation & { staff: Staff }>>
   calculationsByTeam: Record<Team, ScheduleCalculations | null>
-}) {
+}
+
+export function DevLeaveSimPanel(props: DevLeaveSimPanelProps) {
   const [activeTab, setActiveTab] = useState<'edit' | 'run' | 'bundle'>('edit')
   const [config, setConfig] = useState<DevLeaveSimConfig>(() => defaultDevLeaveSimConfig())
   const [draft, setDraft] = useState<DevLeaveSimDraft | null>(null)

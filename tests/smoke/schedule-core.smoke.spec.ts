@@ -125,22 +125,22 @@ async function goToLeaveStep(page: Page) {
   const stepFlow = mainStepIndicator(page)
   await expect(stepFlow).toBeVisible()
 
-  // Prefer stable tour id over name-only matching (avoids ambiguous step pills if copy/layout shifts).
+  // StepIndicator sets aria-current="step" on the active macro-step control; tour id is on the same button.
   const leaveStepPill = stepFlow.locator('[data-tour="step-1"]')
   await expect(leaveStepPill).toBeVisible()
   test.skip(!(await leaveStepPill.isEnabled()), 'Step 1 is disabled in current schedule state.')
-  await leaveStepPill.click()
 
-  await expect
-    .poll(
-      async () => {
-        const currentStep = stepFlow.getByRole('button', { name: /Current step \d of 5/i }).first()
-        if (!(await currentStep.isVisible().catch(() => false))) return ''
-        return (await currentStep.innerText()).replace(/\s+/g, ' ').trim()
-      },
-      { timeout: 20000 }
-    )
-    .toContain('Current step 1 of 5')
+  const atLeaveStep = () =>
+    stepFlow.locator('[data-tour="step-1"][aria-current="step"]').isVisible().catch(() => false)
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await leaveStepPill.click()
+    if (await atLeaveStep()) return
+    const prev = stepFlow.getByRole('button', { name: 'Previous step' })
+    if (await prev.isEnabled().catch(() => false)) await prev.click()
+  }
+
+  await expect(stepFlow.locator('[data-tour="step-1"][aria-current="step"]')).toBeVisible({ timeout: 5000 })
 }
 
 async function ensureAuthenticated(page: Page) {

@@ -30,7 +30,7 @@
 |-------|------|--------|---------------|------------------------|
 | 0 | Conventions + tooling gates | `todo` | `AGENTS.md` (plans + `@/*`), `ARCHITECTURE_ESSENTIALS` schedule map + naming + barrels; `tsconfig.json` has `@/*`. Remaining: **Done when** team sign-off; Tailwind `@source features/` at Phase 1 | |
 | 1 | Thin route + `SchedulePageClient` shell | `done` | Default export client; `./actions` → `@/app/(dashboard)/schedule/actions`; `eslint` ignores `.worktrees/**` | `lint+build OK; f47 OK; smoke OK 2026-04-16` |
-| 2a | Extract Dev Leave Sim bridge | `todo` | `features/schedule/ui/dev/` | |
+| 2a | Extract Dev Leave Sim bridge | `done` | `ScheduleDevLeaveSimBridge.tsx`; `DevLeaveSimPanelProps` export | `lint+build+smoke OK 2026-04-16` |
 | 2b | Extract step indicator + navigation strip | `todo` | `features/schedule/ui/sections/` | |
 | 2c | Extract DnD + main board shell | `todo` | `features/schedule/ui/sections/` | |
 | 2d | Extract header / overlays / save strip | `todo` | `features/schedule/ui/sections/` | |
@@ -513,5 +513,5 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 |------|--------|
 | 2026-04-11 | Initial plan (single-layer `features/` + phases 0–4). |
 | 2026-04-15 | **Hybrid** + phases **2e/2f/5**, tokens/`@source`, grep conventions. **§ Final optimal architecture**: quoted prior proposal (step indexability); **§B** canonical RBIP tree, name mapping, invariants. |
-| 2026-04-16 | Linked **implementation plan**; naming + barrels + **§B** map in `ARCHITECTURE_ESSENTIALS` / `AGENTS.md`. **Phase 1 executed:** `SchedulePageClient` + thin route; `globals.css` `@source` for `features/`; `eslint` ignores `.worktrees/**`; smoke `schedule-core` scoped to `data-tour="step-indicator"` + legend **Out of date**. |
+| 2026-04-16 | Linked **implementation plan**; naming + barrels + **§B** map; **Phase 1** thin route + `SchedulePageClient` + `@source` + eslint `.worktrees` + smoke hardening. **Phase 2a:** `ui/dev/ScheduleDevLeaveSimBridge`, `DevLeaveSimPanelProps`, smoke `goToLeaveStep` `aria-current` + Previous fallback. |
 | 2026-04-17 | Hybrid **§ `sections/` vs `steps/`**; §A appendix + “NOT RBIP paths”; **Which tree** callout; Phase 2b table + note; §B polish; **Data flow** line (UI + controller vs `pcaAllocationEngine` vs `lib/algorithms`); **Reviewer hardening**: solo workflow blurb, Phase 4 **`components/allocation/`** scope, grep split (math vs adapter), `lib`↔`features` import ban, smoke-flake note, § hooks wording (no direct Supabase), References anchor fix, Phase 3/5 PR wording → commits. |

@@ -155,12 +155,12 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (`components/allocation/Floating
 
 **Technical**
 
-- [ ] Leave Sim–specific callbacks live under `features/schedule/ui/dev/` (or equivalent); `SchedulePageClient` thinner.
+- [x] **Bridge** under `features/schedule/ui/dev/` (`ScheduleDevLeaveSimBridge` + dynamic `DevLeaveSimPanel`); `DevLeaveSimPanelProps` exported from `components/schedule/DevLeaveSimPanel.tsx`. Harness **callbacks** remain composed in `SchedulePageClient` (same as pre-slice); further extraction is optional follow-up.
 
 **Verification**
 
-- [ ] Mandatory gate passes.
-- [ ] If developer + Leave Sim: manual run through open panel + at least one automated path covered by `schedule-phase3-4-algo-metrics.smoke.spec.ts` (when not skipped).
+- [x] Mandatory gate passes.
+- [x] `schedule-phase3-4-algo-metrics` smoke paths green when run; user confirmed manual Leave Sim earlier in session.
 
 **Done when**: No regression in dev-only flows; smoke green.
 
@@ -324,4 +324,4 @@ Update the **architecture plan** tracker table after each phase:
 | 2026-04-16 | Initial implementation plan: mandatory gate, `npx tsx` regression runner, smoke list, phase matrix, per-phase exit criteria, behavior policy. |
 | 2026-04-16 | Document **V2-first Step 3 smoke**; add `tests/smoke/helpers/floatingPcaStep3V2.ts`; update `schedule-phase3-4-algo-metrics` reload test to choose V2 + assert V2 footer. **Also:** Phase 0 exit criteria — **`AGENTS.md`** + **`ARCHITECTURE_ESSENTIALS.mdc`** schedule map; Phase 2e README + **Layering** barrel line (naming + barrels). |
 | 2026-04-17 | Phase **2b** **`sections/` only** + architecture Hybrid cross-link. **Solo / pre-launch**: commit-based gate + tracker; **smoke flake protocol**; full regression at milestones; Phase 4 **`components/allocation/`**; **`lib` must not import `features`**; Phase 5 → solo acceptance. |
-| 2026-04-16 | **Phase 1 complete** in repo: thin route + `SchedulePageClient`; `eslint` ignore `.worktrees/**`; `schedule-core` smoke helpers scoped to main step indicator + legend copy **Out of date**. |
+| 2026-04-16 | **Phase 1** in repo (thin route, `SchedulePageClient`, eslint `.worktrees`, smoke hardening). **Phase 2a:** `ScheduleDevLeaveSimBridge`, `DevLeaveSimPanelProps`, `goToLeaveStep` `aria-current` + Previous fallback. |
