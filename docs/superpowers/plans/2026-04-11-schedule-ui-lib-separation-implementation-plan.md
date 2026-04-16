@@ -170,13 +170,13 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (`components/allocation/Floating
 
 **Technical**
 
-- [ ] Extract **workflow shell** only: **`StepIndicator`**, **Next step**, **Previous step** — macro-step navigation (Leave → Therapist → Floating → Bed → Review). Target: **`features/schedule/ui/sections/`** (required; **not** `ui/steps/`).
-- [ ] Rationale and anti-confusion rules: architecture plan **Hybrid architecture → `sections/` vs `steps/`** and **Phase 2b note** (global strip vs Step 2/3 wizard bodies).
+- [x] Extract **workflow shell** only: **`ScheduleWorkflowStepShell`** wraps collapsible chrome + **`StepIndicator`** (Next/Previous + step pills + legend). Path: **`features/schedule/ui/sections/`** (not `ui/steps/`).
+- [x] **`StepIndicatorProps`** exported from `components/allocation/StepIndicator.tsx` for the shell typing contract.
 
 **Verification**
 
-- [ ] Mandatory gate passes.
-- [ ] Manual: next/previous step, step gating, “outdated” hints still behave.
+- [x] Mandatory gate passes.
+- [x] Smoke: `schedule-core` (shell, legend, leave flow, step 2 when enabled); `f47` regression for page wiring.
 
 **Done when**: Manual checklist + smoke green; no step-indicator code under `ui/steps/`.
 
@@ -324,4 +324,4 @@ Update the **architecture plan** tracker table after each phase:
 | 2026-04-16 | Initial implementation plan: mandatory gate, `npx tsx` regression runner, smoke list, phase matrix, per-phase exit criteria, behavior policy. |
 | 2026-04-16 | Document **V2-first Step 3 smoke**; add `tests/smoke/helpers/floatingPcaStep3V2.ts`; update `schedule-phase3-4-algo-metrics` reload test to choose V2 + assert V2 footer. **Also:** Phase 0 exit criteria — **`AGENTS.md`** + **`ARCHITECTURE_ESSENTIALS.mdc`** schedule map; Phase 2e README + **Layering** barrel line (naming + barrels). |
 | 2026-04-17 | Phase **2b** **`sections/` only** + architecture Hybrid cross-link. **Solo / pre-launch**: commit-based gate + tracker; **smoke flake protocol**; full regression at milestones; Phase 4 **`components/allocation/`**; **`lib` must not import `features`**; Phase 5 → solo acceptance. |
-| 2026-04-16 | **Phase 1** in repo (thin route, `SchedulePageClient`, eslint `.worktrees`, smoke hardening). **Phase 2a:** `ScheduleDevLeaveSimBridge`, `DevLeaveSimPanelProps`, `goToLeaveStep` `aria-current` + Previous fallback. |
+| 2026-04-16 | **Phase 1** in repo (thin route, `SchedulePageClient`, eslint `.worktrees`, smoke hardening). **Phase 2a:** `ScheduleDevLeaveSimBridge`, `DevLeaveSimPanelProps`, `goToLeaveStep` `aria-current` + Previous fallback. **Phase 2b:** `ScheduleWorkflowStepShell`, export `StepIndicatorProps`. |

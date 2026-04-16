@@ -49,7 +49,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
 import { useToast } from '@/components/ui/toast-context'
-import { StepIndicator } from '@/components/allocation/StepIndicator'
+import { ScheduleWorkflowStepShell } from '@/features/schedule/ui/sections/ScheduleWorkflowStepShell'
 import { PcaAllocationLegendPopover } from '@/components/allocation/PcaAllocationLegendPopover'
 import { AvgPcaFormulaPopoverContent } from '@/components/help/AvgPcaFormulaPopoverContent'
 import dynamic from 'next/dynamic'
@@ -10947,105 +10947,93 @@ function SchedulePageContent() {
             calculationsByTeam={calculations as any}
           />
 
-        {/* Step Indicator with Navigation */}
-        {/* shrink-0: split-mode flex column + flex-1 main can otherwise shrink this strip. */}
-        <div
-          className={cn(
-            'vt-mode-anim shrink-0',
-            'overflow-hidden transition-[max-height,opacity,transform,margin] duration-300 ease-in-out',
-            isViewingMode
-              ? 'max-h-0 opacity-0 -translate-y-2 mb-0 pointer-events-none'
-              : stepIndicatorCollapsed
-                ? 'max-h-0 opacity-0 mb-0 overflow-hidden'
-                : 'max-h-[9999px] opacity-100 translate-y-0 mb-4'
-          )}
-          aria-hidden={isViewingMode || stepIndicatorCollapsed}
-        >
-          <StepIndicator
-            steps={ALLOCATION_STEPS}
-            currentStep={currentStep}
-            stepStatus={stepStatus}
-            attentionStepIds={(() => {
-              const ids: string[] = []
-              if (step2DownstreamImpact?.step3Outdated) ids.push('floating-pca')
-              if (step2DownstreamImpact?.step4Outdated) ids.push('bed-relieving')
-              return ids
-            })()}
-            userRole={userRole}
-            canResetToBaseline={access.can('schedule.tools.reset-to-baseline')}
-            onResetToBaseline={resetToBaseline}
-            onStepClick={handleStepClick}
-            canNavigateToStep={(stepId) => {
-              const targetIndex = ALLOCATION_STEPS.findIndex(s => s.id === stepId)
-              const currentIndex = ALLOCATION_STEPS.findIndex(s => s.id === currentStep)
+        {/* Step Indicator with Navigation — see ScheduleWorkflowStepShell (Phase 2b) */}
+        <ScheduleWorkflowStepShell
+          isViewingMode={isViewingMode}
+          stepIndicatorCollapsed={stepIndicatorCollapsed}
+          steps={ALLOCATION_STEPS}
+          currentStep={currentStep}
+          stepStatus={stepStatus}
+          attentionStepIds={(() => {
+            const ids: string[] = []
+            if (step2DownstreamImpact?.step3Outdated) ids.push('floating-pca')
+            if (step2DownstreamImpact?.step4Outdated) ids.push('bed-relieving')
+            return ids
+          })()}
+          userRole={userRole}
+          canResetToBaseline={access.can('schedule.tools.reset-to-baseline')}
+          onResetToBaseline={resetToBaseline}
+          onStepClick={handleStepClick}
+          canNavigateToStep={(stepId) => {
+            const targetIndex = ALLOCATION_STEPS.findIndex(s => s.id === stepId)
+            const currentIndex = ALLOCATION_STEPS.findIndex(s => s.id === currentStep)
 
-              // Can always go to earlier steps
-              if (targetIndex <= currentIndex) return true
+            // Can always go to earlier steps
+            if (targetIndex <= currentIndex) return true
 
-              const previousStep = ALLOCATION_STEPS[targetIndex - 1]
-              if (!previousStep) return false
+            const previousStep = ALLOCATION_STEPS[targetIndex - 1]
+            if (!previousStep) return false
 
-              // Special case for Step 1 -> Step 2 navigation
-              if (previousStep.id === 'leave-fte') {
-                // Allow if Step 1 has leave data configured (fresh schedule case)
-                const hasLeaveData = Object.keys(staffOverrides).length > 0
+            // Special case for Step 1 -> Step 2 navigation
+            if (previousStep.id === 'leave-fte') {
+              // Allow if Step 1 has leave data configured (fresh schedule case)
+              const hasLeaveData = Object.keys(staffOverrides).length > 0
 
-                // Allow if any later step is completed (loaded schedule case)
-                const anyLaterStepCompleted = ['therapist-pca', 'floating-pca', 'bed-relieving', 'review']
-                  .some(s => stepStatus[s] !== 'pending')
+              // Allow if any later step is completed (loaded schedule case)
+              const anyLaterStepCompleted = ['therapist-pca', 'floating-pca', 'bed-relieving', 'review']
+                .some(s => stepStatus[s] !== 'pending')
 
-                // Allow if Step 1 itself is completed/modified (normal case)
-                const step1Started = stepStatus['leave-fte'] !== 'pending'
+              // Allow if Step 1 itself is completed/modified (normal case)
+              const step1Started = stepStatus['leave-fte'] !== 'pending'
 
-                return (
-                  hasLeaveData ||
-                  anyLaterStepCompleted ||
-                  step1Started ||
-                  allocationStepNavSignals.hasStep2Data ||
-                  allocationStepNavSignals.hasStep3Data ||
-                  allocationStepNavSignals.hasStep4Data
-                )
-              }
-
-              // Forward: require previous step started *or* matching saved allocation/workflow data
-              // (explicit workflow can leave `stepStatus` pending while rows exist — see load gating).
-              if (previousStep.id === 'therapist-pca') {
-                return stepStatus['therapist-pca'] !== 'pending' || allocationStepNavSignals.hasStep2Data
-              }
-              if (previousStep.id === 'floating-pca') {
-                return stepStatus['floating-pca'] !== 'pending' || allocationStepNavSignals.hasStep3Data
-              }
-              if (previousStep.id === 'bed-relieving') {
-                return stepStatus['bed-relieving'] !== 'pending' || allocationStepNavSignals.hasStep4Data
-              }
-
-              return stepStatus[previousStep.id] !== 'pending'
-            }}
-            onNext={handleNextStep}
-            onPrevious={handlePreviousStep}
-            canGoNext={currentStep !== 'review'}
-            canGoPrevious={currentStep !== 'leave-fte'}
-            onInitialize={handleInitializeAlgorithm}
-            onInitializePrefetch={() => {
-              if (currentStep === 'therapist-pca') prefetchStep2Algorithms()
-              else if (currentStep === 'floating-pca') prefetchStep3Algorithms()
-              else if (currentStep === 'bed-relieving') prefetchBedAlgorithm()
-            }}
-            onOpenLeaveSetup={isViewingMode ? undefined : () => setStep1LeaveSetupOpen(true)}
-            onClearStep={handleClearStep}
-            showClear={showClearForCurrentStep}
-            isInitialized={initializedSteps.has(currentStep)}
-            isLoading={loading || isUiTransitionPending}
-            isAlgorithmRunning={loading}
-            leaveSetupPulseKey={leaveSetupPulseKey}
-            belowDescriptionSlot={
-              <Step2DialogReminder
-                impact={step2DownstreamImpact}
-                className="mt-0 w-full text-center text-sm leading-snug"
-              />
+              return (
+                hasLeaveData ||
+                anyLaterStepCompleted ||
+                step1Started ||
+                allocationStepNavSignals.hasStep2Data ||
+                allocationStepNavSignals.hasStep3Data ||
+                allocationStepNavSignals.hasStep4Data
+              )
             }
-          />
-        </div>
+
+            // Forward: require previous step started *or* matching saved allocation/workflow data
+            // (explicit workflow can leave `stepStatus` pending while rows exist — see load gating).
+            if (previousStep.id === 'therapist-pca') {
+              return stepStatus['therapist-pca'] !== 'pending' || allocationStepNavSignals.hasStep2Data
+            }
+            if (previousStep.id === 'floating-pca') {
+              return stepStatus['floating-pca'] !== 'pending' || allocationStepNavSignals.hasStep3Data
+            }
+            if (previousStep.id === 'bed-relieving') {
+              return stepStatus['bed-relieving'] !== 'pending' || allocationStepNavSignals.hasStep4Data
+            }
+
+            return stepStatus[previousStep.id] !== 'pending'
+          }}
+          onNext={handleNextStep}
+          onPrevious={handlePreviousStep}
+          canGoNext={currentStep !== 'review'}
+          canGoPrevious={currentStep !== 'leave-fte'}
+          onInitialize={handleInitializeAlgorithm}
+          onInitializePrefetch={() => {
+            if (currentStep === 'therapist-pca') prefetchStep2Algorithms()
+            else if (currentStep === 'floating-pca') prefetchStep3Algorithms()
+            else if (currentStep === 'bed-relieving') prefetchBedAlgorithm()
+          }}
+          onOpenLeaveSetup={isViewingMode ? undefined : () => setStep1LeaveSetupOpen(true)}
+          onClearStep={handleClearStep}
+          showClear={showClearForCurrentStep}
+          isInitialized={initializedSteps.has(currentStep)}
+          isLoading={loading || isUiTransitionPending}
+          isAlgorithmRunning={loading}
+          leaveSetupPulseKey={leaveSetupPulseKey}
+          belowDescriptionSlot={
+            <Step2DialogReminder
+              impact={step2DownstreamImpact}
+              className="mt-0 w-full text-center text-sm leading-snug"
+            />
+          }
+        />
 
         <div className={cn(isSplitMode && 'flex-1 min-h-0 overflow-hidden')}>
           {(() => {

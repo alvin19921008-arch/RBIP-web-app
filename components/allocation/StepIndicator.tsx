@@ -14,7 +14,7 @@ interface Step {
   description: string
 }
 
-interface StepIndicatorProps {
+export interface StepIndicatorProps {
   steps: Step[]
   currentStep: string
   stepStatus: Record<string, 'pending' | 'completed' | 'modified' | 'outdated'>
