@@ -1,10 +1,4 @@
 'use client'
 
-import type { ComponentProps } from 'react'
-import { FloatingPCAConfigDialog } from './FloatingPCAConfigDialog'
-
-export type FloatingPCAConfigDialogV1Props = ComponentProps<typeof FloatingPCAConfigDialog>
-
-export function FloatingPCAConfigDialogV1(props: FloatingPCAConfigDialogV1Props) {
-  return <FloatingPCAConfigDialog {...props} />
-}
+export { FloatingPCAConfigDialogV1 } from '@/features/schedule/ui/steps/step3-floating/FloatingPCAConfigDialogV1'
+export type { FloatingPCAConfigDialogV1Props } from '@/features/schedule/ui/steps/step3-floating/FloatingPCAConfigDialogV1'

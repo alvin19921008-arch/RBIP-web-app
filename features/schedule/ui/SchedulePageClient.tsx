@@ -272,11 +272,11 @@ const FloatingPCAEntryDialog = dynamic(
   { ssr: false }
 )
 const FloatingPCAConfigDialogV1 = dynamic(
-  () => import('@/components/allocation/FloatingPCAConfigDialogV1').then(m => m.FloatingPCAConfigDialogV1),
+  () => import('@/features/schedule/ui/steps/step3-floating/FloatingPCAConfigDialogV1').then(m => m.FloatingPCAConfigDialogV1),
   { ssr: false }
 )
 const FloatingPCAConfigDialogV2 = dynamic(
-  () => import('@/components/allocation/FloatingPCAConfigDialogV2').then(m => m.FloatingPCAConfigDialogV2),
+  () => import('@/features/schedule/ui/steps/step3-floating/FloatingPCAConfigDialogV2').then(m => m.FloatingPCAConfigDialogV2),
   { ssr: false }
 )
 const NonFloatingSubstitutionDialog = dynamic(
@@ -324,8 +324,8 @@ const prefetchScheduleCopyWizard = () => import('@/components/allocation/Schedul
 const prefetchStaffEditDialog = () => import('@/components/allocation/StaffEditDialog')
 const prefetchFloatingPCAEntryDialog = () =>
   import('@/features/schedule/ui/steps/step3-floating/substeps/step30-entry-flow/FloatingPCAEntryDialog')
-const prefetchFloatingPCAConfigDialogV1 = () => import('@/components/allocation/FloatingPCAConfigDialogV1')
-const prefetchFloatingPCAConfigDialogV2 = () => import('@/components/allocation/FloatingPCAConfigDialogV2')
+const prefetchFloatingPCAConfigDialogV1 = () => import('@/features/schedule/ui/steps/step3-floating/FloatingPCAConfigDialogV1')
+const prefetchFloatingPCAConfigDialogV2 = () => import('@/features/schedule/ui/steps/step3-floating/FloatingPCAConfigDialogV2')
 const prefetchSpecialProgramOverrideDialog = () => import('@/components/allocation/SpecialProgramOverrideDialog')
 const prefetchSptFinalEditDialog = () => import('@/components/allocation/SptFinalEditDialog')
 const prefetchSharedTherapistEditDialog = () => import('@/components/allocation/SharedTherapistEditDialog')
