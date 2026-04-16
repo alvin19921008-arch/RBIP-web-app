@@ -1,5 +1,10 @@
 import { expect, test, type Page } from '@playwright/test'
 
+import {
+  chooseFloatingPcaV2RankedFromEntryDialog,
+  expectFloatingPcaV2ConfigDialogFromStep31,
+} from './helpers/floatingPcaStep3V2'
+
 const appBaseURL = process.env.PW_APP_BASE_URL || process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000'
 
 async function ensureAuthenticated(page: Page) {
@@ -110,6 +115,8 @@ test.describe('Schedule Phase 3.4 algorithm smoke', () => {
     await startStep3Button.click()
 
     await expect(page.getByRole('heading', { name: 'Floating PCA allocation' })).toBeVisible()
+    await chooseFloatingPcaV2RankedFromEntryDialog(page)
+    await expectFloatingPcaV2ConfigDialogFromStep31(page)
     await expect(page.getByText('Step 2 must be completed before Step 3.')).toHaveCount(0)
   })
 })
