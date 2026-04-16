@@ -113,7 +113,7 @@ export function ScheduleHeaderBar(props: {
     isDevMetaStale
       ? 'border-red-200 bg-red-50 text-red-700'
       : isDevMetaPending
-        ? 'border-slate-200 bg-slate-50 text-slate-600'
+        ? 'border-border bg-muted text-muted-foreground'
         : devMeta?.cacheHit
           ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
           : 'border-amber-200 bg-amber-50 text-amber-700'

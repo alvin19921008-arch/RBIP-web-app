@@ -40,13 +40,13 @@ export function ScheduleTitleWithLoadDiagnostics(props: {
       side="bottom"
       className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
       content={
-        <div className="w-[360px] bg-slate-800 border border-slate-700 rounded-md shadow-lg">
-          <div className="border-b border-slate-700 px-3 py-2 text-xs text-slate-500">Load diagnostics</div>
-          <div className="px-3 py-2 text-xs text-slate-200 space-y-2">
+        <div className="w-[360px] rounded-md border border-border bg-popover text-popover-foreground shadow-lg">
+          <div className="border-b border-border px-3 py-2 text-xs text-muted-foreground">Load diagnostics</div>
+          <div className="space-y-2 px-3 py-2 text-xs text-popover-foreground">
             {props.lastLoadTiming ? (
               <>
                 <div>
-                  <span className="text-slate-400">total:</span> {Math.round(props.lastLoadTiming.totalMs)}ms
+                  <span className="text-muted-foreground">total:</span> {Math.round(props.lastLoadTiming.totalMs)}ms
                 </div>
                 <LoadMetaBlock
                   meta={(props.lastLoadTiming.meta as any) || {}}
@@ -56,10 +56,10 @@ export function ScheduleTitleWithLoadDiagnostics(props: {
                   perfStats={props.perfStats}
                 />
                 {props.lastLoadTiming.stages.length > 0 ? (
-                  <div className="pt-1 text-[11px] text-slate-300 space-y-0.5">
+                  <div className="space-y-0.5 pt-1 text-[11px] text-popover-foreground">
                     {props.lastLoadTiming.stages.map((s) => (
                       <div key={`load-${s.name}`}>
-                        <span className="text-slate-400">{s.name}:</span> {Math.round(s.ms)}ms
+                        <span className="text-muted-foreground">{s.name}:</span> {Math.round(s.ms)}ms
                       </div>
                     ))}
                   </div>
@@ -67,7 +67,7 @@ export function ScheduleTitleWithLoadDiagnostics(props: {
               </>
             ) : (
               <>
-                <div className="text-slate-500">No load timing captured yet.</div>
+                <div className="text-muted-foreground">No load timing captured yet.</div>
                 <LoadNavFallback navToScheduleTiming={props.navToScheduleTiming} />
               </>
             )}
@@ -97,7 +97,7 @@ function LoadMetaBlock(props: {
   const fmtDelta = (from: number, to: number) => `${Math.max(0, Math.round(to - from))}ms`
 
   return (
-    <div className="text-[11px] text-slate-400 space-y-0.5">
+    <div className="space-y-0.5 text-[11px] text-muted-foreground">
       <div>
         rpc:{meta.rpcUsed ? 'yes' : 'no'}
         {meta.batchedQueriesUsed ? ', batched:yes' : ', batched:no'}
@@ -140,17 +140,17 @@ function LoadMetaBlock(props: {
       </div>
 
       {nav && typeof nav.startMs === 'number' ? (
-        <div className="pt-1 space-y-0.5">
-          <div className="text-slate-500">nav → schedule</div>
+        <div className="space-y-0.5 pt-1">
+          <div className="font-medium text-foreground">nav → schedule</div>
           <div>
-            <span className="text-slate-400">start→loading.tsx:</span>{' '}
+            <span className="text-muted-foreground">start→loading.tsx:</span>{' '}
             {nav.loadingShownMs != null ? fmtDelta(nav.startMs, nav.loadingShownMs) : 'n/a'}
           </div>
           <div>
-            <span className="text-slate-400">start→mount:</span> {nav.mountedMs != null ? fmtDelta(nav.startMs, nav.mountedMs) : 'n/a'}
+            <span className="text-muted-foreground">start→mount:</span> {nav.mountedMs != null ? fmtDelta(nav.startMs, nav.mountedMs) : 'n/a'}
           </div>
           <div>
-            <span className="text-slate-400">start→gridReady:</span> {fmtDelta(nav.startMs, nav.gridReadyMs)}
+            <span className="text-muted-foreground">start→gridReady:</span> {fmtDelta(nav.startMs, nav.gridReadyMs)}
           </div>
         </div>
       ) : null}
@@ -164,25 +164,25 @@ function LoadMetaBlock(props: {
 
       {Array.isArray(meta.stages) && meta.stages.length > 0 ? (
         <div className="pt-1">
-          <div className="text-slate-500">loadScheduleForDate stages</div>
+          <div className="font-medium text-foreground">loadScheduleForDate stages</div>
           <div className="space-y-0.5">
             {meta.stages.slice(0, 12).map((s: any) => (
               <div key={`inner-${s.name}`}>
-                <span className="text-slate-400">{s.name}:</span> {Math.round(s.ms ?? 0)}ms
+                <span className="text-muted-foreground">{s.name}:</span> {Math.round(s.ms ?? 0)}ms
               </div>
             ))}
-            {meta.stages.length > 12 ? <div className="text-slate-500">…and {meta.stages.length - 12} more</div> : null}
+            {meta.stages.length > 12 ? <div className="text-muted-foreground">…and {meta.stages.length - 12} more</div> : null}
           </div>
         </div>
       ) : null}
 
       {meta.rpcServerMs ? (
         <div className="pt-1">
-          <div className="text-slate-500">rpc server breakdown</div>
+          <div className="font-medium text-foreground">rpc server breakdown</div>
           <div className="space-y-0.5">
             {Object.entries(meta.rpcServerMs as any).map(([k, v]) => (
               <div key={`rpcms-${k}`}>
-                <span className="text-slate-400">{k}:</span> {Math.round((v as any) ?? 0)}ms
+                <span className="text-muted-foreground">{k}:</span> {Math.round((v as any) ?? 0)}ms
               </div>
             ))}
           </div>
@@ -199,17 +199,17 @@ function LoadNavFallback(props: { navToScheduleTiming: NavTiming | null }) {
   if (!nav || typeof nav.startMs !== 'number') return null
   const fmtDelta = (from: number, to: number) => `${Math.max(0, Math.round(to - from))}ms`
   return (
-    <div className="pt-1 text-[11px] text-slate-400 space-y-0.5">
-      <div className="text-slate-500">nav → schedule</div>
+    <div className="space-y-0.5 pt-1 text-[11px] text-muted-foreground">
+      <div className="font-medium text-foreground">nav → schedule</div>
       <div>
-        <span className="text-slate-400">start→loading.tsx:</span>{' '}
+        <span className="text-muted-foreground">start→loading.tsx:</span>{' '}
         {nav.loadingShownMs != null ? fmtDelta(nav.startMs, nav.loadingShownMs) : 'n/a'}
       </div>
       <div>
-        <span className="text-slate-400">start→mount:</span> {nav.mountedMs != null ? fmtDelta(nav.startMs, nav.mountedMs) : 'n/a'}
+        <span className="text-muted-foreground">start→mount:</span> {nav.mountedMs != null ? fmtDelta(nav.startMs, nav.mountedMs) : 'n/a'}
       </div>
       <div>
-        <span className="text-slate-400">start→gridReady:</span> {fmtDelta(nav.startMs, nav.gridReadyMs)}
+        <span className="text-muted-foreground">start→gridReady:</span> {fmtDelta(nav.startMs, nav.gridReadyMs)}
       </div>
     </div>
   )
@@ -237,13 +237,13 @@ function RenderPerfBlock(props: { perfTick: number; perfStats: Record<string, Pe
 
   return (
     <div className="pt-1">
-      <div className="text-slate-500">render perf</div>
+      <div className="font-medium text-foreground">render perf</div>
       <div className="space-y-0.5">
         {rows.map(({ id, s }) => {
           const avg = s.commits > 0 ? s.totalActualMs / s.commits : 0
           return (
             <div key={`perf-${id}`}>
-              <span className="text-slate-400">{id}:</span> last {Math.round(s.lastActualMs)}ms ({s.lastPhase}), max{' '}
+              <span className="text-muted-foreground">{id}:</span> last {Math.round(s.lastActualMs)}ms ({s.lastPhase}), max{' '}
               {Math.round(s.maxActualMs)}ms, avg {Math.round(avg)}ms, commits {s.commits}
             </div>
           )
