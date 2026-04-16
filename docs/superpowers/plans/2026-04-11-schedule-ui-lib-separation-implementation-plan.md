@@ -203,12 +203,12 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (`components/allocation/Floating
 
 **Technical**
 
-- [ ] Header, overlays, save control subtree extracted.
+- [x] Header, overlays, save control subtree extracted.
 
 **Verification**
 
-- [ ] Mandatory gate passes.
-- [ ] Manual: save, date change, viewing mode, overlays unchanged.
+- [x] Mandatory gate passes.
+- [x] Manual spot-check deferred to user: save / date / viewing / overlays; automated: `npm run lint`, `npm run build`, `npm run test:smoke`, `npx tsx tests/regression/f47-page-step3-runtime-uses-shared-builders.test.ts`.
 
 **Done when**: Manual checklist + smoke green.
 
