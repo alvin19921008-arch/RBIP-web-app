@@ -5,7 +5,7 @@
 > **Rule**: Update the **Progress tracker** and phase checkboxes as work completes.  
 > **Implementation & verification** (commands, regression matrix, per-phase exit criteria): [`2026-04-11-schedule-ui-lib-separation-implementation-plan.md`](./2026-04-11-schedule-ui-lib-separation-implementation-plan.md).
 
-**Phases 3–5 — token work is part of the phase:** structural change first → **review + mandatory gate + smoke + manual** → **then** token-alignment commit(s) on touched schedule UI → gate again — or log **token N/A (no UI diff)**. See **§ Deferred: UI color / design tokens**.
+**Phases 3–6 — token work is part of the phase (where UI moves):** structural change first → **review + mandatory gate + smoke + manual** → **then** token-alignment commit(s) on touched schedule UI → gate again — or log **token N/A (no UI diff)**. See **§ Deferred: UI color / design tokens**.
 
 **Solo workflow (this repo)**: Work ships as **commits on your branch**, not pull requests. Verification = **lint + build + Playwright smoke + targeted regression** where the implementation plan lists them, plus **manual schedule passes** on paths automation does not cover. Where the companion doc says “after PR” / “before merge”, read that as **after a coherent commit (slice)** / **before you mark the phase done** — there is **no** “stabilize N days on main” gate unless you choose one.
 
@@ -21,6 +21,7 @@
 | P3 | `useScheduleController` ~4k lines; second “god” surface | P2 | `done` (types + domain modules landed; further hook splits optional) |
 | P4 | Legacy hooks / duplicate mental models (`hooks/useScheduleState`, etc.) | P2 | `done` |
 | P5 | New `features/` tree must participate in **Tailwind v4 `@source`** | P0 | `done` |
+| P6 | **`components/allocation/` peel** + Step 3.4 **substep path parity** (`substeps/step34-preview/`) | P1 | `todo` |
 
 **Status values**: `todo` · `in_progress` · `blocked` · `done`
 
@@ -41,6 +42,7 @@
 | 3 | Split `useScheduleController` (facade) | `done` | `scheduleControllerTypes.ts`, `scheduleDomainState.ts`; gym/f124 `c2b11ea`. Token N/A. | `lint+build+smoke OK; full regression tsx OK; manual Step2/3/4+save OK 2026-04-16` |
 | 4 | Legacy hook cleanup + `components/schedule` migration | `done` | 4a migrate+shims+hooks; 4b tokens `8274d20`+`535d163`. README allocation inventory. | `lint+build+smoke; full regression tsx; grep clean 2026-04-16` |
 | 5 | **Deep step parity** (optional): migrate remaining Step 3 UI into `ui/steps/` | `done` | 5a `c5709a9` wizard+viewModel; 5b `42d3d21` light-first tokens (no dark-mode scope). Manual wizard: solo sign-off. | `lint+build+smoke; full regression tsx OK 2026-04-16` |
+| 6 | **Step 3.4 substep path** + **`components/allocation/` peel** | `todo` | Canonical `step34` under `substeps/step34-preview/`; incremental allocation → `features/schedule/ui/` per README inventory. See **§ Phase 6** below. | |
 
 **Legacy emoji column** (optional): ⬜ = `todo`, 🟡 = `in_progress`, ✅ = `done`, ⏸️ = `blocked`
 
@@ -333,6 +335,7 @@ Phase 0 ──► Phase 1 ──► Phase 2a → 2b → 2c → 2d
                 └────────────────────────────────────┴──► Phase 3 (optional parallel — see note)
 Phase 4 ──► after 2a–2d + 2e/f materially reduce page client OR when agreed “strangler complete”
 Phase 5 ──► optional depth migration; do not block Phase 4
+Phase 6 ──► after Phase 5 (or in parallel if files do not overlap): substep folder parity + allocation peel per README inventory
 ```
 
 - **Phase 2f** can start **in parallel** with late Phase 2 slices once `features/` exists (same commit/slice as Phase 1 tail is OK if small).
@@ -431,7 +434,7 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 
 **Product:** Schedule UX is **light-first**; **dark mode** is **not** a driver for token work unless requirements change.
 
-**Required workflow for Phases 3–5 (agents must not skip token silently)**
+**Required workflow for Phases 3–6 (agents must not skip token silently)**
 
 1. **Structural slice** — main phase work (controller split, migration, step move).  
 2. **Verify** — code review + **mandatory gate** + smoke + **manual** on that slice; all green before tokens.  
@@ -487,6 +490,26 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 
 ---
 
+## Phase 6 — Step 3.4 substep path parity + `components/allocation/` peel
+
+**Goal (two tracks, same phase — ship in small slices):**
+
+1. **Substep path parity:** Move **`step34ViewModel`** (and any Step 3.4-only helpers co-located with it) from `features/schedule/ui/steps/step3-floating/step34/` to the **mandatory** layout **`features/schedule/ui/steps/step3-floating/substeps/step34-preview/`** so the tree matches **`ARCHITECTURE_ESSENTIALS.mdc`** (product Step 3.4 = `step34-preview`). Update all imports (wizard, shims, `tests/regression/*`, docs as needed). **No behavior change** — rename/move only unless a bug is discovered.
+
+2. **Allocation peel:** Incrementally migrate **schedule-primary** React from **`components/allocation/`** into **`features/schedule/ui/`** (`steps/`, `sections/`, `dialogs/`, shared leaf folders) using the living checklist in **`features/schedule/ui/README.md`** (Phase 4 inventory + “still to migrate”). Prefer **one vertical slice per commit** (e.g. one dialog cluster + `SchedulePageClient` import updates + shims). **Shared consumers** called out in the README (`StaffCardColorGuideContent`, `BufferStaffConvertDialog`) must be updated in the **same slice** as their moved target, or keep a documented shim path.
+
+**Layering follow-up:** When a moved dialog forces **`lib`** to type-import from **`components`** (e.g. **`BedCountsOverrideState`** today), hoist the shared type to **`@/types/schedule`** or **`lib/`** in that slice so domain types do not depend on UI paths.
+
+**Token workflow:** Per **§ Deferred** — structural peel → gate + smoke + manual on touched flows → token pass on **touched** `features/schedule/ui/**` only (light-first unless product enables dark mode). Log **token N/A** only if a slice is path-only with no class changes.
+
+**Verify:** Mandatory gate (`lint`, `build`, `test:smoke`); **`f47`** + **`f66`** whenever Step 3 / schedule page import graph moves materially; **full** `tests/regression` loop before marking Phase **6** `done` for a milestone that touches allocation/save; manual Steps **1–5** after slices that change user-visible surfaces. Optionally extend grep: **`@/components/allocation`** from app/features code should trend toward **shims-only** for schedule-only components — document any intentional exceptions in the README.
+
+**Done when:** `step34` canonical path is under **`substeps/step34-preview/`**; README inventory reflects migrated vs remaining allocation components; mandatory gate + full regression + your manual acceptance for the peeled areas; token follow-up per **§ Deferred** satisfied (or **token N/A** logged per slice).
+
+**Consequence if deferred:** Schedule remains correct; **grepability and §B folder conventions stay slightly wrong** for Step 3.4; **`components/allocation/`** remains the main non-`features/` home for schedule grid/wizard leaves, which blurs the “UI bug vs logic bug” search heuristic.
+
+---
+
 ## AI / grep conventions (Cursor-friendly)
 
 | Question | Search prefix / path |
@@ -505,7 +528,7 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 
 - **`lib` → `features` ban**: **`lib/**` must not import from `features/**`** (only UI may import lib). Breaks layering and risks circular bundles.
 - **Barrels**: thin top-level re-export only; avoid deep barrels that hide implementations from **grep** / go-to-definition (see **Barrel exports** above).
-- **Phase 4 scope**: **`components/allocation/`** schedule-only surfaces belong in the same strangler story as `components/schedule/` (see Phase 4 tasks).
+- **Phase 4 / Phase 6 scope**: **`components/allocation/`** schedule-only surfaces — Phase **4** inventoried them; Phase **6** executes the **peel** into `features/schedule/ui/` (see **§ Phase 6** and `features/schedule/ui/README.md`).
 - **Smoke flakes**: If `npm run test:smoke` fails on a test **unrelated** to your slice, follow the **implementation plan** flake protocol (retry, then documented skip or fix) — do not block a phase on unrelated red.
 
 ---
@@ -547,3 +570,4 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 | 2026-04-17 | Hybrid **§ `sections/` vs `steps/`**; §A appendix + “NOT RBIP paths”; **Which tree** callout; Phase 2b table + note; §B polish; **Data flow** line (UI + controller vs `pcaAllocationEngine` vs `lib/algorithms`); **Reviewer hardening**: solo workflow blurb, Phase 4 **`components/allocation/`** scope, grep split (math vs adapter), `lib`↔`features` import ban, smoke-flake note, § hooks wording (no direct Supabase), References anchor fix, Phase 3/5 PR wording → commits. |
 | 2026-04-16 | **§ Deferred: UI color / design tokens** — light-first; bundle token cleanup with **extractions** and **Phases 3–5**; no monolithic `SchedulePageClient` repaint. Tracker **2f** note + Phase **3/4/5** guidance bullets; companion **§ Deferred** in implementation plan + matrix row for **2f**. |
 | 2026-04-16 | **§ Deferred:** **Required two-slice workflow** for Phases **3–5** — structural → verify (review, gate, smoke, manual) → **token slice** → mark `done` or **token N/A**; replaces “optional” so agents do not skip token work silently. |
+| 2026-04-17 | **Phase 6** added (**§ Phase 6**): `substeps/step34-preview/` path parity + **`components/allocation/` peel**; progress tracker row + **P6**; iteration diagram; token workflow wording **Phases 3–6**; reviewer note Phase 4/6 split. |
