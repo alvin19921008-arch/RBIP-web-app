@@ -13,12 +13,12 @@
 
 | ID | Problem | Priority | Status |
 |----|---------|----------|--------|
-| P0 | `page.tsx` ~13k lines; hard to maintain and for agents to localize bugs | P0 | `todo` |
-| P1 | UI vs logic mixed; unclear grep boundaries | P0 | `todo` |
+| P0 | Schedule **body** still large (~13k in `SchedulePageClient`); route `page.tsx` is thin — shrink body via Phases 2–2e | P0 | `in_progress` |
+| P1 | UI vs logic mixed; unclear grep boundaries | P0 | `in_progress` |
 | P2 | No stable **step/substep** home for schedule UI (indexability) | P1 | `todo` |
 | P3 | `useScheduleController` ~4k lines; second “god” surface | P2 | `todo` |
 | P4 | Legacy hooks / duplicate mental models (`hooks/useScheduleState`, etc.) | P2 | `todo` |
-| P5 | New `features/` tree must participate in **Tailwind v4 `@source`** | P0 | `todo` |
+| P5 | New `features/` tree must participate in **Tailwind v4 `@source`** | P0 | `done` |
 
 **Status values**: `todo` · `in_progress` · `blocked` · `done`
 
@@ -28,8 +28,8 @@
 
 | Phase | Name | Status | Owner / notes | Last verified (tests) |
 |-------|------|--------|---------------|------------------------|
-| 0 | Conventions + tooling gates | `todo` | Includes `AGENTS.md` pointer, Tailwind `features/` scan | |
-| 1 | Thin route + `SchedulePageClient` shell | `todo` | Mechanical move; no behavior change | |
+| 0 | Conventions + tooling gates | `todo` | `AGENTS.md` (plans + `@/*`), `ARCHITECTURE_ESSENTIALS` schedule map + naming + barrels; `tsconfig.json` has `@/*`. Remaining: **Done when** team sign-off; Tailwind `@source features/` at Phase 1 | |
+| 1 | Thin route + `SchedulePageClient` shell | `done` | Default export client; `./actions` → `@/app/(dashboard)/schedule/actions`; `eslint` ignores `.worktrees/**` | `lint+build OK; f47 OK; smoke OK 2026-04-16` |
 | 2a | Extract Dev Leave Sim bridge | `todo` | `features/schedule/ui/dev/` | |
 | 2b | Extract step indicator + navigation strip | `todo` | `features/schedule/ui/sections/` | |
 | 2c | Extract DnD + main board shell | `todo` | `features/schedule/ui/sections/` | |
@@ -65,7 +65,7 @@
 ### Borrowed from the alternate AI proposal (without adopting its `lib` placement)
 
 - **Indexable step tree** lives under **`features/schedule/ui/steps/`**, not under `lib/`.
-- Use **filesystem-friendly** folder names (avoid `Step3.1` literal dots in directory names if tooling annoys you; prefer `step31-teams-order`, `Step31TeamsOrder`, or `substeps/step31-teams-order/`).
+- **Folder naming is fixed repo-wide** (not a menu of styles): see **Step folder naming (mandatory)** below and the same rule in `.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc`.
 
 **Example target (illustrative — grow incrementally)**:
 
@@ -89,6 +89,21 @@ features/schedule/ui/
   dialogs/
   dev/
 ```
+
+### Step folder naming (mandatory)
+
+All **directory** names under **`features/schedule/ui/steps/`** use **lowercase kebab-case** only (ASCII letters, digits, hyphens). **Do not** use PascalCase folders, **do not** put `.` in folder names (e.g. no `Step3.1/`).
+
+| Pattern | Example | Maps to product |
+|---------|---------|-----------------|
+| Macro step | `step1-leave/`, `step2-fixed-allocation/`, `step3-floating/`, `step4-bed/`, `step5-review/` | Steps 1–5 |
+| Substep (Step 3 mini-steps) | `substeps/step31-teams-order/`, `substeps/step32-preferred/`, … | 3.1, 3.2, … — `step` + **two digits** (major+minor) + `-` + slug, always under `substeps/` |
+
+**Files** inside those folders may use normal React/TS conventions (e.g. `FloatingPCAStep.tsx`, `useFloatingPCAStep.ts`).
+
+### Barrel exports (`features/schedule/index.ts`)
+
+An optional **`features/schedule/index.ts`** may re-export **`SchedulePageClient`** (or the single public entry consumers need). Keep it **thin**. For everything else, prefer **direct imports** to the implementing file under `ui/steps/...` or `ui/sections/...` so **grep** and **go to definition** land on the real module.
 
 ### `sections/` vs `steps/` (do not conflate)
 
@@ -168,7 +183,7 @@ lib/features/schedule/             # ← REFERENCE ONLY: UI + logic co-located u
 | `ScheduleOrchestrator.tsx` | `features/schedule/ui/SchedulePageClient.tsx` (or `ScheduleScreen.tsx`) — **top composer only** |
 | `SchedulePageContainer.tsx` | **Merged into** `SchedulePageClient` + thin providers, **or** `features/schedule/ui/SchedulePageContainer.tsx` if you split container vs shell |
 | `ScheduleController.ts` | **`lib/features/schedule/controller/useScheduleController.ts`** (+ Phase 3 submodules); **hook** naming stays `use*` |
-| `steps/**.tsx`, `substeps/**` | **`features/schedule/ui/steps/**`** — use **dash** folder names, e.g. `step31-teams-order/` not `Step3.1/` |
+| `steps/**.tsx`, `substeps/**` | **`features/schedule/ui/steps/**`** — **mandatory** lowercase kebab-case dirs: `step3-floating/substeps/step31-teams-order/` (see **Step folder naming (mandatory)**) |
 | Step-level `types.ts`, `validators.ts` | **UI-adjacent** types/validators → `features/schedule/ui/steps/.../` when only UI concerns; **domain** types stay in `types/schedule.ts` / `lib/db/types` as today |
 | `steps/.../lib/` (reference) | **Domain** helpers → `lib/features/schedule/` (e.g. `step3Bootstrap.ts`); **UI-only** helpers stay next to the step component |
 | `lib/features/schedule/hooks/` (reference) | Prefer **`features/schedule/ui/hooks/`** for UI hooks; **`lib/features/schedule/`** only for non-React schedule hooks if truly needed |
@@ -182,7 +197,7 @@ app/(dashboard)/schedule/
   loading.tsx | error.tsx          # Optional; Next.js route conventions
 
 features/schedule/
-  index.ts                         # Optional barrel: re-export SchedulePageClient for `@/features/schedule`
+  index.ts                         # Optional **thin** barrel: SchedulePageClient (or one public entry) only — see § Barrel exports
 
   ui/
     SchedulePageClient.tsx         # Composer: mounts sections + route-level dialogs + step modules; no algorithms
@@ -254,7 +269,7 @@ app/globals.css
 | **Where do I put new files?** | **§B only** — `features/schedule/ui/...` for UI, `lib/features/schedule/...` + `lib/algorithms/...` for logic. |
 | **What is §A for?** | **Ideas**: macro-step naming, substeps, “hooks per step,” decision table. **Never** use §A’s `lib/features/schedule/*.tsx` paths. |
 | **Step indicator / Next / Previous?** | Always **`features/schedule/ui/sections/`** — workflow shell, not `ui/steps/`. |
-| **Step 3.2 Preferred panel?** | **`features/schedule/ui/steps/step3-floating/substeps/step32-preferred/`** (or equivalent), not `sections/`. |
+| **Step 3.2 Preferred panel?** | **`features/schedule/ui/steps/step3-floating/substeps/step32-preferred/`**, not `sections/`. |
 
 > **Agents: implement §B + Hybrid `sections/` vs `steps/` rules.** Use §A only for naming and depth inspiration.
 
@@ -329,9 +344,9 @@ Phase 5 ──► optional depth migration; do not block Phase 4
 
 **Tasks**
 
-- [ ] Confirm `@/*` → repo root in `tsconfig.json` (supports `@/features/schedule/...`).
-- [ ] **Recommended**: Add **one line** to `AGENTS.md` or `.cursor/rules` so agents find this plan (solo: skip until convenient).
-- [ ] Document **grep prefixes** for agents (see § “AI / grep conventions” below) in `ARCHITECTURE_ESSENTIALS.mdc` or `AGENTS.md` — optional but high leverage.
+- [x] Confirm `@/*` → repo root in `tsconfig.json` (supports `@/features/schedule/...`) — **noted in `AGENTS.md`**; paths block present in `tsconfig.json`.
+- [x] **`AGENTS.md`** (repo root) points to this plan + **`ARCHITECTURE_ESSENTIALS.mdc`** schedule layout.
+- [x] **`ARCHITECTURE_ESSENTIALS.mdc`** includes the short **§B-style path table**, **mandatory step folder naming**, **`lib`↔`features` import rule**, and **barrel** guidance (see § “Schedule UI / lib layout”).
 
 **Done when**: Team agrees strangler + hybrid; tracker row Phase 0 = `done`.
 
@@ -345,10 +360,10 @@ Phase 5 ──► optional depth migration; do not block Phase 4
 
 **Tasks**
 
-- [ ] Create `features/schedule/ui/SchedulePageClient.tsx`.
-- [ ] Move client body from `app/(dashboard)/schedule/page.tsx` with **minimal** edits.
-- [ ] Replace `page.tsx` with import + render.
-- [ ] Fix imports; add **`@source "../features/**/*.{ts,tsx}"`** to `app/globals.css` so Tailwind sees new files.
+- [x] Create `features/schedule/ui/SchedulePageClient.tsx`.
+- [x] Move client body from `app/(dashboard)/schedule/page.tsx` with **minimal** edits.
+- [x] Replace `page.tsx` with import + render.
+- [x] Fix imports; add **`@source "../features/**/*.{ts,tsx}"`** to `app/globals.css` so Tailwind sees new files.
 
 **Done when**: Build passes; schedule loads; `page.tsx` line count trivial.
 
@@ -379,7 +394,7 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 
 **Tasks**
 
-- [ ] Add `features/schedule/ui/steps/README.md` (3–10 lines: naming rule + “logic stays in lib”).
+- [ ] Add `features/schedule/ui/steps/README.md` (short: mandatory **lowercase kebab-case** dirs + `substeps/stepNN-slug/` pattern; **logic stays in `lib/features/schedule/`**; **barrels**: prefer direct imports; link to architecture plan § Step folder naming).
 - [ ] Create minimal folder tree under `steps/step3-floating/substeps/` (empty `index.ts` or one pilot component).
 - [ ] Migrate **one** pilot UI chunk from `SchedulePageClient` or `components/schedule` into the scaffold (prefer a self-contained dialog or panel).
 - [ ] Update imports; no behavior change.
@@ -448,6 +463,7 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 | Question | Search prefix / path |
 |----------|----------------------|
 | Schedule **UI** (JSX, local hooks) | `features/schedule/` |
+| **Step / substep folders** (directory names) | Lowercase kebab-case only under `ui/steps/` — e.g. `step32-preferred`, not `Step32Preferred` or `Step3.2` |
 | Schedule **domain** (no JSX) | `lib/features/schedule/` |
 | **Allocation math** (pure / worker-isolated) | `lib/algorithms/` (e.g. `pcaAllocation`, `floatingPcaV2`, …) |
 | **PCA run adapter** (build context → call algorithms; worker) | `lib/features/schedule/pcaAllocationEngine.ts` — **not** the same folder as “math only” |
@@ -459,6 +475,7 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 ## Reviewer notes — hardening (solo / pre-launch)
 
 - **`lib` → `features` ban**: **`lib/**` must not import from `features/**`** (only UI may import lib). Breaks layering and risks circular bundles.
+- **Barrels**: thin top-level re-export only; avoid deep barrels that hide implementations from **grep** / go-to-definition (see **Barrel exports** above).
 - **Phase 4 scope**: **`components/allocation/`** schedule-only surfaces belong in the same strangler story as `components/schedule/` (see Phase 4 tasks).
 - **Smoke flakes**: If `npm run test:smoke` fails on a test **unrelated** to your slice, follow the **implementation plan** flake protocol (retry, then documented skip or fix) — do not block a phase on unrelated red.
 
@@ -471,6 +488,7 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 - **`import` from `features/` inside `lib/`** — breaks the two-layer rule and invites circular dependencies.
 - Duplicating orchestration (Supabase, full `allocatePCA` paths) inside deep leaf components.
 - Skipping **`@source`** for `features/` after creating the folder.
+- **PascalCase or dotted directory names** under `features/schedule/ui/steps/` — use **Step folder naming (mandatory)** only.
 - Skipping tests between slices (solo: at least **lint + build + smoke** when you touch schedule; add **manual** pass per implementation plan).
 
 ---
@@ -495,5 +513,5 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 |------|--------|
 | 2026-04-11 | Initial plan (single-layer `features/` + phases 0–4). |
 | 2026-04-15 | **Hybrid** + phases **2e/2f/5**, tokens/`@source`, grep conventions. **§ Final optimal architecture**: quoted prior proposal (step indexability); **§B** canonical RBIP tree, name mapping, invariants. |
-| 2026-04-16 | Linked **implementation plan** (verification commands, regression matrix, exit criteria per phase). |
+| 2026-04-16 | Linked **implementation plan**; naming + barrels + **§B** map in `ARCHITECTURE_ESSENTIALS` / `AGENTS.md`. **Phase 1 executed:** `SchedulePageClient` + thin route; `globals.css` `@source` for `features/`; `eslint` ignores `.worktrees/**`; smoke `schedule-core` scoped to `data-tour="step-indicator"` + legend **Out of date**. |
 | 2026-04-17 | Hybrid **§ `sections/` vs `steps/`**; §A appendix + “NOT RBIP paths”; **Which tree** callout; Phase 2b table + note; §B polish; **Data flow** line (UI + controller vs `pcaAllocationEngine` vs `lib/algorithms`); **Reviewer hardening**: solo workflow blurb, Phase 4 **`components/allocation/`** scope, grep split (math vs adapter), `lib`↔`features` import ban, smoke-flake note, § hooks wording (no direct Supabase), References anchor fix, Phase 3/5 PR wording → commits. |

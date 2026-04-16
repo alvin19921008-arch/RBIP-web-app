@@ -12,6 +12,7 @@
 @source "../lib/**/*.{ts,tsx}";
 @source "../hooks/**/*.{ts,tsx}";
 @source "../pages/**/*.{ts,tsx}";
+@source "../features/**/*.{ts,tsx}";
 
 /* Tailwind v4 CSS-first theme: map shadcn CSS vars to Tailwind tokens */
 @theme {

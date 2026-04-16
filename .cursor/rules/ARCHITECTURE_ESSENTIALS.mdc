@@ -8,6 +8,28 @@ alwaysApply: true
 
 > **Purpose**: Critical architectural patterns and gotchas that new agents MUST know. For detailed changelog, see `CHANGELOG.md`.
 
+## Schedule UI / lib layout (grep map)
+
+**Full spec (phases, verification, §A vs §B):** `docs/superpowers/plans/2026-04-11-schedule-ui-lib-separation-plan.md` — implement **§B** only; §A is reference vocabulary, not RBIP paths.
+
+| Put it here | Role |
+|---------------|------|
+| `app/(dashboard)/schedule/` | Route shell only (`page.tsx` mounts client; no business logic). |
+| `features/schedule/ui/` | Schedule **React** UI: `SchedulePageClient`, `sections/` (global step strip, next/prev, shell), `steps/` (in-step / wizard bodies), `dialogs/`, `dev/`, `hooks/`. |
+| `features/schedule/ui/sections/` | Workflow **shell** only — **not** Step 2 grid body, **not** Step 3.1–3.4 wizard panels. |
+| `features/schedule/ui/steps/` | In-step / wizard UI (e.g. `step3-floating/` + `substeps/`). |
+| `lib/features/schedule/` | Schedule **domain + orchestration** (`.ts`); **no new** schedule screen `*.tsx` here. |
+| `lib/features/schedule/controller/` | `useScheduleController` (facade over smaller modules as split progresses). |
+| `lib/features/schedule/pcaAllocationEngine.ts` | Adapter: build context → call algorithms / worker (**not** “pure math only”). |
+| `lib/algorithms/` | Pure (or worker-isolated) allocation math; **no React**. |
+| `styles/rbip-design-tokens.css` | Step-themed tokens; align with `.cursor/rules/design-elements-commonality.mdc`. |
+
+**`features/schedule/ui/steps/` folder naming (mandatory):** directories are **lowercase kebab-case** only — no PascalCase folder names, no `.` in folder names. Macro steps: `step1-leave/`, `step2-fixed-allocation/`, `step3-floating/`, `step4-bed/`, `step5-review/`. Substeps (product 3.x): under `substeps/` as `step31-teams-order/`, `step32-preferred/`, `step33-adjacent/`, `step34-preview/` (two digits = major+minor, then kebab slug). **React files** inside may stay PascalCase (`FloatingPCAStep.tsx`).
+
+**Imports:** `lib/**` must **not** import from `features/**`. UI imports lib; not the reverse.
+
+**Barrels:** optional thin `features/schedule/index.ts` for the top client entry only. Prefer **direct imports** to real files under `ui/steps/` and `ui/sections/` so search and go-to-definition resolve to implementations.
+
 ## Critical Gotchas (Top 10)
 
 1. **Database Type Safety (CRITICAL)**: Always use `lib/db/types.ts` utilities (`toDbLeaveType`, `programNamesToIds`, `normalizeFTE`) - TypeScript types are WIDER than database enums

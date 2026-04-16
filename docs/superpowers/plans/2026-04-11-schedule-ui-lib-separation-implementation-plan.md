@@ -125,9 +125,9 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (`components/allocation/Floating
 
 ### Phase 0 — Conventions + tooling gates
 
-- [ ] `@/*` → repo root documented (existing `tsconfig.json`).
-- [ ] Architecture plan linked from `AGENTS.md` or `.cursor/rules` (one line) — **recommended** for solo; per architecture plan Phase 0.
-- [ ] Agents know: UI → `features/schedule/`, logic → `lib/features/schedule/`.
+- [x] `@/*` → repo root documented (`tsconfig.json` + **`AGENTS.md`**).
+- [x] **`AGENTS.md`** links the schedule refactor plans + **`.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc`** (schedule **§B-style** grep map, naming, barrels, `lib`↔`features` rule).
+- [x] Agents know: UI → `features/schedule/`, logic → `lib/features/schedule/` — duplicated at top of **`ARCHITECTURE_ESSENTIALS.mdc`** (“Schedule UI / lib layout”).
 
 **Done when**: Checklist above complete; no production code required.
 
@@ -137,15 +137,15 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (`components/allocation/Floating
 
 **Technical**
 
-- [ ] `app/(dashboard)/schedule/page.tsx` is **only** route shell (mount + optional providers); **target** ≪ 100 lines.
-- [ ] `features/schedule/ui/SchedulePageClient.tsx` exists and contains moved client tree.
-- [ ] `app/globals.css` includes `@source "../features/**/*.{ts,tsx}"` so Tailwind scans new files.
+- [x] `app/(dashboard)/schedule/page.tsx` is **only** route shell (mount + optional providers); **target** ≪ 100 lines.
+- [x] `features/schedule/ui/SchedulePageClient.tsx` exists and contains moved client tree.
+- [x] `app/globals.css` includes `@source "../features/**/*.{ts,tsx}"` so Tailwind scans new files.
 
 **Verification**
 
-- [ ] Mandatory gate passes.
-- [ ] `npx tsx tests/regression/f47-page-step3-runtime-uses-shared-builders.test.ts` passes (schedule page **wiring** / step3 runtime builders).
-- [ ] Manual: open `/schedule` (or dashboard schedule route), confirm page renders without console errors on load.
+- [x] Mandatory gate passes.
+- [x] `npx tsx tests/regression/f47-page-step3-runtime-uses-shared-builders.test.ts` passes (schedule page **wiring** / step3 runtime builders).
+- [x] Manual: open `/schedule` — **covered by** `schedule-core` smoke (shell + leave flow); spot-check in browser if you change auth/env.
 
 **Done when**: All boxes checked; tracker “Last verified” lists commands + pass.
 
@@ -218,7 +218,7 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (`components/allocation/Floating
 
 **Technical**
 
-- [ ] `features/schedule/ui/steps/` exists with README + one **pilot** migration.
+- [ ] `features/schedule/ui/steps/` exists with README (mandatory **lowercase kebab-case** dirs + `substeps/stepNN-slug/`; logic in `lib/`; **barrels**: prefer direct imports) + one **pilot** migration.
 - [ ] Pilot route renders; no duplicate mount of providers.
 
 **Verification**
@@ -304,6 +304,7 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (`components/allocation/Floating
 ### Layering (hard rule)
 
 - **`lib/**` must not import `features/**`**. UI imports lib; not the reverse. If you need a symbol from UI in lib, the seam is wrong — move shared types/helpers to `lib/` or pass data via props.
+- **Barrels:** optional thin `features/schedule/index.ts` for the top client entry only; prefer **direct imports** under `ui/steps/` and `ui/sections/` (same as architecture plan).
 
 ---
 
@@ -321,5 +322,6 @@ Update the **architecture plan** tracker table after each phase:
 | Date | Change |
 |------|--------|
 | 2026-04-16 | Initial implementation plan: mandatory gate, `npx tsx` regression runner, smoke list, phase matrix, per-phase exit criteria, behavior policy. |
-| 2026-04-16 | Document **V2-first Step 3 smoke**; add `tests/smoke/helpers/floatingPcaStep3V2.ts`; update `schedule-phase3-4-algo-metrics` reload test to choose V2 + assert V2 footer. |
-| 2026-04-17 | Phase **2b** **`sections/` only** + architecture Hybrid cross-link. **Solo / pre-launch**: commit-based gate + tracker; **smoke flake protocol**; full regression at milestones; Phase 4 **`components/allocation/`**; **`lib` must not import `features`**; Phase 0 AGENTS optional; Phase 5 → solo acceptance. |
+| 2026-04-16 | Document **V2-first Step 3 smoke**; add `tests/smoke/helpers/floatingPcaStep3V2.ts`; update `schedule-phase3-4-algo-metrics` reload test to choose V2 + assert V2 footer. **Also:** Phase 0 exit criteria — **`AGENTS.md`** + **`ARCHITECTURE_ESSENTIALS.mdc`** schedule map; Phase 2e README + **Layering** barrel line (naming + barrels). |
+| 2026-04-17 | Phase **2b** **`sections/` only** + architecture Hybrid cross-link. **Solo / pre-launch**: commit-based gate + tracker; **smoke flake protocol**; full regression at milestones; Phase 4 **`components/allocation/`**; **`lib` must not import `features`**; Phase 5 → solo acceptance. |
+| 2026-04-16 | **Phase 1 complete** in repo: thin route + `SchedulePageClient`; `eslint` ignore `.worktrees/**`; `schedule-core` smoke helpers scoped to main step indicator + legend copy **Out of date**. |

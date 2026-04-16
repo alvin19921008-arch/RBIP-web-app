@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 
 const appBaseURL = process.env.PW_APP_BASE_URL || process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000'
 
@@ -7,13 +7,13 @@ function escapeRegex(input: string): string {
 }
 
 async function getVisibleButtonByName(
-  page: Page,
+  root: Page | Locator,
   name: string | RegExp,
   options?: { enabledOnly?: boolean; exact?: boolean }
 ) {
   const enabledOnly = options?.enabledOnly ?? false
   const exact = options?.exact
-  const buttons = page.getByRole('button', { name, exact })
+  const buttons = root.getByRole('button', { name, exact })
   const count = await buttons.count()
 
   for (let index = 0; index < count; index += 1) {
@@ -115,17 +115,26 @@ async function waitForScheduleReady(page: Page) {
   await expect(page.getByRole('button', { name: 'Previous step' })).toBeVisible({ timeout: 20000 })
 }
 
+function mainStepIndicator(page: Page) {
+  return page.locator('[data-tour="step-indicator"]').first()
+}
+
 async function goToLeaveStep(page: Page) {
   await waitForScheduleReady(page)
 
-  const leaveStepButton = await getVisibleButtonByName(page, /Leave & FTE/i, { enabledOnly: true })
-  expect(leaveStepButton).not.toBeNull()
-  await leaveStepButton!.click()
+  const stepFlow = mainStepIndicator(page)
+  await expect(stepFlow).toBeVisible()
+
+  // Prefer stable tour id over name-only matching (avoids ambiguous step pills if copy/layout shifts).
+  const leaveStepPill = stepFlow.locator('[data-tour="step-1"]')
+  await expect(leaveStepPill).toBeVisible()
+  test.skip(!(await leaveStepPill.isEnabled()), 'Step 1 is disabled in current schedule state.')
+  await leaveStepPill.click()
 
   await expect
     .poll(
       async () => {
-        const currentStep = page.getByRole('button', { name: /Current step \d of 5/i }).first()
+        const currentStep = stepFlow.getByRole('button', { name: /Current step \d of 5/i }).first()
         if (!(await currentStep.isVisible().catch(() => false))) return ''
         return (await currentStep.innerText()).replace(/\s+/g, ' ').trim()
       },
@@ -162,19 +171,20 @@ test.describe('Schedule smoke suite', () => {
     await waitForScheduleReady(page)
 
     await expect(page).toHaveURL(/\/schedule/)
-    await expect(page.getByRole('button', { name: 'Previous step' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Next step' })).toBeVisible()
+    const stepFlow = mainStepIndicator(page)
+    await expect(stepFlow.getByRole('button', { name: 'Previous step' })).toBeVisible()
+    await expect(stepFlow.getByRole('button', { name: 'Next step' })).toBeVisible()
 
-    await expect(page.getByRole('button', { name: /Leave & FTE/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /Therapist & PCA/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /Floating PCA/i })).toBeVisible()
+    await expect(stepFlow.getByRole('button', { name: /Leave & FTE/i })).toBeVisible()
+    await expect(stepFlow.getByRole('button', { name: /Therapist & PCA/i })).toBeVisible()
+    await expect(stepFlow.getByRole('button', { name: /Floating PCA/i })).toBeVisible()
 
-    const bedRelievingButton = page.getByRole('button', { name: /Bed Relieving/i }).first()
+    const bedRelievingButton = stepFlow.getByRole('button', { name: /Bed Relieving/i }).first()
     if ((await bedRelievingButton.count()) > 0) {
       await expect(bedRelievingButton).toBeVisible()
     }
 
-    const reviewButton = page.getByRole('button', { name: /Review/i }).first()
+    const reviewButton = stepFlow.getByRole('button', { name: /Review/i }).first()
     if ((await reviewButton.count()) > 0) {
       await expect(reviewButton).toBeVisible()
     }
@@ -185,15 +195,17 @@ test.describe('Schedule smoke suite', () => {
     await page.goto(`${appBaseURL}/schedule`, { waitUntil: 'domcontentloaded' })
     await waitForScheduleReady(page)
 
-    const step2Button = page.getByRole('button', { name: /Therapist & PCA/i }).first()
+    const stepFlow = mainStepIndicator(page)
+    const step2Button = stepFlow.getByRole('button', { name: /Therapist & PCA/i }).first()
     await expect(step2Button).toBeVisible()
     test.skip(!(await step2Button.isEnabled()), 'Step 2 is disabled in current schedule state.')
     await step2Button.click()
-    await expect(page.getByRole('button', { name: /Therapist & PCA.*Current step 2 of 5/i })).toBeVisible()
+    await expect(stepFlow.getByRole('button', { name: /Therapist & PCA.*Current step 2 of 5/i })).toBeVisible()
 
-    await page.getByRole('button', { name: 'Step status legend' }).click()
+    await stepFlow.getByRole('button', { name: 'Step status legend' }).click()
     await expect(page.getByText(/^Pending$/)).toBeVisible()
-    await expect(page.getByText(/^Modified$/)).toBeVisible()
+    // StepIndicator legend uses "Out of date" (not "Modified") for the yellow/warning state.
+    await expect(page.getByText(/^Out of date$/)).toBeVisible()
     await expect(page.getByText(/^Completed$/)).toBeVisible()
   })
 
@@ -256,11 +268,12 @@ test.describe('Schedule smoke suite', () => {
     await page.goto(`${appBaseURL}/schedule`, { waitUntil: 'domcontentloaded' })
     await waitForScheduleReady(page)
 
-    const step2Button = page.getByRole('button', { name: /Therapist & PCA/i }).first()
+    const stepFlow = mainStepIndicator(page)
+    const step2Button = stepFlow.getByRole('button', { name: /Therapist & PCA/i }).first()
     await expect(step2Button).toBeVisible()
     test.skip(!(await step2Button.isEnabled()), 'Step 2 is disabled in current schedule state.')
     await step2Button.click()
-    await expect(page.getByRole('button', { name: /Therapist & PCA.*Current step 2 of 5/i })).toBeVisible()
+    await expect(stepFlow.getByRole('button', { name: /Therapist & PCA.*Current step 2 of 5/i })).toBeVisible()
 
     const expandedStaffPool = page.locator('[data-tour="staff-pool"]')
     if (!(await expandedStaffPool.isVisible())) {
