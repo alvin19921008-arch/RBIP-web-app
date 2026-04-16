@@ -471,15 +471,39 @@ function getTrueStep3TeamSlotsOnPca(
   })
 }
 
-function getRepairSlotOrder(pref: TeamPreferenceInfo): Slot[] {
+function dedupeSlotsPreserveOrder(slots: Slot[]): Slot[] {
+  const seen = new Set<Slot>()
+  const out: Slot[] = []
+  for (const slot of slots) {
+    if (seen.has(slot)) continue
+    seen.add(slot)
+    out.push(slot)
+  }
+  return out
+}
+
+/**
+ * Bounded-repair / fairness probe slot order for [team]:
+ * non-gym non-duplicate ranked → non-gym non-duplicate unranked → duplicate ranked → duplicate unranked → gym last resort (if configured).
+ */
+function getRepairSlotOrder(state: AuditState, team: Team): Slot[] {
+  const pref = state.teamPrefs[team]
   const rankedNonGym = pref.rankedSlots.filter(
     (slot): slot is Slot => isValidSlot(slot) && !(pref.avoidGym && pref.gymSlot === slot)
   )
   const unrankedNonGym = pref.unrankedNonGymSlots.filter(isValidSlot)
-  const gymLastResort =
-    pref.gymSlot != null && isValidSlot(pref.gymSlot) ? [pref.gymSlot] : []
+  const dup = (slot: Slot) => (state.trueStep3SlotCountsByTeam[team].get(slot) ?? 0) > 1
 
-  return [...rankedNonGym, ...unrankedNonGym, ...gymLastResort]
+  const ordered: Slot[] = [
+    ...rankedNonGym.filter((s) => !dup(s)),
+    ...unrankedNonGym.filter((s) => !dup(s)),
+    ...rankedNonGym.filter((s) => dup(s)),
+    ...unrankedNonGym.filter((s) => dup(s)),
+  ]
+  if (pref.gymSlot != null && isValidSlot(pref.gymSlot)) {
+    ordered.push(pref.gymSlot)
+  }
+  return dedupeSlotsPreserveOrder(ordered)
 }
 
 function isValidSlot(value: number): value is Slot {
@@ -584,8 +608,7 @@ function canTeamMoveToAlternativeSlot(
   team: Team,
   blockedSlot: Slot
 ): boolean {
-  const pref = state.teamPrefs[team]
-  const slotOrder = getRepairSlotOrder(pref).filter((slot) => slot !== blockedSlot)
+  const slotOrder = getRepairSlotOrder(state, team).filter((slot) => slot !== blockedSlot)
 
   for (const slot of slotOrder) {
     for (const pca of state.orderedPcas) {
@@ -608,11 +631,8 @@ function canTeamsSwapSlots(
   owningTeam: Team,
   targetSlot: Slot
 ): boolean {
-  const requestingPref = state.teamPrefs[requestingTeam]
-  const owningPref = state.teamPrefs[owningTeam]
-
-  const requestingAcceptable = getRepairSlotOrder(requestingPref)
-  const owningAcceptable = getRepairSlotOrder(owningPref).filter((slot) => slot !== targetSlot)
+  const requestingAcceptable = getRepairSlotOrder(state, requestingTeam)
+  const owningAcceptable = getRepairSlotOrder(state, owningTeam).filter((slot) => slot !== targetSlot)
 
   if (!requestingAcceptable.includes(targetSlot)) return false
   if ((state.slotCountsByTeam[owningTeam].get(targetSlot) ?? 0) === 0) return false
@@ -780,7 +800,7 @@ function hasFairnessFloorViolation(state: AuditState, team: Team): boolean {
 
 function canAcquireFairnessFloorCoverage(state: AuditState, team: Team): boolean {
   const pref = state.teamPrefs[team]
-  const fairnessSlots = getRepairSlotOrder(pref)
+  const fairnessSlots = getRepairSlotOrder(state, team)
 
   for (const slot of fairnessSlots) {
     if (canRescueSlotForTeam(state, team, slot) || canAcquireDirectlyFromTrueDuplicate(state, team, slot)) {
@@ -1168,6 +1188,11 @@ function forEachRankedV2GymFeasibilityValidBatch(
   const gymSlot = pref.gymSlot
   if (gymSlot == null || !isValidSlot(gymSlot)) return false
 
+  /** Same tiering as bounded repair (non-dup ranked → …) but only non-gym destinations for gym shuffle. */
+  const gymShuffleSlotOrder = getRepairSlotOrder(auditState, targetTeam).filter(
+    (slot) => slot !== gymSlot && isNonGymSlotForAvoidTeam(ctx.teamPrefs, targetTeam, slot)
+  )
+
   const sortedPcaIds = [...auditState.orderedPcas]
     .map((pca) => pca.id)
     .sort((a, b) => String(a).localeCompare(String(b)))
@@ -1190,10 +1215,8 @@ function forEachRankedV2GymFeasibilityValidBatch(
     if (!pcaData) continue
     const supported = getNormalizedAvailableSlots(pcaData)
 
-    for (const destSlot of VALID_SLOTS) {
-      if (destSlot === gymSlot) continue
+    for (const destSlot of gymShuffleSlotOrder) {
       if (!supported.includes(destSlot)) continue
-      if (!isNonGymSlotForAvoidTeam(ctx.teamPrefs, targetTeam, destSlot)) continue
 
       const destRow = beforeAllocations.find((a) => a.staff_id === pcaId)
       if (!destRow || getSlotTeam(destRow, destSlot) != null) continue
@@ -1229,8 +1252,7 @@ function forEachRankedV2GymFeasibilityValidBatch(
     const row = beforeAllocations.find((a) => a.staff_id === pcaId)
     if (!row) continue
 
-    for (const otherSlot of VALID_SLOTS) {
-      if (otherSlot === gymSlot) continue
+    for (const otherSlot of gymShuffleSlotOrder) {
       if (!supported.includes(otherSlot) || !supported.includes(gymSlot)) continue
 
       const ownerOther = getSlotTeam(row, otherSlot)
@@ -1284,7 +1306,7 @@ function forEachRankedV2GymFeasibilityValidBatch(
       const pcaDataB = auditState.orderedPcas.find((p) => p.id === pcaB)
       if (!rowB || !pcaDataB) continue
 
-      for (const slotB of VALID_SLOTS) {
+      for (const slotB of gymShuffleSlotOrder) {
         const ownerB = getSlotTeam(rowB, slotB)
         if (!ownerB || ownerB === targetTeam) continue
         if (
