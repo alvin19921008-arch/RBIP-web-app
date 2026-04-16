@@ -11,7 +11,8 @@
 
 1. Before starting a phase: set that row to `in_progress` in the **architecture plan** progress tracker.  
 2. After each **meaningful commit** that touches schedule: run **§ Mandatory gate** + the **phase-specific** tests below; paste commands + outcome into the tracker **Last verified** (or your journal).  
-3. Mark phase `done` only when **all** exit criteria for that phase are satisfied.
+3. Mark phase `done` only when **all** exit criteria for that phase are satisfied.  
+4. For **Phases 3–5**, follow **§ Deferred → Required two-slice workflow**: land **structural** work first → **review + gate + smoke + manual** → then **token-alignment** commit(s) on touched UI → re-run gate — or log **token N/A (no UI diff)** explicitly; do not skip token silently.
 
 ---
 
@@ -114,10 +115,10 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (canonical: `features/schedule/u
 | **2c** | Yes | **`schedule-phase3-1-dnd-metrics`** + DnD-related regression if any | Full regression if DnD types change |
 | **2d** | Yes | `schedule-core`, save/header flows | Full regression optional |
 | **2e** | Yes | `f66` (step3 harness) + `f47` if step3 paths touched | Full regression if new step folder imports shuffle module graph |
-| **2f** | Yes | Visual spot-check Step 3.2 / 3.3; confirm **no** missing Tailwind classes after `@source` | No full regression unless CSS class names tied to logic |
-| **3** | Yes | **Full regression** recommended (controller touches allocation/save) | **Yes** before marking Phase 3 `done` |
-| **4** | Yes | Full regression + grep for removed hooks + **allocation** UI inventory per architecture Phase 4 | **Yes** before Phase 4 `done` |
-| **5** | Yes | Full regression + extended smoke if new wizard surfaces | **Yes** before Phase 5 `done` |
+| **2f** | Yes | Visual spot-check Step 3.2 / 3.3; confirm **no** missing Tailwind classes after `@source` | No full regression unless CSS class names tied to logic; **broad** token sweep on `SchedulePageClient` **deferred** — see **§ Deferred: UI color / design tokens** |
+| **3** | Yes | **Full regression** recommended (controller touches allocation/save) + **token slice** after verify (see **§ Deferred**) | **Yes** before marking Phase 3 `done` |
+| **4** | Yes | Full regression + grep for removed hooks + **allocation** UI inventory + **token slice** after each migration verify | **Yes** before Phase 4 `done` |
+| **5** | Yes | Full regression + extended smoke if new wizard surfaces + **token slice** after each substep verify | **Yes** before Phase 5 `done` |
 
 ---
 
@@ -247,19 +248,52 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (canonical: `features/schedule/u
 
 ---
 
+### Deferred: UI color / design tokens on `SchedulePageClient` (post-2f policy)
+
+**Context:** Phase **2f** intentionally aligned **extracted** surfaces first (e.g. `sections/SchedulePageHeaderRightActions`) plus `features/schedule/ui/README.md` and `@source` for `features/`. It did **not** sweep every `slate-*` / literal in **`SchedulePageClient.tsx`** (~12k lines) — that would be a huge, hard-to-review diff with weak structural payoff while the file remains a god object.
+
+**Product note:** Schedule UX is **light-first**; there is **no** product requirement to optimize token passes for **dark mode** unless that changes later. Semantic classes (`border-border`, `text-muted-foreground`, `bg-popover`, …) are still useful for **consistency** and shadcn alignment in light UI.
+
+---
+
+#### Required two-slice workflow (Phases **3**, **4**, **5** — do not skip token slice)
+
+Future agents should treat **token / `design-elements-commonality` alignment** as part of the phase, **after** structural work is proven — not as “optional” fluff that can be dropped.
+
+| Step | What | Gate |
+|------|------|------|
+| **1 — Structural** | Main phase work (e.g. controller split, hook migration, step UI move). | Code review on the structural diff. |
+| **2 — Verify structural** | **Mandatory gate** + phase-specific regression/smoke + **manual** pass on touched flows. | All green / accepted before step 3. |
+| **3 — Token slice** | Align literals in **`features/schedule/ui/**` and any `SchedulePageClient` regions touched in step 1** with semantic tokens / `.rbip-*` per `styles/rbip-design-tokens.css` + `design-elements-commonality.mdc`. Prefer **separate commit(s)** so review stays small (“style only” after behavior is frozen). | Re-run **mandatory gate** (and phase matrix extras) after token commits. |
+| **4 — Mark phase `done`** | Tracker + exit criteria | Only after **steps 1–3** complete for that phase slice. |
+
+**If step 1 touched no schedule UI** (pure `lib/` controller move with zero JSX churn): step 3 is **N/A** — document **“token slice N/A — no UI diff”** in tracker or commit message so the skip is explicit, not silent.
+
+**Still avoid:** A monolithic PR whose **only** goal is recoloring all of `SchedulePageClient` with no extraction — high regression risk. Token work stays **scoped to what the phase changed** until the god file is mostly gone.
+
+---
+
+#### Extraction-first (same idea, smaller phases)
+
+When a subtree moves **out** of `SchedulePageClient` in **any** phase (2x or 3–5), you may still **combine** structural move + token in one slice **if** the diff stays reviewable; otherwise use the **two-slice** table above for that extraction.
+
+---
+
 ### Phase 3 — Split `useScheduleController` (facade)
 
 **Technical**
 
 - [ ] New modules under `lib/features/schedule/controller/` (or adjacent); **public** `useScheduleController` API unchanged unless versioned in the **same commit/slice**.
 
+**Token slice (after structural verify)** — see **§ Deferred → Required two-slice workflow**: after structural work + review + gate + smoke + manual are green, complete token alignment for **schedule UI files touched** in that slice (or record **token slice N/A — no UI diff**). Re-run mandatory gate after token commit(s).
+
 **Verification**
 
-- [ ] Mandatory gate passes.
+- [ ] Mandatory gate passes (after **structural** slice and again after **token** slice when applicable).
 - [ ] **Full** regression suite (`find … npx tsx` loop) passes.
 - [ ] Manual: Step 2 run, Step 3 run, Step 4 bed relieving, save/load smoke path.
 
-**Done when**: Full regression + mandatory gate + manual triad complete.
+**Done when**: Full regression + mandatory gate + manual triad complete **and** token follow-up satisfied per **§ Deferred** (or explicit N/A logged).
 
 ---
 
@@ -271,13 +305,15 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (canonical: `features/schedule/u
 - [ ] `components/schedule` empty or thin re-exports only.
 - [ ] **`components/allocation/`** — per architecture plan: inventory schedule-only surfaces; migrate or track in a checklist so Phase 4 is not “done” with allocation UI still orphaned outside `features/schedule/ui/`.
 
+**Token slice (after structural verify)** — **§ Deferred → Required two-slice workflow**: for each **migration slice**, after review + gate + smoke + manual on **that** slice, run token alignment on **moved or edited** `features/schedule/ui/**` (and any `SchedulePageClient` hunks touched). Small migration + token can be one commit **only if** the combined diff stays easy to review; otherwise **two commits** (move → token). Re-run gate after token work.
+
 **Verification**
 
-- [ ] Mandatory gate passes.
+- [ ] Mandatory gate passes after structural slices and after token slices as applicable.
 - [ ] Full regression suite passes.
 - [ ] `grep -R "@/components/schedule" --include='*.tsx' --include='*.ts'` returns no stale paths (or only allowed shims).
 
-**Done when**: Grep clean + full regression + gate + allocation inventory addressed (migrated or explicitly deferred with next slice).
+**Done when**: Grep clean + full regression + gate + allocation inventory addressed **and** token follow-up per **§ Deferred** completed for migrated UI (or N/A logged per slice).
 
 ---
 
@@ -287,11 +323,13 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (canonical: `features/schedule/u
 
 - [ ] Remaining wizard UI lives under `features/schedule/ui/steps/**` per architecture **§B**.
 
+**Token slice (after structural verify)** — **§ Deferred → Required two-slice workflow**: for each substep migration, after review + gate + smoke + manual on **that** step’s behavior, apply **step-scoped** tokens (`rbip-step32-*`, `rbip-step33-*`, `rbip-step34-*`, `lib/design/rbipDesignTokens.ts`, `design-elements-commonality.mdc`) in a follow-up commit if not already done in the move. For **leftover** literals in `SchedulePageClient` **only after** the relevant wizard JSX has moved — token pass scoped to **removed / shrunk** regions, not whole-file repaint in one go.
+
 **Verification**
 
-- [ ] Mandatory gate + full regression + extended manual wizard walkthrough (Steps 1–5).
+- [ ] Mandatory gate + full regression + extended manual wizard walkthrough (Steps 1–5), **after structural and after token** slices as applicable.
 
-**Done when**: Your acceptance on wizard parity (solo); tests green.
+**Done when**: Your acceptance on wizard parity (solo); tests green **and** token follow-up per **§ Deferred** satisfied for UI moved in Phase 5 (or N/A logged per slice).
 
 ---
 
@@ -325,3 +363,5 @@ Update the **architecture plan** tracker table after each phase:
 | 2026-04-16 | Document **V2-first Step 3 smoke**; add `tests/smoke/helpers/floatingPcaStep3V2.ts`; update `schedule-phase3-4-algo-metrics` reload test to choose V2 + assert V2 footer. **Also:** Phase 0 exit criteria — **`AGENTS.md`** + **`ARCHITECTURE_ESSENTIALS.mdc`** schedule map; Phase 2e README + **Layering** barrel line (naming + barrels). |
 | 2026-04-17 | Phase **2b** **`sections/` only** + architecture Hybrid cross-link. **Solo / pre-launch**: commit-based gate + tracker; **smoke flake protocol**; full regression at milestones; Phase 4 **`components/allocation/`**; **`lib` must not import `features`**; Phase 5 → solo acceptance. |
 | 2026-04-16 | **Phase 1** in repo (thin route, `SchedulePageClient`, eslint `.worktrees`, smoke hardening). **Phase 2a:** `ScheduleDevLeaveSimBridge`, `DevLeaveSimPanelProps`, `goToLeaveStep` `aria-current` + Previous fallback. **Phase 2b:** `ScheduleWorkflowStepShell`, export `StepIndicatorProps`. |
+| 2026-04-16 | **Policy:** **§ Deferred: UI color / design tokens** — light-first product; bundle token cleanup with **Phases 3–5 extractions**; avoid monolithic repaint of `SchedulePageClient`. Cross-links in phase matrix + Phases 3–5 guidance. |
+| 2026-04-16 | **§ Deferred tightened:** **Required two-slice workflow** (structural → verify → token → `done` or **token N/A** logged). Phases **3–5** exit criteria + verification bullets updated so token pass is not silently skipped. |

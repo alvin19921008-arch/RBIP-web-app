@@ -5,6 +5,8 @@
 > **Rule**: Update the **Progress tracker** and phase checkboxes as work completes.  
 > **Implementation & verification** (commands, regression matrix, per-phase exit criteria): [`2026-04-11-schedule-ui-lib-separation-implementation-plan.md`](./2026-04-11-schedule-ui-lib-separation-implementation-plan.md).
 
+**Phases 3–5 — token work is part of the phase:** structural change first → **review + mandatory gate + smoke + manual** → **then** token-alignment commit(s) on touched schedule UI → gate again — or log **token N/A (no UI diff)**. See **§ Deferred: UI color / design tokens**.
+
 **Solo workflow (this repo)**: Work ships as **commits on your branch**, not pull requests. Verification = **lint + build + Playwright smoke + targeted regression** where the implementation plan lists them, plus **manual schedule passes** on paths automation does not cover. Where the companion doc says “after PR” / “before merge”, read that as **after a coherent commit (slice)** / **before you mark the phase done** — there is **no** “stabilize N days on main” gate unless you choose one.
 
 ---
@@ -35,7 +37,7 @@
 | 2c | Extract DnD + main board shell | `done` | `ScheduleDndContextShell.tsx`, `ScheduleMainBoardChrome.tsx` | `lint+build+smoke OK 2026-04-16` |
 | 2d | Extract header / overlays / save strip | `done` | `SchedulePageHeaderRightActions.tsx`, `SchedulePageSplitMainPaneHeader.tsx` (Overlays/DialogsLayer still inline — optional thin shell) | `lint+build+smoke+f47 OK 2026-04-16` |
 | 2e | **Step / substep UI scaffold** (hybrid indexability) | `done` | `ui/steps/README.md`; pilot `step30-entry-flow/FloatingPCAEntryDialog.tsx`; allocation path = shim | `lint+build+smoke+f66+f47 OK 2026-04-16` |
-| 2f | **Design tokens + Tailwind** alignment for moved UI | `done` | `features/schedule/ui/README.md`; semantic tooltips in `SchedulePageHeaderRightActions` | `lint+build+smoke+f66+f47 OK 2026-04-16` |
+| 2f | **Design tokens + Tailwind** alignment for moved UI | `done` | `features/schedule/ui/README.md`; semantic tooltips in `SchedulePageHeaderRightActions`. **Broad** token sweep on `SchedulePageClient` **deferred** — see **§ Deferred: UI color / design tokens** below + companion **§ Deferred** in implementation plan. | `lint+build+smoke+f66+f47 OK 2026-04-16` |
 | 3 | Split `useScheduleController` (facade) | `todo` | Parallel track OK | |
 | 4 | Legacy hook cleanup + `components/schedule` migration | `todo` | Strangler completion | |
 | 5 | **Deep step parity** (optional): migrate remaining Step 3 UI into `ui/steps/` | `todo` | After 2e + stability | |
@@ -423,13 +425,36 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 
 ---
 
+## Deferred: UI color / design tokens (`SchedulePageClient` and beyond)
+
+**Why:** Phase **2f** closed with **extracted** schedule UI tokenized first (e.g. header dev tooltips) and `features/` documented for Tailwind — **not** a repo-wide recolor of **`SchedulePageClient.tsx`**, which remains large (“god file”). Sweeping that file only for cosmetics would be high churn, hard review, and weak modularity gain.
+
+**Product:** Schedule UX is **light-first**; **dark mode** is **not** a driver for token work unless requirements change.
+
+**Required workflow for Phases 3–5 (agents must not skip token silently)**
+
+1. **Structural slice** — main phase work (controller split, migration, step move).  
+2. **Verify** — code review + **mandatory gate** + smoke + **manual** on that slice; all green before tokens.  
+3. **Token slice** — align touched `features/schedule/ui/**` (and any `SchedulePageClient` regions changed in step 1) with semantic / `.rbip-*` tokens per `rbip-design-tokens.css` + `design-elements-commonality.mdc`; prefer **separate commit(s)** after behavior is frozen. Re-run gate after token work.  
+4. **Mark phase `done`** only after steps 1–3, **or** log **token N/A — no UI diff** if step 1 changed no JSX (explicit skip, not omission).
+
+**Smaller extractions:** If a move from `SchedulePageClient` is tiny, structural + token may be **one** commit only when the combined diff stays easy to review.
+
+**Avoid:** A standalone “repaint the whole `SchedulePageClient`” milestone with no structural extraction.
+
+**Detail (commands, matrix, exit criteria):** [`2026-04-11-schedule-ui-lib-separation-implementation-plan.md`](./2026-04-11-schedule-ui-lib-separation-implementation-plan.md) — **§ Deferred: UI color / design tokens on `SchedulePageClient` (post-2f policy)** and **§ Required two-slice workflow**.
+
+---
+
 ## Phase 3 — Split `useScheduleController` (facade)
 
 **Goal**: Smaller internal modules under `lib/features/schedule/controller/`; **public** `useScheduleController` API unchanged until intentional version bump.
 
 **Tasks**: (unchanged from prior plan — persistence / workflow / step runners / undo seams)
 
-**Verify**: Regression + manual Step 2/3/4.
+**Token workflow:** After structural slice is reviewed and verified (gate + smoke + manual), run the **token slice** on touched schedule UI — see **§ Deferred: UI color / design tokens** (required two-slice workflow). Log **token N/A** only if that slice changed **no** schedule UI files.
+
+**Verify**: Regression + manual Step 2/3/4; mandatory gate again after token commits when applicable.
 
 ---
 
@@ -444,7 +469,9 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 - [ ] Grep for stale `@/components/schedule` imports.
 - [ ] **Inventory** `components/allocation/**` used exclusively by schedule; plan moves into `features/schedule/ui/` (sections, steps, or dialogs) and execute incrementally.
 
-**Verify**: Automated tests you run locally + grep clean + **manual** schedule smoke pass on flows you care about.
+**Token workflow:** Per migration slice — **structural → verify → token** (see **§ Deferred**). Re-run gate after token commits.
+
+**Verify**: Automated tests you run locally + grep clean + **manual** schedule smoke pass on flows you care about; gate after token slices as applicable.
 
 ---
 
@@ -455,6 +482,8 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 **Consequence if skipped**: Schedule still works; indexability is partial until Phase 5.
 
 **Tasks**: Incremental **commits/slices** per macro-step; avoid big-bang renames.
+
+**Token workflow:** Per substep — **structural → verify → token** using step-scoped `.rbip-step*` / `rbipDesignTokens` + commonality rules (**§ Deferred**). For **leftover** literals in `SchedulePageClient`, token passes only **after** the relevant JSX has moved — scoped hunks, not whole-file repaint.
 
 ---
 
@@ -516,3 +545,5 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 | 2026-04-16 | Linked **implementation plan**; naming + barrels + **§B** map; **Phase 1** thin route + `SchedulePageClient` + `@source` + eslint `.worktrees` + smoke hardening. **Phase 2a:** `ui/dev/ScheduleDevLeaveSimBridge`, `DevLeaveSimPanelProps`, smoke `goToLeaveStep` `aria-current` + Previous fallback. |
 | 2026-04-16 | **Phase 2b:** `features/schedule/ui/sections/ScheduleWorkflowStepShell.tsx`; export **`StepIndicatorProps`** from `StepIndicator`. |
 | 2026-04-17 | Hybrid **§ `sections/` vs `steps/`**; §A appendix + “NOT RBIP paths”; **Which tree** callout; Phase 2b table + note; §B polish; **Data flow** line (UI + controller vs `pcaAllocationEngine` vs `lib/algorithms`); **Reviewer hardening**: solo workflow blurb, Phase 4 **`components/allocation/`** scope, grep split (math vs adapter), `lib`↔`features` import ban, smoke-flake note, § hooks wording (no direct Supabase), References anchor fix, Phase 3/5 PR wording → commits. |
+| 2026-04-16 | **§ Deferred: UI color / design tokens** — light-first; bundle token cleanup with **extractions** and **Phases 3–5**; no monolithic `SchedulePageClient` repaint. Tracker **2f** note + Phase **3/4/5** guidance bullets; companion **§ Deferred** in implementation plan + matrix row for **2f**. |
+| 2026-04-16 | **§ Deferred:** **Required two-slice workflow** for Phases **3–5** — structural → verify (review, gate, smoke, manual) → **token slice** → mark `done` or **token N/A**; replaces “optional” so agents do not skip token work silently. |
