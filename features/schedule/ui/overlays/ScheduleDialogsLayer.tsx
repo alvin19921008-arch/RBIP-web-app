@@ -1,0 +1,34 @@
+'use client'
+
+import type { ReactNode } from 'react'
+
+export function ScheduleDialogsLayer(props: {
+  bedCountsDialog: ReactNode
+  staffEditDialog: ReactNode
+  step1LeaveSetupDialog: ReactNode
+  tieBreakDialog: ReactNode
+  copyWizardDialog: ReactNode
+  floatingPcaDialog: ReactNode
+  specialProgramOverrideDialog: ReactNode
+  sptFinalEditDialog: ReactNode
+  sharedTherapistEditDialog: ReactNode
+  nonFloatingSubstitutionDialog: ReactNode
+  calendarPopover: ReactNode
+}) {
+  return (
+    <>
+      {props.bedCountsDialog}
+      {props.staffEditDialog}
+      {props.step1LeaveSetupDialog}
+      {props.tieBreakDialog}
+      {props.copyWizardDialog}
+      {props.floatingPcaDialog}
+      {props.specialProgramOverrideDialog}
+      {props.sptFinalEditDialog}
+      {props.sharedTherapistEditDialog}
+      {props.nonFloatingSubstitutionDialog}
+      {props.calendarPopover}
+    </>
+  )
+}
+

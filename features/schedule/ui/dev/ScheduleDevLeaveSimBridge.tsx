@@ -1,10 +1,10 @@
 'use client'
 
 import dynamic from 'next/dynamic'
-import type { DevLeaveSimPanelProps } from '@/components/schedule/DevLeaveSimPanel'
+import type { DevLeaveSimPanelProps } from '@/features/schedule/ui/dev/DevLeaveSimPanel'
 
 const DevLeaveSimPanelLazy = dynamic(
-  () => import('@/components/schedule/DevLeaveSimPanel').then((m) => m.DevLeaveSimPanel),
+  () => import('@/features/schedule/ui/dev/DevLeaveSimPanel').then((m) => m.DevLeaveSimPanel),
   { ssr: false }
 )
 

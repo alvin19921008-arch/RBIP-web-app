@@ -60,10 +60,10 @@ import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopov
 import { StaffContextMenu } from '@/components/allocation/StaffContextMenu'
 import { TeamPickerPopover } from '@/components/allocation/TeamPickerPopover'
 import { ConfirmPopover } from '@/components/allocation/ConfirmPopover'
-import { ScheduleOverlays } from '@/components/schedule/ScheduleOverlays'
-import { ScheduleHeaderBar } from '@/components/schedule/ScheduleHeaderBar'
-import { ScheduleDialogsLayer } from '@/components/schedule/ScheduleDialogsLayer'
-import { ScheduleMainLayout } from '@/components/schedule/ScheduleMainLayout'
+import { ScheduleOverlays } from '@/features/schedule/ui/overlays/ScheduleOverlays'
+import { ScheduleHeaderBar } from '@/features/schedule/ui/layout/ScheduleHeaderBar'
+import { ScheduleDialogsLayer } from '@/features/schedule/ui/overlays/ScheduleDialogsLayer'
+import { ScheduleMainLayout } from '@/features/schedule/ui/layout/ScheduleMainLayout'
 import { SplitPane } from '@/components/ui/SplitPane'
 import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, ImageDown, Undo2, Redo2, Info } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
@@ -304,15 +304,15 @@ const BufferStaffCreateDialog = dynamic(
   { ssr: false }
 )
 const ScheduleCalendarPopover = dynamic(
-  () => import('@/components/schedule/ScheduleCalendarPopover').then(m => m.ScheduleCalendarPopover),
+  () => import('@/features/schedule/ui/overlays/ScheduleCalendarPopover').then(m => m.ScheduleCalendarPopover),
   { ssr: false }
 )
 const ReferenceSchedulePane = dynamic(
-  () => import('@/components/schedule/ReferenceSchedulePane').then(m => m.ReferenceSchedulePane),
+  () => import('@/features/schedule/ui/panes/ReferenceSchedulePane').then(m => m.ReferenceSchedulePane),
   { ssr: false }
 )
 const ScheduleBlocks1To6 = dynamic(
-  () => import('@/components/schedule/ScheduleBlocks1To6').then(m => m.ScheduleBlocks1To6),
+  () => import('@/features/schedule/ui/panes/ScheduleBlocks1To6').then(m => m.ScheduleBlocks1To6),
   { ssr: false }
 )
 const PCADedicatedScheduleTable = dynamic(
@@ -330,7 +330,7 @@ const prefetchSpecialProgramOverrideDialog = () => import('@/components/allocati
 const prefetchSptFinalEditDialog = () => import('@/components/allocation/SptFinalEditDialog')
 const prefetchSharedTherapistEditDialog = () => import('@/components/allocation/SharedTherapistEditDialog')
 const prefetchNonFloatingSubstitutionDialog = () => import('@/components/allocation/NonFloatingSubstitutionDialog')
-const prefetchScheduleCalendarPopover = () => import('@/components/schedule/ScheduleCalendarPopover')
+const prefetchScheduleCalendarPopover = () => import('@/features/schedule/ui/overlays/ScheduleCalendarPopover')
 
 function combineScheduleCalculations(rows: Array<ScheduleCalculations | null | undefined>): ScheduleCalculations | null {
   const valid = rows.filter((row): row is ScheduleCalculations => !!row)
@@ -412,7 +412,7 @@ import {
 import { ALLOCATION_STEPS, EMPTY_BED_ALLOCATIONS, TEAMS, WEEKDAYS, WEEKDAY_NAMES } from '@/lib/features/schedule/constants'
 import { useScheduleController } from '@/lib/features/schedule/controller/useScheduleController'
 import type { PCAAllocationErrors } from '@/lib/features/schedule/controller/useScheduleController'
-import { AllocationExportView } from '@/components/schedule/AllocationExportView'
+import { AllocationExportView } from '@/features/schedule/ui/panes/AllocationExportView'
 import { downloadBlobAsFile, renderElementToImageBlob } from '@/lib/utils/exportPng'
 import { HelpCenterDialog } from '@/components/help/HelpCenterDialog'
 import { HELP_TOUR_PENDING_KEY } from '@/lib/help/tours'

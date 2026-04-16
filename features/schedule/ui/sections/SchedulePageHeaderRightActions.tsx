@@ -3,7 +3,7 @@
 import { CircleHelp, Copy } from 'lucide-react'
 import type { Dispatch, MutableRefObject, ReactNode, SetStateAction } from 'react'
 
-import { ScheduleSaveButton } from '@/components/schedule/ScheduleSaveButton'
+import { ScheduleSaveButton } from '@/features/schedule/ui/layout/ScheduleSaveButton'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { FeatureId } from '@/lib/access/types'
