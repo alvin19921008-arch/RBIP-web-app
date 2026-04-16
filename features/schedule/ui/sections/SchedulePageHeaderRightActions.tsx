@@ -9,6 +9,10 @@ import { Tooltip } from '@/components/ui/tooltip'
 import type { FeatureId } from '@/lib/access/types'
 import type { TimingReport } from '@/lib/utils/timing'
 
+/** Shared shell for diagnostics / save developer tooltips (theme-aware popover surface). */
+const SCHEDULE_HEADER_DEV_TOOLTIP_PANEL_CLASS =
+  'w-56 bg-popover text-popover-foreground border border-border shadow-lg rounded-md'
+
 export type ScheduleCopyWizardLaunchConfig = {
   sourceDate: Date
   targetDate: Date | null
@@ -113,51 +117,51 @@ export function SchedulePageHeaderRightActions({
                 side="bottom"
                 className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
                 content={
-                  <div className="w-56 bg-slate-800 border border-slate-700 rounded-md shadow-lg">
-                    <div className="border-b border-slate-700 px-3 py-2 text-xs text-slate-500">Diagnostics</div>
+                  <div className={SCHEDULE_HEADER_DEV_TOOLTIP_PANEL_CLASS}>
+                    <div className="border-b border-border px-3 py-2 text-xs text-muted-foreground">Diagnostics</div>
 
                     {access.can('schedule.diagnostics.snapshot-health') ? (
                       snapshotHealthReport ? (
-                        <div className="px-3 pt-2 text-xs text-slate-200 space-y-1">
+                        <div className="px-3 pt-2 text-xs text-foreground space-y-1">
                           <div>
-                            <span className="text-slate-400">snapshotHealth:</span> {snapshotHealthReport.status}
+                            <span className="text-muted-foreground">snapshotHealth:</span> {snapshotHealthReport.status}
                           </div>
                           {snapshotHealthReport.issues && snapshotHealthReport.issues.length > 0 && (
                             <div>
-                              <span className="text-slate-400">issues:</span> {snapshotHealthReport.issues.join(', ')}
+                              <span className="text-muted-foreground">issues:</span> {snapshotHealthReport.issues.join(', ')}
                             </div>
                           )}
                           <div>
-                            <span className="text-slate-400">staff:</span> {snapshotHealthReport.snapshotStaffCount} (missing
+                            <span className="text-muted-foreground">staff:</span> {snapshotHealthReport.snapshotStaffCount} (missing
                             referenced: {snapshotHealthReport.missingReferencedStaffCount})
                           </div>
                           {(snapshotHealthReport.schemaVersion || snapshotHealthReport.source) && (
                             <div>
-                              <span className="text-slate-400">meta:</span>{' '}
+                              <span className="text-muted-foreground">meta:</span>{' '}
                               {snapshotHealthReport.schemaVersion ? `v${snapshotHealthReport.schemaVersion}` : 'v?'}
                               {snapshotHealthReport.source ? `, ${snapshotHealthReport.source}` : ''}
                             </div>
                           )}
                         </div>
                       ) : (
-                        <div className="px-3 pt-2 text-xs text-slate-500">snapshotHealth: (none)</div>
+                        <div className="px-3 pt-2 text-xs text-muted-foreground">snapshotHealth: (none)</div>
                       )
                     ) : null}
 
                     {access.can('schedule.diagnostics.copy') ? (
                       <>
-                        <div className="border-t border-slate-700 mt-2 px-3 py-2 text-[11px] text-slate-500">Copy timing</div>
-                        <div className="px-3 pb-3 text-xs text-slate-200 space-y-1">
+                        <div className="border-t border-border mt-2 px-3 py-2 text-[11px] text-muted-foreground">Copy timing</div>
+                        <div className="px-3 pb-3 text-xs text-foreground space-y-1">
                           {lastCopyTiming ? (
                             <>
                               <div>
-                                <span className="text-slate-400">client total:</span> {Math.round(lastCopyTiming.totalMs)}ms
+                                <span className="text-muted-foreground">client total:</span> {Math.round(lastCopyTiming.totalMs)}ms
                               </div>
                               {lastCopyTiming.stages.length > 0 && (
-                                <div className="text-[11px] text-slate-300 space-y-0.5">
+                                <div className="text-[11px] text-muted-foreground space-y-0.5">
                                   {lastCopyTiming.stages.map((s) => (
                                     <div key={`copy-client-${s.name}`}>
-                                      <span className="text-slate-400">{s.name}:</span> {Math.round(s.ms)}ms
+                                      <span className="text-muted-foreground">{s.name}:</span> {Math.round(s.ms)}ms
                                     </div>
                                   ))}
                                 </div>
@@ -168,28 +172,28 @@ export function SchedulePageHeaderRightActions({
                                 return (
                                   <div className="pt-1">
                                     <div>
-                                      <span className="text-slate-400">server total:</span> {Math.round(server.totalMs ?? 0)}ms{' '}
+                                      <span className="text-muted-foreground">server total:</span> {Math.round(server.totalMs ?? 0)}ms{' '}
                                       {typeof server?.meta?.rpcUsed === 'boolean'
                                         ? `(rpc:${server.meta.rpcUsed ? 'yes' : 'no'})`
                                         : null}
                                       {typeof server?.meta?.baselineBytes === 'number' ? (
-                                        <span className="text-slate-400"> baseline:{Math.round(server.meta.baselineBytes / 1024)}KB</span>
+                                        <span className="text-muted-foreground"> baseline:{Math.round(server.meta.baselineBytes / 1024)}KB</span>
                                       ) : null}
                                       {typeof server?.meta?.specialProgramsBytes === 'number' ? (
-                                        <span className="text-slate-400"> sp:{Math.round(server.meta.specialProgramsBytes / 1024)}KB</span>
+                                        <span className="text-muted-foreground"> sp:{Math.round(server.meta.specialProgramsBytes / 1024)}KB</span>
                                       ) : null}
                                       {server?.meta?.rpcError ? (
-                                        <span className="text-amber-300">
+                                        <span className="text-amber-700 dark:text-amber-400">
                                           {' '}
                                           rpcError:{String((server.meta.rpcError as any)?.message || 'unknown')}
                                         </span>
                                       ) : null}
                                     </div>
                                     {Array.isArray(server.stages) && server.stages.length > 0 && (
-                                      <div className="text-[11px] text-slate-300 space-y-0.5">
+                                      <div className="text-[11px] text-muted-foreground space-y-0.5">
                                         {server.stages.map((s: any) => (
                                           <div key={`copy-server-${s.name}`}>
-                                            <span className="text-slate-400">{s.name}:</span> {Math.round(s.ms ?? 0)}ms
+                                            <span className="text-muted-foreground">{s.name}:</span> {Math.round(s.ms ?? 0)}ms
                                           </div>
                                         ))}
                                       </div>
@@ -199,7 +203,7 @@ export function SchedulePageHeaderRightActions({
                               })()}
                             </>
                           ) : (
-                            <div className="text-slate-500">No copy timing captured yet.</div>
+                            <div className="text-muted-foreground">No copy timing captured yet.</div>
                           )}
                         </div>
                       </>
@@ -304,20 +308,20 @@ export function SchedulePageHeaderRightActions({
               side="bottom"
               className="p-0 bg-transparent border-0 shadow-none whitespace-normal"
               content={
-                <div className="w-56 bg-slate-800 border border-slate-700 rounded-md shadow-lg">
-                  <div className="border-b border-slate-700 px-3 py-2 text-xs text-slate-500">Save timing</div>
-                  <div className="px-3 py-2 text-xs text-slate-200 space-y-1">
+                <div className={SCHEDULE_HEADER_DEV_TOOLTIP_PANEL_CLASS}>
+                  <div className="border-b border-border px-3 py-2 text-xs text-muted-foreground">Save timing</div>
+                  <div className="px-3 py-2 text-xs text-foreground space-y-1">
                     {lastSaveTiming ? (
                       <>
                         <div>
-                          <span className="text-slate-400">total:</span> {Math.round(lastSaveTiming.totalMs)}ms
+                          <span className="text-muted-foreground">total:</span> {Math.round(lastSaveTiming.totalMs)}ms
                         </div>
                         {(() => {
                           const meta = lastSaveTiming.meta as any
                           if (!meta) return null
                           return (
                             <>
-                              <div className="text-[11px] text-slate-400">
+                              <div className="text-[11px] text-muted-foreground">
                                 rpc:{meta.rpcUsed ? 'yes' : 'no'}
                                 {typeof meta.rpcAttempted === 'boolean' ? `, attempted:${meta.rpcAttempted ? 'yes' : 'no'}` : null}
                                 {typeof meta.rpcProxyUsed === 'boolean' ? `, proxy:${meta.rpcProxyUsed ? 'yes' : 'no'}` : null}
@@ -335,17 +339,17 @@ export function SchedulePageHeaderRightActions({
                                   : null}
                               </div>
                               {typeof meta.rpcProxyError === 'string' && meta.rpcProxyError.length > 0 ? (
-                                <div className="text-[10px] text-orange-300/90 truncate" title={meta.rpcProxyError}>
+                                <div className="text-[10px] text-amber-700 dark:text-amber-400 truncate" title={meta.rpcProxyError}>
                                   proxyMsg: {meta.rpcProxyError}
                                 </div>
                               ) : null}
                               {typeof meta.rpcErrorMessage === 'string' && meta.rpcErrorMessage.length > 0 ? (
-                                <div className="text-[10px] text-amber-300/90 truncate" title={meta.rpcErrorMessage}>
+                                <div className="text-[10px] text-amber-700 dark:text-amber-400 truncate" title={meta.rpcErrorMessage}>
                                   rpcMsg: {meta.rpcErrorMessage}
                                 </div>
                               ) : null}
                               {meta.rpcServerDiagnostics?.timings ? (
-                                <div className="text-[10px] text-slate-300/90 truncate">
+                                <div className="text-[10px] text-muted-foreground truncate">
                                   rpcServer:
                                   {' '}th {Math.round(meta.rpcServerDiagnostics.timings.therapist_ms ?? 0)}ms
                                   {' '}| pca {Math.round(meta.rpcServerDiagnostics.timings.pca_ms ?? 0)}ms
@@ -358,17 +362,17 @@ export function SchedulePageHeaderRightActions({
                           )
                         })()}
                         {lastSaveTiming.stages.length > 0 && (
-                          <div className="pt-1 text-[11px] text-slate-300 space-y-0.5">
+                          <div className="pt-1 text-[11px] text-muted-foreground space-y-0.5">
                             {lastSaveTiming.stages.map((s) => (
                               <div key={`save-${s.name}`}>
-                                <span className="text-slate-400">{s.name}:</span> {Math.round(s.ms)}ms
+                                <span className="text-muted-foreground">{s.name}:</span> {Math.round(s.ms)}ms
                               </div>
                             ))}
                           </div>
                         )}
                       </>
                     ) : (
-                      <div className="text-slate-500">No save timing captured yet.</div>
+                      <div className="text-muted-foreground">No save timing captured yet.</div>
                     )}
                   </div>
                 </div>

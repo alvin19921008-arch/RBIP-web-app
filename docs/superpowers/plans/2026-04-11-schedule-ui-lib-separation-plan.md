@@ -35,7 +35,7 @@
 | 2c | Extract DnD + main board shell | `done` | `ScheduleDndContextShell.tsx`, `ScheduleMainBoardChrome.tsx` | `lint+build+smoke OK 2026-04-16` |
 | 2d | Extract header / overlays / save strip | `done` | `SchedulePageHeaderRightActions.tsx`, `SchedulePageSplitMainPaneHeader.tsx` (Overlays/DialogsLayer still inline — optional thin shell) | `lint+build+smoke+f47 OK 2026-04-16` |
 | 2e | **Step / substep UI scaffold** (hybrid indexability) | `done` | `ui/steps/README.md`; pilot `step30-entry-flow/FloatingPCAEntryDialog.tsx`; allocation path = shim | `lint+build+smoke+f66+f47 OK 2026-04-16` |
-| 2f | **Design tokens + Tailwind** alignment for moved UI | `todo` | `styles/rbip-design-tokens.css`, `.cursor/rules/design-elements-commonality.mdc` | |
+| 2f | **Design tokens + Tailwind** alignment for moved UI | `done` | `features/schedule/ui/README.md`; semantic tooltips in `SchedulePageHeaderRightActions` | `lint+build+smoke+f66+f47 OK 2026-04-16` |
 | 3 | Split `useScheduleController` (facade) | `todo` | Parallel track OK | |
 | 4 | Legacy hook cleanup + `components/schedule` migration | `todo` | Strangler completion | |
 | 5 | **Deep step parity** (optional): migrate remaining Step 3 UI into `ui/steps/` | `todo` | After 2e + stability | |
@@ -411,9 +411,9 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 
 **Tasks**
 
-- [ ] Audit first migrated `features/schedule/ui/**` components: replace inline one-off colors with tokens where the rule applies.
-- [ ] Add `lib/design/rbipDesignTokens.ts` (or equivalent) **if** TS constants are needed — align with comment in `rbip-design-tokens.css`.
-- [ ] Confirm `globals.css` `@source` includes `features/` (if not done in Phase 1).
+- [x] Audit first migrated `features/schedule/ui/**` components: replace inline one-off colors with tokens where the rule applies. **Slice:** `SchedulePageHeaderRightActions` dev tooltip panels → `bg-popover` / `border-border` / muted + amber semantic text.
+- [x] Add `lib/design/rbipDesignTokens.ts` (or equivalent) **if** TS constants are needed — **skipped**; module-local `SCHEDULE_HEADER_DEV_TOOLTIP_PANEL_CLASS` used instead.
+- [x] Confirm `globals.css` `@source` includes `features/` (if not done in Phase 1). **Confirmed**; documented in `features/schedule/ui/README.md`.
 
 **Done when**: New UI paths compile; token usage noted in **commit message** or architecture **Progress tracker**.
 

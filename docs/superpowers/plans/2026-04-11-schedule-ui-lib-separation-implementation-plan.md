@@ -235,13 +235,13 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (canonical: `features/schedule/u
 
 **Technical**
 
-- [ ] New UI uses `styles/rbip-design-tokens.css` / documented utilities per `.cursor/rules/design-elements-commonality.mdc`.
-- [ ] `@source` includes `features/` (if not already from Phase 1).
+- [x] New UI uses `styles/rbip-design-tokens.css` / documented utilities per `.cursor/rules/design-elements-commonality.mdc` (semantic popover surfaces in migrated header actions; see `features/schedule/ui/README.md`).
+- [x] `@source` includes `features/` (if not already from Phase 1).
 
 **Verification**
 
-- [ ] Mandatory gate passes.
-- [ ] Manual visual: Step 3.2 / 3.3 surfaces touched still match token intent (no accidental unstyled blocks).
+- [x] Mandatory gate passes.
+- [x] Manual visual: Step 3.2 / 3.3 surfaces **unchanged** this slice (only header dev tooltips restyled); smoke + f66 + f47 green.
 
 **Done when**: No missing-class regressions; spot-check documented.
 
