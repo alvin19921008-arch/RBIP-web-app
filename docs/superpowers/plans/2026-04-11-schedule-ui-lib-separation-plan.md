@@ -17,7 +17,7 @@
 |----|---------|----------|--------|
 | P0 | Schedule **body** still large (~13k in `SchedulePageClient`); route `page.tsx` is thin — shrink body via Phases 2–2e | P0 | `in_progress` |
 | P1 | UI vs logic mixed; unclear grep boundaries | P0 | `in_progress` |
-| P2 | No stable **step/substep** home for schedule UI (indexability) | P1 | `todo` |
+| P2 | No stable **step/substep** home for schedule UI (indexability) | P1 | `in_progress` (Floating PCA config wizard + step34 VM under `ui/steps/step3-floating/`; `SchedulePageClient` still large) |
 | P3 | `useScheduleController` ~4k lines; second “god” surface | P2 | `done` (types + domain modules landed; further hook splits optional) |
 | P4 | Legacy hooks / duplicate mental models (`hooks/useScheduleState`, etc.) | P2 | `done` |
 | P5 | New `features/` tree must participate in **Tailwind v4 `@source`** | P0 | `done` |
@@ -40,7 +40,7 @@
 | 2f | **Design tokens + Tailwind** alignment for moved UI | `done` | `features/schedule/ui/README.md`; semantic tooltips in `SchedulePageHeaderRightActions`. **Broad** token sweep on `SchedulePageClient` **deferred** — see **§ Deferred: UI color / design tokens** below + companion **§ Deferred** in implementation plan. | `lint+build+smoke+f66+f47 OK 2026-04-16` |
 | 3 | Split `useScheduleController` (facade) | `done` | `scheduleControllerTypes.ts`, `scheduleDomainState.ts`; gym/f124 `c2b11ea`. Token N/A. | `lint+build+smoke OK; full regression tsx OK; manual Step2/3/4+save OK 2026-04-16` |
 | 4 | Legacy hook cleanup + `components/schedule` migration | `done` | 4a migrate+shims+hooks; 4b tokens `8274d20`+`535d163`. README allocation inventory. | `lint+build+smoke; full regression tsx; grep clean 2026-04-16` |
-| 5 | **Deep step parity** (optional): migrate remaining Step 3 UI into `ui/steps/` | `todo` | After 2e + stability | |
+| 5 | **Deep step parity** (optional): migrate remaining Step 3 UI into `ui/steps/` | `done` | 5a `c5709a9` wizard+viewModel; 5b `42d3d21` light-first tokens (no dark-mode scope). Manual wizard: solo sign-off. | `lint+build+smoke; full regression tsx OK 2026-04-16` |
 
 **Legacy emoji column** (optional): ⬜ = `todo`, 🟡 = `in_progress`, ✅ = `done`, ⏸️ = `blocked`
 
