@@ -34,7 +34,7 @@
 | 2b | Extract step indicator + navigation strip | `done` | `ScheduleWorkflowStepShell`; export `StepIndicatorProps` | `lint+build+smoke+f47 OK 2026-04-16` |
 | 2c | Extract DnD + main board shell | `done` | `ScheduleDndContextShell.tsx`, `ScheduleMainBoardChrome.tsx` | `lint+build+smoke OK 2026-04-16` |
 | 2d | Extract header / overlays / save strip | `done` | `SchedulePageHeaderRightActions.tsx`, `SchedulePageSplitMainPaneHeader.tsx` (Overlays/DialogsLayer still inline — optional thin shell) | `lint+build+smoke+f47 OK 2026-04-16` |
-| 2e | **Step / substep UI scaffold** (hybrid indexability) | `todo` | See § “UI step tree”; pilot one mini-step | |
+| 2e | **Step / substep UI scaffold** (hybrid indexability) | `done` | `ui/steps/README.md`; pilot `step30-entry-flow/FloatingPCAEntryDialog.tsx`; allocation path = shim | `lint+build+smoke+f66+f47 OK 2026-04-16` |
 | 2f | **Design tokens + Tailwind** alignment for moved UI | `todo` | `styles/rbip-design-tokens.css`, `.cursor/rules/design-elements-commonality.mdc` | |
 | 3 | Split `useScheduleController` (facade) | `todo` | Parallel track OK | |
 | 4 | Legacy hook cleanup + `components/schedule` migration | `todo` | Strangler completion | |
@@ -394,10 +394,10 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 
 **Tasks**
 
-- [ ] Add `features/schedule/ui/steps/README.md` (short: mandatory **lowercase kebab-case** dirs + `substeps/stepNN-slug/` pattern; **logic stays in `lib/features/schedule/`**; **barrels**: prefer direct imports; link to architecture plan § Step folder naming).
-- [ ] Create minimal folder tree under `steps/step3-floating/substeps/` (empty `index.ts` or one pilot component).
-- [ ] Migrate **one** pilot UI chunk from `SchedulePageClient` or `components/schedule` into the scaffold (prefer a self-contained dialog or panel).
-- [ ] Update imports; no behavior change.
+- [x] Add `features/schedule/ui/steps/README.md` (short: mandatory **lowercase kebab-case** dirs + `substeps/stepNN-slug/` pattern; **logic stays in `lib/features/schedule/`**; **barrels**: prefer direct imports; link to architecture plan § Step folder naming).
+- [x] Create minimal folder tree under `steps/step3-floating/substeps/` (empty `index.ts` or one pilot component).
+- [x] Migrate **one** pilot UI chunk from `SchedulePageClient` or `components/schedule` into the scaffold (prefer a self-contained dialog or panel). **Pilot:** `FloatingPCAEntryDialog` → `step3-floating/substeps/step30-entry-flow/`; `components/allocation/FloatingPCAEntryDialog.tsx` re-exports for compatibility.
+- [x] Update imports; no behavior change.
 
 **Done when**: Pilot renders; grep `features/schedule/ui/steps` finds the pilot.
 

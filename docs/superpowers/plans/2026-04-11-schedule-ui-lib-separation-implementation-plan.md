@@ -92,7 +92,7 @@ done
 
 ### Step 3 Playwright path: **V2 ranked** (smoke default)
 
-Step 3 opens **`FloatingPCAEntryDialog`** first (`components/allocation/FloatingPCAEntryDialog.tsx`): users choose **“V1 legacy”** or **“V2 ranked”**. Ranked-slot **V2** is the long-term primary engine, so smokes that open the Step 3 wizard after **Initialize / Re-run** should:
+Step 3 opens **`FloatingPCAEntryDialog`** first (canonical: `features/schedule/ui/steps/step3-floating/substeps/step30-entry-flow/FloatingPCAEntryDialog.tsx`; `components/allocation/FloatingPCAEntryDialog.tsx` remains a **client re-export** shim): users choose **“V1 legacy”** or **“V2 ranked”**. Ranked-slot **V2** is the long-term primary engine, so smokes that open the Step 3 wizard after **Initialize / Re-run** should:
 
 1. Call **`chooseFloatingPcaV2RankedFromEntryDialog(page)`** — `tests/smoke/helpers/floatingPcaStep3V2.ts`
 2. Assert V2 config chrome, e.g. **`expectFloatingPcaV2ConfigDialogFromStep31(page)`** — footer uses **“Continue to 3.2 Preferred”** (etc.), which **differs** from V1’s **“Continue to 3.2”** (no `Preferred`).
@@ -218,14 +218,14 @@ Step 3 opens **`FloatingPCAEntryDialog`** first (`components/allocation/Floating
 
 **Technical**
 
-- [ ] `features/schedule/ui/steps/` exists with README (mandatory **lowercase kebab-case** dirs + `substeps/stepNN-slug/`; logic in `lib/`; **barrels**: prefer direct imports) + one **pilot** migration.
-- [ ] Pilot route renders; no duplicate mount of providers.
+- [x] `features/schedule/ui/steps/` exists with README (mandatory **lowercase kebab-case** dirs + `substeps/stepNN-slug/`; logic in `lib/`; **barrels**: prefer direct imports) + one **pilot** migration.
+- [x] Pilot route renders; no duplicate mount of providers.
 
 **Verification**
 
-- [ ] Mandatory gate passes.
-- [ ] `npx tsx tests/regression/f66-step3-v2-harness-uses-ranked-slot-engine.test.ts` passes (harness unchanged).
-- [ ] `f47` passes if step3 import graph touched.
+- [x] Mandatory gate passes.
+- [x] `npx tsx tests/regression/f66-step3-v2-harness-uses-ranked-slot-engine.test.ts` passes (harness unchanged).
+- [x] `f47` passes if step3 import graph touched.
 
 **Done when**: Pilot works + curated regression green.
 

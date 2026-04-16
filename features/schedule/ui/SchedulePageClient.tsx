@@ -265,7 +265,10 @@ const Step1LeaveSetupDialog = dynamic(
   { ssr: false }
 )
 const FloatingPCAEntryDialog = dynamic(
-  () => import('@/components/allocation/FloatingPCAEntryDialog').then(m => m.FloatingPCAEntryDialog),
+  () =>
+    import('@/features/schedule/ui/steps/step3-floating/substeps/step30-entry-flow/FloatingPCAEntryDialog').then(
+      (m) => m.FloatingPCAEntryDialog
+    ),
   { ssr: false }
 )
 const FloatingPCAConfigDialogV1 = dynamic(
@@ -319,7 +322,8 @@ const PCADedicatedScheduleTable = dynamic(
 
 const prefetchScheduleCopyWizard = () => import('@/components/allocation/ScheduleCopyWizard')
 const prefetchStaffEditDialog = () => import('@/components/allocation/StaffEditDialog')
-const prefetchFloatingPCAEntryDialog = () => import('@/components/allocation/FloatingPCAEntryDialog')
+const prefetchFloatingPCAEntryDialog = () =>
+  import('@/features/schedule/ui/steps/step3-floating/substeps/step30-entry-flow/FloatingPCAEntryDialog')
 const prefetchFloatingPCAConfigDialogV1 = () => import('@/components/allocation/FloatingPCAConfigDialogV1')
 const prefetchFloatingPCAConfigDialogV2 = () => import('@/components/allocation/FloatingPCAConfigDialogV2')
 const prefetchSpecialProgramOverrideDialog = () => import('@/components/allocation/SpecialProgramOverrideDialog')
