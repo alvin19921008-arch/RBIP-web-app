@@ -2369,7 +2369,7 @@ export function FloatingPCAConfigDialogV2({
               <div key={`${selectedStep34Detail.team}-${card.slot}`} className="flex items-center gap-2">
                 <div className="min-w-[108px] max-w-[140px] shrink-0 rounded-xl border bg-background p-2.5">
                   <div className="text-[11px] font-semibold text-muted-foreground">{card.label}</div>
-                  <div className="mt-1.5 inline-flex rounded-md bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                  <div className="mt-1.5 inline-flex rounded-md bg-muted px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground">
                     {card.timeRange}
                   </div>
                   <div className="mt-1.5 text-xs font-semibold leading-snug text-foreground">{card.resultLabel}</div>
@@ -2450,11 +2450,11 @@ export function FloatingPCAConfigDialogV2({
             >
               {visibleSteps.map((step, index) => (
                 <div key={step} className="flex items-center gap-2">
-                  {index > 0 ? <span className="text-slate-400">•</span> : null}
+                  {index > 0 ? <span className="text-muted-foreground/60">•</span> : null}
                   <span
                     className={cn(
                       currentStep === step
-                        ? 'rounded-full bg-slate-100 px-3 py-1 font-semibold text-foreground dark:bg-slate-700'
+                        ? 'rounded-full bg-muted px-3 py-1 font-semibold text-foreground'
                         : ''
                     )}
                   >

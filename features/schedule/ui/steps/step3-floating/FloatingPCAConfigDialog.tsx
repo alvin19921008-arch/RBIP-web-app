@@ -1654,8 +1654,8 @@ export function FloatingPCAConfigDialog({
             className={cn(
               'relative pl-4 pr-3 py-3 text-left transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border-l-2',
               allocationMode === 'standard'
-                ? 'border-l-primary bg-slate-50/40'
-                : 'border-l-transparent hover:bg-slate-50/30'
+                ? 'border-l-primary bg-muted/40'
+                : 'border-l-transparent hover:bg-muted/30'
             )}
           >
             <div className="flex items-start justify-between gap-3">
@@ -1754,7 +1754,7 @@ export function FloatingPCAConfigDialog({
                       'rounded border px-3 py-2 text-left text-xs transition-all duration-200',
                       preferenceProtectionMode === 'exclusive'
                         ? 'border-primary bg-white'
-                        : 'border-border bg-background hover:bg-slate-50/60'
+                        : 'border-border bg-background hover:bg-muted/60'
                     )}
                   >
                     <div className="font-semibold text-foreground">Strict (default) - Exclusive</div>
@@ -1782,7 +1782,7 @@ export function FloatingPCAConfigDialog({
                       'rounded border px-3 py-2 text-left text-xs transition-all duration-200',
                       preferenceProtectionMode === 'share'
                         ? 'border-primary bg-white'
-                        : 'border-border bg-background hover:bg-slate-50/60'
+                        : 'border-border bg-background hover:bg-muted/60'
                     )}
                   >
                     <div className="font-semibold text-foreground">Flexible sharing - Slot-only</div>
@@ -1819,8 +1819,8 @@ export function FloatingPCAConfigDialog({
             className={cn(
               'relative pl-4 pr-3 py-3 text-left transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border-l-2',
               allocationMode === 'balanced'
-                ? 'border-l-primary bg-slate-50/40'
-                : 'border-l-transparent hover:bg-slate-50/30'
+                ? 'border-l-primary bg-muted/40'
+                : 'border-l-transparent hover:bg-muted/30'
             )}
           >
             <div className="flex items-start justify-between gap-3">
@@ -2083,7 +2083,7 @@ export function FloatingPCAConfigDialog({
                 return steps.map((s, i) => (
                   <Fragment key={s.id}>
                     {i > 0 ? <span aria-hidden="true">·</span> : null}
-                    <span className={cn('px-2.5 py-1 rounded-md text-xs text-muted-foreground', currentMiniStep === s.id && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>
+                    <span className={cn('px-2.5 py-1 rounded-md text-xs text-muted-foreground', currentMiniStep === s.id && 'bg-muted font-semibold text-primary')}>
                       {s.label}
                     </span>
                   </Fragment>
@@ -2118,7 +2118,7 @@ export function FloatingPCAConfigDialog({
                   return steps.map((s, i) => (
                     <Fragment key={s.id}>
                       {i > 0 ? <span aria-hidden="true">·</span> : null}
-                      <span className={cn('px-2.5 py-1 rounded-md', currentMiniStep === s.id && 'bg-slate-100 dark:bg-slate-700 font-semibold text-primary')}>
+                      <span className={cn('px-2.5 py-1 rounded-md', currentMiniStep === s.id && 'bg-muted font-semibold text-primary')}>
                         {s.label}
                       </span>
                     </Fragment>
