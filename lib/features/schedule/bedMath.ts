@@ -1,4 +1,5 @@
 import type { Team } from '@/types/staff'
+import type { BedCountsOverridesByTeam } from '@/lib/features/schedule/controller/scheduleControllerTypes'
 
 export type WardForScheduleBedMath = {
   name: string
@@ -6,17 +7,6 @@ export type WardForScheduleBedMath = {
   team_assignments: Record<Team, number>
   team_assignment_portions?: Partial<Record<Team, string>>
 }
-
-export type BedCountsOverridesByTeam = Partial<
-  Record<
-    Team,
-    {
-      wardBedCounts?: Record<string, number | null> | undefined
-      shsBedCounts?: number | null | undefined
-      studentPlacementBedCounts?: number | null | undefined
-    }
-  >
->
 
 export function formatWardLabel(ward: WardForScheduleBedMath, team: Team): string {
   // Prefer stored portion text if available

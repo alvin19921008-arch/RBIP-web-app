@@ -410,6 +410,7 @@ import {
 import { ALLOCATION_STEPS, EMPTY_BED_ALLOCATIONS, TEAMS, WEEKDAYS, WEEKDAY_NAMES } from '@/lib/features/schedule/constants'
 import { useScheduleController } from '@/lib/features/schedule/controller/useScheduleController'
 import type { PCAAllocationErrors } from '@/lib/features/schedule/controller/useScheduleController'
+import type { BedCountsOverridesByTeam } from '@/lib/features/schedule/controller/scheduleControllerTypes'
 import { AllocationExportView } from '@/features/schedule/ui/panes/AllocationExportView'
 import { downloadBlobAsFile, renderElementToImageBlob } from '@/lib/utils/exportPng'
 import { HelpCenterDialog } from '@/components/help/HelpCenterDialog'
@@ -444,6 +445,10 @@ import {
   type TeamSettingsMergeRow,
 } from '@/lib/utils/teamMerge'
 
+/** Per main team: summed SHS + student placement deductions from contributor teams (display/export). */
+type BedCountsShsStudentMergedByTeam = Partial<
+  Record<Team, { shsBedCounts: number; studentPlacementBedCounts: number }>
+>
 
 function SchedulePageContent() {
   const router = useRouter()
@@ -3687,7 +3692,7 @@ function SchedulePageContent() {
     const { bedsDesignatedByTeam, totalBedsEffectiveAllTeams } = computeBedsDesignatedByTeam({
       teams: recalculationTeams,
       wards: wardsForRecalculation as any,
-      bedCountsOverridesByTeam: bedCountsOverridesByTeam as any,
+      bedCountsOverridesByTeam,
     })
     const { bedsForRelieving, overallBedsPerPT } = computeBedsForRelieving({
       teams: recalculationTeams,
@@ -3880,7 +3885,7 @@ function SchedulePageContent() {
     const { totalBedsEffectiveAllTeams } = computeBedsDesignatedByTeam({
       teams: recalculationTeams,
       wards: wardsForRecalculation as any,
-      bedCountsOverridesByTeam: bedCountsOverridesByTeam as any,
+      bedCountsOverridesByTeam,
     })
     if (!(totalBedsEffectiveAllTeams > 0)) return
 
@@ -4026,7 +4031,7 @@ function SchedulePageContent() {
     const { bedsDesignatedByTeam, totalBedsEffectiveAllTeams } = computeBedsDesignatedByTeam({
       teams: recalculationTeams,
       wards: wardsForRecalculation as any,
-      bedCountsOverridesByTeam: bedCountsOverridesByTeam as any,
+      bedCountsOverridesByTeam,
     })
     const { bedsForRelieving } = computeBedsForRelieving({
       teams: recalculationTeams,
@@ -6414,14 +6419,14 @@ function SchedulePageContent() {
   }, [visibleTeams, teamContributorsByMain, calculations])
 
   const bedCountsOverridesByTeamForDisplay = useMemo(() => {
-    const out: Partial<Record<Team, { shsBedCounts?: number; studentPlacementBedCounts?: number }>> = {}
+    const out: BedCountsShsStudentMergedByTeam = {}
     visibleTeams.forEach((mainTeam) => {
       const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
       let shsTotal = 0
       let studentTotal = 0
       let hasAny = false
       contributors.forEach((team) => {
-        const override = (bedCountsOverridesByTeam?.[team] as any) || null
+        const override = bedCountsOverridesByTeam?.[team] ?? null
         if (override && typeof override.shsBedCounts === 'number') {
           shsTotal += override.shsBedCounts
           hasAny = true
@@ -10367,7 +10372,7 @@ function SchedulePageContent() {
               calculationsByTeam={calculationsForDisplay as any}
               staff={staff as any}
               staffOverrides={staffOverridesForPcaDisplay as any}
-              bedCountsOverridesByTeam={bedCountsOverridesByTeamForDisplay as any}
+              bedCountsOverridesByTeam={bedCountsOverridesByTeamForDisplay}
               bedRelievingNotesByToTeam={bedRelievingNotesByToTeamForDisplay as any}
               stepStatus={stepStatus as any}
               initializedSteps={initializedSteps as any}
@@ -10742,18 +10747,18 @@ function SchedulePageContent() {
             {(() => {
               const totalBeds = wards.reduce((sum, ward) => sum + ward.total_beds, 0)
               const shsBedsTotal = TEAMS.reduce((sum, team) => {
-                const o = (bedCountsOverridesByTeam as any)?.[team]
+                const o = bedCountsOverridesByTeam?.[team]
                 const shs = typeof o?.shsBedCounts === 'number' ? o.shsBedCounts : 0
                 return sum + shs
               }, 0)
               const studentBedsTotal = TEAMS.reduce((sum, team) => {
-                const o = (bedCountsOverridesByTeam as any)?.[team]
+                const o = bedCountsOverridesByTeam?.[team]
                 const students =
                   typeof o?.studentPlacementBedCounts === 'number' ? o.studentPlacementBedCounts : 0
                 return sum + students
               }, 0)
               const hasShsOrStudents = TEAMS.some(team => {
-                const o = (bedCountsOverridesByTeam as any)?.[team]
+                const o = bedCountsOverridesByTeam?.[team]
                 const shs = typeof o?.shsBedCounts === 'number' ? o.shsBedCounts : 0
                 const students =
                   typeof o?.studentPlacementBedCounts === 'number' ? o.studentPlacementBedCounts : 0
@@ -11302,12 +11307,12 @@ function SchedulePageContent() {
                   <h3 className="text-xs font-semibold text-center mb-2">Beds Calculations</h3>
                   <div className="grid gap-2" style={visibleTeamGridStyle}>
                     {visibleTeams.map((team) => {
-                      const bedOverride = bedCountsOverridesByTeamForDisplay?.[team] as any
+                      const bedOverride = bedCountsOverridesByTeamForDisplay?.[team]
                       const shs =
-                        typeof bedOverride?.shsBedCounts === 'number' ? (bedOverride.shsBedCounts as number) : null
+                        typeof bedOverride?.shsBedCounts === 'number' ? bedOverride.shsBedCounts : null
                       const students =
                         typeof bedOverride?.studentPlacementBedCounts === 'number'
-                          ? (bedOverride.studentPlacementBedCounts as number)
+                          ? bedOverride.studentPlacementBedCounts
                           : null
 
                       return (
@@ -11719,7 +11724,7 @@ function SchedulePageContent() {
 
                 captureUndoCheckpoint('Bed counts override')
                 setBedCountsOverridesByTeam(prev => {
-                  const next = { ...prev } as any
+                  const next: BedCountsOverridesByTeam = { ...prev }
                   const hasAny =
                     Object.keys(wardBedCountsPruned).length > 0 ||
                     (typeof shs === 'number' && shs > 0) ||
@@ -12476,14 +12481,14 @@ function SplitReferencePortal(props: {
     return out
   }, [refVisibleTeams, refContributorsByMain, refScheduleState.calculations])
   const refBedCountsOverridesByTeamForDisplay = useMemo(() => {
-    const out: Partial<Record<Team, { shsBedCounts?: number; studentPlacementBedCounts?: number }>> = {}
+    const out: BedCountsShsStudentMergedByTeam = {}
     refVisibleTeams.forEach((mainTeam) => {
       const contributors = refContributorsByMain[mainTeam] || [mainTeam]
       let shsTotal = 0
       let studentTotal = 0
       let hasAny = false
       contributors.forEach((team) => {
-        const override = (refScheduleState.bedCountsOverridesByTeam?.[team] as any) || null
+        const override = refScheduleState.bedCountsOverridesByTeam?.[team] ?? null
         if (override && typeof override.shsBedCounts === 'number') {
           shsTotal += override.shsBedCounts
           hasAny = true
@@ -12586,7 +12591,7 @@ function SplitReferencePortal(props: {
             calculationsByTeam={refCalculationsForDisplay as any}
             staff={refScheduleState.staff as any}
             staffOverrides={refScheduleState.staffOverrides as any}
-            bedCountsOverridesByTeam={refBedCountsOverridesByTeamForDisplay as any}
+            bedCountsOverridesByTeam={refBedCountsOverridesByTeamForDisplay}
             bedRelievingNotesByToTeam={refBedRelievingNotesByToTeamForDisplay as any}
             stepStatus={refScheduleState.stepStatus as any}
             initializedSteps={refScheduleState.initializedSteps as any}

@@ -48,9 +48,8 @@ export type AllocationExportViewProps = {
 
   staff: Staff[]
   staffOverrides: StaffOverridesLike
-  bedCountsOverridesByTeam?: Record<
-    Team,
-    { shsBedCounts?: number | null; studentPlacementBedCounts?: number | null } | undefined
+  bedCountsOverridesByTeam?: Partial<
+    Record<Team, { shsBedCounts?: number | null; studentPlacementBedCounts?: number | null } | undefined>
   >
   bedRelievingNotesByToTeam?: BedRelievingNotesByToTeam
   onSaveBedRelievingNotesForToTeam?: (toTeam: Team, notes: BedRelievingNotesForToTeam) => void

@@ -61,7 +61,9 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
 
   staff: Staff[]
   staffOverrides: StaffOverrides
-  bedCountsOverridesByTeam?: Record<Team, { shsBedCounts?: number | null; studentPlacementBedCounts?: number | null } | undefined>
+  bedCountsOverridesByTeam?: Partial<
+    Record<Team, { shsBedCounts?: number | null; studentPlacementBedCounts?: number | null } | undefined>
+  >
 
   // Bed relieving note editing is only enabled when this callback is provided AND currentStep === 'bed-relieving' within BedBlock.
   bedRelievingNotesByToTeam?: BedRelievingNotesByToTeam
