@@ -36,8 +36,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils'
 import { rbipStep33, rbipStep34 } from '@/lib/design/rbipDesignTokens'
 import { useStep3V2DetailBeakCenter } from '@/lib/hooks/useStep3V2DetailBeakCenter'
-import { Step3V2LaneDetailShell } from '@/components/allocation/step3V2/Step3V2LaneDetailShell'
-import { TeamPendingCard, TIE_BREAKER_COLORS } from '@/components/allocation/TeamPendingCard'
+import { Step3V2LaneDetailShell } from './components/step3-v2-lane-detail-shell/Step3V2LaneDetailShell'
+import { TeamPendingCard, TIE_BREAKER_COLORS } from './components/team-wizard-cards/TeamPendingCard'
 import {
   buildStep3V2VisibleSteps,
   getStep3V2BackTarget,
@@ -56,8 +56,8 @@ import {
 import { buildV2Step31ScarcitySummary } from '@/lib/features/schedule/step31V2ScarcitySummary'
 import { runStep3V2CommittedSelections } from '@/lib/features/schedule/step3V2CommittedSelections'
 import { computeStep3V2ReservationPreview } from '@/lib/features/schedule/step3V2ReservationPreview'
-import { Step32PreferredReviewDetailPanel } from '@/components/allocation/step32V2/Step32PreferredReviewDetailPanel'
-import { Step32PreferredReviewLane } from '@/components/allocation/step32V2/Step32PreferredReviewLane'
+import { Step32PreferredReviewDetailPanel } from './substeps/step32-preferred/Step32PreferredReviewDetailPanel'
+import { Step32PreferredReviewLane } from './substeps/step32-preferred/Step32PreferredReviewLane'
 import {
   computeAdjacentSlotReservations,
   type AdjacentSlotInfo,
@@ -71,7 +71,7 @@ import {
   computeStep33AssignedFloating3233Preview,
   shouldOmitStep32ForStep33ReplaceSave,
 } from '@/lib/features/schedule/step3V2ScratchPreview'
-import { buildStep34TeamDetailViewModel } from './step34/step34ViewModel'
+import { buildStep34TeamDetailViewModel } from './substeps/step34-preview/step34ViewModel'
 
 import type { FloatingPCAConfigDialogV1Props } from './FloatingPCAConfigDialogV1'
 import {

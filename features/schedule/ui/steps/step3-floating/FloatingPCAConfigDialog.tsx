@@ -9,9 +9,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip } from '@/components/ui/tooltip'
-import { TeamPendingCard, TIE_BREAKER_COLORS } from '@/components/allocation/TeamPendingCard'
-import { TeamReservationCard } from '@/components/allocation/TeamReservationCard'
-import { TeamAdjacentSlotCard } from '@/components/allocation/TeamAdjacentSlotCard'
+import { TeamPendingCard, TIE_BREAKER_COLORS } from './components/team-wizard-cards/TeamPendingCard'
+import { TeamReservationCard } from './components/team-wizard-cards/TeamReservationCard'
+import { TeamAdjacentSlotCard } from './components/team-wizard-cards/TeamAdjacentSlotCard'
 import { ChevronRight, ChevronDown, ArrowLeft, ArrowRight, Lightbulb, GripVertical, Check, Circle, AlertTriangle, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { roundDownToQuarter, roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
@@ -58,7 +58,7 @@ import {
   SvgViewer,
   Step3StandardModeExplainerSvg,
   Step3BalancedModeExplainerSvg,
-} from '@/components/allocation/Step3ModeExplainerAnimated'
+} from './components/step3-mode-explainer-animated/Step3ModeExplainerAnimated'
 import {
   buildProjectedExtraSlotsTooltipLines,
   buildStep31PreviewExtraCoverageOptions,
