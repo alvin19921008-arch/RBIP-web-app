@@ -1,4 +1,5 @@
 import type { Team, LeaveType, SharedTherapistAllocationMode } from '@/types/staff'
+import type { BedCountsOverrideState } from '@/types/schedule'
 
 export type ScheduleWardRow = {
   name: string
@@ -80,9 +81,7 @@ export type StaffOverrideState = {
   cardColorByTeam?: Partial<Record<Team, string>>
 }
 
-export type BedCountsOverridesByTeam = Partial<
-  Record<Team, import('@/components/allocation/BedCountsEditDialog').BedCountsOverrideState>
->
+export type BedCountsOverridesByTeam = Partial<Record<Team, BedCountsOverrideState>>
 export type BedRelievingNotesByToTeam = import('@/types/schedule').BedRelievingNotesByToTeam
 
 export type PCAAllocationErrors = {

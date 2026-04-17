@@ -117,6 +117,25 @@ export type BedRelievingNotesByToTeam = Partial<
   Record<Team, BedRelievingNotesForToTeam>
 >
 
+// ============================================================================
+// Bed counts overrides (dashboard bed edit dialog; staffOverrides.__bedCounts)
+// ============================================================================
+
+export type BedCountsOverridePayload = {
+  wardBedCounts: Record<string, number | null>
+  shsBedCounts: number | null
+  studentPlacementBedCounts: number | null
+}
+
+export type BedCountsOverrideState = Partial<BedCountsOverridePayload>
+
+export type BedCountsWardRow = {
+  wardName: string
+  wardLabel: string
+  wardTotalBeds: number
+  baselineTeamBeds: number
+}
+
 export interface ScheduleCalculations {
   id: string
   schedule_id: string

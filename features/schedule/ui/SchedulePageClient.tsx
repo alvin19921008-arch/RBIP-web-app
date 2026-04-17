@@ -21,6 +21,9 @@ import type {
   BedAllocation,
   BedRelievingNotesForToTeam,
   BedRelievingNotesByToTeam,
+  BedCountsOverridePayload,
+  BedCountsOverrideState,
+  BedCountsWardRow,
   ScheduleCalculations,
   AllocationTracker,
   WorkflowState,
@@ -36,12 +39,7 @@ import { AllocationNotesBoard } from '@/components/allocation/AllocationNotesBoa
 import { BedBlock } from '@/components/allocation/BedBlock'
 import { LeaveBlock } from '@/components/allocation/LeaveBlock'
 import { CalculationBlock } from '@/components/allocation/CalculationBlock'
-import {
-  BedCountsEditDialog,
-  type BedCountsOverridePayload,
-  type BedCountsOverrideState,
-  type BedCountsWardRow,
-} from '@/components/allocation/BedCountsEditDialog'
+import { BedCountsEditDialog } from '@/features/schedule/ui/allocation/BedCountsEditDialog'
 import { PCACalculationBlock } from '@/components/allocation/PCACalculationBlock'
 import { SummaryColumn } from '@/components/allocation/SummaryColumn'
 import { Button } from '@/components/ui/button'
