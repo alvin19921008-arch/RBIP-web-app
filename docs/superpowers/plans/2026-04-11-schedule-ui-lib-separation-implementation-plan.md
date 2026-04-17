@@ -336,11 +336,13 @@ When a subtree moves **out** of `SchedulePageClient` in **any** phase (2x or 3�
 
 ### Phase 6 — Step 3.4 substep path parity + `components/allocation/` peel
 
+**Bucket B (Step 3 floating wizard under `steps/step3-floating/`) is complete** (B1 structural + B2 audit: zero `@/components/allocation` imports in that tree); remaining allocation peel is **Bucket A** (grid / `PCABlock` / `pcaTracker/*`, etc.).
+
 **Technical**
 
-- [ ] **`step34` path parity:** Canonical **`step34ViewModel`** (and any Step 3.4-only co-located modules) live under **`features/schedule/ui/steps/step3-floating/substeps/step34-preview/`** per **`ARCHITECTURE_ESSENTIALS.mdc`** (not `step3-floating/step34/` at macro-step root). Update imports across wizard, shims, and **`tests/regression/*`** in the same slice.
+- [x] **`step34` path parity:** Canonical **`step34ViewModel`** (and any Step 3.4-only co-located modules) live under **`features/schedule/ui/steps/step3-floating/substeps/step34-preview/`** per **`ARCHITECTURE_ESSENTIALS.mdc`** (not `step3-floating/step34/` at macro-step root). Update imports across wizard, shims, and **`tests/regression/*`** in the same slice. *(Slice 1, 2026-04-17.)*
 - [ ] **Allocation peel:** Migrate schedule-primary surfaces listed in **`features/schedule/ui/README.md`** from **`components/allocation/`** into **`features/schedule/ui/`** in **incremental slices** (grid blocks, dialogs, `step3V2/*`, `step32V2/*`, `pcaTracker/*`, etc.); leave **thin shims** in `components/allocation/` only where required for stable deep links or update non-schedule consumers in the same slice.
-- [ ] **Type layering:** When a peel would leave **`lib/**` importing types from **`components/**`** (e.g. bed-count overrides), hoist shared types to **`@/types/schedule`** or **`lib/`** in that peel slice.
+- [x] **Type layering:** Hoist shared types when a peel would leave **`lib/**` importing types from **`components/**`**. *(Bed-count overrides: `BedCountsOverride*` in `@/types/schedule`; `scheduleControllerTypes` + `bedMath` aligned — Slice 3, 2026-04-17.)*
 
 **Token slice (after structural verify)** — same **§ Deferred → Required two-slice workflow** as Phases 3–5: token-align **touched** `features/schedule/ui/**` after each verified peel (light-first unless product ships dark mode). Log **token N/A** when a slice is import-path-only with no class changes.
 
@@ -389,3 +391,4 @@ Update the **architecture plan** tracker table after each phase:
 | 2026-04-16 | **Policy:** **§ Deferred: UI color / design tokens** — light-first product; bundle token cleanup with **Phases 3–6 extractions** (where UI moves); avoid monolithic repaint of `SchedulePageClient`. Cross-links in phase matrix + phase guidance. |
 | 2026-04-16 | **§ Deferred tightened:** **Required two-slice workflow** (structural → verify → token → `done` or **token N/A** logged). Phases **3–6** exit criteria + verification bullets updated so token pass is not silently skipped. |
 | 2026-04-17 | **Phase 6** added: **`substeps/step34-preview/`** path parity + **`components/allocation/` peel** per `features/schedule/ui/README.md` inventory; matrix + exit criteria; architecture plan **§ Phase 6**, **P6**, tracker row; token workflow wording extended to **Phases 3–6**. |
+| 2026-04-17 | **Phase 6 — Bucket B closure (B2):** one-line note under Phase 6 heading — wizard peel complete; allocation peel continues with **Bucket A**. |

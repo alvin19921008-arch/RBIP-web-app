@@ -19,9 +19,9 @@ That line is part of Phase 1 / Phase 2f so utilities used only under `features/`
 
 Prefer semantic shadcn-style variables (`bg-popover`, `border-border`, `text-muted-foreground`, etc.). **Light-first today:** dark mode is not a product target yet; avoid growing `dark:` surface area unless you are intentionally shipping dual-theme for a component.
 
-## Phase 2f note (this slice)
+## Phase 2f note (historical)
 
-Token alignment touched **developer diagnostics / timing tooltips** in `sections/SchedulePageHeaderRightActions.tsx` only. **Step 3.2 / 3.3** wizard UI (`components/allocation/*` dialogs) was not edited here.
+At Phase 2f, token alignment was scoped to **developer diagnostics / timing tooltips** in `sections/SchedulePageHeaderRightActions.tsx` only; **Step 3.2 / 3.3** wizard UI under `components/allocation/*` was not part of that edit. **Later:** Phase 6 — Bucket B — slice B1 moved the Step 3 floating wizard surface (including those cards/dialog shells) to canonical paths under `steps/step3-floating/`; see **Phase 6 status** below.
 
 ## Phase 4 — components/allocation inventory
 
@@ -38,4 +38,9 @@ This slice did **not** move `components/allocation/*`; it only records what is s
 - **`teamThemePalette`** is canonical under **`features/schedule/ui/allocation/teamThemePalette.ts`**; `components/allocation/teamThemePalette.ts` is a thin re-export shim.
 - **`BedCountsEditDialog`** is canonical under **`features/schedule/ui/allocation/BedCountsEditDialog.tsx`**; bed-count override types (`BedCountsOverridePayload`, `BedCountsOverrideState`, `BedCountsWardRow`) live in **`@/types/schedule`**; `components/allocation/BedCountsEditDialog.tsx` re-exports the component and types for backwards compatibility. Domain/controller code types bed overrides via **`scheduleControllerTypes.BedCountsOverridesByTeam`** (uses `BedCountsOverrideState` from `@/types/schedule`).
 - **Phase 6 — Bucket B — slice B1 (structural, done):** Step 3 floating wizard pieces moved under `steps/step3-floating/`: **`Step3V2LaneDetailShell`** (`components/step3-v2-lane-detail-shell/`), **Step 3.2 preferred review** (`substeps/step32-preferred/Step32PreferredReviewLane.tsx`, `Step32PreferredReviewDetailPanel.tsx`), and shared wizard UI **`TeamPendingCard`**, **`TeamReservationCard`**, **`TeamAdjacentSlotCard`**, **`Step3ModeExplainerAnimated`** (`components/team-wizard-cards/*`, `components/step3-mode-explainer-animated/`). Thin re-export shims remain under `components/allocation/` (same pattern as `BedCountsEditDialog` / `teamThemePalette`).
-- **Remaining Phase 6 (planned):** peel the rest of the **Phase 4 inventory** allocation surface into `features/schedule/ui/` per `docs/superpowers/plans/2026-04-11-schedule-ui-lib-separation-plan.md` and the **implementation plan** companion (exit criteria, verification matrix).
+
+#### Bucket B — complete
+
+- **Wizard UI** for Floating PCA under **`steps/step3-floating/`** is **canonical**; **`components/allocation/`** may keep **thin shims** for stable deep-link / legacy import paths (same pattern as other peeled symbols above).
+- **`pcaTracker/*` (V1/V2 tooltips)** stays under **`components/allocation/`** until **Bucket A** peels **`PCABlock`** (main grid) — **explicitly deferred**, not an open “next hunt” under Bucket B.
+- **Remaining Phase 6 (planned):** **Bucket A** — main schedule grid / **`PCABlock`** and related surfaces (including **`pcaTracker/*`**), plus any other **Phase 4 inventory** items still not under `features/schedule/ui/` — per `docs/superpowers/plans/2026-04-11-schedule-ui-lib-separation-plan.md` and the **implementation plan** companion (exit criteria, verification matrix). **Bucket B** is **closed** after B1 + **B2 audit** (`rg '@/components/allocation' features/schedule/ui/steps/step3-floating` → zero matches).

@@ -21,7 +21,7 @@
 | P3 | `useScheduleController` ~4k lines; second “god” surface | P2 | `done` (types + domain modules landed; further hook splits optional) |
 | P4 | Legacy hooks / duplicate mental models (`hooks/useScheduleState`, etc.) | P2 | `done` |
 | P5 | New `features/` tree must participate in **Tailwind v4 `@source`** | P0 | `done` |
-| P6 | **`components/allocation/` peel** + Step 3.4 **substep path parity** (`substeps/step34-preview/`) | P1 | `todo` |
+| P6 | **`components/allocation/` peel** + Step 3.4 **substep path parity** (`substeps/step34-preview/`) | P1 | `in_progress` |
 
 **Status values**: `todo` · `in_progress` · `blocked` · `done`
 
@@ -42,7 +42,7 @@
 | 3 | Split `useScheduleController` (facade) | `done` | `scheduleControllerTypes.ts`, `scheduleDomainState.ts`; gym/f124 `c2b11ea`. Token N/A. | `lint+build+smoke OK; full regression tsx OK; manual Step2/3/4+save OK 2026-04-16` |
 | 4 | Legacy hook cleanup + `components/schedule` migration | `done` | 4a migrate+shims+hooks; 4b tokens `8274d20`+`535d163`. README allocation inventory. | `lint+build+smoke; full regression tsx; grep clean 2026-04-16` |
 | 5 | **Deep step parity** (optional): migrate remaining Step 3 UI into `ui/steps/` | `done` | 5a `c5709a9` wizard+viewModel; 5b `42d3d21` light-first tokens (no dark-mode scope). Manual wizard: solo sign-off. | `lint+build+smoke; full regression tsx OK 2026-04-16` |
-| 6 | **Step 3.4 substep path** + **`components/allocation/` peel** | `todo` | Canonical `step34` under `substeps/step34-preview/`; incremental allocation → `features/schedule/ui/` per README inventory. See **§ Phase 6** below. | |
+| 6 | **Step 3.4 substep path** + **`components/allocation/` peel** | `in_progress` | Slices 1–3 + **Bucket B complete** (B1 + **B2** closure audit: zero `@/components/allocation` under `step3-floating/**`). **Bucket A** (grid / `PCABlock` / `pcaTracker/*`) still later. | `lint OK; rg step3-floating→0 @/components/allocation B2 2026-04-17` |
 
 **Legacy emoji column** (optional): ⬜ = `todo`, 🟡 = `in_progress`, ✅ = `done`, ⏸️ = `blocked`
 
@@ -494,9 +494,16 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 
 **Goal (two tracks, same phase — ship in small slices):**
 
-1. **Substep path parity:** Move **`step34ViewModel`** (and any Step 3.4-only helpers co-located with it) from `features/schedule/ui/steps/step3-floating/step34/` to the **mandatory** layout **`features/schedule/ui/steps/step3-floating/substeps/step34-preview/`** so the tree matches **`ARCHITECTURE_ESSENTIALS.mdc`** (product Step 3.4 = `step34-preview`). Update all imports (wizard, shims, `tests/regression/*`, docs as needed). **No behavior change** — rename/move only unless a bug is discovered.
+1. **Substep path parity:** **`step34ViewModel`** (and Step 3.4-only helpers co-located with it) lives under **`features/schedule/ui/steps/step3-floating/substeps/step34-preview/`** per **`ARCHITECTURE_ESSENTIALS.mdc`** (product Step 3.4 = `step34-preview`). *(Structural slice 1, 2026-04-17: moved from `step3-floating/step34/`; imports updated.)*
 
 2. **Allocation peel:** Incrementally migrate **schedule-primary** React from **`components/allocation/`** into **`features/schedule/ui/`** (`steps/`, `sections/`, `dialogs/`, shared leaf folders) using the living checklist in **`features/schedule/ui/README.md`** (Phase 4 inventory + “still to migrate”). Prefer **one vertical slice per commit** (e.g. one dialog cluster + `SchedulePageClient` import updates + shims). **Shared consumers** called out in the README (`StaffCardColorGuideContent`, `BufferStaffConvertDialog`) must be updated in the **same slice** as their moved target, or keep a documented shim path.
+
+**Peel sequencing (frozen — reduces open-ended “next target” hunting):**
+
+| Bucket | Scope (what) | Order | Notes |
+|--------|----------------|-------|--------|
+| **B** | **Step 3 floating allocation subtree** still under `components/allocation/`: e.g. `step3V2/*`, `step32V2/*`, `TeamPendingCard` / `TeamReservationCard` / `TeamAdjacentSlotCard`, `Step3ModeExplainerAnimated`, and any co-imported leaves those modules need. Canonical home: **`features/schedule/ui/steps/step3-floating/`** (and `substeps/` where product mapping fits), per **§B** naming. | **Do first** | **Bucket B complete (2026-04-17, B1 + B2 audit):** wizard canonical under `step3-floating/`; **`rg '@/components/allocation' features/schedule/ui/steps/step3-floating`** → **zero** matches; thin shims in `components/allocation/`. **`pcaTracker/*`** is **Bucket A** (peels with **`PCABlock`** / main grid) — **not** Bucket B. **`f47` + `f66`** + gate logged for B1; token N/A where relocate-only. |
+| **A** | **Main schedule grid + overlays + dynamic dialogs**: `SchedulePageClient.tsx`, `ScheduleBlocks1To6.tsx`, `ScheduleOverlays.tsx`, column/block/pool/popover cluster, and `dynamic()` / prefetch paths that still point at `components/allocation/*`. | **Logged for later** | Same vertical-slice + shim rules; may run **after** Bucket **B** (or in parallel **only** if merge conflicts / overlap risk is low). Completing **A** is what most reduces `@/components/allocation` from `features/schedule/ui/**` overall — intentionally **not** the first peel batch in this plan revision. |
 
 **Layering follow-up:** When a moved dialog forces **`lib`** to type-import from **`components`** (e.g. **`BedCountsOverrideState`** today), hoist the shared type to **`@/types/schedule`** or **`lib/`** in that slice so domain types do not depend on UI paths.
 
@@ -571,3 +578,6 @@ Each subphase shrinks `SchedulePageClient` and adds files under `features/schedu
 | 2026-04-16 | **§ Deferred: UI color / design tokens** — light-first; bundle token cleanup with **extractions** and **Phases 3–5**; no monolithic `SchedulePageClient` repaint. Tracker **2f** note + Phase **3/4/5** guidance bullets; companion **§ Deferred** in implementation plan + matrix row for **2f**. |
 | 2026-04-16 | **§ Deferred:** **Required two-slice workflow** for Phases **3–5** — structural → verify (review, gate, smoke, manual) → **token slice** → mark `done` or **token N/A**; replaces “optional” so agents do not skip token work silently. |
 | 2026-04-17 | **Phase 6** added (**§ Phase 6**): `substeps/step34-preview/` path parity + **`components/allocation/` peel**; progress tracker row + **P6**; iteration diagram; token workflow wording **Phases 3–6**; reviewer note Phase 4/6 split. |
+| 2026-04-17 | **§ Phase 6 peel sequencing:** **Bucket B** (Step 3 floating allocation subtree under `features/schedule/ui/steps/step3-floating/`) **before** **Bucket A** (main grid / `SchedulePageClient` + panes + overlays); **A** remains in-plan for a later batch. Tracker row 6 notes the order. |
+| 2026-04-17 | **Bucket B slice B1:** `step3V2` lane shell, `step32-preferred` review lane/detail, team wizard cards, `Step3ModeExplainerAnimated` → `features/schedule/ui/steps/step3-floating/`; shims; `FloatingPCAConfigDialog*` imports allocation-free under `step3-floating/`; README Phase 2f historical note. |
+| 2026-04-17 | **Bucket B closure (B2):** docs + peel table — **Bucket B complete**; `pcaTracker/*` deferred to **Bucket A** with `PCABlock`; commit message documents `rg '@/components/allocation' features/schedule/ui/steps/step3-floating` → zero. |
