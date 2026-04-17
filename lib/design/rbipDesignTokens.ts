@@ -51,6 +51,8 @@ export const rbipStep32 = {
 export const rbipStep33 = {
   detailShell: 'rbip-step33-detail-shell',
   detailBeak: 'rbip-step33-detail-beak',
+  /** Near-white inner plate inside the mint shell (luminance stratification vs 3.2 combined). */
+  combinedSurface: 'rbip-step33-combined-surface',
   laneChipActive: 'rbip-step33-lane-chip--active',
   laneChipSelected: 'rbip-step33-lane-chip-selected',
   sectionDivider: 'rbip-step33-section-divider',

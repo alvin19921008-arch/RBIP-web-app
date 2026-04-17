@@ -85,9 +85,6 @@ function displayPcaName(assignment: SlotAssignmentLog): string {
   return name && name.length > 0 ? name : 'PCA'
 }
 
-const DUPLICATE_FLOATING_REASON_SUFFIX =
-  'only after every other usable slot was tried but without available floating PCA'
-
 function buildDuplicateFloatingReasonLines(args: {
   team: Team
   teamLog: TeamAllocationLog
@@ -95,7 +92,7 @@ function buildDuplicateFloatingReasonLines(args: {
   gymSlot: number | null
   staffOverrides?: Record<string, any>
 }): string[] {
-  const { team, teamLog, rankedSlots, gymSlot, staffOverrides } = args
+  const { team, teamLog, staffOverrides } = args
   const lines: string[] = []
   for (const slot of [1, 2, 3, 4] as const) {
     const logsForSlot = teamLog.assignments.filter((a) => a.slot === slot)
@@ -106,9 +103,9 @@ function buildDuplicateFloatingReasonLines(args: {
       staffOverrides,
     })
     if (qualifying.length < 2) continue
-    const meta = buildSlotLabel({ slot, rankedSlots, gymSlot })
+    const timeRange = getTimeRange(slot)
     lines.push(
-      `${qualifying.length} floating PCAs were assigned to ${meta.label} (${getTimeRange(slot)}), ${DUPLICATE_FLOATING_REASON_SUFFIX}.`
+      `${timeRange} — ${qualifying.length} floating PCAs, only after other usable slots were tried.`
     )
   }
   return lines
@@ -192,7 +189,7 @@ function buildAssignmentDetailLabel(
   }
 
   if (assignment.slotSelectionPhase === 'unranked-unused') {
-    return `Used an unranked slot with ${who} before duplicating another slot`
+    return `Unranked slot used with ${who}`
   }
   if (assignment.pcaSelectionTier === 'preferred') {
     return `Preferred PCA ${who} used`
@@ -203,9 +200,28 @@ function buildAssignmentDetailLabel(
       : `Floor PCA ${who}`
   }
   if (assignment.usedContinuity) {
-    return `Continued with ${who} across useful slots`
+    return `Continued with ${who} across slots`
   }
   return `Unused ranked path was available (${who})`
+}
+
+function buildPreferredPcaReasonText(teamLog: TeamAllocationLog, rankedSlots: number[]): string | null {
+  const rows = teamLog.assignments.filter((a) => a.pcaSelectionTier === 'preferred')
+  if (rows.length === 0) return null
+  const lowerOrUnranked = rows.find((a) => {
+    const rank = a.fulfilledSlotRank
+    if (typeof rank === 'number' && rank > 1) return true
+    if (a.slotSelectionPhase === 'unranked-unused') return true
+    const slot = a.slot as 1 | 2 | 3 | 4
+    if (rankedSlots.length > 0 && !rankedSlots.includes(slot)) return true
+    return false
+  })
+  const subject = lowerOrUnranked ?? rows[0]
+  const name = displayPcaName(subject)
+  if (lowerOrUnranked) {
+    return `Preferred PCA ${name} on a lower-ranked or unranked slot — higher-ranked slots were still filled first.`
+  }
+  return `Preferred PCA ${name} on the ranked path.`
 }
 
 function dedupeReasonLines(lines: Step34ReasonLine[]): Step34ReasonLine[] {
@@ -264,33 +280,33 @@ function buildReasons(args: {
     })
   }
 
-  if (teamLog.summary.usedUnrankedSlot) {
-    reasons.push({ text: 'System used another useful slot before duplicating a slot.' })
-  }
-
-  for (const line of buildDuplicateFloatingReasonLines({
+  const duplicateFloatingReasonTexts = buildDuplicateFloatingReasonLines({
     team,
     teamLog,
     rankedSlots,
     gymSlot,
     staffOverrides,
-  })) {
+  })
+
+  if (teamLog.summary.usedUnrankedSlot && duplicateFloatingReasonTexts.length === 0) {
+    reasons.push({ text: 'An unranked slot was used.' })
+  }
+
+  for (const line of duplicateFloatingReasonTexts) {
     reasons.push({ text: line })
   }
 
   if (avoidGym) {
     if (resolveFinalGymUsageStatus(teamLog.summary) === 'used-last-resort') {
       reasons.push({ text: V2_GYM_UI_UNAVOIDABLE_GYM_LONG })
-    } else if (gymSlot === 1 || gymSlot === 2 || gymSlot === 3 || gymSlot === 4) {
-      reasons.push({
-        text: `Gym slot (${getTimeRange(gymSlot)}) was not used because pending could still be covered using other slots first.`,
-      })
     }
   }
 
   if (teamLog.summary.preferredPCAUsed) {
     reasons.push({
-      text: 'Preferred PCA stayed helpful, but only after the higher-priority slot path was respected.',
+      text:
+        buildPreferredPcaReasonText(teamLog, rankedSlots) ??
+        'Preferred PCA contributed to floating cover after higher-ranked slots were covered.',
     })
   }
 
@@ -300,7 +316,7 @@ function buildReasons(args: {
   if (extraCoverageRows.length > 0) {
     const n = extraCoverageRows.length
     reasons.push({
-      text: `This team has ${n} Step 3.4 ${n === 1 ? 'row' : 'rows'} from Extra after needs (required floating need was already satisfied).`,
+      text: `Extra after needs: ${n} slot(s) added — every team's required floating was already satisfied.`,
       tone: 'extra-after-needs',
       extraAfterNeedsCount: n,
     })
@@ -308,11 +324,11 @@ function buildReasons(args: {
 
   const continuityUsed = slotCards.some((card) => card.assignment?.usedContinuity)
   if (continuityUsed) {
-    reasons.push({ text: 'Continuity was used only when it supported the next useful slot.' })
+    reasons.push({ text: 'Same floating PCA continued across slots, where rules allowed.' })
   }
 
   if (!teamLog.summary.pendingMet) {
-    reasons.push({ text: 'Pending was not fully met because no further legal slot path remained.' })
+    reasons.push({ text: 'Pending floating not fully cleared — no eligible floating PCA left.' })
   }
 
   return dedupeReasonLines(reasons)

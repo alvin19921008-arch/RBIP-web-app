@@ -9,6 +9,7 @@ import type {
   Step32TeamReview,
 } from '@/lib/features/schedule/step32V2/step32PreferredReviewModel'
 import {
+  type Step32SaveDecisionUi,
   getStep32CombinedReservationGroupHeading,
   getStep32LeaveOpenFor34ChoiceLabel,
   getStep32OutcomeSectionHeading,
@@ -22,13 +23,16 @@ import {
   getStep32RankedSlotsContextLabel,
   getStep32ReservedFor34RowPrefix,
   getStep32ReservedOtherSlotsDisclaimer,
-  getStep32SaveDecisionHelperLeaveOpenNoSave,
   getStep32SaveDecisionHelperStaleCommit,
+  getStep32SaveDecisionHelperUnsetNoCommit,
   getStep32SaveDecisionSectionHeading,
   getStep32SaveHintPlaceholder,
+  getStep32SaveIfYouPressSaveReservationHintFor34,
+  getStep32SaveLeaveOpenStep34Explainer,
   getStep32SaveReservesOnlyHintFor34,
   getStep32SaveSelectedOutcomeLabel,
   getStep32SuggestedOutcomeBadgeLabel,
+  getStep32ContinuityTradeoffBannerMessage,
   getTradeoffMessage,
 } from '@/lib/features/schedule/step32V2/step32PreferredReviewCopy'
 import { formatStep32RankedSlotsSummaryLineFromChoices } from '@/lib/features/schedule/step32V2/step32RankedSummaryFormat'
@@ -36,6 +40,7 @@ import { rbipStep32 } from '@/lib/design/rbipDesignTokens'
 import { Step3V2LaneDetailShell } from '../../components/step3-v2-lane-detail-shell/Step3V2LaneDetailShell'
 import type { SlotAssignment } from '@/lib/utils/reservationLogic'
 import { cn } from '@/lib/utils'
+import { getSlotTime } from '@/lib/utils/slotHelpers'
 import {
   Select,
   SelectContent,
@@ -62,6 +67,8 @@ interface Step32PreferredReviewDetailPanelProps {
   committedAssignment: SlotAssignment | null
   onCommit: () => void
   onLeaveOpen: () => void
+  /** Whether §3 shows neither / Leave open / Save as visually selected (see Step 3.2 tri-state save intent). */
+  saveDecisionUi: Step32SaveDecisionUi
 }
 
 function getOrderLabel(position: number): string {
@@ -131,6 +138,7 @@ export function Step32PreferredReviewDetailPanel({
   committedAssignment,
   onCommit,
   onLeaveOpen,
+  saveDecisionUi,
 }: Step32PreferredReviewDetailPanelProps) {
   const reservationGroupTitleId = useId()
   const saveHintId = useId()
@@ -213,8 +221,8 @@ export function Step32PreferredReviewDetailPanel({
       committedAssignment.pcaId === resolvedSelectedPcaId
   )
   const staleCommit = Boolean(committedAssignment) && !currentSelectionIsCommitted
-  const leaveOpenChoiceSelected = !committedAssignment
-  const saveChoiceSelected = currentSelectionIsCommitted
+  const leaveOpenChoiceSelected = saveDecisionUi === 'leave_open'
+  const saveChoiceSelected = saveDecisionUi === 'committed'
 
   const step32ChoiceButtonBase = cn(
     rbipStep32.focusable,
@@ -279,7 +287,9 @@ export function Step32PreferredReviewDetailPanel({
                     <span className="font-medium text-foreground">{entry.name}</span>
                     <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground">
                       <Icon className={cn('h-4 w-4 shrink-0', iconClass)} aria-hidden />
-                      {getStep32PreferredAvailabilityLabel(entry.availability)}
+                      {entry.availability === 'unavailable'
+                        ? entry.detail
+                        : getStep32PreferredAvailabilityLabel(entry.availability)}
                     </span>
                   </div>
                 )
@@ -301,7 +311,12 @@ export function Step32PreferredReviewDetailPanel({
         <div id={reservationGroupTitleId} className="sr-only">
           {getStep32CombinedReservationGroupHeading()}
         </div>
-        <div className={cn(rbipStep32.combinedGrid)}>
+        <div
+          className={cn(
+            rbipStep32.combinedGrid,
+            saveDecisionUi === 'leave_open' && 'opacity-[0.55] saturate-[0.65] transition-opacity'
+          )}
+        >
           <div className="min-w-0 space-y-3 p-3 md:p-4">
             <div className={rbipStep32.sectionHeading}>{getStep32OutcomeSectionHeading()}</div>
             {review.outcomeOptions.length > 0 ? (
@@ -349,7 +364,19 @@ export function Step32PreferredReviewDetailPanel({
             )}
             {selectedOutcome?.commitState === 'committable_with_tradeoff' ? (
               <div className="rounded-md border border-amber-200 bg-amber-50/70 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-100">
-                {getTradeoffMessage(selectedOutcome.tradeoffKind ?? 'other')}
+                {selectedOutcome.tradeoffKind === 'continuity' || selectedOutcome.tradeoffKind === undefined
+                  ? getStep32ContinuityTradeoffBannerMessage({
+                      firstRankedIntervalDisplay:
+                        review.rankedChoices[0]?.slot != null
+                          ? getSlotTime(review.rankedChoices[0].slot)
+                          : '—',
+                      preferredPcaName:
+                        selectedOutcome.rows[1]?.pcaLabel ??
+                        (review.preferredPcaIds[0]
+                          ? (review.preferredPcaNames[review.preferredPcaIds[0]] ?? review.preferredPcaIds[0])
+                          : 'this PCA'),
+                    })
+                  : getTradeoffMessage(selectedOutcome.tradeoffKind ?? 'other')}
               </div>
             ) : null}
           </div>
@@ -414,15 +441,18 @@ export function Step32PreferredReviewDetailPanel({
 
       <div className={rbipStep32.savePanel}>
         <div className={rbipStep32.saveHeading}>{getStep32SaveDecisionSectionHeading()}</div>
-        {selectedPcaName && reservedInterval ? (
-          <p id={saveHintId} className="mt-3 text-xs leading-relaxed text-muted-foreground">
-            {getStep32SaveReservesOnlyHintFor34({ pcaName: selectedPcaName, interval: reservedInterval })}
-          </p>
-        ) : (
-          <p id={saveHintId} className="mt-3 text-xs leading-relaxed text-muted-foreground">
-            {getStep32SaveHintPlaceholder()}
-          </p>
-        )}
+        <p id={saveHintId} className="mt-3 text-xs leading-relaxed text-muted-foreground">
+          {saveDecisionUi === 'leave_open'
+            ? getStep32SaveLeaveOpenStep34Explainer()
+            : saveDecisionUi === 'committed' && currentSelectionIsCommitted && selectedPcaName && reservedInterval
+              ? getStep32SaveReservesOnlyHintFor34({ pcaName: selectedPcaName, interval: reservedInterval })
+              : saveDecisionUi === 'unset' && selectedPcaName && reservedInterval
+                ? getStep32SaveIfYouPressSaveReservationHintFor34({
+                    pcaName: selectedPcaName,
+                    interval: reservedInterval,
+                  })
+                : getStep32SaveHintPlaceholder()}
+        </p>
         <div
           className="mt-3 flex flex-wrap gap-2"
           role="group"
@@ -450,17 +480,12 @@ export function Step32PreferredReviewDetailPanel({
             {getStep32SaveSelectedOutcomeLabel()}
           </button>
         </div>
-        {staleCommit || !committedAssignment ? (
-          <div
-            className={cn(
-              'mt-3 text-xs',
-              staleCommit ? 'text-amber-900 dark:text-amber-100' : 'text-muted-foreground'
-            )}
-          >
-            {staleCommit
-              ? getStep32SaveDecisionHelperStaleCommit()
-              : getStep32SaveDecisionHelperLeaveOpenNoSave()}
+        {staleCommit ? (
+          <div className="mt-3 text-xs text-amber-900 dark:text-amber-100">
+            {getStep32SaveDecisionHelperStaleCommit()}
           </div>
+        ) : saveDecisionUi === 'unset' && !committedAssignment && !(selectedPcaName && reservedInterval) ? (
+          <div className="mt-3 text-xs text-muted-foreground">{getStep32SaveDecisionHelperUnsetNoCommit()}</div>
         ) : null}
       </div>
     </Step3V2LaneDetailShell>

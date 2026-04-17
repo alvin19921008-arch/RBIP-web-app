@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 
+import { STEP32_CONTINUITY_TRADEOFF_PATH_NOTE } from '../../lib/features/schedule/step32V2/step32PreferredReviewCopy'
 import { computeStep3V2ReservationPreview } from '../../lib/features/schedule/step3V2ReservationPreview'
 import type { PCAData } from '../../lib/algorithms/pcaAllocation'
 import type { PCAPreference } from '../../types/allocation'
@@ -63,7 +64,7 @@ async function main() {
   )
   assert.deepEqual(
     fo?.pathOptions?.find((option: { pathKey: string }) => option.pathKey === 'ranked:3')?.note,
-    'Rank #1 stays protected, but continuity is reduced because the team would use 2 PCAs instead of 1.'
+    STEP32_CONTINUITY_TRADEOFF_PATH_NOTE
   )
 }
 

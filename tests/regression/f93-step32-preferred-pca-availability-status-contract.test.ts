@@ -65,11 +65,59 @@ async function main() {
 
   const cppc = preview.teamReviews.CPPC
   assert.deepEqual(
-    cppc.preferredPcaStatuses?.map((row) => [row.name, row.availability]),
+    cppc.preferredPcaStatuses?.map((row) => [row.name, row.availability, row.unavailableReason]),
     [
-      ['光劭', 'unavailable'],
-      ['阿明', 'later-ranked'],
+      ['光劭', 'unavailable', 'slot_availability_mismatch'],
+      ['阿明', 'later-ranked', undefined],
     ]
+  )
+
+  const sickPreview = computeStep3V2ReservationPreview({
+    pcaPreferences: [
+      {
+        id: 'pref-fo',
+        team: 'FO',
+        preferred_pca_ids: ['sick-pca'],
+        preferred_slots: [1],
+        avoid_gym_schedule: true,
+        gym_schedule: null,
+        floor_pca_selection: 'upper',
+      },
+    ],
+    adjustedPendingFTE: { ...emptyTeamRecord(0), FO: 0.25 },
+    floatingPCAs: [
+      {
+        id: 'sick-pca',
+        name: 'Sick PCA',
+        floating: true,
+        fte_pca: 0,
+        leave_type: 'Sick',
+        is_available: false,
+        special_program: null,
+        team: 'FO',
+        availableSlots: [],
+        floor_pca: ['upper'],
+      },
+      {
+        id: 'floor-x',
+        name: 'Floor',
+        floating: true,
+        fte_pca: 1,
+        leave_type: null,
+        is_available: true,
+        special_program: null,
+        team: 'FO',
+        availableSlots: [1, 2, 3, 4],
+        floor_pca: ['upper'],
+      },
+    ] as any,
+    existingAllocations: [],
+  })
+
+  const fo = sickPreview.teamReviews.FO
+  assert.deepEqual(
+    fo.preferredPcaStatuses?.map((row) => [row.name, row.availability, row.unavailableReason]),
+    [['Sick PCA', 'unavailable', 'unavailable_today']]
   )
 }
 

@@ -60,7 +60,7 @@ async function main() {
   assert.equal(extraBullet?.tone, 'extra-after-needs')
   assert.equal(extraBullet?.extraAfterNeedsCount, 1)
   assert.ok(
-    extraBullet.text.includes('required floating need was already satisfied'),
+    extraBullet.text.includes("every team's required floating was already satisfied"),
     `expected satisfaction clause in reason, got: ${extraBullet.text}`
   )
 }

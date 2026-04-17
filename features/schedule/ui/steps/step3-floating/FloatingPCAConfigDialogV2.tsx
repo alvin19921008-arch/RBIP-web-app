@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
@@ -32,7 +31,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { WizardAvgSlotsHelpInlinePopover } from '@/components/help/WizardAvgSlotsHelpInlinePopover'
+import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { rbipStep33, rbipStep34 } from '@/lib/design/rbipDesignTokens'
 import { useStep3V2DetailBeakCenter } from '@/lib/hooks/useStep3V2DetailBeakCenter'
@@ -121,7 +121,7 @@ const STEP34_LANE_DOT_TOOLTIPS = {
     'Step 3.4 placed extra-after-needs slot(s) here: basic floating need was already satisfied before these rows.',
 } as const
 
-/** Popover legend — same order and colors as the lane dot cluster (hue = dot only). */
+/** Tooltip legend — same order and colors as the lane dot cluster (hue = dot only). */
 const STEP34_LANE_DOT_LEGEND_ROWS = [
   {
     key: 'step32',
@@ -289,7 +289,7 @@ function formatAdjacentOptionRowLabel(option: AdjacentSlotInfo): string {
   const program = option.specialProgramName?.trim() || 'special program'
   const adjacent = formatTimeRange(getSlotTime(option.adjacentSlot))
   const programSlot = formatTimeRange(getSlotTime(option.specialProgramSlot))
-  return `${program} · ${option.pcaName} · adjacent slot ${adjacent} (next to ${program} ${programSlot})`
+  return `${option.pcaName} · adjacent slot ${adjacent} (next to ${program} ${programSlot})`
 }
 
 function formatAdjacentPcaTimeCompact(option: AdjacentSlotInfo): string {
@@ -449,6 +449,8 @@ export function FloatingPCAConfigDialogV2({
   const [step32CommittedAssignmentsByTeam, setStep32CommittedAssignmentsByTeam] = useState<
     Partial<Record<Team, SlotAssignment | null>>
   >({})
+  /** User explicitly pressed “Leave open” for that team (no Step 3.2 commit). Absent key = unset. */
+  const [step32ExplicitLeaveOpenByTeam, setStep32ExplicitLeaveOpenByTeam] = useState<Partial<Record<Team, true>>>({})
   const [selectedStep33Team, setSelectedStep33Team] = useState<Team | null>(null)
   const [step33Decisions, setStep33Decisions] = useState<Partial<Record<Team, Step33Decision>>>({})
   const [step33SelectedOptionByTeam, setStep33SelectedOptionByTeam] = useState<Partial<Record<Team, string>>>({})
@@ -554,6 +556,7 @@ export function FloatingPCAConfigDialogV2({
     setSelectedStep32OutcomeByTeam({})
     setSelectedStep32PcaByTeam({})
     setStep32CommittedAssignmentsByTeam({})
+    setStep32ExplicitLeaveOpenByTeam({})
     setSelectedStep33Team(null)
     setStep33Decisions({})
     setStep33SelectedOptionByTeam({})
@@ -851,6 +854,51 @@ export function FloatingPCAConfigDialogV2({
     ? step32CommittedAssignmentsByTeam[selectedStep32Team] ?? null
     : null
 
+  const selectedStep32ResolvedPcaId = useMemo(() => {
+    if (!selectedStep32Path) return null
+    return (
+      selectedStep32PcaId ??
+      selectedStep32Path.systemSuggestedPcaId ??
+      selectedStep32Path.preferredCandidates[0]?.id ??
+      selectedStep32Path.floorCandidates[0]?.id ??
+      selectedStep32Path.nonFloorCandidates[0]?.id ??
+      null
+    )
+  }, [selectedStep32PcaId, selectedStep32Path])
+
+  const step32SaveDecisionUi = useMemo(() => {
+    if (!selectedStep32Team) return 'unset' as const
+    const commit = selectedStep32CommittedAssignment
+    if (
+      commit &&
+      selectedStep32Path &&
+      selectedStep32ResolvedPcaId &&
+      commit.slot === selectedStep32Path.slot &&
+      commit.pcaId === selectedStep32ResolvedPcaId
+    ) {
+      return 'committed' as const
+    }
+    if (step32ExplicitLeaveOpenByTeam[selectedStep32Team]) {
+      return 'leave_open' as const
+    }
+    return 'unset' as const
+  }, [
+    selectedStep32Team,
+    selectedStep32CommittedAssignment,
+    selectedStep32Path,
+    selectedStep32ResolvedPcaId,
+    step32ExplicitLeaveOpenByTeam,
+  ])
+
+  const clearStep32ExplicitLeaveOpenForTeam = useCallback((team: Team) => {
+    setStep32ExplicitLeaveOpenByTeam((prev) => {
+      if (!(team in prev)) return prev
+      const next = { ...prev }
+      delete next[team]
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     if (!selectedStep32Team || !selectedStep32Review) return
     if (selectedStep32Review.outcomeOptions.length === 0) return
@@ -877,31 +925,16 @@ export function FloatingPCAConfigDialogV2({
         ...(selectedStep32Path?.nonFloorCandidates ?? []),
       ].map((candidate) => candidate.id)
     )
+    const suggestedId = selectedStep32Path?.systemSuggestedPcaId
+    if (suggestedId) validPcaIds.add(suggestedId)
 
     if (selectedStep32PcaId != null && validPcaIds.has(selectedStep32PcaId)) {
       return
     }
 
-    if (selectedStep32PcaId != null) {
-      const supportingOutcomes = selectedStep32Review.outcomeOptions.filter((option) => {
-        const path = selectedStep32Review.pathOptions.find((p) => p.pathKey === option.primaryPathKey)
-        if (!path) return false
-        const ids = new Set(
-          [...path.preferredCandidates, ...path.floorCandidates, ...path.nonFloorCandidates].map((c) => c.id)
-        )
-        return ids.has(selectedStep32PcaId)
-      })
-      if (supportingOutcomes.length > 0) {
-        const pick = supportingOutcomes[0]
-        if (pick.outcomeKey !== selectedStep32OutcomeKey) {
-          setSelectedStep32OutcomeByTeam((prev) => ({
-            ...prev,
-            [selectedStep32Team]: pick.outcomeKey,
-          }))
-        }
-        return
-      }
-    }
+    // User may pick the tradeoff outcome (e.g. preferred PCA on an unranked slot). Keep that outcome
+    // and align PCA with this path's options — do not snap the outcome back to whichever path still
+    // contained the previous PCA.
 
     const nextPcaId =
       selectedStep32Path?.systemSuggestedPcaId ??
@@ -956,6 +989,11 @@ export function FloatingPCAConfigDialogV2({
         pcaName,
       },
     }))
+    setStep32ExplicitLeaveOpenByTeam((prev) => {
+      const next = { ...prev }
+      delete next[selectedStep32Team]
+      return next
+    })
   }, [selectedStep32Outcome, selectedStep32PcaId, selectedStep32Path, selectedStep32Review, selectedStep32Team])
 
   const handleLeaveOpenStep32 = useCallback(() => {
@@ -965,6 +1003,10 @@ export function FloatingPCAConfigDialogV2({
       delete next[selectedStep32Team]
       return next
     })
+    setStep32ExplicitLeaveOpenByTeam((prev) => ({
+      ...prev,
+      [selectedStep32Team]: true,
+    }))
   }, [selectedStep32Team])
 
   useEffect(() => {
@@ -1536,15 +1578,10 @@ export function FloatingPCAConfigDialogV2({
             <div className="space-y-1.5">
               <p className="text-sm text-muted-foreground">
                 <span className={STEP31_RAISED_TARGET_TEXT_CLASS}>Raised target (shared spare).</span>{' '}
-                Floating target includes a small raise from shared spare (rounding).{' '}
-                <Link
-                  href="/help/avg-and-slots"
-                  className="text-primary underline-offset-2 hover:underline"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  What does this mean?
-                </Link>
+                Floating target includes a small raise from shared spare (rounding).
+                <span className="pl-3">
+                  <WizardAvgSlotsHelpInlinePopover variant="raised-target" />
+                </span>
               </p>
               <button
                 type="button"
@@ -1630,15 +1667,10 @@ export function FloatingPCAConfigDialogV2({
             </span>{' '}
             optional slot
             {step31Preview.standardProjectedExtraSlots === 1 ? '' : 's'} in Step 3.4 after needs are met (
-            <span className={STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS}>Extra after needs</span>).{' '}
-            <Link
-              href="/help/avg-and-slots"
-              className="text-primary underline-offset-2 hover:underline"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              What does this mean?
-            </Link>
+            <span className={STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS}>Extra after needs</span>).
+            <span className="pl-3">
+              <WizardAvgSlotsHelpInlinePopover variant="extra-after-needs" />
+            </span>
           </p>
         ) : null}
 
@@ -1720,24 +1752,27 @@ export function FloatingPCAConfigDialogV2({
             }
             queuePosition={Math.max(1, teamOrder.indexOf(selectedStep32Team as Team) + 1)}
             selectedOutcomeKey={selectedStep32OutcomeKey}
-            onSelectOutcome={(outcomeKey) =>
-              selectedStep32Team &&
+            onSelectOutcome={(outcomeKey) => {
+              if (!selectedStep32Team) return
+              clearStep32ExplicitLeaveOpenForTeam(selectedStep32Team)
               setSelectedStep32OutcomeByTeam((prev) => ({
                 ...prev,
                 [selectedStep32Team]: outcomeKey,
               }))
-            }
+            }}
             selectedPcaId={selectedStep32PcaId}
-            onSelectPca={(pcaId) =>
-              selectedStep32Team &&
+            onSelectPca={(pcaId) => {
+              if (!selectedStep32Team) return
+              clearStep32ExplicitLeaveOpenForTeam(selectedStep32Team)
               setSelectedStep32PcaByTeam((prev) => ({
                 ...prev,
                 [selectedStep32Team]: pcaId,
               }))
-            }
+            }}
             committedAssignment={selectedStep32CommittedAssignment}
             onCommit={handleCommitSelectedStep32Outcome}
             onLeaveOpen={handleLeaveOpenStep32}
+            saveDecisionUi={step32SaveDecisionUi}
           />
         ) : (
           <div className="rounded-xl border bg-background p-4 text-sm text-muted-foreground">
@@ -1749,8 +1784,6 @@ export function FloatingPCAConfigDialogV2({
   )
 
   const renderStep33 = () => {
-    const wideLane = dialogFitWidthPx >= 720
-
     return (
       <div className="space-y-4">
         <div className="flex items-start gap-2 text-sm text-muted-foreground">
@@ -1785,10 +1818,6 @@ export function FloatingPCAConfigDialogV2({
                   roundToNearestQuarterWithMidpoint(pendingFloating - assignedFloating)
                 )
                 const step32Commit = step32CommittedAssignmentsByTeam[team]
-                const step32LineWide = step32Commit
-                  ? `${step32Commit.pcaName} · ${formatTimeRange(getSlotTime(step32Commit.slot))}`
-                  : null
-                const step32LineNarrow = step32Commit ? `${step32Commit.pcaName} · Slot ${step32Commit.slot}` : null
                 const laneOptions = adjacentPreview.adjacentReservations[team] || []
                 const canAssignAdjacentAdditive =
                   hasAdjacent && pendingAfter32Rounded >= 0.25 && laneOptions.length > 0
@@ -1816,12 +1845,14 @@ export function FloatingPCAConfigDialogV2({
                       <>
                         <div className="mt-1 whitespace-nowrap text-[11px] leading-4 text-foreground">{`Pending floating: ${pendingFloating.toFixed(2)}`}</div>
                         <div className="whitespace-nowrap text-[11px] leading-4 text-foreground">{`Assigned floating: ${assignedFloating.toFixed(2)}`}</div>
-                        <div className="whitespace-nowrap text-[11px] leading-4 text-foreground">{`Remaining pending: ${remainingPending.toFixed(2)}`}</div>
-                        {step32Commit ? (
-                          <div className="mt-1 text-[11px] leading-4 text-foreground">
-                            {wideLane ? step32LineWide : step32LineNarrow}
-                          </div>
-                        ) : null}
+                        <div
+                          className={cn(
+                            'whitespace-nowrap text-[11px] leading-4',
+                            remainingPending.toFixed(2) === '0.00'
+                              ? 'font-medium text-emerald-600 dark:text-emerald-400'
+                              : 'text-foreground'
+                          )}
+                        >{`Remaining pending: ${remainingPending.toFixed(2)}`}</div>
                         <div className="mt-2 flex items-center gap-1.5 text-[11px] font-medium leading-tight text-foreground">
                           {cannotAssignAdjacent ? (
                             <>
@@ -1862,7 +1893,7 @@ export function FloatingPCAConfigDialogV2({
               theme="adjacent"
               detailPanelRef={step33DetailPanelRef}
               beakCenterX={step33DetailBeakCenterX}
-              className="space-y-4 p-4"
+              className="p-4"
             >
             {(() => {
               const team = selectedStep33Team
@@ -1893,7 +1924,7 @@ export function FloatingPCAConfigDialogV2({
                 replacePath && !!step32Commit && !!selectedAdjacentOption && !crossPcaMismatch
 
               return (
-                <>
+                <div className={cn(rbipStep33.combinedSurface, 'space-y-4 p-3 md:p-4')}>
                   <div className="text-sm font-semibold text-foreground">{team}</div>
 
                   <div className="flex flex-wrap items-center gap-2">
@@ -2139,7 +2170,7 @@ export function FloatingPCAConfigDialogV2({
                       ) : null}
                     </div>
                   </div>
-                </>
+                </div>
               )
             })()}
             </Step3V2LaneDetailShell>
@@ -2149,17 +2180,62 @@ export function FloatingPCAConfigDialogV2({
     )
   }
 
-  const renderStep34 = () => (
+  const renderStep34 = () => {
+    const anyTeamShowsLaneDots = teamOrder.some((team) => {
+      const laneDots = getStep34LaneDotFlagsForTeam({
+        team,
+        step34PreviewResult,
+        grants: step31BootstrapSummary?.realizedSurplusSlotGrantsByTeam,
+        step32Assignments: step32AssignmentsForSave,
+        step33Assignments: step33AssignmentsForSave,
+      })
+      return laneDots.step32 || laneDots.step33 || laneDots.surplus || laneDots.extra
+    })
+
+    const laneDotLegendTooltip = (
+      <div className="space-y-2">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Team lane dots</div>
+          <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+            Dots on each team card follow tracker order (left to right). Only shown when that signal applies.
+          </p>
+        </div>
+        <ul className="space-y-2.5">
+          {STEP34_LANE_DOT_LEGEND_ROWS.map((row) => (
+            <li key={row.key} className="flex gap-2.5">
+              <span className="mt-1 shrink-0 self-start" aria-hidden>
+                <span className={row.dotClass} />
+              </span>
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-foreground">{row.title}</div>
+                <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{row.body}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )
+
+    return (
     <div className="relative space-y-4">
-      <Popover modal={false}>
-        <PopoverTrigger asChild>
+      {anyTeamShowsLaneDots ? (
+        <Tooltip
+          side="bottom"
+          wrapperClassName="absolute right-0 top-0 z-20"
+          enableOnTouch
+          interactive
+          zIndex={10050}
+          className="max-w-[min(18.5rem,calc(100vw-2rem))] whitespace-normal px-3 py-2.5 text-left"
+          content={laneDotLegendTooltip}
+        >
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="absolute right-0 top-0 z-20 h-auto min-h-8 shrink-0 gap-1 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-            aria-label="What the team lane dots mean"
+            className="h-auto min-h-8 shrink-0 gap-1.5 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+            aria-label="What the team lane dots mean (hover or tap for legend)"
           >
+            <Info className="h-4 w-4 shrink-0" aria-hidden />
             <span className="inline-flex items-center gap-1" aria-hidden>
               <span className={cn(rbipStep34.laneDot, rbipStep34.laneDotLg, rbipStep34.laneDotStep32)} />
               <span className={cn(rbipStep34.laneDot, rbipStep34.laneDotLg, rbipStep34.laneDotStep33)} />
@@ -2167,36 +2243,10 @@ export function FloatingPCAConfigDialogV2({
               <span className={cn(rbipStep34.laneDot, rbipStep34.laneDotLg, rbipStep34.laneDotExtra)} />
             </span>
           </Button>
-        </PopoverTrigger>
-        <PopoverContent
-          align="end"
-          side="bottom"
-          sideOffset={6}
-          className="z-[100] w-[min(18.5rem,calc(100vw-2rem))] border-border bg-popover p-3 text-popover-foreground shadow-lg"
-        >
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Team lane dots
-          </div>
-          <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
-            Dots on each team card follow tracker order (left to right). Only shown when that signal applies.
-          </p>
-          <ul className="mt-3 space-y-2.5">
-            {STEP34_LANE_DOT_LEGEND_ROWS.map((row) => (
-              <li key={row.key} className="flex gap-2.5">
-                <span className="mt-1 shrink-0 self-start" aria-hidden>
-                  <span className={row.dotClass} />
-                </span>
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold text-foreground">{row.title}</div>
-                  <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{row.body}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </PopoverContent>
-      </Popover>
+        </Tooltip>
+      ) : null}
 
-      <div className="pr-14 text-sm text-muted-foreground">
+      <div className={cn('text-sm text-muted-foreground', anyTeamShowsLaneDots && 'pr-14')}>
         Keep the selected team in focus to understand how Slots 1 to 4 were handled.
       </div>
 
@@ -2338,9 +2388,22 @@ export function FloatingPCAConfigDialogV2({
                 </Badge>
               ) : null}
               {step34SurplusAndExtraFlags.showExtraAfterNeedsChip ? (
-                <Badge variant="outline" className={cn(STEP34_EXTRA_AFTER_NEEDS_BADGE_CLASS, 'whitespace-nowrap')}>
-                  Extra after needs
-                </Badge>
+                <Tooltip
+                  side="bottom"
+                  wrapperClassName="inline-flex max-w-full"
+                  enableOnTouch
+                  interactive
+                  zIndex={10050}
+                  className="max-w-[min(22rem,calc(100vw-2rem))] whitespace-normal px-3 py-2 text-left leading-snug text-popover-foreground"
+                  content={<span>{STEP34_POST_NEED_DEFAULT_LINE}</span>}
+                >
+                  <Badge
+                    variant="outline"
+                    className={cn(STEP34_EXTRA_AFTER_NEEDS_BADGE_CLASS, 'cursor-help whitespace-nowrap')}
+                  >
+                    Extra after needs
+                  </Badge>
+                </Tooltip>
               ) : null}
               {selectedStep34Detail.summaryPills.map((pill) => (
                 <Badge
@@ -2353,12 +2416,6 @@ export function FloatingPCAConfigDialogV2({
               ))}
             </div>
           </div>
-
-          {step34SurplusAndExtraFlags.showExtraAfterNeedsChip ? (
-            <p className="mb-3 w-full rounded-md border border-violet-200/80 bg-violet-50/90 px-3 py-2 text-xs text-violet-950 dark:border-violet-700/80 dark:bg-violet-950/35 dark:text-violet-100">
-              {STEP34_POST_NEED_DEFAULT_LINE}
-            </p>
-          ) : null}
 
           <div className="overflow-x-auto pb-1">
             <div
@@ -2389,20 +2446,8 @@ export function FloatingPCAConfigDialogV2({
               {selectedStep34Detail.reasons.map((reason) => (
                 <li key={reason.text} className="pl-1">
                   {reason.tone === 'extra-after-needs' ? (
-                    <span className="block rounded-md border border-violet-200/90 bg-violet-50/95 px-2.5 py-1.5 text-violet-950 dark:border-violet-600 dark:bg-violet-950/45 dark:text-violet-100">
-                      {reason.extraAfterNeedsCount != null ? (
-                        <>
-                          This team has{' '}
-                          <span className={cn(STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS, 'tabular-nums')}>
-                            {reason.extraAfterNeedsCount}
-                          </span>{' '}
-                          Step 3.4 {reason.extraAfterNeedsCount === 1 ? 'row' : 'rows'} from{' '}
-                          <span className={STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS}>Extra after needs</span>{' '}
-                          (required floating need was already satisfied).
-                        </>
-                      ) : (
-                        reason.text
-                      )}
+                    <span className="block border-l-2 border-violet-500/55 bg-violet-50/40 py-1.5 pl-3 pr-1 text-muted-foreground dark:border-violet-400/45 dark:bg-violet-950/20">
+                      {reason.text}
                     </span>
                   ) : (
                     reason.text
@@ -2418,7 +2463,8 @@ export function FloatingPCAConfigDialogV2({
         </div>
       )}
     </div>
-  )
+    )
+  }
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onCancel()}>

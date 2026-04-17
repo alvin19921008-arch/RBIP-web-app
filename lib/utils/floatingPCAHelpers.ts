@@ -38,7 +38,7 @@ export type StaffOverrideWithSubstitution = {
   [key: string]: any
 }
 
-function getNormalizedPcaAvailableSlots(pca: { availableSlots?: number[] } | null | undefined): number[] | null {
+export function getNormalizedPcaAvailableSlots(pca: { availableSlots?: number[] } | null | undefined): number[] | null {
   const slots = pca?.availableSlots
   if (!Array.isArray(slots)) return null
   // Treat empty array as "no availability" (not "all slots").
@@ -237,7 +237,7 @@ export interface FindAvailablePCAsOptions {
   staffOverrides?: Record<string, StaffOverrideWithSubstitution>
 }
 
-function getUsableAvailableSlotsForPca(options: {
+export function getUsableAvailableSlotsForPca(options: {
   pca: PCAData & { floor_pca?: ('upper' | 'lower')[] | null }
   allocation?: PCAAllocation
   gymSlot: number | null

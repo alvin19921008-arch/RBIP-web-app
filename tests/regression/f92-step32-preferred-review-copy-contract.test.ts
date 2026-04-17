@@ -17,21 +17,26 @@ import {
   getStep32PcaSelectLabel,
   getStep32PcaSelectPlaceholder,
   getStep32PreferredAvailabilityLabel,
+  getStep32PreferredPcaUnavailableDetail,
   getStep32RankedSlotsContextLabel,
   getStep32RecommendedContinuityOutcomeTitle,
   getStep32ReservedFor34RowPrefix,
   getStep32ReservedOtherSlotsDisclaimer,
-  getStep32SaveDecisionHelperLeaveOpenNoSave,
   getStep32SaveDecisionHelperSavedReservation,
   getStep32SaveDecisionHelperStaleCommit,
+  getStep32SaveDecisionHelperUnsetNoCommit,
   getStep32SaveDecisionSectionHeading,
   getStep32SaveDecisionTitle,
   getStep32SaveHintPlaceholder,
+  getStep32SaveIfYouPressSaveReservationHintFor34,
+  getStep32SaveLeaveOpenStep34Explainer,
   getStep32SaveReservesOnlyHintFor34,
   getStep32SaveSelectedOutcomeLabel,
   getStep32StatusHelpLabel,
+  getStep32ContinuityTradeoffBannerMessage,
   getStep32SuggestedOutcomeBadgeLabel,
   getTradeoffMessage,
+  STEP32_CONTINUITY_TRADEOFF_PATH_NOTE,
 } from '../../lib/features/schedule/step32V2/step32PreferredReviewCopy'
 
 async function main() {
@@ -57,8 +62,16 @@ async function main() {
   assert.equal(getStep32SaveSelectedOutcomeLabel(), 'Save reservation')
   assert.equal(getStep32LeaveOpenFor34ChoiceLabel(), 'Leave open for Step 3.4')
   assert.equal(
-    getStep32SaveDecisionHelperLeaveOpenNoSave(),
-    'Leaving this team open for Step 3.4 (no reservation saved).'
+    getStep32SaveDecisionHelperUnsetNoCommit(),
+    'Nothing from Step 3.2 is saved for Step 3.4 until you press Save reservation. Next without choosing also leaves no Step 3.2 reservation.'
+  )
+  assert.equal(
+    getStep32SaveLeaveOpenStep34Explainer(),
+    "Step 3.4 will assign floating PCAs without this Step 3.2 reservation; it won't follow the preview above."
+  )
+  assert.equal(
+    getStep32SaveIfYouPressSaveReservationHintFor34({ pcaName: 'Ada', interval: '1030-1200' }),
+    'If you press Save reservation, only Ada · 1030-1200 is held for Step 3.4. Leave open, or Next without choosing, leaves no Step 3.2 reservation.'
   )
   assert.equal(
     getStep32SaveDecisionHelperSavedReservation({
@@ -119,7 +132,24 @@ async function main() {
   assert.equal(getStep32PreferredAvailabilityLabel('rank-1'), 'Available on 1st rank')
   assert.equal(getStep32PreferredAvailabilityLabel('later-ranked'), 'Available on a lower rank only')
   assert.equal(getStep32PreferredAvailabilityLabel('unranked'), 'Available on an unranked slot only')
-  assert.equal(getStep32PreferredAvailabilityLabel('unavailable'), 'Unavailable for ranked paths')
+  assert.equal(getStep32PreferredAvailabilityLabel('unavailable'), 'Not available here')
+  assert.equal(
+    getStep32PreferredPcaUnavailableDetail('not_on_floating_list'),
+    'Not on the floating list for this step.'
+  )
+  assert.equal(getStep32PreferredPcaUnavailableDetail('unavailable_today'), 'Unavailable today')
+  assert.equal(
+    getStep32PreferredPcaUnavailableDetail('no_floating_slot_left'),
+    'No floating slot left to assign today.'
+  )
+  assert.equal(
+    getStep32PreferredPcaUnavailableDetail('slot_availability_mismatch'),
+    "Available floating slots don't match with this team today."
+  )
+  assert.equal(
+    getStep32PreferredPcaUnavailableDetail('other'),
+    "Can't be placed on any of the options we're showing today."
+  )
 
   assert.deepEqual(
     getOutcomeSummaryLines({
@@ -151,9 +181,13 @@ async function main() {
     ['Protects rank #1', 'Preferred on later slot', 'Unranked path']
   )
 
+  assert.equal(getTradeoffMessage('continuity'), STEP32_CONTINUITY_TRADEOFF_PATH_NOTE)
   assert.equal(
-    getTradeoffMessage('continuity'),
-    'Rank #1 stays protected, but continuity is reduced because the team would use 2 PCAs instead of 1.'
+    getStep32ContinuityTradeoffBannerMessage({
+      firstRankedIntervalDisplay: '10:30-12:00',
+      preferredPcaName: 'Ada',
+    }),
+    "Your 1st ranked slot (10:30-12:00) would still be filled. But placing preferred PCA Ada on the other slot means this team's floatings would be split across more PCAs."
   )
   assert.equal(
     getTradeoffMessage('other'),

@@ -1,8 +1,17 @@
 import type { PCAData } from '@/lib/algorithms/pcaAllocation'
 import type { PCAAllocation } from '@/types/schedule'
 import type { PCAPreference } from '@/types/allocation'
-import type { Team } from '@/types/staff'
-import { TEAMS, findAvailablePCAs, getTeamPreferenceInfo, isFloorPCAForTeam, type StaffOverrideWithSubstitution } from '@/lib/utils/floatingPCAHelpers'
+import type { LeaveType, Team } from '@/types/staff'
+import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
+import {
+  TEAMS,
+  findAvailablePCAs,
+  getNormalizedPcaAvailableSlots,
+  getTeamPreferenceInfo,
+  getUsableAvailableSlotsForPca,
+  isFloorPCAForTeam,
+  type StaffOverrideWithSubstitution,
+} from '@/lib/utils/floatingPCAHelpers'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { formatTimeRange, getSlotTime } from '@/lib/utils/slotHelpers'
 import {
@@ -12,17 +21,28 @@ import {
 import {
   getOutcomeSummaryLines,
   getStep32OutcomePlainTitle,
+  getStep32PreferredPcaUnavailableDetail,
   getStep32SaveEffectLabel,
-  getTradeoffMessage,
+  STEP32_CONTINUITY_TRADEOFF_PATH_NOTE,
 } from '@/lib/features/schedule/step32V2/step32PreferredReviewCopy'
 
 export type Step32PreferredAvailability = 'rank-1' | 'later-ranked' | 'unranked' | 'unavailable'
+
+/** Why a preferred PCA is not on any showable path (plain-language bucket for UI). */
+export type Step32PreferredUnavailableReason =
+  | 'not_on_floating_list'
+  | 'unavailable_today'
+  | 'no_floating_slot_left'
+  | 'slot_availability_mismatch'
+  | 'other'
 
 export interface Step32PreferredPcaStatus {
   id: string
   name: string
   availability: Step32PreferredAvailability
   detail: string
+  /** Set when [availability] is `unavailable` — drives [detail] and optional UI. */
+  unavailableReason?: Step32PreferredUnavailableReason
 }
 
 export type Step32ReviewState = 'not_applicable' | 'matched' | 'alternative' | 'unavailable'
@@ -369,6 +389,68 @@ function buildPathOptionData(args: {
   return { option, candidateLookup: buckets.candidateLookup }
 }
 
+function classifyStep32PreferredPcaUnavailableReason(args: {
+  preferredPcaId: string
+  floatingPcaById: Map<string, PCAData>
+  existingAllocations: PCAAllocation[]
+  pref: ReturnType<typeof getTeamPreferenceInfo>
+  staffOverrides?: Record<string, StaffOverrideWithSubstitution>
+  pathData: Array<{
+    option: Step32PathOption
+    candidateLookup: Map<string, { id: string; name: string; bucket: 'preferred' | 'floor' | 'non_floor' }>
+  }>
+}): Step32PreferredUnavailableReason {
+  const pca = args.floatingPcaById.get(args.preferredPcaId)
+  if (!pca || !pca.floating) return 'not_on_floating_list'
+
+  /** Step 1 leave types: off normal duty (sick, VL, SDO, …) — not “ran out of floating while on duty”. */
+  const offNormalDutyLeave = !isOnDutyLeaveType(pca.leave_type as LeaveType | null)
+  const pcaAvailEarly = getNormalizedPcaAvailableSlots(pca)
+  const explicitNoSlotWindows =
+    (pcaAvailEarly != null && pcaAvailEarly.length === 0) ||
+    (Array.isArray(pca.availableSlots) && pca.availableSlots.length === 0)
+
+  if (
+    offNormalDutyLeave &&
+    (pca.fte_pca <= 0 || pca.is_available === false || explicitNoSlotWindows)
+  ) {
+    return 'unavailable_today'
+  }
+
+  if (pca.fte_pca <= 0) return 'no_floating_slot_left'
+
+  const allocation =
+    args.existingAllocations.find((row) => row.staff_id === args.preferredPcaId) ?? null
+  if (allocation && allocation.fte_remaining <= 0) return 'no_floating_slot_left'
+
+  const staffOverride = args.staffOverrides?.[args.preferredPcaId]
+  const usableAny = getUsableAvailableSlotsForPca({
+    pca,
+    allocation: allocation ?? undefined,
+    gymSlot: args.pref.gymSlot ?? null,
+    avoidGym: args.pref.avoidGym,
+    staffOverride,
+  })
+
+  const pcaAvail = getNormalizedPcaAvailableSlots(pca)
+  if (pcaAvail && pcaAvail.length === 0) return 'slot_availability_mismatch'
+  if (usableAny.length === 0) return 'slot_availability_mismatch'
+
+  const showableSlots = [
+    ...new Set(
+      args.pathData
+        .filter((entry) => entry.option.pathState !== 'unavailable')
+        .map((entry) => entry.option.slot)
+    ),
+  ] as Array<1 | 2 | 3 | 4>
+  if (showableSlots.length === 0) return 'other'
+
+  const fitsAnyShowable = showableSlots.some((slot) => usableAny.includes(slot))
+  if (!fitsAnyShowable) return 'slot_availability_mismatch'
+
+  return 'other'
+}
+
 function getPreferredAvailabilityForPca(args: {
   preferredPcaId: string
   pathData: Array<{
@@ -405,7 +487,8 @@ function preferredAvailabilityDetail(kind: Step32PreferredAvailability): string 
   if (kind === 'rank-1') return 'Feasible on your 1st ranked slot.'
   if (kind === 'later-ranked') return 'Feasible on a lower ranked slot, not on rank #1.'
   if (kind === 'unranked') return 'Feasible only on an unranked slot.'
-  return 'No feasible path lists this PCA.'
+  if (kind === 'unavailable') return ''
+  return ''
 }
 
 function buildAlternativePrimaryScenario(args: {
@@ -650,7 +733,7 @@ function buildReviewableReview(args: {
     if (reviewState === 'alternative' && laterPreferred && index === laterPreferredIndex) {
       option.commitState = 'committable_with_tradeoff'
       option.tradeoffKind = 'continuity'
-      option.note = getTradeoffMessage('continuity')
+      option.note = STEP32_CONTINUITY_TRADEOFF_PATH_NOTE
       return option
     }
 
@@ -696,11 +779,27 @@ function buildReviewableReview(args: {
 
   const preferredPcaStatuses: Step32PreferredPcaStatus[] = pref.preferredPCAIds.map((id) => {
     const availability = getPreferredAvailabilityForPca({ preferredPcaId: id, pathData })
+    const unavailableReason =
+      availability === 'unavailable'
+        ? classifyStep32PreferredPcaUnavailableReason({
+            preferredPcaId: id,
+            floatingPcaById,
+            existingAllocations,
+            pref,
+            staffOverrides,
+            pathData,
+          })
+        : undefined
+    const detail =
+      availability === 'unavailable'
+        ? getStep32PreferredPcaUnavailableDetail(unavailableReason ?? 'other')
+        : preferredAvailabilityDetail(availability)
     return {
       id,
       name: preferredPcaNames[id] ?? id,
       availability,
-      detail: preferredAvailabilityDetail(availability),
+      detail,
+      unavailableReason,
     }
   })
 

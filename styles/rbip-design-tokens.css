@@ -6,7 +6,7 @@
  * Step themes (Floating PCA wizard):
  * - **3.1 / 3.4** — informational “cool” blue: keep existing Tailwind `sky-*` usage in those views.
  * - **3.2** — warm **amber / orange** editorial surface (not alarm-neon); variables + `.rbip-step32-*` utilities below.
- * - **3.3** — adjacent slot: **teal / light-green** theme with **沈實** (muted) edges — deeper teal borders, not neon cyan (`FloatingPCAConfigDialogV2`).
+ * - **3.3** — adjacent slot: **teal / light-green** theme with **沈實** edges; shell = tinted chapter, **combined** = near-white inner plate (delta-L vs 3.2).
  * - **3.4** — final ranked review: **blue** detail shell + beak (lane chips may stay `sky-*`).
  *
  * Consume from TS via `lib/design/rbipDesignTokens.ts` class name constants.
@@ -70,7 +70,7 @@
   --rbip-step33-divider: rgb(13 148 136 / 0.2);
   --rbip-step33-metric-badge-border: rgb(15 118 110 / 0.3);
   --rbip-step33-metric-badge-bg: rgb(255 255 255 / 0.94);
-  --rbip-step33-option-chosen-bg: rgb(209 250 229 / 0.55); /* light green wash */
+  --rbip-step33-option-chosen-bg: rgb(209 250 229 / 0.72); /* chosen row on near-white plate */
   --rbip-step33-icon-check: #0d9488;
   /* Selected decision buttons — earthy sage, slightly greener chroma */
   --rbip-step33-choice-on-border: #5c8f5e;
@@ -79,10 +79,14 @@
   --rbip-step33-choice-on-ring: rgb(92 143 94 / 0.32);
   --rbip-step33-choice-off-hover-border: rgb(92 143 94 / 0.4);
   --rbip-step33-focus-ring: #14b8a6; /* teal-500 — focus */
-  --rbip-step33-shell-border: rgb(15 118 110 / 0.34);
-  --rbip-step33-shell-bg: rgb(240 253 250 / 0.82); /* teal-50 panel */
-  --rbip-step33-beak-border: rgb(15 118 110 / 0.34);
-  --rbip-step33-beak-fill: rgb(240 253 250 / 0.92);
+  --rbip-step33-shell-border: rgb(15 118 110 / 0.36);
+  /* Shell: slightly deeper mint than modal bg so inner combined plate reads clearly brighter */
+  --rbip-step33-shell-bg: rgb(214 243 236 / 0.94);
+  --rbip-step33-beak-border: rgb(15 118 110 / 0.36);
+  --rbip-step33-beak-fill: rgb(214 243 236 / 0.94);
+  /* Inner work surface — near-white (same role as `--rbip-step32-combined-*`) */
+  --rbip-step33-combined-border: rgb(13 148 136 / 0.24);
+  --rbip-step33-combined-bg: rgb(255 255 255 / 0.98);
 
   /* --- Step 3.4 (Final review) — sky / blue detail shell (lane chips stay Tailwind sky) */
   --rbip-step34-shell-border: rgb(191 219 254); /* blue-200 */
@@ -151,7 +155,7 @@
   --rbip-step33-divider: rgb(13 148 136 / 0.22);
   --rbip-step33-metric-badge-border: rgb(13 148 136 / 0.38);
   --rbip-step33-metric-badge-bg: rgb(24 24 27 / 0.9);
-  --rbip-step33-option-chosen-bg: rgb(6 78 59 / 0.55);
+  --rbip-step33-option-chosen-bg: rgb(6 95 70 / 0.45);
   --rbip-step33-icon-check: #5eead4;
 
   --rbip-step33-choice-on-border: rgb(120 168 118 / 0.58);
@@ -160,10 +164,12 @@
   --rbip-step33-choice-on-ring: rgb(120 168 118 / 0.24);
   --rbip-step33-choice-off-hover-border: rgb(120 168 118 / 0.34);
   --rbip-step33-focus-ring: #2dd4bf;
-  --rbip-step33-shell-border: rgb(13 148 136 / 0.4);
-  --rbip-step33-shell-bg: rgb(6 78 59 / 0.4);
-  --rbip-step33-beak-border: rgb(13 148 136 / 0.4);
+  --rbip-step33-shell-border: rgb(13 148 136 / 0.42);
+  --rbip-step33-shell-bg: rgb(6 78 59 / 0.48);
+  --rbip-step33-beak-border: rgb(13 148 136 / 0.42);
   --rbip-step33-beak-fill: rgb(6 78 59 / 0.48);
+  --rbip-step33-combined-border: rgb(13 148 136 / 0.28);
+  --rbip-step33-combined-bg: rgb(24 24 27 / 0.52);
 
   --rbip-step34-shell-border: rgb(59 130 246 / 0.38);
   --rbip-step34-shell-bg: rgb(30 58 138 / 0.22);
@@ -420,6 +426,14 @@
     border-left: 1px solid var(--rbip-step33-beak-border);
     border-top: 1px solid var(--rbip-step33-beak-border);
     background: var(--rbip-step33-beak-fill);
+  }
+
+  .rbip-step33-combined-surface {
+    overflow: hidden;
+    border-radius: 0.75rem;
+    border: 1px solid var(--rbip-step33-combined-border);
+    background: var(--rbip-step33-combined-bg);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
   }
 
   .rbip-step34-detail-shell {
