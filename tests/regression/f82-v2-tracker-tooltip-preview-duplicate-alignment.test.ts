@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-import { buildStep34TeamDetailViewModel } from '../../features/schedule/ui/steps/step3-floating/step34/step34ViewModel'
+import { buildStep34TeamDetailViewModel } from '../../features/schedule/ui/steps/step3-floating/substeps/step34-preview/step34ViewModel'
 import { buildV2PcaTrackerTooltipModel } from '../../lib/features/schedule/v2PcaTrackerTooltipModel'
 import { createEmptyTracker } from '../../lib/utils/floatingPCAHelpers'
 import type { PCAPreference } from '../../types/allocation'

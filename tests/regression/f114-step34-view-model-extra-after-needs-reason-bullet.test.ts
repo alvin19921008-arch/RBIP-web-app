@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict'
 
 import type { FloatingPCAAllocationResultV2 } from '../../lib/algorithms/floatingPcaShared/contracts'
-import { buildStep34TeamDetailViewModel } from '../../features/schedule/ui/steps/step3-floating/step34/step34ViewModel'
+import { buildStep34TeamDetailViewModel } from '../../features/schedule/ui/steps/step3-floating/substeps/step34-preview/step34ViewModel'
 import { createEmptyTracker } from '../../lib/utils/floatingPCAHelpers'
 import type { PCAPreference } from '../../types/allocation'
 import type { Team } from '../../types/staff'

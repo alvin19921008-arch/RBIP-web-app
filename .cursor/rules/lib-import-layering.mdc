@@ -1,0 +1,13 @@
+---
+description: Enforce lib→features import ban whenever editing under lib/
+globs:
+  - "lib/**/*.ts"
+  - "lib/**/*.tsx"
+alwaysApply: false
+---
+
+# Lib import layering
+
+- **`lib/**` must not import from `features/**`**. Domain and algorithms live in `lib/`; React schedule UI lives in `features/`. **UI imports `lib`; not the reverse.**
+
+- **Schedule-specific layout**, Step 1–5, Step 3 projection, and allocation gotchas: `.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc` (overlaps `lib/features/schedule/**` — read both when touching schedule domain code).

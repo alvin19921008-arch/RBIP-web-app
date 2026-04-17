@@ -1,5 +1,7 @@
 # Changelog 2
 
+**2026-04-17:** Schedule UI/lib (Phase **6**): `step34ViewModel` under `steps/step3-floating/substeps/step34-preview/`; Bucket **B** wizard peel + **B** closed; agent map **`docs/schedule-architecture-core.md`**; slim **`ARCHITECTURE_ESSENTIALS`**, **`lib-import-layering`**, **`AGENTS`** (long separation plan demoted).
+
 ## Step 3 V2 (ranked slots) — 2026-04
 
 **Revamped V2:** Ranked-slot Step 3.4 uses a continuity-friendly draft pass plus a **bounded, deterministic audit/repair** pass; tracker distinguishes draft / repair / extra-coverage; `selected_only` preserves base ranked slots while biasing PCA choice from Step 3.2/3.3. The V2 wizard preview materializes committed Step 3.2/3.3 picks into allocations **before** Step 3.4 so save state matches the sheet.

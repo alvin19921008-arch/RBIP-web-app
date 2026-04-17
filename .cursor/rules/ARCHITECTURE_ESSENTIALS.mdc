@@ -1,117 +1,79 @@
 ---
-description: Essential architectural patterns and critical gotchas for RBIP duty list system
-globs: ["**/*.ts", "**/*.tsx"]
-alwaysApply: true
+description: Schedule allocation, controller, Step 1–5 workflow, Step 3 projection, and layout invariants (loaded when working under schedule/allocation paths)
+globs:
+  - "lib/features/schedule/**"
+  - "lib/algorithms/**"
+  - "features/schedule/**"
+  - "components/allocation/**"
+  - "app/(dashboard)/schedule/**"
+alwaysApply: false
 ---
 
-# Architecture Essentials
+# Architecture Essentials (schedule & allocation)
 
-> **Purpose**: Critical architectural patterns and gotchas that new agents MUST know. For detailed changelog, see `CHANGELOG.md`.
+**When this applies:** Edits to **schedule allocation**, **`useScheduleController` / domain**, **`lib/algorithms`**, **Floating PCA / Step 3**, **`features/schedule/ui`**, or **`components/allocation`**. For unrelated UI elsewhere, you usually do **not** need this full sheet.
+
+**Hard import rule (everywhere):** `lib/**` must **not** import `features/**`. UI imports `lib`; not the reverse. On any file under `lib/`, `.cursor/rules/lib-import-layering.mdc` should also attach (same rule, shorter reminder).
+
+**Deep dives:** stable layout map — `docs/schedule-architecture-core.md`; Step 3 glossary — `docs/glossary/step3-floating-nonfloating.md`; optional verification matrix — `docs/superpowers/plans/2026-04-11-schedule-ui-lib-separation-implementation-plan.md`; UI tokens — `.cursor/rules/design-elements-commonality.mdc`, `styles/rbip-design-tokens.css`. Changelog: `CHANGELOG.md`.
 
 ## Schedule UI / lib layout (grep map)
-
-**Full spec (phases, verification, §A vs §B):** `docs/superpowers/plans/2026-04-11-schedule-ui-lib-separation-plan.md` — implement **§B** only; §A is reference vocabulary, not RBIP paths.
 
 | Put it here | Role |
 |---------------|------|
 | `app/(dashboard)/schedule/` | Route shell only (`page.tsx` mounts client; no business logic). |
-| `features/schedule/ui/` | Schedule **React** UI: `SchedulePageClient`, `sections/` (global step strip, next/prev, shell), `steps/` (in-step / wizard bodies), `dialogs/`, `dev/`, `hooks/`. |
+| `features/schedule/ui/` | Schedule **React** UI: `SchedulePageClient`, `sections/` (macro step strip, next/prev), `steps/` (in-step / wizard), `dialogs/`, `dev/`, `hooks/`. |
 | `features/schedule/ui/sections/` | Workflow **shell** only — **not** Step 2 grid body, **not** Step 3.1–3.4 wizard panels. |
-| `features/schedule/ui/steps/` | In-step / wizard UI (e.g. `step3-floating/` + `substeps/`). |
-| `lib/features/schedule/` | Schedule **domain + orchestration** (`.ts`); **no new** schedule screen `*.tsx` here. |
-| `lib/features/schedule/controller/` | `useScheduleController` (facade over smaller modules as split progresses). |
-| `lib/features/schedule/pcaAllocationEngine.ts` | Adapter: build context → call algorithms / worker (**not** “pure math only”). |
-| `lib/algorithms/` | Pure (or worker-isolated) allocation math; **no React**. |
-| `styles/rbip-design-tokens.css` | Step-themed tokens; align with `.cursor/rules/design-elements-commonality.mdc`. |
+| `features/schedule/ui/steps/` | In-step / wizard UI (`step3-floating/` + `substeps/`). |
+| `lib/features/schedule/` | Domain + orchestration **`.ts`** only; **no new** schedule screen **`*.tsx`**. |
+| `lib/features/schedule/controller/` | `useScheduleController` (facade). |
+| `lib/features/schedule/pcaAllocationEngine.ts` | Adapter: context → algorithms / worker (not “pure math only”). |
+| `lib/algorithms/` | Pure or worker-isolated allocation math; **no React**. |
 
-**`features/schedule/ui/steps/` folder naming (mandatory):** directories are **lowercase kebab-case** only — no PascalCase folder names, no `.` in folder names. Macro steps: `step1-leave/`, `step2-fixed-allocation/`, `step3-floating/`, `step4-bed/`, `step5-review/`. Substeps (product 3.x): under `substeps/` as `step31-teams-order/`, `step32-preferred/`, `step33-adjacent/`, `step34-preview/` (two digits = major+minor, then kebab slug). **React files** inside may stay PascalCase (`FloatingPCAStep.tsx`).
+**`features/schedule/ui/steps/` directories:** **lowercase kebab-case** only (no PascalCase dirs, no `.` in folder names). Macros: `step1-leave/`, `step2-fixed-allocation/`, `step3-floating/`, `step4-bed/`, `step5-review/`. Substeps: `substeps/step31-teams-order/`, `step32-preferred/`, `step33-adjacent/`, `step34-preview/` (two digits + kebab slug). **`.tsx` filenames** may stay PascalCase.
 
-**Imports:** `lib/**` must **not** import from `features/**`. UI imports lib; not the reverse.
+**Barrels:** optional thin `features/schedule/index.ts` for top client entry; prefer **direct imports** into `ui/steps/` and `ui/sections/` for grep and go-to-definition.
 
-**Barrels:** optional thin `features/schedule/index.ts` for the top client entry only. Prefer **direct imports** to real files under `ui/steps/` and `ui/sections/` so search and go-to-definition resolve to implementations.
+## Allocation workflow (macro)
 
-## Critical Gotchas (Top 10)
+1. **Step 1** — Leave & FTE → `staffOverrides`; seeds `average_pca_per_team` / targets.  
+2. **Step 2** — Therapist & non-floating PCA (2.0 special-program overrides, ordered allocation, 2.1 non-floating substitution).  
+3. **Step 3** — Floating PCA wizard **3.0 → 3.1 → 3.2 → 3.3 → 3.4** (pending/order → preferred → adjacent from **special-program** slots only → final).  
+4. **Step 4** — Bed relieving.  
+5. **Step 5** — Review / finalize.
 
-1. **Database Type Safety (CRITICAL)**: Always use `lib/db/types.ts` utilities (`toDbLeaveType`, `programNamesToIds`, `normalizeFTE`) - TypeScript types are WIDER than database enums
-2. **staffOverrides is Single Source of Truth**: All staff modifications must update `staffOverrides`; algorithms read from it
-3. **`average_pca_per_team` / display Avg Can Change During Step 2**: The requirement-side target may change when Step 2 changes therapist distribution (Step 2.2/2.3) or special-program capacity (Step 2.0). Once Step 3/4 have been completed, any Step 2 change that alters this target must mark Steps 3/4 as **out of date** and require a rerun. For **what users see as “Avg PCA/team”** on the dashboard and Step 3.1, use the **unified projection** (`Step3ProjectionV2.displayTargetByTeam` / `getStep3AveragePcaDisplayTargets`) — do not mix ad-hoc `calculations` vs `step2Result` reads for that same label (see **Step 3 projection** below).
-4. **Bed Relieving Calculations**: Use `totalBedsEffectiveAllTeams` (after SHS/students deductions) consistently - using raw `totalBedsAllTeams` creates impossible positive global sums
-5. **Pending FTE Update Safety**: Always use `assignOneSlotAndUpdatePending()` for one-slot calls and `assignUpToPendingAndUpdatePending()` for global pending calls - never manually update `pendingFTE[team]` after calling wrappers
-6. **TypeScript Strict Mode**: Use `createEmptyTeamRecord<T>()` for Record initialization, guard clauses instead of `!`, `PromiseLike<any>[]` for Supabase queries in `Promise.all()`
-7. **Step 3 Wizard State**: Always clone state objects (`adjustedFTE`, `existingAllocations`) before modification; each mini-step progressively updates `currentPendingFTE` and `pcaAllocations`
-8. **Adjacent Slot Logic (Step 3.3)**: Only considers slots actually assigned by special programs, NOT Step 3.2 assignments
-9. **Bed Relieving Notes**: Stored in `staffOverrides.__bedRelieving` (within-day only, NOT copied across dates via copy schedule)
-10. **Snapshot Envelope**: Always use `buildBaselineSnapshotEnvelope()` before saving; always validate with `validateAndRepairBaselineSnapshot()` on load
+## State (three layers + persistence)
 
-## State Management Architecture
+1. **Saved:** `baseline_snapshot`, `staff_overrides`, `workflow_state` (per-date isolation on snapshot).  
+2. **Algorithm:** allocations, `calculations` (generated from snapshot + overrides).  
+3. **Overrides:** **`staffOverrides`** = single source of truth for staff-side edits; algorithms read it. Field shapes / types → `lib/features/schedule/controller/scheduleControllerTypes.ts` and related `types/*` (do not duplicate long field lists here).
 
-### Three-Layer State Pattern
-1. **Layer 1: Saved State** (from database) - `baseline_snapshot`, `staff_overrides`, `workflow_state`
-2. **Layer 2: Algorithm State** (generated from snapshot + overrides) - allocations, calculations
-3. **Layer 3: Override State** (user modifications) - `staffOverrides` (single source of truth)
+**Snapshots:** save with `buildBaselineSnapshotEnvelope()`; load with `validateAndRepairBaselineSnapshot()`.
 
-### Key State Variables
-- **`staffOverrides`**: Single source of truth for all staff modifications
-  - `invalidSlots`: Array of `{ slot: number; timeRange: { start: string; end: string } }` (display-only)
-  - `amPmSelection`: `'AM' | 'PM'` for therapist FTE = 0.5 or 0.25
-  - `slotOverrides`: Manual slot transfers `{ slot1?, slot2?, slot3?, slot4? }`
-  - `substitutionFor`: Non-floating PCA substitution override
-  - `specialProgramOverrides`: Step 2.0 special program assignments
-  - `__bedCounts`: Schedule-level bed count overrides per team
-- **`pcaAllocations`**: `Record<Team, (PCAAllocation & { staff: Staff })[]>` - current PCA assignments
-- **`calculations`**: `Record<Team, ScheduleCalculations | null>` - metrics per team
-- **`baselineSnapshot`**: Frozen snapshot of dashboard state (per-date isolation)
+**`pcaAllocations`:** current PCA rows per team. **`calculations`:** per-team metrics (see types).
 
-## Allocation Workflow (5 Steps)
+## Step 3 numbers & projection (non‑negotiables)
 
-1. **Step 1**: Leave & FTE management → updates `staffOverrides`, calculates initial `average_pca_per_team` target
-2. **Step 2**: Therapist & Non-Floating PCA
-   - **2.0**: Special Program Overrides Dialog
-   - **Algorithm**: Therapist → Non-floating PCA → Special program PCA (except DRM) → Non-floating substitution
-   - **2.1**: Non-Floating PCA Substitution Dialog
-3. **Step 3**: Floating PCA wizard (3.0 → 3.1 → 3.2 → 3.3 → 3.4)
-   - **3.1**: Adjust pending FTE & team order
-   - **3.2**: Preferred slot reservation
-   - **3.3**: Adjacent slot assignment (from special program PCAs only)
-   - **3.4**: Final floating PCA algorithm
-4. **Step 4**: Bed relieving calculation
-5. **Step 5**: Review and finalization
+- **One builder:** Build **`Step3ProjectionV2` once** when Step 2 is settled for Step 3 entry; pass the **same** reference into schedule page, `PCABlock`, `FloatingPCAConfigDialogV2`, etc. **Do not** run a second `computeStep3BootstrapSummary` (or parallel builders) with **different args** for the **same** “Avg PCA/team” / Step 3.1 numbers.  
+- **“Avg PCA/team” label:** **`displayTargetByTeam`** only — not ad-hoc `calculations` vs `step2Result` mixing for that label. It is **not** “edit 3.1 fixed floating to change display Avg.”  
+- **Chain (detail):** non-floating reduces the gap; raw vs surplus vs **quarter** rules; **`fixedRoundedFloatingTargetByTeam`** from **surplus-aware** bootstrap (not `round(displayTarget)` alone, not `roundedAdjustedTeamTargets` as 3.1 seed); **pending floating** from **3.1** drives **3.2–3.4**; assigned vs remaining pending; **extra coverage ≠ surplus authority** — full glossary: `docs/glossary/step3-floating-nonfloating.md`.
 
-## Key Algorithm Rules
+## Floating PCA engines (V1 vs V2)
 
-- **DRM Special Program**: DRM is NOT a special program requiring designated PCA staff. It only adds +0.4 FTE to DRO team's `average_pca_per_team`. Skip DRM during special program PCA allocation phase.
-- **Floating PCA Substitution**: Step 2 handles non-floating substitution; Step 3 should NOT assign to slots already covered by Step 2 substitutions.
-- **Rounding Consistency**: Use `roundToNearestQuarterWithMidpoint()` for pending FTE checks to prevent infinite loops.
+Public entrypoints on `lib/algorithms/pcaAllocation.ts` include **`allocateFloatingPCA_v2RankedSlot`** (current ranked-slot Step 3.4 path) and **`allocateFloatingPCA_v1LegacyPreference`** (legacy / continuity). Implementations live under `lib/algorithms/floatingPcaV2/`, `lib/algorithms/floatingPcaLegacy/`, etc. — follow imports from `pcaAllocation.ts`; do not duplicate engine semantics in UI.
 
-## Step 3 projection: Avg vs floating chain (essential)
+## Invariants & gotchas
 
-**Full glossary (floating vs non-floating):** `docs/glossary/step3-floating-nonfloating.md`
-
-- **`Step3ProjectionV2` / one builder:** Built when Step 2 is settled for Step 3 entry (controller); pass **one** reference into schedule page, `PCABlock`, `FloatingPCAConfigDialogV2`, etc. Do not recompute `computeStep3BootstrapSummary` in parallel with different args for the **same** dashboard vs Step 3.1 display numbers.
-
-- **Display Avg (source of truth for the label):** `displayTargetByTeam` — raw average PCA per team for **every** “Avg PCA/team” style display (dashboard + Step 3.1). It is **not** the surplus-adjusted operational team total; editing Step 3.1 **fixed floating** does **not** change this display Avg.
-
-- **Non-floating FTE:** Reduces the floating gap; may use `nonFloatingFteBreakdownByTeam` / `computeStep3NonFloatingFteBreakdownByTeamFromAllocations` for engine truth while UI can still show friendly totals.
-
-- **Raw floating:** Continuous `Avg − non-floating` **before** quarter rounding. Surplus and slack math stay in **raw** space first; then apply quarter rules to floating layers.
-
-- **Rounded floating at Step 3 open:** `fixedRoundedFloatingTargetByTeam` = `roundToNearestQuarterWithMidpoint(pendingByTeam)` from the **surplus-aware** bootstrap — **not** `round(displayTarget)` alone and **not** `roundedAdjustedTeamTargets` as the Step 3.1 quarter seed. After 3.1, **pending floating** in dialog state drives the allocator.
-
-- **Pending floating:** Set in Step 3.1 (order + ±); Steps 3.2–3.4 consume this until the user returns to 3.1.
-
-- **Assigned floating / remaining pending:** Assigned = floating FTE actually placed in 3.2–3.4; remaining pending = pending floating − assigned (quarters, clamp at ≥ 0).
-
-- **Extra coverage vs surplus:** Post-need **extra** assignments are a **separate** allocator/UI path; projection and surplus grants must not treat generic extra coverage as surplus authority.
-
-## PCA Total Values (Critical Distinction)
-
-- **`totalPCAOnDuty`**: STABLE - Sum of FTE from all on-duty PCAs (used for requirement calculations)
-- **`totalPCAFromAllocations`**: UNSTABLE - Sum of FTE from current allocations (reference/debugging only, NOT used in calculations)
-
-**Key Rule**: Always use `totalPCAOnDuty` for requirement calculations. Never use `totalPCAFromAllocations` for calculations.
-
-## Snapshot System
-
-- **Per-Date Isolation**: Each schedule date has isolated `baseline_snapshot` to prevent cross-date contamination
-- **Versioned Envelope**: Always wrap snapshots in envelope before saving (`buildBaselineSnapshotEnvelope`)
-- **Validation**: Always validate on load (`validateAndRepairBaselineSnapshot`) to handle corrupted data gracefully
+1. **DB types:** Use `lib/db/types.ts` (`toDbLeaveType`, `programNamesToIds`, `normalizeFTE`) — TS types are wider than DB enums.  
+2. **`staffOverrides`:** All staff edits go here; algorithms consume it.  
+3. **Step 2 vs Step 3/4:** Targets can change during Step 2; after Step 3/4 are done, Step 2 changes that move the target must **invalidate** 3/4 and require rerun. **Display Avg** stays projection-driven (see Step 3 numbers above).  
+4. **Beds:** Use **`totalBedsEffectiveAllTeams`** (after SHS/students), not raw `totalBedsAllTeams`, for relieving math.  
+5. **Pending FTE:** Use **`assignOneSlotAndUpdatePending`** / **`assignUpToPendingAndUpdatePending`**; never patch `pendingFTE[team]` manually after those wrappers.  
+6. **Strict patterns:** `createEmptyTeamRecord<T>()` for team `Record`s; avoid `!`; `PromiseLike<any>[]` for `Promise.all` with Supabase.  
+7. **Step 3 wizard state:** Clone `adjustedFTE` / `existingAllocations` before mutating; mini-steps advance `currentPendingFTE` and `pcaAllocations`.  
+8. **Step 3.3 adjacent:** Only slots from **special programs**, not Step 3.2 preferred placements.  
+9. **Bed relieving notes:** `staffOverrides.__bedRelieving` — within-day; **not** copied on schedule copy.  
+10. **PCA totals:** **`totalPCAOnDuty`** for requirements; **`totalPCAFromAllocations`** is debug/unstable — **never** use it for requirement math.  
+11. **DRM:** Not a staffed special program; **+0.4 FTE** to DRO `average_pca_per_team` only; skip in special-program PCA staffing pass.  
+12. **Non-floating substitution:** Owned in **Step 2**; Step 3 must not place floating into slots already covered there.  
+13. **Rounding:** `roundToNearestQuarterWithMidpoint()` for pending checks to avoid loops.
