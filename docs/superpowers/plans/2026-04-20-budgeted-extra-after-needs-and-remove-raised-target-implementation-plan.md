@@ -448,7 +448,7 @@ git commit -m "feat(step3): add budgeted extra-after-needs policy contract"
 - Modify: `lib/algorithms/floatingPcaV2/allocator.ts`
 - Tests: **extend** `tests/regression/f99-step34-v2-extra-coverage-pass-reaudits-before-freeze.test.ts` (and split assertions into clearly labeled sections inside the file). Optionally fold overlapping expectations from `tests/regression/f69-step34-extra-coverage-duplicate-characterization.test.ts` if both files duplicate the same extra-coverage harness.
 
-- [ ] **Step 1: Write failing regression**
+- [x] **Step 1: Write failing regression**
 
 In `tests/regression/f99-step34-v2-extra-coverage-pass-reaudits-before-freeze.test.ts`, add a new section (or replace obsolete “unbounded round-robin” expectations) with a minimal harness that:
 
@@ -463,13 +463,13 @@ Use existing Step 3 harness patterns from:
 - `lib/features/schedule/step3Harness/runStep3V2Harness.ts`
 - existing extra-coverage regressions (e.g. `tests/regression/f99-*.test.ts`)
 
-- [ ] **Step 2: Run it to confirm failure**
+- [x] **Step 2: Run it to confirm failure**
 
 ```bash
 npx tsx tests/regression/f99-step34-v2-extra-coverage-pass-reaudits-before-freeze.test.ts
 ```
 
-- [ ] **Step 3: Implement new pass**
+- [x] **Step 3: Implement new pass**
 
 In `lib/algorithms/floatingPcaV2/allocator.ts`, replace `applyExtraCoverageRoundRobin()` with:
 
@@ -514,13 +514,13 @@ Notes:
 - Use the same candidate selection logic already present in the current round-robin extra pass.
 - Bound the loop by `budgetSlots`; also add a safety attempt cap (e.g. `budgetSlots * TEAMS.length`) to avoid pathological loops if feasibility is sparse.
 
-- [ ] **Step 4: Run regressions**
+- [x] **Step 4: Run regressions**
 
 ```bash
 npx tsx tests/regression/f99-step34-v2-extra-coverage-pass-reaudits-before-freeze.test.ts
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lib/algorithms/floatingPcaV2/allocator.ts tests/regression/f99-step34-v2-extra-coverage-pass-reaudits-before-freeze.test.ts
