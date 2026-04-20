@@ -5,7 +5,10 @@ import {
   buildStep31PreviewExtraCoverageOptions,
   countProjectedExtraSlots,
 } from '../../lib/features/schedule/step31ProjectedExtraSlots'
+import { computeStep31ExtraAfterNeedsBudget } from '../../lib/features/schedule/step3ExtraAfterNeedsBudget'
+import { createEmptyTeamRecord } from '../../lib/utils/types'
 import { seededShuffle } from '../../lib/utils/seededRandom'
+import type { Team } from '../../types/staff'
 
 async function main() {
   assert.equal(
@@ -54,6 +57,52 @@ async function main() {
     ['FO', 'SMM', 'DRO', 'NSM'],
     'Expected seededShuffle to not mutate input'
   )
+
+  const teams: Team[] = ['FO', 'SMM', 'DRO', 'NSM']
+  const avg: Record<Team, number> = {
+    ...createEmptyTeamRecord(0),
+    FO: 1.13,
+    SMM: 1.13,
+    DRO: 1.13,
+    NSM: 1.13,
+  }
+  const existing: Record<Team, number> = {
+    ...createEmptyTeamRecord(0),
+    FO: 1.0,
+    SMM: 1.0,
+    DRO: 1.0,
+    NSM: 1.0,
+  }
+  const pending: Record<Team, number> = {
+    ...createEmptyTeamRecord(0),
+    FO: 0.0,
+    SMM: 0.0,
+    DRO: 0.25,
+    NSM: 0.25,
+  }
+
+  const noSpare = computeStep31ExtraAfterNeedsBudget({
+    teams,
+    avgByTeam: avg,
+    existingAssignedFteByTeam: existing,
+    pendingFloatingFteByTeam: pending,
+    availableFloatingSlots: 2,
+    tieBreakSeed: '2026-04-20',
+  })
+  assert.equal(noSpare.poolSpareSlots, 0)
+  assert.equal(noSpare.extraBudgetSlots, 0, 'Expected no extras when pool spare is zero')
+
+  const withSpare = computeStep31ExtraAfterNeedsBudget({
+    teams,
+    avgByTeam: avg,
+    existingAssignedFteByTeam: existing,
+    pendingFloatingFteByTeam: pending,
+    availableFloatingSlots: 3,
+    tieBreakSeed: '2026-04-20',
+  })
+  assert.equal(withSpare.poolSpareSlots, 1)
+  assert.equal(withSpare.extraBudgetSlots, 1, 'Expected one extra when aggregate qualifies and pool spare is one')
+  assert.ok(withSpare.recipientsPreview.length > 0)
 }
 
 main().catch((error) => {
