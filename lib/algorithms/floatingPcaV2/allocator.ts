@@ -1,6 +1,7 @@
 import type { Team } from '@/types/staff'
 import type { PCAAllocation, SlotAssignmentLog } from '@/types/schedule'
 import type {
+  ExtraAfterNeedsPolicy,
   FloatingPCAAllocationContextV2,
   FloatingPCAAllocationResultV2,
 } from '@/lib/algorithms/floatingPcaShared/contracts'
@@ -113,6 +114,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
     pcaPool,
     pcaPreferences,
     extraCoverageMode = 'none',
+    extraAfterNeedsPolicy = { mode: 'none' } satisfies ExtraAfterNeedsPolicy,
     preferenceSelectionMode = 'legacy',
     selectedPreferenceAssignments = [],
     committedStep3Assignments = [],
@@ -533,6 +535,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
 
   // Extra coverage runs between repair passes; a second repair loop re-audits after mutations (f99).
   const applyExtraCoverageRoundRobin = () => {
+    if (extraAfterNeedsPolicy.mode !== 'none') return
     if (extraCoverageMode !== 'round-robin-team-order') return
 
     const allSatisfied = TEAMS.every(

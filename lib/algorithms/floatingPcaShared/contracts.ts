@@ -5,6 +5,16 @@ import type { PCAData } from '@/lib/algorithms/pcaAllocationTypes'
 
 export type FloatingPCAAllocationMode = 'standard' | 'balanced'
 
+export type ExtraAfterNeedsPolicy =
+  | { mode: 'none' }
+  | {
+      mode: 'budgeted-under-assigned-first'
+      budgetSlots: number
+      /** balance = Assigned(after rounded needs) − Avg; negative means under-assigned */
+      balanceAfterRoundedNeedsByTeam: Record<Team, number>
+      tieBreakSeed: string
+    }
+
 export interface FloatingPCAAllocationContextV2 {
   teamOrder: Team[]
   currentPendingFTE: Record<Team, number>
@@ -14,6 +24,7 @@ export interface FloatingPCAAllocationContextV2 {
   specialPrograms: SpecialProgram[]
   mode?: FloatingPCAAllocationMode
   extraCoverageMode?: 'none' | 'round-robin-team-order'
+  extraAfterNeedsPolicy?: ExtraAfterNeedsPolicy
   preferenceSelectionMode?: 'legacy' | 'selected_only'
   preferenceProtectionMode?: 'exclusive' | 'share'
   selectedPreferenceAssignments?: Array<{

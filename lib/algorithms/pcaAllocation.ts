@@ -2457,6 +2457,7 @@ function getWeekday(date: Date): 'mon' | 'tue' | 'wed' | 'thu' | 'fri' {
 
 // Step 3.4 floating allocation uses explicit V1/V2 behavior-named entrypoints.
 export type {
+  ExtraAfterNeedsPolicy,
   FloatingPCAAllocationMode,
   FloatingPCAAllocationContextV2,
   FloatingPCAAllocationResultV2,
