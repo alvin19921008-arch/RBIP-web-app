@@ -56,7 +56,7 @@ alwaysApply: false
 
 - **One builder:** Build **`Step3ProjectionV2` once** when Step 2 is settled for Step 3 entry; pass the **same** reference into schedule page, `PCABlock`, `FloatingPCAConfigDialogV2`, etc. **Do not** run a second `computeStep3BootstrapSummary` (or parallel builders) with **different args** for the **same** “Avg PCA/team” / Step 3.1 numbers.  
 - **“Avg PCA/team” label:** **`displayTargetByTeam`** only — not ad-hoc `calculations` vs `step2Result` mixing for that label. It is **not** “edit 3.1 fixed floating to change display Avg.”  
-- **Chain (detail):** non-floating reduces the gap; raw vs surplus vs **quarter** rules; **`fixedRoundedFloatingTargetByTeam`** from **surplus-aware** bootstrap (not `round(displayTarget)` alone, not `roundedAdjustedTeamTargets` as 3.1 seed); **pending floating** from **3.1** drives **3.2–3.4**; assigned vs remaining pending; **extra coverage ≠ surplus authority** — full glossary: `docs/glossary/step3-floating-nonfloating.md`.
+- **Chain (detail):** non-floating reduces the gap; raw vs **quarter** rules; **`fixedRoundedFloatingTargetByTeam`** from V2 bootstrap pending (`round(max(0, Avg − assigned))` per team, then `round(pending)` — not `round(displayTarget)` alone as 3.1 seed); **pending floating** from **3.1** drives **3.2–3.4**; assigned vs remaining pending; **extra coverage** is budgeted Extra after needs — full glossary: `docs/glossary/step3-floating-nonfloating.md`.
 
 ## Floating PCA engines (V1 vs V2)
 

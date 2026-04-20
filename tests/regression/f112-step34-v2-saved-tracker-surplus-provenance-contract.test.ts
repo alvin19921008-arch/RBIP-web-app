@@ -53,44 +53,18 @@ async function main() {
     specialPrograms: [],
     step32Assignments: [{ team: 'FO', slot: 1, pcaId: 'manual-step32', pcaName: 'Manual Step 3.2' }],
     step33Assignments: [],
-    step34SurplusProvenanceByTeam: {
-      FO: {
-        realizedGrantFte: 0.25,
-        enabledStep34RowCount: 1,
-      },
-    },
-    step34SurplusProvenanceMeta: {
-      projectionVersion: 'unit-test-projection-fingerprint',
-      grantReadSource: 'bootstrap_summary',
-    },
-  } as any)
+  })
 
-  assert.equal(
-    result.tracker.FO.summary.v2RealizedSurplusSlotGrant,
-    0.25,
-    'Expected the saved Step 3 V2 tracker summary to preserve the realized surplus grant for tooltip provenance.'
-  )
-  assert.equal(result.tracker.FO.summary.v2SurplusProvenanceGrantReadSource, 'bootstrap_summary')
-  assert.equal(
-    result.tracker.FO.summary.v2SurplusProvenanceProjectionVersion,
-    'unit-test-projection-fingerprint'
-  )
+  assert.equal(result.tracker.FO.summary.v2RealizedSurplusSlotGrant, undefined)
+  assert.equal(result.tracker.FO.summary.v2SurplusProvenanceGrantReadSource, undefined)
 
   const step32Rows = result.tracker.FO.assignments.filter((assignment) => assignment.assignedIn === 'step32')
   const step34Rows = result.tracker.FO.assignments.filter((assignment) => assignment.assignedIn === 'step34')
 
   assert.equal(step32Rows.length, 1, 'Expected one committed Step 3.2 row in the saved tracker.')
   assert.equal(step34Rows.length, 1, 'Expected one remaining Step 3.4 row in the saved tracker.')
-  assert.equal(
-    step32Rows[0]?.v2EnabledBySurplusAdjustedTarget,
-    undefined,
-    'Committed Step 3.2 rows should not be marked as surplus-enabled Step 3.4 provenance rows.'
-  )
-  assert.equal(
-    step34Rows[0]?.v2EnabledBySurplusAdjustedTarget,
-    true,
-    'Expected the remaining Step 3.4 row to be flagged as enabled by the surplus-adjusted target.'
-  )
+  assert.equal(step32Rows[0]?.v2EnabledBySurplusAdjustedTarget, undefined)
+  assert.equal(step34Rows[0]?.v2EnabledBySurplusAdjustedTarget, undefined)
 }
 
 main().catch((error) => {

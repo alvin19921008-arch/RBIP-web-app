@@ -10,7 +10,7 @@
 - Surplus mechanics — [V2 Step 3 surplus / ranked swap design](../superpowers/specs/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md)
 - **In-app** staff guide: route `/help/avg-and-slots` (Help Center → Guides)
 
-**Staff-facing UI (English):** Use **Raised target** / **Raised target (shared spare)** and **Extra after needs** in toasts, Help, popovers, and tracker labels. Engineering prose may still say *surplus-adjusted* / *post-need extra*; map to the approved deck in the surplus spec **Locked decision 2**.
+**Staff-facing UI (English):** Use **Extra after needs** (budgeted optional slots in Step 3.4). The legacy **Raised target (shared spare)** surplus-grant pathway has been **removed**; do not introduce new copy for it.
 
 ---
 
@@ -42,11 +42,11 @@
 
 ---
 
-## Surplus (raw coherence)
+## Bootstrap pending (V2)
 
 - **Raw floating** is always **Avg – non-floating** in **continuous** space, **before** quarter rounding.
-- When **surplus** exists (V2 bootstrap / grants), treat surplus as **raw FTE in the same class as Avg**: fold surplus into the **canonical raw requirement** first (e.g. adjust the scalar that acts as **Avg** for derivation), **then** recompute **raw floating** and **rounded floating**. Avoid combining raw gap with a pre-rounded “pie” — keep **apple + apple** in raw space, then apply quarter rules to **floating** only for **rounded floating** / **pending floating**.
-- **Display vs engine:** The **dashboard / Step 3.1 “Avg” row** stays the **raw** therapist-weighted **display** target (unified projection `displayTargetByTeam`); regression `f113` locks this. **Surplus grants** apply on the **operational floating-target** layer inside the projection (e.g. rounded surplus-adjusted targets / pending seeds), **not** by silently rewriting that visible **Avg** number. See **“Why surplus after Step 2”** in [V2 Step 3 surplus design](../superpowers/specs/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md).
+- **V2** `pendingByTeam` at bootstrap uses **quarter-rounded gap**: `roundToNearestQuarterWithMidpoint(max(0, Avg − existingAssigned))` per team (no surplus grants).
+- **Display:** The **dashboard / Step 3.1 “Avg” row** stays the **raw** therapist-weighted target (`displayTargetByTeam` / `teamTargets`); regression `f113` locks this.
 
 ---
 
@@ -73,15 +73,6 @@ Agents should treat **this glossary** as the **product source of truth** when up
 
 ---
 
-## V2 surplus / projection field glossary (code names)
+## Removed surplus-grant fields (historical)
 
-Stable **TypeScript / bootstrap** names stay as implemented unless a focused refactor is explicitly approved; use this table when writing UI copy or cross-linking specs. See the worked example and **Continuous surplus vs discrete grants** in [V2 Step 3 surplus design](../superpowers/specs/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md).
-
-| Code / spec field | Meaning |
-|-------------------|--------|
-| `rawSurplusFte` | Continuous surplus for **weighting** ideal shares (not slot output by itself). |
-| `idealWeightedSurplusShareByTeam` | Fair share of `rawSurplusFte` per team before the slot cap. |
-| `redistributableSlackSlots` | **Integer** max quarter-slots that can be **realized** in this pass; **not** “round(`rawSurplusFte` / 0.25)” as the policy definition. |
-| `realizedSurplusSlotGrantsByTeam` | Per-team **0.25** FTE grants after cap + reconciliation. |
-| `surplusAdjustedTeamTargets` | Continuous targets after grants, before final quarter rounding. |
-| `roundedAdjustedTeamTargets` | Quarter-grid **operational** team targets after surplus + rounding + reconciliation. |
+The following **bootstrap** surplus fields were removed in favor of **budgeted Extra after needs** in Step 3.4 only: `rawSurplusFte`, `idealWeightedSurplusShareByTeam`, `redistributableSlackSlots`, `realizedSurplusSlotGrantsByTeam`, `roundedAdjustedTeamTargets`, `surplusAdjustmentDeltaByTeam`. Optional tracker fields (`v2RealizedSurplusSlotGrant`, etc.) may still appear on **old** saved data but are no longer stamped.

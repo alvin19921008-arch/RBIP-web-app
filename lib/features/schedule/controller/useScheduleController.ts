@@ -3646,42 +3646,10 @@ export function useScheduleController(params: {
               data: {
                 hasTracker: !!(pcaResult as any)?.tracker,
                 teams: {
-                  FO: {
-                    pending: (pcaResult as any)?.pendingPCAFTEPerTeam?.FO ?? null,
-                    grantSlots:
-                      (pcaResult as any)?.tracker?.FO?.summary?.v2RealizedSurplusSlotGrant ?? null,
-                    enabledRows:
-                      ((pcaResult as any)?.tracker?.FO?.assignments ?? []).filter(
-                        (assignment: any) => assignment?.v2EnabledBySurplusAdjustedTarget === true
-                      ).length,
-                  },
-                  SMM: {
-                    pending: (pcaResult as any)?.pendingPCAFTEPerTeam?.SMM ?? null,
-                    grantSlots:
-                      (pcaResult as any)?.tracker?.SMM?.summary?.v2RealizedSurplusSlotGrant ?? null,
-                    enabledRows:
-                      ((pcaResult as any)?.tracker?.SMM?.assignments ?? []).filter(
-                        (assignment: any) => assignment?.v2EnabledBySurplusAdjustedTarget === true
-                      ).length,
-                  },
-                  CPPC: {
-                    pending: (pcaResult as any)?.pendingPCAFTEPerTeam?.CPPC ?? null,
-                    grantSlots:
-                      (pcaResult as any)?.tracker?.CPPC?.summary?.v2RealizedSurplusSlotGrant ?? null,
-                    enabledRows:
-                      ((pcaResult as any)?.tracker?.CPPC?.assignments ?? []).filter(
-                        (assignment: any) => assignment?.v2EnabledBySurplusAdjustedTarget === true
-                      ).length,
-                  },
-                  DRO: {
-                    pending: (pcaResult as any)?.pendingPCAFTEPerTeam?.DRO ?? null,
-                    grantSlots:
-                      (pcaResult as any)?.tracker?.DRO?.summary?.v2RealizedSurplusSlotGrant ?? null,
-                    enabledRows:
-                      ((pcaResult as any)?.tracker?.DRO?.assignments ?? []).filter(
-                        (assignment: any) => assignment?.v2EnabledBySurplusAdjustedTarget === true
-                      ).length,
-                  },
+                  FO: { pending: (pcaResult as any)?.pendingPCAFTEPerTeam?.FO ?? null },
+                  SMM: { pending: (pcaResult as any)?.pendingPCAFTEPerTeam?.SMM ?? null },
+                  CPPC: { pending: (pcaResult as any)?.pendingPCAFTEPerTeam?.CPPC ?? null },
+                  DRO: { pending: (pcaResult as any)?.pendingPCAFTEPerTeam?.DRO ?? null },
                 },
               },
               timestamp: Date.now(),

@@ -1,36 +1,12 @@
 'use client'
 
-import {
-  AvgPcaExtraAfterNeedsDifferentParagraph,
-  AvgPcaRaisedTargetSharedSpareParagraph,
-} from '@/components/help/AvgPcaContinuousVsSlotsExplain'
+import { AvgPcaExtraAfterNeedsDifferentParagraph } from '@/components/help/AvgPcaContinuousVsSlotsExplain'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 
-export type WizardAvgSlotsHelpVariant = 'raised-target' | 'extra-after-needs'
-
 /** In-dialog “What does this mean?” — scoped copy for Step 3.1 (no navigation). */
-export function WizardAvgSlotsHelpInlinePopover({
-  variant,
-  className,
-}: {
-  variant: WizardAvgSlotsHelpVariant
-  className?: string
-}) {
-  const body =
-    variant === 'raised-target' ? (
-      <div className="space-y-2 text-xs leading-snug">
-        <div className="font-semibold text-foreground">Raised target (shared spare)</div>
-        <AvgPcaRaisedTargetSharedSpareParagraph />
-      </div>
-    ) : (
-      <div className="space-y-2 text-xs leading-snug">
-        <div className="font-semibold text-foreground">Extra after needs</div>
-        <AvgPcaExtraAfterNeedsDifferentParagraph />
-      </div>
-    )
-
+export function WizardAvgSlotsHelpInlinePopover({ className }: { className?: string }) {
   return (
     <Popover modal={false}>
       <PopoverTrigger asChild>
@@ -51,7 +27,10 @@ export function WizardAvgSlotsHelpInlinePopover({
         sideOffset={6}
         className="z-[100] w-[min(20rem,calc(100vw-2rem))] border border-border bg-popover p-3 text-popover-foreground shadow-lg"
       >
-        {body}
+        <div className="space-y-2 text-xs leading-snug">
+          <div className="font-semibold text-foreground">Extra after needs</div>
+          <AvgPcaExtraAfterNeedsDifferentParagraph />
+        </div>
       </PopoverContent>
     </Popover>
   )

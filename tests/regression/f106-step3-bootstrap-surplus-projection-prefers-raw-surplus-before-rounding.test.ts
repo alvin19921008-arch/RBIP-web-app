@@ -1,6 +1,5 @@
 /**
- * V2 surplus projection: raw/base targets and raw surplus drive ideal shares
- * before quarter realization; the grant must not follow a round-first-then-add path.
+ * V2 bootstrap: pending floating uses quarter-rounded gap vs Avg (no surplus-grant uplift).
  */
 import assert from 'node:assert/strict'
 
@@ -56,30 +55,16 @@ async function main() {
     rawAveragePCAPerTeamByTeam,
   })
 
-  assert.ok(summary.rawSurplusFte != null && summary.rawSurplusFte > 0.25)
-  assert.equal(summary.redistributableSlackSlots, 1)
+  for (const team of ['MC', 'NSM'] as const) {
+    const gap = Math.max(0, (teamTargets[team] ?? 0) - 0)
+    assert.equal(
+      summary.pendingByTeam[team],
+      roundToNearestQuarterWithMidpoint(gap),
+      `Expected V2 pending = round(max(0, Avg − assigned)) for ${team}`
+    )
+  }
 
-  const idealMc = summary.idealWeightedSurplusShareByTeam?.MC ?? 0
-  const idealNsm = summary.idealWeightedSurplusShareByTeam?.NSM ?? 0
-  assert.ok(idealMc > 0 && idealNsm > 0)
-  assert.ok(idealMc > idealNsm)
-
-  const realizedMc = summary.realizedSurplusSlotGrantsByTeam?.MC ?? 0
-  const realizedNsm = summary.realizedSurplusSlotGrantsByTeam?.NSM ?? 0
-  assert.equal(realizedMc, 0.25)
-  assert.equal(realizedNsm, 0)
-
-  const wrongRoundedWeightsMc = roundToNearestQuarterWithMidpoint(0.11)
-  const wrongRoundedWeightsNsm = roundToNearestQuarterWithMidpoint(0.36)
-  const wrongWeightSum = wrongRoundedWeightsMc + wrongRoundedWeightsNsm
-  const wrongIdealMc =
-    summary.rawSurplusFte! * (wrongRoundedWeightsMc / wrongWeightSum)
-  const wrongIdealNsm =
-    summary.rawSurplusFte! * (wrongRoundedWeightsNsm / wrongWeightSum)
-  assert.ok(
-    Math.abs(wrongIdealMc - idealMc) > 1e-6 || Math.abs(wrongIdealNsm - idealNsm) > 1e-6,
-    'expected ideal shares to differ from a round-first weighting baseline'
-  )
+  assert.equal(summary.rawAveragePCAPerTeamByTeam?.MC, 10)
 }
 
 main().catch((error) => {

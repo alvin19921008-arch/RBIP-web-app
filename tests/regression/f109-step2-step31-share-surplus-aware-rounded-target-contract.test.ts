@@ -1,6 +1,6 @@
 /**
- * V2 contract: Step 2 handoff delta and Step 3.1 rounded seeds share surplus-aware
- * operational targets from computeStep3BootstrapSummary (not "round initialPending first").
+ * V2 contract: Step 3.1 pending = round(max(0, Avg − existingAssigned)); Step 2 handoff toast
+ * only when display Avg targets change (not when only the floating pool size changes).
  */
 import assert from 'node:assert/strict'
 
@@ -68,22 +68,13 @@ async function main() {
     floatingPCAs: [buildFloatingPca('float-0', 1), buildFloatingPca('float-1', 1)],
   })
 
-  const handoff = describeStep3BootstrapDelta(prev, next)
-  assert.ok(handoff, 'expected a Step 3 bootstrap handoff delta')
-  assert.match(handoff.details, /MC \+4 PCA slots/)
+  assert.equal(describeStep3BootstrapDelta(prev, next), null)
 
-  const step31RoundedMc = roundToNearestQuarterWithMidpoint(next.pendingByTeam.MC ?? 0)
-  const legacyRoundedMc = roundToNearestQuarterWithMidpoint(Math.max(0, teamTargets.MC - 0))
-  assert.equal(step31RoundedMc, 1.25)
-  assert.equal(legacyRoundedMc, 0)
-  assert.notEqual(
-    step31RoundedMc,
-    legacyRoundedMc,
-    'expected surplus-aware pending rounding to differ from legacy round(target-assigned) pending'
-  )
+  const expectedMc = roundToNearestQuarterWithMidpoint(Math.max(0, teamTargets.MC - 0))
+  assert.equal(next.pendingByTeam.MC, expectedMc)
+  assert.equal(roundToNearestQuarterWithMidpoint(next.pendingByTeam.MC ?? 0), expectedMc)
 
-  const rawAverageEchoMc = next.rawAveragePCAPerTeamByTeam?.MC
-  assert.equal(rawAverageEchoMc, 10)
+  assert.equal(next.rawAveragePCAPerTeamByTeam?.MC, 10)
   assert.equal(next.teamTargets.MC, teamTargets.MC)
 }
 

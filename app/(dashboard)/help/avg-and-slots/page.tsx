@@ -4,7 +4,7 @@ import { AvgPcaFormulaSteps, AvgPcaSanityCheckStaticDescription } from '@/compon
 export const metadata = {
   title: 'Avg PCA and slots',
   description:
-    'Why Avg PCA/team uses continuous FTE while Step 3 uses slots, and how raised target (shared spare) differs from extra after needs.',
+    'Why Avg PCA/team uses continuous FTE while Step 3 uses slots, and how budgeted Extra after needs works in Step 3.4.',
 }
 
 export default function AvgAndSlotsHelpPage() {
@@ -70,156 +70,24 @@ export default function AvgAndSlotsHelpPage() {
           </p>
         </section>
 
-        <section className="space-y-4 rounded-lg border border-border bg-card p-4 text-sm leading-relaxed">
-          <h2 className="text-base font-semibold">Raised target (shared spare) — after Step 2, before Step 3</h2>
+        <section className="space-y-3 rounded-lg border border-border bg-card p-4 text-sm leading-relaxed">
+          <h2 className="text-base font-semibold">Slack after rounding</h2>
           <p className="text-muted-foreground">
-            After <span className="font-medium text-foreground">Step 2</span>, the system turns each team’s floating{' '}
-            <span className="font-medium text-foreground">need</span> into <span className="font-medium text-foreground">whole slots</span>{' '}
-            (0.25 FTE each). Sometimes the <span className="font-medium text-foreground">floating pool</span> can still
-            make <span className="font-medium text-foreground">extra whole slots</span> after those needs are counted in
-            slots. A fair share of that spare can <span className="font-medium text-foreground">raise</span> one team’s{' '}
-            <span className="font-medium text-foreground">floating target</span> slightly — that is{' '}
-            <span className="font-medium text-foreground">raised target (shared spare)</span>.
-          </p>
-
-          <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Example mapping (same idea, different units)
-            </p>
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full min-w-[280px] border-collapse text-xs">
-                <thead>
-                  <tr className="bg-muted/60 text-foreground">
-                    <th className="border-b border-border px-3 py-2 text-left font-medium">In the app</th>
-                    <th className="border-b border-border px-3 py-2 text-left font-medium">In this example</th>
-                  </tr>
-                </thead>
-                <tbody className="text-muted-foreground">
-                  <tr>
-                    <td className="border-b border-border px-3 py-2">1 placeable slot (0.25 FTE)</td>
-                    <td className="border-b border-border px-3 py-2">1 × 8 g bun (fixed size)</td>
-                  </tr>
-                  <tr>
-                    <td className="border-b border-border px-3 py-2">Continuous floating pool (FTE)</td>
-                    <td className="border-b border-border px-3 py-2">Whole bread dough (e.g. 100 g)</td>
-                  </tr>
-                  <tr>
-                    <td className="border-b border-border px-3 py-2">Need counted in whole slots</td>
-                    <td className="border-b border-border px-3 py-2">Mealboxes — only whole compartments (no 0.37 box)</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div>
-            <p className="mb-2 font-medium text-foreground">Dough → buns (continuous vs whole slots)</p>
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full min-w-[260px] border-collapse text-xs">
-                <thead>
-                  <tr className="bg-muted/60 text-foreground">
-                    <th className="border-b border-border px-3 py-2 text-left font-medium">Idea</th>
-                    <th className="border-b border-border px-3 py-2 text-right font-medium">Amount</th>
-                  </tr>
-                </thead>
-                <tbody className="text-muted-foreground">
-                  <tr>
-                    <td className="border-b border-border px-3 py-2">Whole dough (continuous)</td>
-                    <td className="border-b border-border px-3 py-2 text-right tabular-nums">100 g</td>
-                  </tr>
-                  <tr>
-                    <td className="border-b border-border px-3 py-2">Fixed bun size → max buns you can bake</td>
-                    <td className="border-b border-border px-3 py-2 text-right tabular-nums">8 g each → 12 buns (uses 96 g)</td>
-                  </tr>
-                  <tr>
-                    <td className="border-b border-border px-3 py-2">Leftover dough (not another 8 g bun)</td>
-                    <td className="border-b border-border px-3 py-2 text-right tabular-nums">4 g</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <ul className="mt-2 list-disc space-y-1.5 pl-5 text-muted-foreground">
-              <li>
-                <span className="font-medium text-foreground">12 buns</span> ≈ how many{' '}
-                <span className="font-medium text-foreground">whole placeable slots</span> the floating pool can still
-                make today.
-              </li>
-              <li>
-                <span className="font-medium text-foreground">4 g</span> ≈ continuous “headroom” in the story that{' '}
-                <span className="font-medium text-foreground">does not</span> automatically become another 8 g bun — same
-                idea as: not every leftover bit becomes another 0.25 FTE slot unless the rules allow a{' '}
-                <span className="font-medium text-foreground">whole</span> slot.
-              </li>
-            </ul>
-          </div>
-
-          <div>
-            <p className="mb-2 font-medium text-foreground">Mealboxes = need in whole slots only</p>
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full min-w-[280px] border-collapse text-xs">
-                <thead>
-                  <tr className="bg-muted/60 text-foreground">
-                    <th className="border-b border-border px-3 py-2 text-left font-medium">Team (mealbox)</th>
-                    <th className="border-b border-border px-3 py-2 text-right font-medium">
-                      Compartments to fill (slots)
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="text-muted-foreground">
-                  <tr>
-                    <td className="border-b border-border px-3 py-2">Team 1</td>
-                    <td className="border-b border-border px-3 py-2 text-right tabular-nums">4</td>
-                  </tr>
-                  <tr>
-                    <td className="border-b border-border px-3 py-2">Team 2</td>
-                    <td className="border-b border-border px-3 py-2 text-right tabular-nums">4</td>
-                  </tr>
-                  <tr>
-                    <td className="border-b border-border px-3 py-2">Team 3</td>
-                    <td className="border-b border-border px-3 py-2 text-right tabular-nums">3</td>
-                  </tr>
-                  <tr className="bg-muted/30 font-medium text-foreground">
-                    <td className="border-b border-border px-3 py-2">Total</td>
-                    <td className="border-b border-border px-3 py-2 text-right tabular-nums">11</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <ul className="mt-2 list-disc space-y-1.5 pl-5 text-muted-foreground">
-              <li>
-                Each <span className="font-medium text-foreground">compartment</span> ={' '}
-                <span className="font-medium text-foreground">1 slot (0.25 FTE)</span> still owed from the floating pool
-                for that team’s plan.
-              </li>
-              <li>
-                <span className="font-medium text-foreground">12</span> buns possible,{' '}
-                <span className="font-medium text-foreground">11</span> compartments needed →{' '}
-                <span className="font-medium text-foreground">1 spare bun</span> the system can assign fairly (using Avg
-                PCA/team weighting) → one team’s <span className="font-medium text-foreground">floating target</span> can
-                show <span className="font-medium text-foreground">+0.25 FTE</span>.
-              </li>
-              <li>
-                <span className="font-medium text-foreground">Avg PCA/team</span> on the dashboard and Step 3.1{' '}
-                <span className="font-medium text-foreground">does not change</span> — only the floating target for
-                Step 3 can move.
-              </li>
-            </ul>
-          </div>
-
-          <p className="text-xs text-muted-foreground">
-            In-app hints:{' '}
-            <span className="font-medium text-foreground">Floating target includes a small raise from shared spare (rounding).</span>{' '}
-            Tooltip: <span className="font-medium text-foreground">Raised floating target (shared spare).</span>
+            After <span className="font-medium text-foreground">Step 2</span>, each team’s floating gap is expressed on
+            the quarter grid. The pool may still have spare placeable slots once those needs are counted in slots.
+            Optional coverage beyond met needs is realized in <span className="font-medium text-foreground">Step 3.4</span>{' '}
+            only, as <span className="font-medium text-foreground">budgeted Extra after needs</span> (capped; favors
+            under-assigned teams first). The dashboard <span className="font-medium text-foreground">Avg</span> row stays
+            the raw therapist-weighted value.
           </p>
         </section>
 
         <section className="space-y-4 rounded-lg border border-border bg-card p-4 text-sm leading-relaxed">
-          <h2 className="text-base font-semibold">Extra after needs — later, Step 3.4</h2>
+          <h2 className="text-base font-semibold">Extra after needs (budgeted) — Step 3.4</h2>
           <p className="text-muted-foreground">
             After <span className="font-medium text-foreground">every team’s basic floating need</span> is already
-            covered, the <span className="font-medium text-foreground">system</span> may still place optional floating
-            slot(s). That is <span className="font-medium text-foreground">extra after needs</span>. It depends on how
-            Step 3.4 runs (order, repair, extra pass) — not the same story as raising the floating target at Step 2→3.
+            covered, Step 3.4 may still place optional floating slot(s), <span className="font-medium text-foreground">up to a computed budget</span>{' '}
+            from pool spare and aggregate under-assignment. That is <span className="font-medium text-foreground">Extra after needs</span>.
           </p>
 
           <div>
@@ -266,33 +134,27 @@ export default function AvgAndSlotsHelpPage() {
 
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Raised target vs extra after needs
+              Extra after needs (summary)
             </p>
             <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full min-w-[320px] border-collapse text-xs">
+              <table className="w-full min-w-[280px] border-collapse text-xs">
                 <thead>
                   <tr className="bg-muted/60 text-foreground">
                     <th className="border-b border-border px-3 py-2 text-left font-medium">Topic</th>
-                    <th className="border-b border-border px-3 py-2 text-left font-medium">
-                      Raised target (shared spare)
-                    </th>
-                    <th className="border-b border-border px-3 py-2 text-left font-medium">Extra after needs</th>
+                    <th className="border-b border-border px-3 py-2 text-left font-medium">Extra after needs (budgeted)</th>
                   </tr>
                 </thead>
                 <tbody className="text-muted-foreground">
                   <tr>
                     <td className="border-b border-border px-3 py-2 font-medium text-foreground">When</td>
-                    <td className="border-b border-border px-3 py-2">After Step 2→3, when counting needs in whole slots leaves spare whole slots in the pool</td>
-                    <td className="border-b border-border px-3 py-2">During / after Step 3.4, when basic needs are met but optional slots can still be placed</td>
+                    <td className="border-b border-border px-3 py-2">Step 3.4, after basic floating needs are met</td>
                   </tr>
                   <tr>
                     <td className="border-b border-border px-3 py-2 font-medium text-foreground">What moves</td>
-                    <td className="border-b border-border px-3 py-2">Mostly the floating target (+0.25 FTE style)</td>
-                    <td className="border-b border-border px-3 py-2">Assignments (an extra slot), not the Avg row</td>
+                    <td className="border-b border-border px-3 py-2">Optional assignments (extra slots), not the Avg row</td>
                   </tr>
                   <tr>
                     <td className="border-b border-border px-3 py-2 font-medium text-foreground">Avg row</td>
-                    <td className="border-b border-border px-3 py-2">Unchanged</td>
                     <td className="border-b border-border px-3 py-2">Unchanged</td>
                   </tr>
                 </tbody>

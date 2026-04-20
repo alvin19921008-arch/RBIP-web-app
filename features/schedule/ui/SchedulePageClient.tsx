@@ -6231,10 +6231,6 @@ function SchedulePageContent() {
               hasRawAvg,
               rawAvgFO: Number((rawAvg?.FO ?? 0).toFixed(3)),
               rawAvgDRO: Number((rawAvg?.DRO ?? 0).toFixed(3)),
-              v2RawSurplusFte: Number((step3BootstrapSummaryV2.rawSurplusFte ?? 0).toFixed(3)),
-              v2SlackSlots: step3BootstrapSummaryV2.redistributableSlackSlots ?? 0,
-              v2GrantFO: Number((step3BootstrapSummaryV2.realizedSurplusSlotGrantsByTeam?.FO ?? 0).toFixed(3)),
-              v2GrantDRO: Number((step3BootstrapSummaryV2.realizedSurplusSlotGrantsByTeam?.DRO ?? 0).toFixed(3)),
               pendingFO: Number((pendingPCAFTEForStep3Dialog.FO ?? 0).toFixed(3)),
               pendingDRO: Number((pendingPCAFTEForStep3Dialog.DRO ?? 0).toFixed(3)),
             },
@@ -11354,13 +11350,13 @@ function SchedulePageContent() {
                           sanityCheckFooter={
                             <div className="space-y-1">
                               <div className="text-muted-foreground">
-                                For each team, compute <span className="font-mono">balance = Assigned − Target</span>.
-                                Use <span className="font-mono">finalAvg[DRO]</span> as DRO’s target on DRM days
+                                For each team, compute <span className="font-mono">balance = Assigned − Avg</span>.
+                                Use <span className="font-mono">finalAvg[DRO]</span> as DRO’s Avg on DRM days
                                 (otherwise use base Avg). Then:
                               </div>
                               <div className="text-muted-foreground font-mono">
-                                +ve sum: {pcaBalanceSanity.positiveSum.toFixed(2)} | -ve abs sum:{' '}
-                                {pcaBalanceSanity.negativeAbsSum.toFixed(2)} | net: {pcaBalanceSanity.netDiff.toFixed(2)}
+                                Over-assigned: {pcaBalanceSanity.positiveSum.toFixed(2)} | Under-assigned:{' '}
+                                {pcaBalanceSanity.negativeAbsSum.toFixed(2)} | Net: {pcaBalanceSanity.netDiff.toFixed(2)}
                               </div>
                               <div className="text-muted-foreground text-[11px]">
                                 Team balances (today): {pcaBalanceSanity.perTeamText}

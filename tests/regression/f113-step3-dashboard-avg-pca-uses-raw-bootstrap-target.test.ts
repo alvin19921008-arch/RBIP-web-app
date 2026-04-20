@@ -39,16 +39,6 @@ async function main() {
     availableFloatingSlots: 0,
     neededFloatingSlots: 0,
     slackFloatingSlots: 0,
-    roundedAdjustedTeamTargets: {
-      FO: 1.5,
-      SMM: 1.5,
-      SFM: 0,
-      CPPC: 1.5,
-      MC: 0,
-      GMC: 0,
-      NSM: 0,
-      DRO: 2,
-    },
   }
 
   const displayTargets = getStep3AveragePcaDisplayTargets(summary)

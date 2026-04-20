@@ -1,6 +1,5 @@
 /**
- * V2 surplus projection: realized grants match executable slack, and reconciled
- * rounded adjusted targets pick up exactly that global quarter-slot uplift.
+ * V2 bootstrap: floating slack = available pool slots minus discrete slot need from rounded pending.
  */
 import assert from 'node:assert/strict'
 
@@ -50,9 +49,9 @@ async function main() {
   ]
 
   const teamTargets = emptyTeamRecord(0)
-  teamTargets.FO = 0.1
-  teamTargets.SMM = 0.1
-  teamTargets.SFM = 0.1
+  teamTargets.FO = 0.15
+  teamTargets.SMM = 0.15
+  teamTargets.SFM = 0.15
 
   const rawAveragePCAPerTeamByTeam = emptyTeamRecord(1)
 
@@ -66,29 +65,19 @@ async function main() {
     rawAveragePCAPerTeamByTeam,
   })
 
-  assert.equal(summary.redistributableSlackSlots, 2)
+  assert.equal(summary.availableFloatingSlots, 5)
 
-  const sumRealized =
-    (summary.realizedSurplusSlotGrantsByTeam?.FO ?? 0) +
-    (summary.realizedSurplusSlotGrantsByTeam?.SMM ?? 0) +
-    (summary.realizedSurplusSlotGrantsByTeam?.SFM ?? 0)
-  assert.equal(sumRealized, 0.5)
-
-  const baselineRounded = (team: Team) =>
-    roundToNearestQuarterWithMidpoint(teamTargets[team] ?? 0)
-
-  const sumRoundedDelta =
-    (summary.roundedAdjustedTeamTargets!.FO! - baselineRounded('FO')) +
-    (summary.roundedAdjustedTeamTargets!.SMM! - baselineRounded('SMM')) +
-    (summary.roundedAdjustedTeamTargets!.SFM! - baselineRounded('SFM'))
-
-  assert.ok(Math.abs(sumRoundedDelta - 0.5) < 1e-9)
-
-  const sumDelta =
-    (summary.surplusAdjustmentDeltaByTeam?.FO ?? 0) +
-    (summary.surplusAdjustmentDeltaByTeam?.SMM ?? 0) +
-    (summary.surplusAdjustmentDeltaByTeam?.SFM ?? 0)
-  assert.ok(Math.abs(sumDelta - 0.5) < 1e-9)
+  let discreteNeeded = 0
+  for (const team of ['FO', 'SMM', 'SFM'] as Team[]) {
+    const gap = Math.max(0, (teamTargets[team] ?? 0) - 0)
+    const pending = roundToNearestQuarterWithMidpoint(gap)
+    assert.equal(summary.pendingByTeam[team], pending)
+    discreteNeeded += Math.max(0, Math.round(roundToNearestQuarterWithMidpoint(pending) / 0.25))
+  }
+  assert.equal(discreteNeeded, 3)
+  assert.equal(summary.neededFloatingSlots, discreteNeeded)
+  assert.equal(summary.slackFloatingSlots, summary.availableFloatingSlots - summary.neededFloatingSlots)
+  assert.equal(summary.slackFloatingSlots, 2)
 }
 
 main().catch((error) => {

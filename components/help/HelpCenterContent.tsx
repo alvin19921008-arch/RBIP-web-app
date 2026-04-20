@@ -93,8 +93,7 @@ export function HelpCenterContent(props: { onAfterStartTour?: () => void }) {
         <div className="rounded-md border border-border p-3 space-y-2">
           <div className="text-sm font-medium">Avg PCA/team and slots</div>
           <p className="text-xs text-muted-foreground">
-            Plain-language notes on continuous FTE vs slots, scarcity, raised target (shared spare) vs extra after needs
-            (V2 Step 3).
+            Plain-language notes on continuous FTE vs slots, scarcity, and budgeted Extra after needs (V2 Step 3).
           </p>
           <Button asChild size="sm" variant="outline">
             <Link href="/help/avg-and-slots">Open guide</Link>

@@ -42,19 +42,10 @@ export type Step3BootstrapSummary = {
   availableFloatingSlots: number
   neededFloatingSlots: number
   slackFloatingSlots: number
-  /** V2-only surplus-aware projection metadata. Omitted unless V2 projection runs. */
-  rawSurplusFte?: number
-  /** Therapist-weighted ideal share of [rawSurplusFte] (continuous). */
-  idealWeightedSurplusShareByTeam?: Record<Team, number>
-  /** Executable quarter-slot cap for surplus realization. */
-  redistributableSlackSlots?: number
-  /** Quarter-FTE grants after discretization (sum ≤ redistributableSlackSlots × 0.25). */
-  realizedSurplusSlotGrantsByTeam?: Record<Team, number>
-  /** Rounded operational targets after uplift + sum-preserving reconciliation. */
-  roundedAdjustedTeamTargets?: Record<Team, number>
-  /** Per-team delta vs quarter-rounded raw [teamTargets] (operational uplift trace). */
-  surplusAdjustmentDeltaByTeam?: Record<Team, number>
-  /** Echo of therapist-weighted base demand used for weighting (never merged into targets). */
+  /**
+   * Echo of therapist-weighted base demand (projection fingerprint / display weighting only;
+   * not used for surplus grants — pathway removed).
+   */
   rawAveragePCAPerTeamByTeam?: Record<Team, number>
   /**
    * Optional attributed non-floating FTE (substitution vs designated vs special program). When absent, only
@@ -67,27 +58,21 @@ export type Step3BootstrapSummary = {
  * Single Step 2 → Step 3 projection snapshot: display avg, fixed rounded floating targets,
  * initial pending, and surplus provenance metadata share one builder + reference.
  *
- * Allocator authority uses [bootstrapSummary] / quarter-rounded bootstrap pending ([fixedRoundedFloatingTargetByTeam]) and executable slack.
- * Diagnostic “rounded model” slack fields on [Step3BootstrapSummary] are not surplus grant authority;
- * executable slack ([redistributableSlackSlots]) caps realized surplus.
+ * Allocator authority uses [bootstrapSummary] and quarter-rounded bootstrap pending ([fixedRoundedFloatingTargetByTeam]).
  */
 export type Step3ProjectionV2 = {
   /** Fingerprint of bootstrap inputs; consumers compare to skip duplicate recomputation. */
   projectionVersion: string
-  /** Raw/display Avg PCA per team (dashboard + Step 3.1 “avg” — not surplus-adjusted operational target). */
+  /** Raw/display Avg PCA per team (dashboard + Step 3.1 “avg”). */
   displayTargetByTeam: Record<Team, number>
   /**
    * Quarter-rounded bootstrap **floating** pending at Step 2→3 open: `roundToNearestQuarterWithMidpoint(pendingByTeam)`.
-   * [pendingByTeam] is surplus-aware in V2 (grants / reconciliation); this is **not** `round(teamTargets)` as a team total.
+   * V2 [pendingByTeam] is `round(max(0, Avg − existingAssigned))` per team.
    */
   fixedRoundedFloatingTargetByTeam: Record<Team, number>
-  /** Pending FTE after bootstrap (V2 surplus-aware when applicable). */
+  /** Pending FTE after bootstrap. */
   initialRemainingPendingByTeam: Record<Team, number>
   existingAssignedByTeam: Record<Team, number>
-  /** Realized surplus slot grants (FTE), metadata for provenance. */
-  realizedSurplusGrantByTeam: Record<Team, number>
-  /** Rounded operational targets after surplus uplift + reconciliation (tracker/tooltip alignment). */
-  roundedSurplusAdjustedTargetByTeam?: Record<Team, number>
   /** Authoritative bootstrap summary this projection was derived from. */
   bootstrapSummary: Step3BootstrapSummary
 }
@@ -100,7 +85,6 @@ export function buildStep3ProjectionV2FromBootstrapSummary(
   const fixedRoundedFloatingTargetByTeam = createEmptyTeamRecord<number>(0)
   const initialRemainingPendingByTeam = createEmptyTeamRecord<number>(0)
   const existingAssignedByTeam = createEmptyTeamRecord<number>(0)
-  const realizedSurplusGrantByTeam = createEmptyTeamRecord<number>(0)
 
   for (const team of TEAM_ORDER) {
     displayTargetByTeam[team] = summary.teamTargets[team] ?? 0
@@ -109,12 +93,7 @@ export function buildStep3ProjectionV2FromBootstrapSummary(
     fixedRoundedFloatingTargetByTeam[team] = roundToNearestQuarterWithMidpoint(
       summary.pendingByTeam[team] ?? 0
     )
-    realizedSurplusGrantByTeam[team] = summary.realizedSurplusSlotGrantsByTeam?.[team] ?? 0
   }
-
-  const roundedSurplusAdjustedTargetByTeam = summary.roundedAdjustedTeamTargets
-    ? { ...summary.roundedAdjustedTeamTargets }
-    : undefined
 
   return {
     projectionVersion: meta.projectionVersion,
@@ -122,8 +101,6 @@ export function buildStep3ProjectionV2FromBootstrapSummary(
     fixedRoundedFloatingTargetByTeam,
     initialRemainingPendingByTeam,
     existingAssignedByTeam,
-    realizedSurplusGrantByTeam,
-    roundedSurplusAdjustedTargetByTeam,
     bootstrapSummary: summary,
   }
 }
@@ -452,7 +429,11 @@ export function computeStep3BootstrapSummary(args: {
     const assigned = args.existingTeamPCAAssigned[team] ?? 0
     teamTargets[team] = target
     existingAssignedByTeam[team] = assigned
-    pendingByTeam[team] = Math.max(0, target - assigned)
+    const rawGap = Math.max(0, target - assigned)
+    pendingByTeam[team] =
+      args.floatingPcaAllocationVersion === 'v2'
+        ? roundToNearestQuarterWithMidpoint(rawGap)
+        : rawGap
   }
 
   const usedSlotsByPcaId = new Map<string, Set<1 | 2 | 3 | 4>>()
@@ -508,191 +489,9 @@ export function computeStep3BootstrapSummary(args: {
   let neededFloatingSlots = computeNeededSlotsFromPending(pendingByTeam)
   let slackFloatingSlots = availableFloatingSlots - neededFloatingSlots
 
-  let rawSurplusFte: number | undefined
-  let idealWeightedSurplusShareByTeam: Record<Team, number> | undefined
-  let redistributableSlackSlots: number | undefined
-  let realizedSurplusSlotGrantsByTeam: Record<Team, number> | undefined
-  let roundedAdjustedTeamTargets: Record<Team, number> | undefined
-  let surplusAdjustmentDeltaByTeam: Record<Team, number> | undefined
   let rawAveragePCAPerTeamEcho: Record<Team, number> | undefined
-
-  if (args.floatingPcaAllocationVersion === 'v2') {
-    const rawPendingByTeam = createEmptyTeamRecord<number>(0)
-    let totalRawPending = 0
-    let discreteNeededSlots = 0
-    for (const team of args.teams) {
-      const raw = Math.max(0, (args.teamTargets[team] ?? 0) - (args.existingTeamPCAAssigned[team] ?? 0))
-      rawPendingByTeam[team] = raw
-      totalRawPending += raw
-      discreteNeededSlots += Math.ceil(raw / 0.25 - 1e-9)
-    }
-
-    const availableFloatingFte = availableFloatingSlots * 0.25
-    rawSurplusFte = Math.max(0, availableFloatingFte - totalRawPending)
-    // Executable slack cap uses strict per-team quarter realizability (ceil), so tiny
-    // continuous uplift shares do not auto-bloat into guaranteed surplus slot grants.
-    redistributableSlackSlots = Math.max(0, availableFloatingSlots - discreteNeededSlots)
-
-    const rawAvgByTeam = createEmptyTeamRecord<number>(0)
-    let weightSum = 0
-    for (const team of args.teams) {
-      const w = args.rawAveragePCAPerTeamByTeam?.[team] ?? 0
-      rawAvgByTeam[team] = w
-      weightSum += Math.max(0, w)
-    }
-    rawAveragePCAPerTeamEcho = { ...rawAvgByTeam }
-
-    // Weighting must stay on continuous raw surplus (spec contract). Executable slack only caps realization.
-    const weightedDistributionInputFte = rawSurplusFte
-
-    idealWeightedSurplusShareByTeam = createEmptyTeamRecord<number>(0)
-    if (weightedDistributionInputFte > 0 && weightSum > 0) {
-      for (const team of args.teams) {
-        const w = Math.max(0, rawAvgByTeam[team] ?? 0)
-        idealWeightedSurplusShareByTeam[team] = weightedDistributionInputFte * (w / weightSum)
-      }
-    }
-
-    const grantBudgetFte = Math.min(weightedDistributionInputFte, redistributableSlackSlots * 0.25)
-    let grantSlotCount = 0
-    if (grantBudgetFte > 0 && weightSum > 0) {
-      grantSlotCount = Math.min(redistributableSlackSlots, Math.floor(grantBudgetFte / 0.25 + 1e-9))
-    }
-
-    realizedSurplusSlotGrantsByTeam = createEmptyTeamRecord<number>(0)
-    const continuousProportionalGrant = createEmptyTeamRecord<number>(0)
-
-    const baselineRoundedTargets = createEmptyTeamRecord<number>(0)
-    for (const team of args.teams) {
-      baselineRoundedTargets[team] = roundToNearestQuarterWithMidpoint(args.teamTargets[team] ?? 0)
-    }
-
-    if (grantSlotCount === 0) {
-      roundedAdjustedTeamTargets = { ...baselineRoundedTargets }
-      surplusAdjustmentDeltaByTeam = createEmptyTeamRecord<number>(0)
-      for (const team of args.teams) {
-        pendingByTeam[team] = rawPendingByTeam[team] ?? 0
-      }
-      neededFloatingSlots = computeNeededSlotsFromPending(pendingByTeam)
-      slackFloatingSlots = availableFloatingSlots - neededFloatingSlots
-    } else if (grantSlotCount > 0 && weightSum > 0) {
-      for (const team of args.teams) {
-        const w = Math.max(0, rawAvgByTeam[team] ?? 0)
-        continuousProportionalGrant[team] = grantBudgetFte * (w / weightSum)
-      }
-
-      const floorSlots: Record<Team, number> = createEmptyTeamRecord<number>(0)
-      const remainder: Record<Team, number> = createEmptyTeamRecord<number>(0)
-      let floorTotal = 0
-      for (const team of args.teams) {
-        const slotsFloat = continuousProportionalGrant[team] / 0.25
-        const f = Math.floor(slotsFloat + 1e-9)
-        floorSlots[team] = f
-        remainder[team] = slotsFloat - f
-        floorTotal += f
-      }
-
-      let deficit = grantSlotCount - floorTotal
-      const bonusOrder = [...args.teams].sort((a, b) => {
-        const dr = remainder[b]! - remainder[a]!
-        if (Math.abs(dr) > 1e-12) return dr
-        return TEAM_ORDER.indexOf(a) - TEAM_ORDER.indexOf(b)
-      })
-      let bi = 0
-      while (deficit > 0 && bonusOrder.length > 0) {
-        const team = bonusOrder[bi % bonusOrder.length]!
-        floorSlots[team] = (floorSlots[team] ?? 0) + 1
-        deficit -= 1
-        bi += 1
-      }
-
-      while (deficit < 0) {
-        const team = [...args.teams].sort((a, b) => {
-          const dr = remainder[a]! - remainder[b]!
-          if (Math.abs(dr) > 1e-12) return dr
-          return TEAM_ORDER.indexOf(a) - TEAM_ORDER.indexOf(b)
-        })[0]!
-        if ((floorSlots[team] ?? 0) <= 0) break
-        floorSlots[team] = (floorSlots[team] ?? 0) - 1
-        deficit += 1
-      }
-
-      for (const team of args.teams) {
-        realizedSurplusSlotGrantsByTeam[team] = (floorSlots[team] ?? 0) * 0.25
-      }
-
-      const surplusAdjusted = createEmptyTeamRecord<number>(0)
-      for (const team of args.teams) {
-        surplusAdjusted[team] =
-          (args.teamTargets[team] ?? 0) + (realizedSurplusSlotGrantsByTeam[team] ?? 0)
-      }
-
-      roundedAdjustedTeamTargets = createEmptyTeamRecord<number>(0)
-      for (const team of args.teams) {
-        roundedAdjustedTeamTargets[team] = roundToNearestQuarterWithMidpoint(surplusAdjusted[team] ?? 0)
-      }
-
-      surplusAdjustmentDeltaByTeam = createEmptyTeamRecord<number>(0)
-
-      const recomputeAdjustmentDeltas = () => {
-        for (const team of args.teams) {
-          surplusAdjustmentDeltaByTeam![team] =
-            (roundedAdjustedTeamTargets![team] ?? 0) - (baselineRoundedTargets[team] ?? 0)
-        }
-      }
-
-      const sumAdjustmentDelta = () =>
-        args.teams.reduce(
-          (acc, team) =>
-            acc +
-            ((roundedAdjustedTeamTargets![team] ?? 0) - (baselineRoundedTargets[team] ?? 0)),
-          0
-        )
-
-      recomputeAdjustmentDeltas()
-      const intendedGrantFte = grantSlotCount * 0.25
-      let guard = 0
-      while (guard < 64 && Math.abs(sumAdjustmentDelta() - intendedGrantFte) > 1e-9) {
-        const sumDelta = sumAdjustmentDelta()
-        if (sumDelta > intendedGrantFte + 1e-9) {
-          const team = [...args.teams].sort((a, b) => {
-            const oa =
-              (roundedAdjustedTeamTargets![a] ?? 0) - (surplusAdjusted[a] ?? 0)
-            const ob =
-              (roundedAdjustedTeamTargets![b] ?? 0) - (surplusAdjusted[b] ?? 0)
-            if (Math.abs(ob - oa) > 1e-12) return ob - oa
-            return TEAM_ORDER.indexOf(a) - TEAM_ORDER.indexOf(b)
-          })[0]!
-          roundedAdjustedTeamTargets![team] =
-            (roundedAdjustedTeamTargets![team] ?? 0) - 0.25
-        } else if (sumDelta < intendedGrantFte - 1e-9) {
-          const team = [...args.teams].sort((a, b) => {
-            const ua =
-              (surplusAdjusted[a] ?? 0) - (roundedAdjustedTeamTargets![a] ?? 0)
-            const ub =
-              (surplusAdjusted[b] ?? 0) - (roundedAdjustedTeamTargets![b] ?? 0)
-            if (Math.abs(ub - ua) > 1e-12) return ub - ua
-            return TEAM_ORDER.indexOf(a) - TEAM_ORDER.indexOf(b)
-          })[0]!
-          roundedAdjustedTeamTargets![team] =
-            (roundedAdjustedTeamTargets![team] ?? 0) + 0.25
-        } else {
-          break
-        }
-        recomputeAdjustmentDeltas()
-        guard += 1
-      }
-
-      for (const team of args.teams) {
-        pendingByTeam[team] = Math.max(
-          0,
-          (roundedAdjustedTeamTargets[team] ?? 0) - (existingAssignedByTeam[team] ?? 0)
-        )
-      }
-
-      neededFloatingSlots = computeNeededSlotsFromPending(pendingByTeam)
-      slackFloatingSlots = availableFloatingSlots - neededFloatingSlots
-    }
+  if (args.floatingPcaAllocationVersion === 'v2' && args.rawAveragePCAPerTeamByTeam) {
+    rawAveragePCAPerTeamEcho = { ...args.rawAveragePCAPerTeamByTeam }
   }
 
   return {
@@ -706,23 +505,13 @@ export function computeStep3BootstrapSummary(args: {
     ...(args.nonFloatingFteBreakdownByTeam != null
       ? { nonFloatingFteBreakdownByTeam: args.nonFloatingFteBreakdownByTeam }
       : {}),
-    ...(args.floatingPcaAllocationVersion === 'v2'
-      ? {
-          rawSurplusFte,
-          idealWeightedSurplusShareByTeam,
-          redistributableSlackSlots,
-          realizedSurplusSlotGrantsByTeam,
-          roundedAdjustedTeamTargets,
-          surplusAdjustmentDeltaByTeam,
-          rawAveragePCAPerTeamByTeam: rawAveragePCAPerTeamEcho,
-        }
+    ...(rawAveragePCAPerTeamEcho != null
+      ? { rawAveragePCAPerTeamByTeam: rawAveragePCAPerTeamEcho }
       : {}),
   }
 }
 
 const operationalTargetForStep3Handoff = (summary: Step3BootstrapSummary, team: Team): number => {
-  const adjusted = summary.roundedAdjustedTeamTargets?.[team]
-  if (adjusted != null) return adjusted
   return summary.teamTargets[team] ?? 0
 }
 
@@ -731,7 +520,7 @@ const operationalTargetForStep3Handoff = (summary: Step3BootstrapSummary, team: 
  * Keep in sync with `docs/superpowers/specs/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md` Locked decision 2.
  */
 export const STEP2_HANDOFF_FLOATING_TARGET_TOAST_MAIN =
-  'Floating targets updated after Step 2 + shared spare from rounding the floating pool.'
+  'Floating targets updated after Step 2.'
 
 /** Returns structured lines for toast: main (short), details (second line). */
 export function describeStep3BootstrapDelta(

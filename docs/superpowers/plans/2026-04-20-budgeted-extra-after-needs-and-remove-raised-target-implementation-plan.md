@@ -599,7 +599,7 @@ git commit -m "feat(step31): show budgeted likely extras with progressive disclo
 - Modify: `features/schedule/ui/SchedulePageClient.tsx`
 - Modify: `components/help/avgPcaFormulaSteps.tsx`
 
-- [ ] **Step 1: Update schedule popover labels**
+- [x] **Step 1: Update schedule popover labels**
 
 In `SchedulePageClient.tsx` sanity footer, change:
 
@@ -614,7 +614,7 @@ to:
 Over-assigned: {positiveSum.toFixed(2)} | Under-assigned: {negativeAbsSum.toFixed(2)} | Net: {netDiff.toFixed(2)}
 ```
 
-- [ ] **Step 2: Update static sanity-check copy**
+- [x] **Step 2: Update static sanity-check copy**
 
 In `AvgPcaSanityCheckStaticDescription`, update text to:
 

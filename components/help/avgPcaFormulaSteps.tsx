@@ -47,12 +47,12 @@ export function AvgPcaSanityCheckStaticDescription() {
   return (
     <>
       <div className="text-muted-foreground">
-        For each team, compute <span className="font-mono">balance = Assigned − Target</span>. Use{' '}
-        <span className="font-mono">finalAvg[DRO]</span> as DRO’s target on DRM days (otherwise use base Avg). Then:
+        For each team, compute <span className="font-mono">balance = Assigned − Avg</span>. Use{' '}
+        <span className="font-mono">finalAvg[DRO]</span> as DRO’s Avg on DRM days (otherwise use base Avg). Then:
       </div>
       <div className="text-muted-foreground">
-        sum of positive balances ≈ absolute sum of negative balances (small drift can happen due to quarter-slot
-        rounding and 2‑decimal display).
+        <span className="font-medium">Over-assigned sum</span> and <span className="font-medium">Under-assigned sum</span>{' '}
+        should roughly match (small drift can happen due to quarter-slot rounding and 2‑decimal display).
       </div>
     </>
   )

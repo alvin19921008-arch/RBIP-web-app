@@ -105,21 +105,12 @@ const TEAMS: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
 const STEP34_POST_NEED_DEFAULT_LINE =
   "After every team's basic floating need was met, rounding still left spare slot(s), so the system could place extra slot(s)."
 
-function teamHasPositiveSurplusGrant(
-  grants: Record<Team, number> | undefined,
-  team: Team
-): boolean {
-  return (grants?.[team] ?? 0) > 1e-9
-}
-
 /** Step 3.4 lane dots — tooltips mirror tracker / “Why this happened” semantics. */
 const STEP34_LANE_DOT_TOOLTIPS = {
   step32:
     'Floating coverage from Step 3.2 (preferred slot / outcome reservation) appears in the allocation tracker for this team.',
   step33:
     'Floating coverage from Step 3.3 (adjacent to special program) appears in the allocation tracker for this team.',
-  surplus:
-    'This team has a raised floating target from surplus redistribution (shared spare). Same signal as the Raised target chip.',
   extra:
     'Step 3.4 placed extra-after-needs slot(s) here: basic floating need was already satisfied before these rows.',
 } as const
@@ -139,12 +130,6 @@ const STEP34_LANE_DOT_LEGEND_ROWS = [
     body: 'Adjacent-to-special-program floating.',
   },
   {
-    key: 'surplus',
-    title: 'Surplus (raised target)',
-    dotClass: `${rbipStep34.laneDot} ${rbipStep34.laneDotLg} ${rbipStep34.laneDotSurplus}`,
-    body: "Surplus grant raised this team's floating headroom.",
-  },
-  {
     key: 'extra',
     title: 'Extra after needs',
     dotClass: `${rbipStep34.laneDot} ${rbipStep34.laneDotLg} ${rbipStep34.laneDotExtra}`,
@@ -155,11 +140,10 @@ const STEP34_LANE_DOT_LEGEND_ROWS = [
 function getStep34LaneDotFlagsForTeam(args: {
   team: Team
   step34PreviewResult: FloatingPCAAllocationResultV2 | null
-  grants: Record<Team, number> | undefined
   step32Assignments: SlotAssignment[]
   step33Assignments: SlotAssignment[]
-}): { step32: boolean; step33: boolean; surplus: boolean; extra: boolean } {
-  const { team, step34PreviewResult, grants, step32Assignments, step33Assignments } = args
+}): { step32: boolean; step33: boolean; extra: boolean } {
+  const { team, step34PreviewResult, step32Assignments, step33Assignments } = args
   const teamLog = step34PreviewResult?.tracker?.[team]
   const assignments = teamLog?.assignments ?? []
 
@@ -167,7 +151,6 @@ function getStep34LaneDotFlagsForTeam(args: {
     return {
       step32: assignments.some((a) => a.assignedIn === 'step32'),
       step33: assignments.some((a) => a.assignedIn === 'step33'),
-      surplus: teamHasPositiveSurplusGrant(grants, team),
       extra: assignments.some((a) => a.assignedIn === 'step34' && a.allocationStage === 'extra-coverage'),
     }
   }
@@ -175,7 +158,6 @@ function getStep34LaneDotFlagsForTeam(args: {
   return {
     step32: step32Assignments.some((a) => a.team === team),
     step33: step33Assignments.some((a) => a.team === team),
-    surplus: teamHasPositiveSurplusGrant(grants, team),
     extra: false,
   }
 }
@@ -184,17 +166,11 @@ function getStep34LaneDotFlagsForTeam(args: {
 const STEP34_DETAIL_BADGE_CLASS =
   'border-blue-400/90 bg-white font-semibold text-blue-950 shadow-sm hover:bg-white dark:border-blue-500 dark:bg-blue-950/70 dark:text-blue-50 dark:hover:bg-blue-950/80'
 
-/** Raised target (shared spare) — distinct from default blue chips. */
-const STEP34_RAISED_TARGET_BADGE_CLASS =
-  'border-emerald-600/85 bg-emerald-50 font-semibold text-emerald-950 shadow-sm hover:bg-emerald-50 dark:border-emerald-500 dark:bg-emerald-950/55 dark:text-emerald-50 dark:hover:bg-emerald-950/65'
-
-/** Extra after needs — distinct violet so it reads apart from blue + emerald. */
+/** Extra after needs — distinct violet so it reads apart from default blue chips. */
 const STEP34_EXTRA_AFTER_NEEDS_BADGE_CLASS =
   'border-violet-600/85 bg-violet-50 font-semibold text-violet-950 shadow-sm hover:bg-violet-50 dark:border-violet-400 dark:bg-violet-950/60 dark:text-violet-50 dark:hover:bg-violet-950/70'
 
 /** Step 3.1 flat literacy (match Step 3.4 chip hues; use violet, not purple). */
-const STEP31_RAISED_TARGET_TEXT_CLASS =
-  'font-semibold text-emerald-800 dark:text-emerald-200'
 const STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS =
   'font-semibold text-violet-800 dark:text-violet-200'
 
@@ -445,7 +421,6 @@ export function FloatingPCAConfigDialogV2({
   const [teamOrder, setTeamOrder] = useState<Team[]>([])
   const [step31Preview, setStep31Preview] = useState<Step31PreviewState>({ status: 'idle' })
   const [step31CardLegendOpen, setStep31CardLegendOpen] = useState(false)
-  const [step31SharedSpareDetailsOpen, setStep31SharedSpareDetailsOpen] = useState(false)
   const [step31LikelyExtrasDetailsOpen, setStep31LikelyExtrasDetailsOpen] = useState(false)
   const [selectedStep32Team, setSelectedStep32Team] = useState<Team | null>(null)
   const [selectedStep32OutcomeByTeam, setSelectedStep32OutcomeByTeam] = useState<Partial<Record<Team, string>>>({})
@@ -1196,84 +1171,6 @@ export function FloatingPCAConfigDialogV2({
   const runStep34Preview = useCallback(async () => {
     setStep34Loading(true)
     try {
-      const projectionAligned = projectionBootstrapAligned
-
-      const displayTargetByTeamForBaseline = projectionAligned
-        ? initialStep3ProjectionV2!.displayTargetByTeam
-        : step31BootstrapSummary?.teamTargets
-      const existingAssignedByTeamForBaseline = projectionAligned
-        ? initialStep3ProjectionV2!.existingAssignedByTeam
-        : step31BootstrapSummary?.existingAssignedByTeam
-
-      const step34SurplusProvenanceByTeam = teamOrder.reduce<
-        Partial<Record<Team, { realizedGrantFte: number; enabledStep34RowCount: number }>>
-      >((acc, team) => {
-        const realizedGrantFte = projectionAligned
-          ? (initialStep3ProjectionV2!.realizedSurplusGrantByTeam[team] ?? 0)
-          : (step31BootstrapSummary?.realizedSurplusSlotGrantsByTeam?.[team] ?? 0)
-        if (roundToNearestQuarterWithMidpoint(realizedGrantFte) < 0.25) {
-          return acc
-        }
-
-        const baselineRoundedPending = roundToNearestQuarterWithMidpoint(
-          Math.max(
-            0,
-            (displayTargetByTeamForBaseline?.[team] ?? 0) -
-              (existingAssignedByTeamForBaseline?.[team] ?? 0)
-          )
-        )
-        const adjustedRoundedPending =
-          roundToNearestQuarterWithMidpoint(adjustedFTE[team] || 0)
-        const upliftedQuarterSlots = Math.max(
-          0,
-          Math.round((adjustedRoundedPending - baselineRoundedPending) / 0.25)
-        )
-        if (upliftedQuarterSlots <= 0) {
-          return acc
-        }
-
-        acc[team] = {
-          realizedGrantFte: roundToNearestQuarterWithMidpoint(realizedGrantFte),
-          enabledStep34RowCount: upliftedQuarterSlots,
-        }
-        return acc
-      }, {})
-
-      // #region agent log (H3) step34 surplus provenance inputs
-      ;(typeof fetch === 'function'
-        ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a8e678' },
-            body: JSON.stringify({
-              sessionId: 'a8e678',
-              runId: 'step3-surplus-takeover-initial',
-              hypothesisId: 'H3',
-              location: 'features/schedule/ui/steps/step3-floating/FloatingPCAConfigDialogV2.tsx:runStep34Preview',
-              message: 'Built Step 3.4 surplus provenance inputs',
-              data: {
-                originalRoundedFTE: {
-                  FO: Number((originalRoundedFTE.FO ?? 0).toFixed(3)),
-                  DRO: Number((originalRoundedFTE.DRO ?? 0).toFixed(3)),
-                },
-                adjustedFTE: {
-                  FO: Number((adjustedFTE.FO ?? 0).toFixed(3)),
-                  DRO: Number((adjustedFTE.DRO ?? 0).toFixed(3)),
-                },
-                realizedGrantFte: {
-                  FO: Number((step31BootstrapSummary?.realizedSurplusSlotGrantsByTeam?.FO ?? 0).toFixed(3)),
-                  DRO: Number((step31BootstrapSummary?.realizedSurplusSlotGrantsByTeam?.DRO ?? 0).toFixed(3)),
-                },
-                enabledStep34RowCount: {
-                  FO: step34SurplusProvenanceByTeam.FO?.enabledStep34RowCount ?? 0,
-                  DRO: step34SurplusProvenanceByTeam.DRO?.enabledStep34RowCount ?? 0,
-                },
-              },
-              timestamp: Date.now(),
-            }),
-          }).catch(() => {})
-        : Promise.resolve())
-      // #endregion
-
       const extraPolicy =
         step31ExtraBudgetSnapshot && step31ExtraBudgetSnapshot.budget.extraBudgetSlots > 0
           ? {
@@ -1297,11 +1194,6 @@ export function FloatingPCAConfigDialogV2({
         preferenceSelectionMode: 'legacy',
         extraCoverageMode: 'none',
         ...(extraPolicy ? { extraAfterNeedsPolicy: extraPolicy } : {}),
-        step34SurplusProvenanceByTeam,
-        step34SurplusProvenanceMeta: {
-          projectionVersion: step3ProjectionVersionNow,
-          grantReadSource: projectionAligned ? 'step3_projection_v2' : 'bootstrap_summary',
-        },
       })
       setStep34PreviewResult(result)
       setStep34SelectedTeam((current) => current ?? teamOrder[0] ?? null)
@@ -1309,25 +1201,14 @@ export function FloatingPCAConfigDialogV2({
       setStep34Loading(false)
     }
   }, [
-    activeTeams,
     adjustedFTE,
     existingAllocations,
     floatingPCAs,
-    initialStep3ProjectionV2,
     pcaPreferences,
     specialPrograms,
-    step31AssignedByTeam,
-    step31BootstrapSummary,
-    step31RawAveragePCAPerTeamByTeam,
-    step31ReservedSpecialProgramPcaFte,
-    step31TeamTargets,
-    staffOverrides,
     step32AssignmentsForSave,
     step33AssignmentsForSave,
     teamOrder,
-    originalRoundedFTE,
-    projectionBootstrapAligned,
-    step3ProjectionVersionNow,
     step31ExtraBudgetSnapshot,
   ])
 
@@ -1362,18 +1243,13 @@ export function FloatingPCAConfigDialogV2({
     })
   }, [pcaPreferences, selectedStep34Team, staffOverrides, step34PreviewResult])
 
-  const step34SurplusAndExtraFlags = useMemo(() => {
-    if (!step34PreviewResult || !selectedStep34Team) {
-      return { showRaisedTargetChip: false, showExtraAfterNeedsChip: false }
-    }
-    const grants = step31BootstrapSummary?.realizedSurplusSlotGrantsByTeam
-    const showRaisedTargetChip = teamHasPositiveSurplusGrant(grants, selectedStep34Team)
+  const step34ExtraAfterNeedsChipFlag = useMemo(() => {
+    if (!step34PreviewResult || !selectedStep34Team) return false
     const teamLog = step34PreviewResult.tracker[selectedStep34Team]
-    const showExtraAfterNeedsChip = teamLog.assignments.some(
+    return teamLog.assignments.some(
       (a) => a.assignedIn === 'step34' && a.allocationStage === 'extra-coverage'
     )
-    return { showRaisedTargetChip, showExtraAfterNeedsChip }
-  }, [step31BootstrapSummary, step34PreviewResult, selectedStep34Team])
+  }, [step34PreviewResult, selectedStep34Team])
 
   const step32DetailBeakCenterX = useStep3V2DetailBeakCenter(
     currentStep === '3.2' && !!selectedStep32Team && !!selectedStep32Review,
@@ -1636,116 +1512,6 @@ export function FloatingPCAConfigDialogV2({
       </div>
 
       <div className="mt-2 space-y-2">
-        {(() => {
-          const bs = step31BootstrapSummary
-          const grants = bs?.realizedSurplusSlotGrantsByTeam
-          if (!grants) return null
-          const teamsWithShare = teamOrder.filter((t) => teamHasPositiveSurplusGrant(grants, t))
-          if (teamsWithShare.length === 0) return null
-
-          const spareSlots = bs.redistributableSlackSlots
-          const displayByTeam =
-            initialStep3ProjectionV2?.displayTargetByTeam ?? bs.rawAveragePCAPerTeamByTeam
-          const weightingSample = teamOrder
-            .map((t) => {
-              const v = displayByTeam?.[t]
-              if (v == null || !Number.isFinite(v)) return null
-              return `${t} ${v.toFixed(2)}`
-            })
-            .filter((s): s is string => s != null)
-          const weightingLine =
-            weightingSample.length > 0
-              ? `Current Avg PCA/team (display) weights used for sharing: ${weightingSample.join(', ')}.`
-              : null
-
-          const onlyTeam = teamsWithShare.length === 1 ? teamsWithShare[0] : null
-          const raisedTargetNumClass = cn(STEP31_RAISED_TARGET_TEXT_CLASS, 'tabular-nums')
-
-          return (
-            <div className="space-y-1.5">
-              <p className="text-sm text-muted-foreground">
-                <span className={STEP31_RAISED_TARGET_TEXT_CLASS}>Raised target (shared spare).</span>{' '}
-                Floating target includes a small raise from shared spare (rounding).
-                <span className="pl-3">
-                  <WizardAvgSlotsHelpInlinePopover variant="raised-target" />
-                </span>
-              </p>
-              <button
-                type="button"
-                aria-expanded={step31SharedSpareDetailsOpen}
-                onClick={() => setStep31SharedSpareDetailsOpen((v) => !v)}
-                className="flex w-full max-w-full items-center gap-1.5 rounded-sm py-1 text-left text-[11px] font-medium text-foreground/90 outline-none ring-offset-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              >
-                <ChevronDown
-                  className={cn(
-                    'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
-                    step31SharedSpareDetailsOpen && 'rotate-180'
-                  )}
-                  aria-hidden
-                />
-                <span>Show details</span>
-              </button>
-              {step31SharedSpareDetailsOpen ? (
-                <ul className="mt-2 list-outside list-disc space-y-1.5 pl-5 text-[11px] leading-snug text-muted-foreground marker:text-muted-foreground">
-                  <li className="pl-1">
-                    The floating pool had spare placeable slot(s) after each team{"'"}s need was rounded to slots
-                    {typeof spareSlots === 'number' && Number.isFinite(spareSlots) ? (
-                      <>
-                        {' '}
-                        (
-                        <span className={raisedTargetNumClass}>{spareSlots}</span>
-                        {' '}
-                        spare slot{spareSlots === 1 ? '' : 's'}).
-                      </>
-                    ) : (
-                      '.'
-                    )}
-                  </li>
-                  <li className="pl-1">
-                    Those spare slot(s) were shared using each team{"'"}s Avg PCA/team weighting (not an equal split).
-                    {weightingLine ? <> {weightingLine}</> : null}
-                  </li>
-                  <li className="pl-1">
-                    {onlyTeam != null ? (
-                      <>
-                        {onlyTeam}
-                        {"'"}s floating target includes that share (
-                        <span className={raisedTargetNumClass}>
-                          {(grants[onlyTeam] ?? 0).toFixed(2)}
-                        </span>{' '}
-                        FTE).
-                      </>
-                    ) : (
-                      <>
-                        These teams{"'"} floating targets include that share:{' '}
-                        {teamsWithShare.map((t, i) => (
-                          <span key={t}>
-                            {i > 0 ? ', ' : null}
-                            {t}{' '}
-                            <span className={raisedTargetNumClass}>+{(grants[t] ?? 0).toFixed(2)}</span> FTE
-                          </span>
-                        ))}
-                        .
-                      </>
-                    )}
-                  </li>
-                  <li className="pl-1">
-                    This is not the same as{' '}
-                    <span className={STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS}>Extra after needs</span>
-                    {' in Step 3.4.'}
-                  </li>
-                </ul>
-              ) : null}
-              {step31SharedSpareDetailsOpen ? (
-                <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
-                  <span className="font-medium text-foreground">Avg PCA/team</span> here was not increased — it stays
-                  the Step 2 average.
-                </p>
-              ) : null}
-            </div>
-          )
-        })()}
-
         {step31Preview.status === 'ready' &&
         step31ExtraBudgetSnapshot &&
         step31ExtraBudgetSnapshot.budget.extraBudgetSlots > 0 ? (
@@ -1755,7 +1521,7 @@ export function FloatingPCAConfigDialogV2({
                 {formatStep31LikelyExtrasPreviewPlain(step31ExtraBudgetSnapshot.budget.extraBudgetSlots)}
               </span>
               <span className="pl-3">
-                <WizardAvgSlotsHelpInlinePopover variant="extra-after-needs" />
+                <WizardAvgSlotsHelpInlinePopover />
               </span>
             </p>
             <button
@@ -2334,11 +2100,10 @@ export function FloatingPCAConfigDialogV2({
       const laneDots = getStep34LaneDotFlagsForTeam({
         team,
         step34PreviewResult,
-        grants: step31BootstrapSummary?.realizedSurplusSlotGrantsByTeam,
         step32Assignments: step32AssignmentsForSave,
         step33Assignments: step33AssignmentsForSave,
       })
-      return laneDots.step32 || laneDots.step33 || laneDots.surplus || laneDots.extra
+      return laneDots.step32 || laneDots.step33 || laneDots.extra
     })
 
     const laneDotLegendTooltip = (
@@ -2388,7 +2153,6 @@ export function FloatingPCAConfigDialogV2({
             <span className="inline-flex items-center gap-1" aria-hidden>
               <span className={cn(rbipStep34.laneDot, rbipStep34.laneDotLg, rbipStep34.laneDotStep32)} />
               <span className={cn(rbipStep34.laneDot, rbipStep34.laneDotLg, rbipStep34.laneDotStep33)} />
-              <span className={cn(rbipStep34.laneDot, rbipStep34.laneDotLg, rbipStep34.laneDotSurplus)} />
               <span className={cn(rbipStep34.laneDot, rbipStep34.laneDotLg, rbipStep34.laneDotExtra)} />
             </span>
           </Button>
@@ -2432,17 +2196,14 @@ export function FloatingPCAConfigDialogV2({
           const laneDots = getStep34LaneDotFlagsForTeam({
             team,
             step34PreviewResult,
-            grants: step31BootstrapSummary?.realizedSurplusSlotGrantsByTeam,
             step32Assignments: step32AssignmentsForSave,
             step33Assignments: step33AssignmentsForSave,
           })
-          const showAnyLaneDot =
-            laneDots.step32 || laneDots.step33 || laneDots.surplus || laneDots.extra
+          const showAnyLaneDot = laneDots.step32 || laneDots.step33 || laneDots.extra
           const laneDotAriaLabel = showAnyLaneDot
             ? `Tracker signals for ${team}: ${[
                 laneDots.step32 && 'Step 3.2 reservation',
                 laneDots.step33 && 'Step 3.3 adjacent slot',
-                laneDots.surplus && 'raised target from surplus',
                 laneDots.extra && 'extra after needs in Step 3.4',
               ]
                 .filter(Boolean)
@@ -2477,12 +2238,6 @@ export function FloatingPCAConfigDialogV2({
                     <span
                       className={cn(rbipStep34.laneDot, rbipStep34.laneDotStep33)}
                       title={STEP34_LANE_DOT_TOOLTIPS.step33}
-                    />
-                  ) : null}
-                  {laneDots.surplus ? (
-                    <span
-                      className={cn(rbipStep34.laneDot, rbipStep34.laneDotSurplus)}
-                      title={STEP34_LANE_DOT_TOOLTIPS.surplus}
                     />
                   ) : null}
                   {laneDots.extra ? (
@@ -2531,12 +2286,7 @@ export function FloatingPCAConfigDialogV2({
               <Badge variant="outline" className={cn(STEP34_DETAIL_BADGE_CLASS, 'whitespace-nowrap')}>
                 {`Assigned floating ${step3FloatingAssignedFteByTeam[selectedStep34Detail.team].toFixed(2)}`}
               </Badge>
-              {step34SurplusAndExtraFlags.showRaisedTargetChip ? (
-                <Badge variant="outline" className={cn(STEP34_RAISED_TARGET_BADGE_CLASS, 'whitespace-nowrap')}>
-                  Raised target
-                </Badge>
-              ) : null}
-              {step34SurplusAndExtraFlags.showExtraAfterNeedsChip ? (
+              {step34ExtraAfterNeedsChipFlag ? (
                 <Tooltip
                   side="bottom"
                   wrapperClassName="inline-flex max-w-full"

@@ -2,8 +2,7 @@ import type { ExtraCoverageByStaffId } from '@/lib/features/schedule/extraCovera
 
 /**
  * Extra coverage UI: optional Step 3.4 floating slots **after** each team’s floating need is satisfied
- * (`extraCoverageMode: round-robin-team-order`). This path is **independent** of V2 **surplus** grants /
- * surplus-adjusted targets (`realizedSurplusSlotGrantsByTeam`, `v2EnabledBySurplusAdjustedTarget`).
+ * (budgeted under-assigned-first pass). Legacy surplus-grant stamping has been removed.
  */
 
 export function shouldShowExtraCoverage(args: {

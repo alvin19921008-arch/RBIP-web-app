@@ -1,11 +1,11 @@
 /**
- * V2 surplus projection: continuous raw surplus can exist while executable slack is zero;
- * ideal shares stay informative but realized grants and operational pending stay capped.
+ * V2 bootstrap: tight floating pool — pending still follows rounded gap; slack can be zero.
  */
 import assert from 'node:assert/strict'
 
 import type { PCAData } from '../../lib/algorithms/pcaAllocation'
 import { computeStep3BootstrapSummary } from '../../lib/features/schedule/step3Bootstrap'
+import { roundToNearestQuarterWithMidpoint } from '../../lib/utils/rounding'
 import type { PCAAllocation } from '../../types/schedule'
 import type { Team } from '../../types/staff'
 
@@ -49,8 +49,8 @@ async function main() {
   ]
 
   const teamTargets = emptyTeamRecord(0)
-  teamTargets.MC = 0.11
-  teamTargets.NSM = 0.11
+  teamTargets.MC = 0.15
+  teamTargets.NSM = 0.15
 
   const rawAveragePCAPerTeamByTeam = emptyTeamRecord(0)
   rawAveragePCAPerTeamByTeam.MC = 1
@@ -66,20 +66,12 @@ async function main() {
     rawAveragePCAPerTeamByTeam,
   })
 
-  assert.ok(summary.rawSurplusFte != null && summary.rawSurplusFte > 0.25)
-  assert.equal(summary.redistributableSlackSlots, 0)
+  assert.equal(summary.slackFloatingSlots, 0, 'pool exactly meets discrete slot demand')
 
-  const idealMc = summary.idealWeightedSurplusShareByTeam?.MC ?? 0
-  const idealNsm = summary.idealWeightedSurplusShareByTeam?.NSM ?? 0
-  assert.ok(idealMc > 0 && idealNsm > 0)
-
-  assert.equal(summary.realizedSurplusSlotGrantsByTeam?.MC ?? -1, 0)
-  assert.equal(summary.realizedSurplusSlotGrantsByTeam?.NSM ?? -1, 0)
-
-  const baselinePendingMc = Math.max(0, teamTargets.MC - 0)
-  const baselinePendingNsm = Math.max(0, teamTargets.NSM - 0)
-  assert.equal(summary.pendingByTeam.MC, baselinePendingMc)
-  assert.equal(summary.pendingByTeam.NSM, baselinePendingNsm)
+  for (const team of ['MC', 'NSM'] as const) {
+    const gap = Math.max(0, teamTargets[team] ?? 0)
+    assert.equal(summary.pendingByTeam[team], roundToNearestQuarterWithMidpoint(gap))
+  }
 }
 
 main().catch((error) => {

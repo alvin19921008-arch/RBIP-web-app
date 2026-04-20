@@ -12,23 +12,12 @@ export function AvgPcaContinuousVsSlotsGridMismatchParagraph({ className }: { cl
   )
 }
 
-export function AvgPcaRaisedTargetSharedSpareParagraph({ className }: { className?: string }) {
-  return (
-    <p className={cn('text-muted-foreground', className)}>
-      <span className="font-medium text-foreground">Raised target (shared spare)</span> (V2) means spare capacity in the
-      floating pool was shared at the Step 2→3 handoff so a team’s{' '}
-      <span className="font-medium text-foreground">floating target</span> can be slightly higher after rounding; the
-      dashboard <span className="font-medium text-foreground">Avg</span> row stays the raw therapist-weighted value.
-    </p>
-  )
-}
-
 export function AvgPcaExtraAfterNeedsDifferentParagraph({ className }: { className?: string }) {
   return (
     <p className={cn('text-muted-foreground', className)}>
-      <span className="font-medium text-foreground">Extra after needs</span> is different: optional slots placed in Step
-      3.4 after basic floating needs were met—depends on how allocation runs, not the same as a raised target from
-      rounding.
+      <span className="font-medium text-foreground">Extra after needs</span> means optional,{' '}
+      <span className="font-medium text-foreground">budgeted</span> slots in Step 3.4 after basic floating needs were met
+      (pool spare and under-assignment cap how many; under-assigned teams first).
     </p>
   )
 }
@@ -39,7 +28,6 @@ export function AvgPcaContinuousVsSlotsExplain({ className }: { className?: stri
     <div className={cn('space-y-2 text-xs leading-snug', className)}>
       <div className="font-semibold">Continuous FTE vs slots</div>
       <AvgPcaContinuousVsSlotsGridMismatchParagraph />
-      <AvgPcaRaisedTargetSharedSpareParagraph />
       <AvgPcaExtraAfterNeedsDifferentParagraph />
     </div>
   )

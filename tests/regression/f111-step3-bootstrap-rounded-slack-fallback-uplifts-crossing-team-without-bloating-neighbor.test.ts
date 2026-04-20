@@ -1,8 +1,5 @@
 /**
- * V2 surplus projection (policy freeze): rounded-model “diagnostic slack” must not produce
- * operational surplus uplift when continuous raw surplus is zero and the rounded-slack fallback
- * is disabled. Executable slack still caps realizable grants; this fixture previously expected
- * target-first rounded-slack uplift — that path is intentionally off (see step3Bootstrap).
+ * V2 bootstrap (post–surplus removal): operational pending is quarter-rounded gap only.
  */
 import assert from 'node:assert/strict'
 
@@ -103,18 +100,14 @@ async function main() {
     rawAveragePCAPerTeamByTeam,
   })
 
-  assert.equal(summary.rawSurplusFte, 0)
-  // No rounded-slack fallback uplift: operational rounded targets stay baseline-rounded raw targets.
   assert.equal(
-    summary.roundedAdjustedTeamTargets?.FO,
-    roundToNearestQuarterWithMidpoint(teamTargets.FO)
+    summary.pendingByTeam.FO,
+    roundToNearestQuarterWithMidpoint(Math.max(0, teamTargets.FO))
   )
   assert.equal(
-    summary.roundedAdjustedTeamTargets?.DRO,
-    roundToNearestQuarterWithMidpoint(teamTargets.DRO)
+    summary.pendingByTeam.DRO,
+    roundToNearestQuarterWithMidpoint(Math.max(0, teamTargets.DRO))
   )
-  assert.equal(summary.realizedSurplusSlotGrantsByTeam?.FO, 0)
-  assert.equal(summary.realizedSurplusSlotGrantsByTeam?.DRO, 0)
 }
 
 main().catch((error) => {

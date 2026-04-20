@@ -229,44 +229,6 @@ function getSlotPathLabel(args: {
   return 'Assigned during final allocation'
 }
 
-const SURPLUS_ADJUSTED_TARGET_PROVENANCE_LABEL = 'Target provenance'
-/** User-facing ultra-short line; sync with surplus spec Locked decision 2 copy deck. */
-const SURPLUS_ADJUSTED_TARGET_PROVENANCE_VALUE = 'Raised floating target (shared spare).'
-
-function appendSurplusAdjustedTargetProvenanceIfApplicable(args: {
-  team: Team
-  assignment: AllocationAssignment
-  allocationSummary?: TeamAllocationLog['summary']
-  details: V2PcaTrackerDetailCell[]
-}): V2PcaTrackerDetailCell[] {
-  const grantSlots = args.allocationSummary?.v2RealizedSurplusSlotGrant ?? 0
-  if (grantSlots <= 0) return args.details
-  if (args.assignment.v2EnabledBySurplusAdjustedTarget !== true) return args.details
-
-  const handoffTrace =
-    args.allocationSummary?.v2SurplusProvenanceGrantReadSource === 'step3_projection_v2' &&
-    typeof args.allocationSummary?.v2SurplusProvenanceProjectionVersion === 'string' &&
-    args.allocationSummary.v2SurplusProvenanceProjectionVersion.length > 0
-      ? args.allocationSummary.v2SurplusProvenanceProjectionVersion
-      : null
-
-  const traceDetail: V2PcaTrackerDetailCell | null = handoffTrace
-    ? {
-        label: 'Handoff trace',
-        value: `Frozen Step 3 projection fingerprint (${handoffTrace.length > 96 ? `${handoffTrace.slice(0, 96)}…` : handoffTrace})`,
-      }
-    : null
-
-  return [
-    ...args.details,
-    {
-      label: SURPLUS_ADJUSTED_TARGET_PROVENANCE_LABEL,
-      value: SURPLUS_ADJUSTED_TARGET_PROVENANCE_VALUE,
-    },
-    ...(traceDetail ? [traceDetail] : []),
-  ]
-}
-
 function buildStep34Details(args: {
   team: Team
   assignment: AllocationAssignment
@@ -309,12 +271,7 @@ function buildStep34Details(args: {
           },
         ]
 
-  return appendSurplusAdjustedTargetProvenanceIfApplicable({
-    team: args.team,
-    assignment: args.assignment,
-    allocationSummary: args.allocationSummary,
-    details,
-  })
+  return details
 }
 
 function buildCommittedDetails(assignment: AllocationAssignment): V2PcaTrackerDetailCell[] {
