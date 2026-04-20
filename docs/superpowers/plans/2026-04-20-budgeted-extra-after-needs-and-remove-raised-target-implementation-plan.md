@@ -68,7 +68,7 @@ Phase 2 is larger and will touch more Step 3 projection code; do not start it un
 - Create: `lib/utils/seededRandom.ts`
 - Test: extend `tests/regression/f61-step31-projected-extra-slots-preview.test.ts` (add a small `seededShuffle` block at the top or bottom of `main()`; do **not** create a new `f###` file)
 
-- [ ] **Step 1: Write failing regression for deterministic shuffle**
+- [x] **Step 1: Write failing regression for deterministic shuffle**
 
 In `tests/regression/f61-step31-projected-extra-slots-preview.test.ts`, add assertions for `seededShuffle` (initial skeleton):
 
@@ -94,7 +94,7 @@ main().catch((error) => {
 })
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run:
 
@@ -104,7 +104,7 @@ npx tsx tests/regression/f61-step31-projected-extra-slots-preview.test.ts
 
 Expected: FAIL with “Cannot find module … seededRandom”.
 
-- [ ] **Step 3: Implement `seededShuffle`**
+- [x] **Step 3: Implement `seededShuffle`**
 
 Create `lib/utils/seededRandom.ts`:
 
@@ -140,7 +140,7 @@ export function seededShuffle<T>(items: readonly T[], seed: string): T[] {
 }
 ```
 
-- [ ] **Step 4: Run regression and confirm pass**
+- [x] **Step 4: Run regression and confirm pass**
 
 ```bash
 npx tsx tests/regression/f61-step31-projected-extra-slots-preview.test.ts
@@ -148,7 +148,7 @@ npx tsx tests/regression/f61-step31-projected-extra-slots-preview.test.ts
 
 Expected: PASS (no output, exit code 0).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lib/utils/seededRandom.ts tests/regression/f61-step31-projected-extra-slots-preview.test.ts
@@ -205,7 +205,7 @@ export function computeStep31ExtraAfterNeedsBudget(args: {
 }): Step31ExtraAfterNeedsBudget
 ```
 
-- [ ] **Step 1: Extend the regression test to cover the two-gate model**
+- [x] **Step 1: Extend the regression test to cover the two-gate model**
 
 In `tests/regression/f61-step31-projected-extra-slots-preview.test.ts`, add (or replace obsolete preview assertions with) coverage for `computeStep31ExtraAfterNeedsBudget`, for example:
 
@@ -214,7 +214,7 @@ import { computeStep31ExtraAfterNeedsBudget } from '../../lib/features/schedule/
 
 // ...
   const teams = ['FO', 'SMM', 'DRO', 'NSM'] as const
-  const avg = { FO: 1.11, SMM: 1.11, DRO: 1.13, NSM: 1.13 }
+  const avg = { FO: 1.13, SMM: 1.13, DRO: 1.13, NSM: 1.13 }
   const existing = { FO: 1.0, SMM: 1.0, DRO: 1.0, NSM: 1.0 }
   const pending = { FO: 0.0, SMM: 0.0, DRO: 0.25, NSM: 0.25 }
 
@@ -242,13 +242,13 @@ import { computeStep31ExtraAfterNeedsBudget } from '../../lib/features/schedule/
   assert.ok(withSpare.recipientsPreview.length > 0)
 ```
 
-- [ ] **Step 2: Run test to confirm it fails (module missing)**
+- [x] **Step 2: Run test to confirm it fails (module missing)**
 
 ```bash
 npx tsx tests/regression/f61-step31-projected-extra-slots-preview.test.ts
 ```
 
-- [ ] **Step 3: Implement `step3ExtraAfterNeedsBudget.ts`**
+- [x] **Step 3: Implement `step3ExtraAfterNeedsBudget.ts`**
 
 Create `lib/features/schedule/step3ExtraAfterNeedsBudget.ts`:
 
@@ -385,13 +385,13 @@ export function computeStep31ExtraAfterNeedsBudget(args: {
 }
 ```
 
-- [ ] **Step 4: Run regression tests**
+- [x] **Step 4: Run regression tests**
 
 ```bash
 npx tsx tests/regression/f61-step31-projected-extra-slots-preview.test.ts
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lib/features/schedule/step3ExtraAfterNeedsBudget.ts tests/regression/f61-step31-projected-extra-slots-preview.test.ts
