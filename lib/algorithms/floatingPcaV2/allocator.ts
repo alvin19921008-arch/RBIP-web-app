@@ -568,7 +568,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
       if (maxUnder <= 1e-12) break
 
       const tied = SCHED_TEAM_ORDER.filter((t) => Math.abs((remainingUnder[t] ?? 0) - maxUnder) < 1e-9)
-      const tieOrder = seededShuffle(tied, `${policy.tieBreakSeed}|allocator:${extrasPlaced}`)
+      const tieOrder = seededShuffle(tied, `${policy.tieBreakSeed}|tie:${extrasPlaced}`)
       const team = tieOrder[tieCursor % tieOrder.length]!
       tieCursor += 1
 
