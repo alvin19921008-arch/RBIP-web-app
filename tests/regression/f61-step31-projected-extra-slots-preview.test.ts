@@ -5,6 +5,7 @@ import {
   buildStep31PreviewExtraCoverageOptions,
   countProjectedExtraSlots,
 } from '../../lib/features/schedule/step31ProjectedExtraSlots'
+import { seededShuffle } from '../../lib/utils/seededRandom'
 
 async function main() {
   assert.equal(
@@ -42,6 +43,16 @@ async function main() {
       extraCoverageMode: 'round-robin-team-order',
     },
     'Expected Step 3.1 preview allocation options to enable round-robin extra coverage so preview matches the final Extra-tag behavior'
+  )
+
+  const input = ['FO', 'SMM', 'DRO', 'NSM']
+  const a = seededShuffle(input, '2026-04-20|example')
+  const b = seededShuffle(input, '2026-04-20|example')
+  assert.deepEqual(a, b, 'Expected seededShuffle to be deterministic for the same seed')
+  assert.deepEqual(
+    input,
+    ['FO', 'SMM', 'DRO', 'NSM'],
+    'Expected seededShuffle to not mutate input'
   )
 }
 
