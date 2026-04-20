@@ -498,7 +498,7 @@ const applyExtraAfterNeedsBudgeted = () => {
     if (maxUnder <= 1e-12) break
 
     const tied = TEAMS.filter((t) => Math.abs((remainingUnder[t] ?? 0) - maxUnder) < 1e-9)
-    const tieOrder = seededShuffle(tied, `${policy.tieBreakSeed}|allocator:${extrasPlaced}`)
+    const tieOrder = seededShuffle(tied, `${policy.tieBreakSeed}|tie:${extrasPlaced}`)
     const team = tieOrder[tieCursor % tieOrder.length]!
     tieCursor += 1
 
