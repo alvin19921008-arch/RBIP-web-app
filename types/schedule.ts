@@ -70,7 +70,7 @@ export interface BedAllocation {
 /**
  * A user-entered row for bed relieving notes, used on the TAKING side.
  * - ward: selected from releasing team's designated wards (ward name only, e.g. "R9C")
- * - bedNumbersText: free text list like "5, 6, 7"
+ * - bedNumbersText: comma/whitespace-separated tokens; each token is one bed (e.g. "5, 6, CB3")
  */
 export interface BedRelievingNoteRow {
   ward: string

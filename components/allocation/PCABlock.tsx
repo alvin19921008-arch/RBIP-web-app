@@ -1017,17 +1017,6 @@ export const PCABlock = memo(function PCABlock({
                 allocation={allocation as any}
                 fteRemaining={undefined}
                 slotDisplay={slotDisplayNodeWithExtra}
-                headerRight={(() => {
-                  if (extraSlotsForTeam.length === 0) return null
-                  return (
-                    <span
-                      className="text-[10px] font-semibold text-violet-700 dark:text-violet-300 whitespace-nowrap"
-                      title="Extra after needs (Step 3.4). Not Raised target (shared spare)."
-                    >
-                      Extra after needs
-                    </span>
-                  )
-                })()}
                 onEdit={readOnly ? undefined : (e) => onEditStaff?.(allocation.staff_id, e)}
                 onOpenContextMenu={readOnly ? undefined : (e) => onEditStaff?.(allocation.staff_id, e)}
                 fillColorClassName={(staffOverrides as any)?.[allocation.staff_id]?.cardColorByTeam?.[team]}

@@ -558,263 +558,284 @@ export function SPTAllocationForm({
     })
   }
 
+  const stepBadgeClass =
+    'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-amber-200/90 bg-amber-50 text-[11px] font-semibold tabular-nums text-amber-950 shadow-sm'
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      <div>
-        <Label className="text-sm font-medium mb-1.5 block">SPT staff</Label>
-        <Select value={selectedStaff} onValueChange={setSelectedStaff} disabled={isEditingExisting}>
-          <SelectTrigger className="w-fit min-w-36">
-            <SelectValue placeholder="Select SPT" />
-          </SelectTrigger>
-          <SelectContent>
-            {staff.map((s) => (
-              <SelectItem key={s.id} value={s.id}>
-                {s.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div>
-        <Label className="text-sm font-medium mb-2 block">Teams</Label>
-        <div className="flex flex-wrap gap-2">
-          {allTeams.map((team) => (
-            <button
-              key={team}
-              type="button"
-              onClick={() => toggleTeam(team)}
-              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-                teams.includes(team) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              {team}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <hr className="border-border" />
-
-      <div>
-        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-4">
-          Weekday Configuration
+    <form onSubmit={handleSubmit} className="divide-y divide-border">
+      <section className="pb-6">
+        <h3 className="mb-4 flex items-center gap-2.5 text-sm font-semibold text-foreground">
+          <span className={stepBadgeClass} aria-hidden>
+            1
+          </span>
+          SPT & teams
         </h3>
+        <div>
+          <Label className="mb-1.5 block text-sm font-medium">SPT staff</Label>
+          <Select value={selectedStaff} onValueChange={setSelectedStaff} disabled={isEditingExisting}>
+            <SelectTrigger className="w-fit min-w-36">
+              <SelectValue placeholder="Select SPT" />
+            </SelectTrigger>
+            <SelectContent>
+              {staff.map((s) => (
+                <SelectItem key={s.id} value={s.id}>
+                  {s.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="mt-5">
+          <Label className="mb-2 block text-sm font-medium">Teams</Label>
+          <div className="flex flex-wrap gap-2">
+            {allTeams.map((team) => (
+              <button
+                key={team}
+                type="button"
+                onClick={() => toggleTeam(team)}
+                className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+                  teams.includes(team)
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                }`}
+              >
+                {team}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="py-6">
+        <h3 className="mb-4 flex items-center gap-2.5 text-sm font-semibold text-foreground">
+          <span className={stepBadgeClass} aria-hidden>
+            2
+          </span>
+          Weekday schedule
+        </h3>
+        <div className="mb-3 text-xs font-medium text-foreground">Configured days</div>
         <div className="space-y-0">
           {(() => {
             const enabledDays = WEEKDAYS.filter((d) => !!weekdayCfg[d]?.enabled)
             const remainingDays = WEEKDAYS.filter((d) => !weekdayCfg[d]?.enabled)
+            const slotIdle = 'bg-muted text-muted-foreground hover:bg-muted/80'
+            const slotActive = 'bg-blue-600 text-white'
+            const modeIdle = 'bg-muted text-muted-foreground hover:bg-muted/80'
+            const modeActive = 'bg-green-600 text-white'
 
             return (
               <div>
                 {enabledDays.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No weekday configured yet.</p>
-                ) : null}
+                ) : (
+                  <div className="divide-y divide-border">
+                    {enabledDays.map((day) => {
+                      const c = weekdayCfg[day]
+                      const derived = computeDerivedFteForDay(day)
+                      const amSlots = c.slots.filter((s) => s === 1 || s === 2)
+                      const pmSlots = c.slots.filter((s) => s === 3 || s === 4)
 
-                {enabledDays.map((day, index) => {
-                  const c = weekdayCfg[day]
-                  const derived = computeDerivedFteForDay(day)
-                  const amSlots = c.slots.filter((s) => s === 1 || s === 2)
-                  const pmSlots = c.slots.filter((s) => s === 3 || s === 4)
-
-                  return (
-                    <div key={day} className="py-4">
-                      {index > 0 && <hr className="border-border mb-4" />}
-                      <div className="flex items-center gap-3 mb-3">
-                        <span className="font-semibold">{weekdayLabel[day]}</span>
-                        <span className="text-xs font-medium text-muted-foreground">
-                          FTE: {derived.fte.toFixed(2)}
-                        </span>
-                        {pendingRemoveDay === day ? (
-                          <div className="flex items-center gap-1">
-                            <Button
-                              type="button"
-                              variant="destructive"
-                              size="sm"
-                              className="h-7 text-xs"
-                              onClick={() => {
-                                removeDay(day)
-                                setPendingRemoveDay(null)
-                              }}
-                            >
-                              Confirm?
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 text-xs"
-                              onClick={() => setPendingRemoveDay(null)}
-                            >
-                              Cancel
-                            </Button>
+                      return (
+                        <div key={day} className="py-4">
+                          <div className="mb-3 flex flex-wrap items-center gap-3">
+                            <span className="font-semibold text-foreground">{weekdayLabel[day]}</span>
+                            <span className="text-xs font-medium text-muted-foreground">
+                              FTE: {derived.fte.toFixed(2)}
+                            </span>
+                            {pendingRemoveDay === day ? (
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() => {
+                                    removeDay(day)
+                                    setPendingRemoveDay(null)
+                                  }}
+                                >
+                                  Confirm?
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() => setPendingRemoveDay(null)}
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                                onClick={() => setPendingRemoveDay(day)}
+                              >
+                                Remove
+                              </Button>
+                            )}
                           </div>
-                        ) : (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                            onClick={() => setPendingRemoveDay(day)}
-                          >
-                            Remove
-                          </Button>
-                        )}
-                      </div>
 
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {/* AM slots */}
-                        <button
-                          type="button"
-                          onClick={() => toggleSlot(day, 1)}
-                          className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
-                            c.slots.includes(1) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                          }`}
-                        >
-                          {getSlotLabel(1)}
-                        </button>
-                        {amSlots.length === 2 && (
-                          <div className="inline-flex rounded border border-input overflow-hidden">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="w-9 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              AM
+                            </span>
                             <button
                               type="button"
-                              onClick={() =>
-                                setWeekdayCfg((prev) => ({
-                                  ...prev,
-                                  [day]: { ...prev[day], slotModes: { ...prev[day].slotModes, am: 'AND' } },
-                                }))
-                              }
-                              className={`px-2 py-1 text-xs font-medium transition-colors ${
-                                c.slotModes.am === 'AND' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                              onClick={() => toggleSlot(day, 1)}
+                              className={`rounded px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                                c.slots.includes(1) ? slotActive : slotIdle
                               }`}
                             >
-                              AND
+                              {getSlotLabel(1)}
                             </button>
+                            {amSlots.length === 2 && (
+                              <div className="inline-flex overflow-hidden rounded border border-input">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setWeekdayCfg((prev) => ({
+                                      ...prev,
+                                      [day]: { ...prev[day], slotModes: { ...prev[day].slotModes, am: 'AND' } },
+                                    }))
+                                  }
+                                  className={`px-2 py-1 text-xs font-medium transition-colors ${
+                                    c.slotModes.am === 'AND' ? modeActive : modeIdle
+                                  }`}
+                                >
+                                  AND
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setWeekdayCfg((prev) => ({
+                                      ...prev,
+                                      [day]: { ...prev[day], slotModes: { ...prev[day].slotModes, am: 'OR' } },
+                                    }))
+                                  }
+                                  className={`border-l border-input px-2 py-1 text-xs font-medium transition-colors ${
+                                    c.slotModes.am === 'OR' ? modeActive : modeIdle
+                                  }`}
+                                >
+                                  OR
+                                </button>
+                              </div>
+                            )}
                             <button
                               type="button"
-                              onClick={() =>
-                                setWeekdayCfg((prev) => ({
-                                  ...prev,
-                                  [day]: { ...prev[day], slotModes: { ...prev[day].slotModes, am: 'OR' } },
-                                }))
-                              }
-                              className={`px-2 py-1 text-xs font-medium transition-colors border-l border-input ${
-                                c.slotModes.am === 'OR' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                              onClick={() => toggleSlot(day, 2)}
+                              className={`rounded px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                                c.slots.includes(2) ? slotActive : slotIdle
                               }`}
                             >
-                              OR
-                            </button>
-                          </div>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => toggleSlot(day, 2)}
-                          className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
-                            c.slots.includes(2) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                          }`}
-                        >
-                          {getSlotLabel(2)}
-                        </button>
-
-                        <span className="text-muted-foreground mx-1 text-xs">|</span>
-
-                        {/* PM slots */}
-                        <button
-                          type="button"
-                          onClick={() => toggleSlot(day, 3)}
-                          className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
-                            c.slots.includes(3) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                          }`}
-                        >
-                          {getSlotLabel(3)}
-                        </button>
-                        {pmSlots.length === 2 && (
-                          <div className="inline-flex rounded border border-input overflow-hidden">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setWeekdayCfg((prev) => ({
-                                  ...prev,
-                                  [day]: { ...prev[day], slotModes: { ...prev[day].slotModes, pm: 'AND' } },
-                                }))
-                              }
-                              className={`px-2 py-1 text-xs font-medium transition-colors ${
-                                c.slotModes.pm === 'AND' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                              }`}
-                            >
-                              AND
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setWeekdayCfg((prev) => ({
-                                  ...prev,
-                                  [day]: { ...prev[day], slotModes: { ...prev[day].slotModes, pm: 'OR' } },
-                                }))
-                              }
-                              className={`px-2 py-1 text-xs font-medium transition-colors border-l border-input ${
-                                c.slotModes.pm === 'OR' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                              }`}
-                            >
-                              OR
+                              {getSlotLabel(2)}
                             </button>
                           </div>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => toggleSlot(day, 4)}
-                          className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
-                            c.slots.includes(4) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                          }`}
-                        >
-                          {getSlotLabel(4)}
-                        </button>
-                      </div>
 
-                      <div className="flex items-center gap-4 mt-3">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={c.contributesFte}
-                            onChange={(e) =>
-                              setWeekdayCfg((prev) => ({
-                                ...prev,
-                                [day]: { ...prev[day], contributesFte: e.target.checked },
-                              }))
-                            }
-                            className="h-4 w-4"
-                          />
-                          <span className="text-xs text-muted-foreground">Contributes FTE</span>
-                        </label>
-                        <div className="text-[10px] text-muted-foreground">
-                          AM: {c.slotModes.am} ({amSlots.join(',') || '-'}) · PM: {c.slotModes.pm} ({pmSlots.join(',') || '-'})
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <span className="w-9 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              PM
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => toggleSlot(day, 3)}
+                              className={`rounded px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                                c.slots.includes(3) ? slotActive : slotIdle
+                              }`}
+                            >
+                              {getSlotLabel(3)}
+                            </button>
+                            {pmSlots.length === 2 && (
+                              <div className="inline-flex overflow-hidden rounded border border-input">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setWeekdayCfg((prev) => ({
+                                      ...prev,
+                                      [day]: { ...prev[day], slotModes: { ...prev[day].slotModes, pm: 'AND' } },
+                                    }))
+                                  }
+                                  className={`px-2 py-1 text-xs font-medium transition-colors ${
+                                    c.slotModes.pm === 'AND' ? modeActive : modeIdle
+                                  }`}
+                                >
+                                  AND
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setWeekdayCfg((prev) => ({
+                                      ...prev,
+                                      [day]: { ...prev[day], slotModes: { ...prev[day].slotModes, pm: 'OR' } },
+                                    }))
+                                  }
+                                  className={`border-l border-input px-2 py-1 text-xs font-medium transition-colors ${
+                                    c.slotModes.pm === 'OR' ? modeActive : modeIdle
+                                  }`}
+                                >
+                                  OR
+                                </button>
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => toggleSlot(day, 4)}
+                              className={`rounded px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                                c.slots.includes(4) ? slotActive : slotIdle
+                              }`}
+                            >
+                              {getSlotLabel(4)}
+                            </button>
+                          </div>
+
+                          <div className="mt-3">
+                            <label className="flex cursor-pointer items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={c.contributesFte}
+                                onChange={(e) =>
+                                  setWeekdayCfg((prev) => ({
+                                    ...prev,
+                                    [day]: { ...prev[day], contributesFte: e.target.checked },
+                                  }))
+                                }
+                                className="h-4 w-4"
+                              />
+                              <span className="text-xs text-muted-foreground">Contributes FTE</span>
+                            </label>
+                          </div>
+
+                          {!c.contributesFte && (
+                            <div className="mt-3 space-y-1.5">
+                              <p className="text-xs text-muted-foreground">
+                                Display text on staff card on schedule page when FTE=0:
+                              </p>
+                              <Input
+                                value={c.displayText}
+                                onChange={(e) =>
+                                  setWeekdayCfg((prev) => ({
+                                    ...prev,
+                                    [day]: { ...prev[day], displayText: e.target.value },
+                                  }))
+                                }
+                                placeholder="e.g. 8 beds"
+                                className="h-8 text-xs"
+                              />
+                            </div>
+                          )}
                         </div>
-                      </div>
-
-                      {!c.contributesFte && (
-                        <div className="mt-3 space-y-1.5">
-                          <p className="text-xs text-muted-foreground">Display text on staff card on schedule page when FTE=0:</p>
-                          <Input
-                            value={c.displayText}
-                            onChange={(e) =>
-                              setWeekdayCfg((prev) => ({
-                                ...prev,
-                                [day]: { ...prev[day], displayText: e.target.value },
-                              }))
-                            }
-                            placeholder="e.g. 8 beds"
-                            className="h-8 text-xs"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
+                      )
+                    })}
+                  </div>
+                )}
 
                 {remainingDays.length > 0 && (
-                  <>
-                    <hr className="border-border" />
-                    <div className="flex items-center gap-2 pt-4">
-                      <span className="text-xs text-muted-foreground">Add weekday:</span>
+                  <div className="mt-8">
+                    <div className="mb-2 text-xs font-medium text-foreground">Add another weekday</div>
+                    <div className="flex flex-wrap items-center gap-2">
                       <Select value={addWeekday} onValueChange={(v) => setAddWeekday(v as Weekday | '')}>
                         <SelectTrigger className="h-8 w-36">
                           <SelectValue placeholder="Select" />
@@ -841,23 +862,24 @@ export function SPTAllocationForm({
                         Add
                       </Button>
                     </div>
-                  </>
+                  </div>
                 )}
 
-                {remainingDays.length === 0 && (
-                  <p className="text-xs text-muted-foreground pt-4">All weekdays are configured.</p>
+                {remainingDays.length === 0 && enabledDays.length > 0 && (
+                  <p className="mt-4 text-xs text-muted-foreground">All weekdays are configured.</p>
                 )}
               </div>
             )
           })()}
         </div>
-      </div>
+      </section>
 
-      <hr className="border-border" />
-
-      <div>
-        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-4">
-          Other Settings
+      <section className="py-6">
+        <h3 className="mb-4 flex items-center gap-2.5 text-sm font-semibold text-foreground">
+          <span className={stepBadgeClass} aria-hidden>
+            3
+          </span>
+          Other settings
         </h3>
         <div className="space-y-4">
           <div>
@@ -895,9 +917,9 @@ export function SPTAllocationForm({
             </div>
           </label>
         </div>
-      </div>
+      </section>
 
-      <div className="flex gap-2 pt-2">
+      <div className="flex gap-2 pt-6">
         <Button type="submit">{saveButtonLabel}</Button>
         <Button type="button" variant="outline" onClick={onCancel}>
           {cancelButtonLabel}

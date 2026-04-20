@@ -122,12 +122,8 @@ export function SpecialProgramOverrideDialog({
         next.delete(programId)
       } else {
         next.add(programId)
-        // Clear the override so staff are released immediately in the UI
-        setProgramOverrides((po) => {
-          const updated = { ...po }
-          delete updated[programId]
-          return updated
-        })
+        // Keep programOverrides intact so re-enabling restores the same draft;
+        // disabledPrograms gates rendering and confirm output.
       }
       return next
     })

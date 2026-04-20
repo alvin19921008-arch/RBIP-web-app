@@ -33,6 +33,8 @@ rbip-dev-leave-sim-*.json
 .cursor/debug.log
 .cursor/*.log
 .cursor/.DS_Store
+# Cursor MCP config (may contain access tokens; keep local only)
+.cursor/mcp.json
 .worktrees/
 yarn-error.log*
 

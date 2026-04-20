@@ -12,6 +12,7 @@ import {
 import { SortableContext, arrayMove, horizontalListSortingStrategy, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { ArrowRight, GripVertical, Info, X } from 'lucide-react'
+import { formatEnglishOrdinal } from '@/lib/utils/formatOrdinal'
 import { getSlotLabel } from '@/lib/utils/slotHelpers'
 import { cn } from '@/lib/utils'
 import { useToast } from '@/components/ui/toast-context'
@@ -59,7 +60,7 @@ function RankedSlotChip({
         isDragging && 'z-50 opacity-90 shadow-md ring-2 ring-ring'
       )}
     >
-      <span className="text-[11px] font-bold tabular-nums text-muted-foreground">{rankIndex + 1}</span>
+      <span className="text-[11px] font-bold text-muted-foreground">{formatEnglishOrdinal(rankIndex + 1)}</span>
       <button
         type="button"
         className="cursor-grab rounded p-0.5 text-muted-foreground hover:bg-muted active:cursor-grabbing"

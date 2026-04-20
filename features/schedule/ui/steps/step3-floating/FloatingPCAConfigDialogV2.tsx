@@ -2127,7 +2127,7 @@ export function FloatingPCAConfigDialogV2({
                         </div>
                       ) : null}
 
-                      {additivePath ? (
+                      {additivePath && decision === 'use' ? (
                         <div className="text-xs text-muted-foreground">Uses one slot of remaining pending.</div>
                       ) : null}
 

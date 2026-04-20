@@ -9,14 +9,14 @@ import { PCAPreference } from '@/types/allocation'
 import { Staff, Team } from '@/types/staff'
 import { getSlotLabel } from '@/lib/utils/slotHelpers'
 import { RankedSlotPreferencesEditor } from '@/components/dashboard/RankedSlotPreferencesEditor'
+import { RankedPCAPreferencesEditor } from '@/components/dashboard/RankedPCAPreferencesEditor'
 import { FloorPCAMappingPanel } from '@/components/dashboard/FloorPCAMappingPanel'
 import { useToast } from '@/components/ui/toast-context'
 import { useDashboardExpandableCard } from '@/hooks/useDashboardExpandableCard'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAccessControl } from '@/lib/access/useAccessControl'
-import { ArrowRight, Users, GitMerge, MoveUp, MoveDown, X } from 'lucide-react'
-import { Tooltip } from '@/components/ui/tooltip'
+import { ArrowRight, Users, GitMerge } from 'lucide-react'
 import { 
   computeMergedIntoMap, 
   getTeamMergeStatus, 
@@ -593,20 +593,6 @@ function PCAPreferenceForm({
     setPcaIdPendingDelete(null)
   }
 
-  const movePCAInOrder = (pcaId: string, direction: 'up' | 'down') => {
-    const index = preferredPCA.indexOf(pcaId)
-    if (index === -1) return
-    if (direction === 'up' && index > 0) {
-      const newOrder = [...preferredPCA]
-      ;[newOrder[index - 1], newOrder[index]] = [newOrder[index], newOrder[index - 1]]
-      setPreferredPCA(newOrder)
-    } else if (direction === 'down' && index < preferredPCA.length - 1) {
-      const newOrder = [...preferredPCA]
-      ;[newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]]
-      setPreferredPCA(newOrder)
-    }
-  }
-
   const togglePCAToAdd = (pcaId: string) => {
     setPcaIdsToAdd(prev => {
       const next = new Set(prev)
@@ -628,11 +614,17 @@ function PCAPreferenceForm({
   const bufferPCAs = eligiblePCAs.filter(s => s.status === 'buffer')
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      <section>
-        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-          Floor PCA Selection
-        </h4>
+    <form onSubmit={handleSubmit} className="divide-y divide-border">
+      <section className="pb-6">
+        <h3 className="mb-3 flex items-center gap-2.5 text-sm font-semibold text-foreground">
+          <span
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-amber-200/90 bg-amber-50 text-[11px] font-semibold tabular-nums text-amber-950 shadow-sm"
+            aria-hidden
+          >
+            1
+          </span>
+          Floor PCA
+        </h3>
         <div className="flex gap-2">
           {(['none', 'upper', 'lower'] as const).map((opt) => (
             <button
@@ -649,17 +641,31 @@ function PCAPreferenceForm({
             </button>
           ))}
         </div>
-        <p className="text-xs text-muted-foreground mt-2">
+        <p className="mt-2 text-xs text-muted-foreground">
           Select the floor type for this team to filter compatible PCAs
         </p>
       </section>
 
-      <hr className="border-border" />
+      <section className="py-6">
+        <h3 className="mb-4 flex items-center gap-2.5 text-sm font-semibold text-foreground">
+          <span
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-amber-200/90 bg-amber-50 text-[11px] font-semibold tabular-nums text-amber-950 shadow-sm"
+            aria-hidden
+          >
+            2
+          </span>
+          Preferred PCA
+        </h3>
 
-      <section>
-        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-          Add Preferred PCA
-        </h4>
+        <div className="text-xs font-medium text-foreground mb-2">Pick</div>
+        <p className="mb-3 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">Preferred PCAs</span> are tried first when possible in the
+          Step 3 allocator; otherwise <span className="font-medium text-foreground">floor‑matched</span> first, then{' '}
+          <span className="font-medium text-foreground">non‑floor</span> PCAs.
+          <br />
+          You can leave this list empty — the allocator will still prefer{' '}
+          <span className="font-medium text-foreground">floor‑matched PCAs</span> first.
+        </p>
         <p className="text-xs text-muted-foreground mb-2">
           Scroll to see full list. Select PCA to add.
         </p>
@@ -694,9 +700,9 @@ function PCAPreferenceForm({
 
         {pcaIdsToAdd.size > 0 && (
           <div className="mt-3 w-full max-w-2xl bg-blue-50/40 border border-blue-100/60 rounded-xl p-3 shadow-sm">
-            <h4 className="text-[13px] font-semibold text-blue-900/90 mb-2">
+            <div className="text-[13px] font-semibold text-blue-900/90 mb-2">
               Confirm to add {pcaIdsToAdd.size} PCA to {preference.team}:
-            </h4>
+            </div>
             <div className="flex flex-wrap gap-2 mb-4">
               {Array.from(pcaIdsToAdd).map(id => {
                 const s = staff.find(st => st.id === id)
@@ -734,111 +740,38 @@ function PCAPreferenceForm({
             </div>
           </div>
         )}
+
+        <div className="mt-8 text-xs font-medium text-foreground mb-2">
+          Order <span className="font-normal text-muted-foreground">(max 2)</span>
+        </div>
+        <RankedPCAPreferencesEditor
+          rankedPcaIds={preferredPCA}
+          onRankedPcaIdsChange={setPreferredPCA}
+          staff={staff}
+          pcaIdPendingDelete={pcaIdPendingDelete}
+          onRequestRemove={(pcaId) => setPcaIdPendingDelete(pcaId)}
+          onCancelPendingRemove={() => setPcaIdPendingDelete(null)}
+          onConfirmRemove={handleRemovePCA}
+        />
       </section>
 
-      <hr className="border-border" />
-
-      <section>
-        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-          Configured Preferred PCA
-        </h4>
-        <p className="text-xs text-muted-foreground mb-2">(max 2)</p>
-        {preferredPCA.length > 0 ? (
-          <div className="bg-muted/30 rounded p-3 space-y-2">
-            {preferredPCA.map((pcaId, idx) => {
-              const pca = staff.find(s => s.id === pcaId)
-              if (!pca) return null
-              const showUpArrow = preferredPCA.length > 1 && idx > 0
-              const showDownArrow = preferredPCA.length > 1 && idx < preferredPCA.length - 1
-              return (
-                <div key={pcaId} className="group flex items-center gap-2 py-1.5 rounded-md px-2 hover:bg-muted/50 transition-colors">
-                  <div className="flex items-center gap-1">
-                    {showUpArrow && (
-                      <button
-                        type="button"
-                        onClick={() => movePCAInOrder(pcaId, 'up')}
-                        className="p-1 hover:bg-muted rounded"
-                      >
-                        <MoveUp className="h-4 w-4" />
-                      </button>
-                    )}
-                    {showDownArrow && (
-                      <button
-                        type="button"
-                        onClick={() => movePCAInOrder(pcaId, 'down')}
-                        className="p-1 hover:bg-muted rounded"
-                      >
-                        <MoveDown className="h-4 w-4" />
-                      </button>
-                    )}
-                    {!showUpArrow && !showDownArrow && (
-                      <span className="w-8" />
-                    )}
-                    <span className="text-sm font-medium w-6">{idx + 1}.</span>
-                    <span className="text-sm">{pca.name}</span>
-                  </div>
-
-                  {/* Delete button - appears on hover, next to name */}
-                  {pcaIdPendingDelete === pcaId ? (
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        className="h-7 text-xs"
-                        onClick={() => handleRemovePCA(pcaId)}
-                      >
-                        Confirm?
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() => setPcaIdPendingDelete(null)}
-                      >
-                        ×
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Tooltip content={`Remove ${pca.name}`} side="right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => setPcaIdPendingDelete(pcaId)}
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </Button>
-                      </Tooltip>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground py-2">No preferred PCA configured.</p>
-        )}
-        {preferredPCA.length > 1 && (
-          <p className="text-xs text-muted-foreground mt-2">
-            Order: {preferredPCA.map(id => staff.find(s => s.id === id)?.name).join(' → ')}
-          </p>
-        )}
-      </section>
-
-      <hr className="border-border" />
-
-      <section>
-        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-          Rank the preferred slots
-        </h4>
+      <section className="py-6">
+        <h3 className="mb-3 flex items-center gap-2.5 text-sm font-semibold text-foreground">
+          <span
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-amber-200/90 bg-amber-50 text-[11px] font-semibold tabular-nums text-amber-950 shadow-sm"
+            aria-hidden
+          >
+            3
+          </span>
+          Slot rank
+        </h3>
         <p className="mb-3 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">Top = most important</span> when floating PCAs are placed.
-          <span className="font-medium text-foreground"> Ranked slots</span> get higher priority first;{' '}
-          <span className="font-medium text-foreground">unranked slots</span> are used after that if the day still
-          needs them.
+          <span className="font-medium text-foreground">Ranked slots</span> are considered in list order;{' '}
+          <span className="font-medium text-foreground">slots you do not rank</span> are only used after that, when
+          those slots are still needed.
           <br />
-          Add only the slots you want ranked.
+          If you leave this empty, Step 3 can still prefer a sensible spread across morning and afternoon where it
+          helps, and avoid using the same PCA twice in the same slot when other choices exist.
         </p>
         <RankedSlotPreferencesEditor
           rankedSlots={preferredSlots}
@@ -848,12 +781,16 @@ function PCAPreferenceForm({
         />
       </section>
 
-      <hr className="border-border" />
-
-      <section>
-        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-          Gym Schedule
-        </h4>
+      <section className="py-6">
+        <h3 className="mb-3 flex items-center gap-2.5 text-sm font-semibold text-foreground">
+          <span
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-amber-200/90 bg-amber-50 text-[11px] font-semibold tabular-nums text-amber-950 shadow-sm"
+            aria-hidden
+          >
+            4
+          </span>
+          Gym
+        </h3>
         <div className="flex flex-wrap items-center gap-2">
           <Select
             value={gymSchedule == null ? 'none' : String(gymSchedule)}
@@ -903,7 +840,7 @@ function PCAPreferenceForm({
         </p>
       </section>
 
-      <div className="flex gap-2 pt-2">
+      <div className="flex gap-2 pt-6">
         <Button type="submit">Save</Button>
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel

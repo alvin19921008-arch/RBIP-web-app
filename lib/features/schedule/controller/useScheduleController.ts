@@ -28,6 +28,7 @@ import type { PCAAllocationContext, PCAData } from '@/lib/algorithms/pcaAllocati
 import type { BedAllocationContext } from '@/lib/algorithms/bedAllocation'
 import { computeBedsDesignatedByTeam, computeBedsForRelieving } from '@/lib/features/schedule/bedMath'
 import { getSptWeekdayConfigMap } from '@/lib/features/schedule/sptConfig'
+import { hydrateBaselineSptAllocationsFromLiveDb } from '@/lib/features/schedule/mergeSptAllocationsWithLiveGlobalConfig'
 import {
   buildStep3ProjectionV2FromBootstrapSummary,
   buildStep3ProjectionVersionKey,
@@ -771,7 +772,11 @@ export function useScheduleController(params: {
         setCurrentScheduleId(cached.scheduleId)
         setCurrentScheduleUpdatedAt((cached as any).scheduleUpdatedAt ?? null)
         if (cached.baselineSnapshot) {
-          applyBaselineSnapshot(cached.baselineSnapshot, cached.overrides)
+          const hydratedBaseline = await hydrateBaselineSptAllocationsFromLiveDb(
+            params.supabase,
+            cached.baselineSnapshot as BaselineSnapshot
+          )
+          applyBaselineSnapshot(hydratedBaseline as any, cached.overrides)
         }
         if (cached.workflowState) {
           setPersistedWorkflowState(cached.workflowState)
@@ -1050,10 +1055,14 @@ export function useScheduleController(params: {
           sourceForNewEnvelope: 'migration',
         })
         innerTimer.stage('validate:baseline_snapshot')
-        validatedBaselineSnapshotData = validated.data
+        const hydratedBaseline = await hydrateBaselineSptAllocationsFromLiveDb(
+          params.supabase,
+          validated.data as BaselineSnapshot
+        )
+        validatedBaselineSnapshotData = hydratedBaseline
         if (shouldApplyToState) {
           setSnapshotHealthReport(validated.report)
-          applyBaselineSnapshot(validated.data, overrides)
+          applyBaselineSnapshot(hydratedBaseline as any, overrides)
         }
 
         // Persist the repaired envelope back to DB so subsequent cold loads don't have to

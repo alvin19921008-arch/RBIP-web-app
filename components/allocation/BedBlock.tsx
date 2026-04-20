@@ -49,20 +49,35 @@ interface BedBlockProps {
   onInvalidEditAttempt?: (position: { x: number; y: number }) => void
 }
 
-function countBedNumbers(text: string): number {
+/** Split on commas and/or whitespace; each non-empty token is one bed (numeric or e.g. CB3). */
+function parseBedNumberTokens(text: string): string[] {
   return text
     .split(/[\s,]+/g)
-    .map(t => t.trim())
+    .map((t) => t.trim())
     .filter(Boolean)
-    .filter(t => /^\d+$/.test(t)).length
+}
+
+function countBedNumbers(text: string): number {
+  return parseBedNumberTokens(text).length
+}
+
+/** Numeric tokens sorted numerically, then non-numeric tokens sorted lexicographically; joined as ", ". */
+function canonicalizeBedNumbersText(text: string): string {
+  const tokens = parseBedNumberTokens(text)
+  if (tokens.length === 0) return ''
+  const numeric: string[] = []
+  const nonNumeric: string[] = []
+  for (const t of tokens) {
+    if (/^\d+$/.test(t)) numeric.push(t)
+    else nonNumeric.push(t)
+  }
+  numeric.sort((a, b) => Number(a) - Number(b))
+  nonNumeric.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }))
+  return [...numeric, ...nonNumeric].join(', ')
 }
 
 function formatBedNumbersForDisplay(text: string): string {
-  const matches = text.match(/\d+/g)
-  if (!matches) return text.trim()
-  const nums = matches.map(n => parseInt(n, 10)).filter(n => Number.isFinite(n))
-  nums.sort((a, b) => a - b)
-  return nums.map(n => String(n)).join(', ')
+  return canonicalizeBedNumbersText(text)
 }
 
 export const BedBlock = React.memo(function BedBlock({
@@ -742,7 +757,7 @@ export const BedBlock = React.memo(function BedBlock({
                         ? 'min-h-[72px] text-xs resize-none whitespace-pre-wrap break-keep [overflow-wrap:normal]'
                         : 'min-h-0 text-xs resize-none whitespace-pre-wrap break-keep [overflow-wrap:normal]'
                     }
-                    placeholder="Bed numbers to take (e.g. 19, 20)"
+                    placeholder="Bed numbers to take (e.g. 19, 20, CB3)"
                     value={row.bedNumbersText || ''}
                     onFocus={() => {
                       onActiveEditingTransferChange?.({ fromTeam, toTeam: team })
@@ -762,6 +777,18 @@ export const BedBlock = React.memo(function BedBlock({
                         const next = { ...(prev as any) }
                         const arr = ([...(((next[fromTeam]?.rows as BedRelievingNoteRow[]) || []))] as BedRelievingNoteRow[]).map((r, i) =>
                           i === idx ? { ...r, bedNumbersText: value } : r
+                        )
+                        next[fromTeam] = { resolution: 'taken', rows: arr }
+                        return next
+                      })
+                    }}
+                    onBlur={(e) => {
+                      const canonical = canonicalizeBedNumbersText(e.target.value)
+                      if (canonical === (row.bedNumbersText || '')) return
+                      setDraftByFromTeam((prev) => {
+                        const next = { ...(prev as any) }
+                        const arr = ([...(((next[fromTeam]?.rows as BedRelievingNoteRow[]) || []))] as BedRelievingNoteRow[]).map((r, i) =>
+                          i === idx ? { ...r, bedNumbersText: canonical } : r
                         )
                         next[fromTeam] = { resolution: 'taken', rows: arr }
                         return next

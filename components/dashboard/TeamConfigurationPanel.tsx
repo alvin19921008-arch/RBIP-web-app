@@ -155,6 +155,8 @@ export function TeamConfigurationPanel() {
   const toast = useToast()
   const teamConfigCheckboxClass =
     'data-[state=checked]:bg-blue-600 data-[state=checked]:text-white'
+  const stepBadgeClass =
+    'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-amber-200/90 bg-amber-50 text-[11px] font-semibold tabular-nums text-amber-950 shadow-sm'
   const expand = useDashboardExpandableCard<string>({ animationMs: 220 })
 
   // Compute merged-into mapping and contributing teams
@@ -780,20 +782,35 @@ export function TeamConfigurationPanel() {
                       </div>
                     </div>
 
-                    <div className="space-y-5">
-                      {/* Team name - flat, minimal nesting */}
-                      <div className="space-y-1.5">
-                        <Label htmlFor="team-name" className="text-sm font-medium">
-                          Team name
-                        </Label>
-                        <Input
-                          id="team-name"
-                          value={editDisplayName}
-                          onChange={(e) => setEditDisplayName(e.target.value)}
-                          className="h-9 w-24 max-w-[120px]"
-                        />
-                      </div>
+                    <div className="mt-6 divide-y divide-border">
+                      <section className="pb-6">
+                        <h3 className="mb-4 flex items-center gap-2.5 text-sm font-semibold text-foreground">
+                          <span className={stepBadgeClass} aria-hidden>
+                            1
+                          </span>
+                          Team identity
+                        </h3>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="team-name" className="text-sm font-medium">
+                            Team name
+                          </Label>
+                          <Input
+                            id="team-name"
+                            value={editDisplayName}
+                            onChange={(e) => setEditDisplayName(e.target.value)}
+                            className="h-9 w-24 max-w-[120px]"
+                          />
+                        </div>
+                      </section>
 
+                      <section className="py-6">
+                        <h3 className="mb-4 flex items-center gap-2.5 text-sm font-semibold text-foreground">
+                          <span className={stepBadgeClass} aria-hidden>
+                            2
+                          </span>
+                          Team members
+                        </h3>
+                        <div className="space-y-5">
                       <RankMemberSection
                         title="Team head (APPT)"
                         assignedCount={currentAPPT.length - editRemovedAPPT.size + editSelectedAPPT.size}
@@ -886,15 +903,15 @@ export function TeamConfigurationPanel() {
                           })
                         }}
                       />
+                        </div>
 
-                      {/* Consolidated Add Members Section */}
-                      <div className="pt-4 border-t">
+                        <div className="mt-8">
+                          <div className="mb-3 text-xs font-medium text-foreground">Add from pool</div>
                         {showAddMembersPanel ? (
-                          <div className="rounded-md border bg-muted/20 p-4 space-y-4">
-                            {/* Header */}
+                          <div className="space-y-4 rounded-lg bg-muted/30 p-4">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-2">
-                                <span className="text-sm font-semibold">Add Team Members</span>
+                                <span className="text-sm font-semibold text-foreground">Pick staff to assign</span>
                                 <span className="text-xs text-muted-foreground">
                                   ({unassignedAPPT.length + unassignedRPT.length + unassignedPCA.length} unassigned)
                                 </span>
@@ -913,7 +930,6 @@ export function TeamConfigurationPanel() {
                               </Button>
                             </div>
 
-                            {/* Search */}
                             <div className="relative">
                               <Search className="absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
                               <Input
@@ -924,14 +940,14 @@ export function TeamConfigurationPanel() {
                               />
                             </div>
 
-                            {/* Unassigned Section - Always Expanded */}
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                                <ChevronDown className="h-3.5 w-3.5" />
+                            <div className="divide-y divide-border">
+                            <div className="space-y-2 pb-4">
+                              <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
                                 Unassigned
                                 <span className="text-muted-foreground">({unassignedAPPT.length + unassignedRPT.length + unassignedPCA.length})</span>
                               </div>
-                              <div className="pl-4 space-y-1 max-h-40 overflow-y-auto pr-1">
+                              <div className="pl-1 space-y-1 max-h-40 overflow-y-auto pr-1 sm:pl-3">
                                 {/* Filter unassigned staff using filterStaff utility */}
                                 {(() => {
                                   const allUnassigned = filterStaff(staff, {
@@ -1001,11 +1017,10 @@ export function TeamConfigurationPanel() {
                               })
                               
                               return (
-                                <div className="space-y-3">
-                                  <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wide pt-2 border-t">
-                                    From Other Teams
+                                <div className="space-y-3 pt-4">
+                                  <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                                    From other teams
                                   </div>
-                                  {/* Masonry-style 2-column grid */}
                                   <div className="grid grid-cols-2 gap-3">
                                     {Array.from(bySourceTeam.entries()).map(([sourceTeam, teamStaff]) => {
                                       const isExpanded = expandedSourceTeams.has(sourceTeam) || (addMembersSearchQuery.trim() && filterStaff(teamStaff, { searchQuery: addMembersSearchQuery, activeOnly: true }).length > 0)
@@ -1018,7 +1033,7 @@ export function TeamConfigurationPanel() {
                                       return (
                                         <div
                                           key={sourceTeam}
-                                          className={`bg-muted/20 rounded-md p-2 ${isExpanded ? 'col-span-2' : ''}`}
+                                          className={`rounded-md border border-border/60 bg-background/80 p-2 ${isExpanded ? 'col-span-2' : ''}`}
                                         >
                                           {/* Clickable team header - minimal text style */}
                                           <button
@@ -1089,12 +1104,12 @@ export function TeamConfigurationPanel() {
                               if (inactiveMatches.length === 0) return null
 
                               return (
-                                <div className="space-y-2 pt-2 border-t">
-                                  <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                                    Inactive Staff
+                                <div className="space-y-2 pt-4">
+                                  <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                                    Inactive staff
                                     <span className="text-muted-foreground">({inactiveMatches.length})</span>
                                   </div>
-                                  <div className="pl-4 space-y-1 max-h-40 overflow-y-auto pr-1">
+                                  <div className="pl-1 space-y-1 max-h-40 overflow-y-auto pr-1 sm:pl-3">
                                     {inactiveMatches.map((s) => {
                                       const isSelected = editSelectedAPPT.has(s.id) || editSelectedRPT.has(s.id) || editSelectedPCA.has(s.id)
                                       const setSelected = s.rank === 'APPT' ? setEditSelectedAPPT : s.rank === 'RPT' ? setEditSelectedRPT : setEditSelectedPCA
@@ -1134,6 +1149,7 @@ export function TeamConfigurationPanel() {
                               )
                             })()}
                           </div>
+                          </div>
                         ) : (
                           <Button
                             variant="outline"
@@ -1153,14 +1169,20 @@ export function TeamConfigurationPanel() {
                             </span>
                           </Button>
                         )}
-                      </div>
+                        </div>
+                      </section>
 
-                      {/* Ward assignment - inline expand design */}
-                      <div className="space-y-3 pt-4 border-t">
-                        <div className="flex items-center gap-2">
-                          <Label className="text-sm font-medium">Wards assigned</Label>
-                          <span className="text-xs text-muted-foreground">
-                            ({editSelectedWards.size} selected)
+                      <section className="py-6">
+                        <h3 className="mb-4 flex items-center gap-2.5 text-sm font-semibold text-foreground">
+                          <span className={stepBadgeClass} aria-hidden>
+                            3
+                          </span>
+                          Wards & beds
+                        </h3>
+                        <div className="space-y-3">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <span>
+                            {editSelectedWards.size} ward{editSelectedWards.size === 1 ? '' : 's'} selected
                           </span>
                         </div>
                         
@@ -1287,9 +1309,9 @@ export function TeamConfigurationPanel() {
                           return (
                             <div className="pt-1">
                               {showWardSelector ? (
-                                <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+                                <div className="space-y-2 rounded-lg bg-muted/30 p-3">
                                   <div className="flex items-center justify-between">
-                                    <span className="text-sm font-medium">Select wards to assign</span>
+                                    <span className="text-sm font-medium text-foreground">Select wards to assign</span>
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -1343,10 +1365,11 @@ export function TeamConfigurationPanel() {
                           )
                         })()}
                       </div>
-                    </div>
+                      </section>
 
                     {selectedInactiveTotal > 0 && (
-                      <div className="mt-3 w-full max-w-2xl bg-amber-50/40 border border-amber-100/60 rounded-xl p-3 shadow-sm">
+                      <section className="py-6">
+                      <div className="w-full max-w-2xl bg-amber-50/40 border border-amber-100/60 rounded-xl p-3 shadow-sm">
                         <div className="flex items-start gap-2 text-sm text-amber-900">
                           <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" />
                           <span>
@@ -1354,10 +1377,10 @@ export function TeamConfigurationPanel() {
                           </span>
                         </div>
                       </div>
+                      </section>
                     )}
 
-                    {/* Action buttons - black only for Save */}
-                    <div className="flex justify-end gap-2 mt-6 pt-4 border-t">
+                    <div className="flex justify-end gap-2 pt-6">
                       <Button variant="outline" onClick={handleCancelEdit} disabled={saving}>
                         Cancel
                       </Button>
@@ -1368,6 +1391,7 @@ export function TeamConfigurationPanel() {
                       >
                         {saving ? 'Saving…' : 'Save'}
                       </Button>
+                    </div>
                     </div>
                   </Card>
                 )
@@ -1539,7 +1563,7 @@ function RankMemberSection({
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <Label className="text-sm font-medium">{title}</Label>
+        <span className="text-xs font-medium text-foreground">{title}</span>
         <span className="text-xs text-muted-foreground">({assignedCount} assigned)</span>
       </div>
 
@@ -1788,13 +1812,32 @@ function PortionPopoverDialog({
 
         <div className="space-y-4">
           <div>
-            <Label>Bed stat</Label>
+            <Label>Ward bed total</Label>
             <p className="text-sm text-muted-foreground">{popover.totalBeds}</p>
           </div>
 
+          {(!popover.currentPortion || !String(popover.currentPortion).trim()) && (
+            <div className="text-sm text-muted-foreground leading-snug">
+              {popover.currentBeds >= popover.totalBeds ? (
+                <p>
+                  No fraction is set. This team uses{' '}
+                  <span className="font-medium text-foreground">all {popover.totalBeds} beds</span> on this ward—a{' '}
+                  <span className="font-medium text-foreground">full ward</span> assignment for this row.
+                </p>
+              ) : (
+                <p>
+                  No fraction is set. This team is assigned{' '}
+                  <span className="font-medium text-foreground">{popover.currentBeds}</span> of{' '}
+                  <span className="font-medium text-foreground">{popover.totalBeds}</span> ward beds. If this ward is
+                  shared with other teams, enter a fraction (e.g. 1/2) so the label shows the share.
+                </p>
+              )}
+            </div>
+          )}
+
           <div>
             <Label htmlFor="portion">
-              Portion
+              Portion (optional)
             </Label>
             <Input
               id="portion"
