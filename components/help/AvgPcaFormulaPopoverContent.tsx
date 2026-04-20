@@ -14,22 +14,33 @@ export type AvgPcaFormulaPopoverContentProps = {
 
 export function AvgPcaFormulaPopoverContent({ className, sanityCheckFooter }: AvgPcaFormulaPopoverContentProps) {
   return (
-    <div className={cn('space-y-2 text-xs leading-snug', className)}>
-      <div className="font-semibold">Avg PCA/team formula</div>
-      <AvgPcaFormulaSteps />
+    <div
+      className={cn(
+        'flex min-h-0 w-full flex-1 flex-col text-xs leading-snug',
+        className
+      )}
+    >
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain px-3 pb-2 pt-3 [scrollbar-gutter:stable]">
+        <div className="font-semibold text-foreground">Avg PCA/team formula</div>
+        <AvgPcaFormulaSteps />
 
-      <div className="border-t border-amber-200/80 pt-2 space-y-1">
-        <div className="font-semibold">Sanity check</div>
-        {sanityCheckFooter ?? <AvgPcaSanityCheckStaticDescription />}
+        <div className="space-y-1 border-t border-amber-200/80 pt-2">
+          <div className="font-semibold text-foreground">Sanity check</div>
+          {sanityCheckFooter ?? <AvgPcaSanityCheckStaticDescription />}
+        </div>
+
+        <div className="space-y-2 border-t border-amber-200/80 pt-2">
+          <AvgPcaContinuousVsSlotsExplain />
+        </div>
       </div>
 
-      <div className="border-t border-amber-200/80 pt-2 space-y-2">
-        <AvgPcaContinuousVsSlotsExplain />
+      <div className="shrink-0 border-t border-amber-200/80 bg-amber-50/95 px-3 py-2.5">
         <Link
           href="/help/avg-and-slots"
-          className="inline-flex text-xs font-medium text-primary underline-offset-4 hover:underline"
+          className="text-xs font-medium text-primary underline-offset-4 hover:underline"
+          title="Opens the Avg PCA and slots guide in Help"
         >
-          What does this mean?
+          Go to Help for more on continuous FTE vs slots — full guide
         </Link>
       </div>
     </div>

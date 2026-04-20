@@ -10,7 +10,17 @@
 - Surplus mechanics — [V2 Step 3 surplus / ranked swap design](../superpowers/specs/2026-04-13-v2-step3-surplus-targets-and-ranked-swap-optimization-design.md)
 - **In-app** staff guide: route `/help/avg-and-slots` (Help Center → Guides)
 
-**Staff-facing UI (English):** Use **Extra after needs** (budgeted optional slots in Step 3.4). The legacy **Raised target (shared spare)** surplus-grant pathway has been **removed**; do not introduce new copy for it.
+## Staff-facing wording (HK English)
+
+Many editors read **English UI** in a Hong Kong workplace. Generated or agentic copy often picks terms that sound **abstract, financial, or US-product-y**. For **tooltips, help, and one-line explanations**, prefer **plain, concrete** phrasing. Internal specs, architecture notes, and changelogs may still use precise terms (e.g. **budgeted** for the cap rule).
+
+| Prefer (short user copy) | Avoid or use only where precise |
+|---------------------------|----------------------------------|
+| **Extra after needs** — optional Step 3.4 slots **after floating need is covered**; **how many** depends on **spare pool slots** and **rounding**; **larger rounding gaps are filled first** (team order follows gap size) | **Budgeted** in tight help lines (reads like finance policy, not roster math) |
+| **Floating need** covered / met | **Basic** floating need(s) — “basic” is vague or sounds dismissive |
+| **Rounding**, **gap size**, **spare pool** | **Short** for teams (easy to misread as height / headcount) |
+
+**Staff-facing UI (English):** Use **Extra after needs** for Step 3.4 optional coverage (see table above). The legacy **Raised target (shared spare)** surplus-grant pathway has been **removed**; do not introduce new copy for it.
 
 ---
 

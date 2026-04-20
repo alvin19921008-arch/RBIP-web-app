@@ -105,6 +105,7 @@ async function main() {
 
   const disclosure = buildStep31BudgetDisclosureParts(withSpare)
   assert.ok(disclosure.supplyLines[0].includes('3'))
+  assert.ok(disclosure.demandSummaryLine.includes('All teams (aggregate)'))
   assert.ok(disclosure.demandSummaryLine.includes('Over-assigned'))
   assert.ok(disclosure.recipientLines.length > 0)
 }

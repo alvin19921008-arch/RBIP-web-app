@@ -44,7 +44,7 @@ export function buildStep31BudgetDisclosureParts(budget: Step31ExtraAfterNeedsBu
   recipientLines: string[]
 } {
   const s = budget.balanceSummary
-  const demandSummaryLine = `Over-assigned: ${s.overAssignedSum.toFixed(2)} | Under-assigned: ${s.underAssignedSum.toFixed(2)} | Net: ${s.net.toFixed(2)}`
+  const demandSummaryLine = `All teams (aggregate): Over-assigned: ${s.overAssignedSum.toFixed(2)} | Under-assigned: ${s.underAssignedSum.toFixed(2)} | Net: ${s.net.toFixed(2)}`
   const supplyLines = [
     `Available floating slots: ${budget.availableFloatingSlots}`,
     `Needed slots (pending): ${budget.neededSlots}`,
@@ -52,8 +52,8 @@ export function buildStep31BudgetDisclosureParts(budget: Step31ExtraAfterNeedsBu
   ]
   const demandPerTeamLine = `Team balances (after rounded needs): ${s.perTeamText}`
   const demandLegend = '(+ = over-assigned, − = under-assigned)'
-  const recipientLines = budget.recipientsPreview.map((row, i) => {
-    return `${i + 1}) ${row.team}: ${fmtBal(row.before)} → ${fmtBal(row.after)} after 1 extra slot`
+  const recipientLines = budget.recipientsPreview.map((row) => {
+    return `${row.team}: ${fmtBal(row.before)} → ${fmtBal(row.after)} after 1 extra slot`
   })
   return {
     supplyLines,

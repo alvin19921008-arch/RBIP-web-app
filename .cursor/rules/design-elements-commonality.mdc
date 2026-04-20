@@ -46,7 +46,7 @@ Use **emerald** vs **violet** consistently for these two meanings everywhere (ba
 | **Raised target (shared spare)** — Step 2→3 rounding slack shared in the pool | Emerald | Badges: `border-emerald-600/85 bg-emerald-50 text-emerald-950` (see `STEP34_RAISED_TARGET_BADGE_CLASS`). Flat copy: `text-emerald-800 dark:text-emerald-200` (see `STEP31_RAISED_TARGET_TEXT_CLASS` in `FloatingPCAConfigDialogV2`). |
 | **Extra after needs** — optional Step 3.4 slot(s) after basic floating need is met | Violet | Badges: `border-violet-600/85 bg-violet-50 text-violet-950` (`STEP34_EXTRA_AFTER_NEEDS_BADGE_CLASS`). Flat copy: `text-violet-800 dark:text-violet-200` (`STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS`). Small labels: `text-violet-700 dark:text-violet-300`. |
 
-**Step 3.1 layout:** Keep scarcity preview (amber) for shortage only. Place **Raised target** literacy and **Extra after needs** preview in the same flat `space-y-2` block **above** “What the card numbers mean” — no nested card-on-card for those two lines.
+**Step 3.1 layout:** Keep scarcity preview (amber) for shortage only. Under the team lane, the collapsible **What the card numbers mean** comes **first**; then **Extra after needs** (“Likely extras” preview + disclosure) in the same flat `space-y-2` block — no nested card-on-card for those sections.
 
 ## Banner Panel Design
 

@@ -316,7 +316,7 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
               <PopoverContent
                 align="center"
                 side="top"
-                className="w-[420px] max-h-[min(520px,70vh)] overflow-y-auto rounded-md border border-amber-200 bg-amber-50/95 p-3"
+                className="flex w-[420px] max-h-[min(520px,70vh)] min-h-0 flex-col overflow-hidden rounded-md border border-amber-200 bg-amber-50/95 p-0"
               >
                 <AvgPcaFormulaPopoverContent />
               </PopoverContent>

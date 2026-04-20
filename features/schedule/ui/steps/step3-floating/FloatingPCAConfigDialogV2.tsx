@@ -1512,6 +1512,58 @@ export function FloatingPCAConfigDialogV2({
       </div>
 
       <div className="mt-2 space-y-2">
+        <div>
+          <button
+            type="button"
+            id="step31-card-legend-trigger"
+            aria-expanded={step31CardLegendOpen}
+            aria-controls="step31-card-legend"
+            onClick={() => setStep31CardLegendOpen((open) => !open)}
+            className="flex w-full max-w-full items-center gap-1.5 rounded-sm py-1 text-left text-[11px] font-medium text-foreground/90 outline-none ring-offset-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <ChevronDown
+              className={cn(
+                'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
+                step31CardLegendOpen && 'rotate-180'
+              )}
+              aria-hidden
+            />
+            <span>What the card numbers mean</span>
+          </button>
+          {step31CardLegendOpen ? (
+            <div
+              id="step31-card-legend"
+              role="region"
+              aria-labelledby="step31-card-legend-trigger"
+              className="mt-1.5 space-y-1.5 pl-5 text-[11px] leading-snug text-muted-foreground"
+            >
+            <p>
+              <span className="font-medium text-foreground">Avg</span> — Target PCA per team (same as the dashboard).
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Raw floating</span> — Avg – non-floating PCA.
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Rounded floating</span> — &ldquo;Raw floating&rdquo; rounded to
+              the nearest 0.25 FTE (the smaller row on the card).
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Non-floating</span> — PCA on this team from Step 2 (often{' '}
+              <span className="tabular-nums">1.00</span>).
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Pending floating</span> — The same quarter-grid need as the
+              large number: how much floating PCA this team still needs from the pool for this run. Change it with ± in
+              Step 3.1 only; from Step 3.2 onward it stays fixed until you return to Step 3.1.
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Assigned floating</span> — Floating PCA already placed on
+              this team in Steps 3.2–3.4.
+            </p>
+            </div>
+          ) : null}
+        </div>
+
         {step31Preview.status === 'ready' &&
         step31ExtraBudgetSnapshot &&
         step31ExtraBudgetSnapshot.budget.extraBudgetSlots > 0 ? (
@@ -1572,13 +1624,13 @@ export function FloatingPCAConfigDialogV2({
                         {parts.recipientLines.length === 0 ? (
                           <p>No recipient preview for this budget.</p>
                         ) : (
-                          <ul className="list-outside list-decimal space-y-0.5 pl-5 marker:text-muted-foreground">
+                          <ol className="list-outside list-decimal space-y-0.5 pl-5 marker:text-muted-foreground">
                             {parts.recipientLines.map((line) => (
                               <li key={line} className="pl-1">
                                 {line}
                               </li>
                             ))}
-                          </ul>
+                          </ol>
                         )}
                       </div>
                     </>
@@ -1588,58 +1640,6 @@ export function FloatingPCAConfigDialogV2({
             ) : null}
           </div>
         ) : null}
-
-        <div>
-          <button
-            type="button"
-            id="step31-card-legend-trigger"
-            aria-expanded={step31CardLegendOpen}
-            aria-controls="step31-card-legend"
-            onClick={() => setStep31CardLegendOpen((open) => !open)}
-            className="flex w-full max-w-full items-center gap-1.5 rounded-sm py-1 text-left text-[11px] font-medium text-foreground/90 outline-none ring-offset-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-          >
-            <ChevronDown
-              className={cn(
-                'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
-                step31CardLegendOpen && 'rotate-180'
-              )}
-              aria-hidden
-            />
-            <span>What the card numbers mean</span>
-          </button>
-          {step31CardLegendOpen ? (
-            <div
-              id="step31-card-legend"
-              role="region"
-              aria-labelledby="step31-card-legend-trigger"
-              className="mt-1.5 space-y-1.5 pl-5 text-[11px] leading-snug text-muted-foreground"
-            >
-            <p>
-              <span className="font-medium text-foreground">Avg</span> — Target PCA per team (same as the dashboard).
-            </p>
-            <p>
-              <span className="font-medium text-foreground">Raw floating</span> — Avg – non-floating PCA.
-            </p>
-            <p>
-              <span className="font-medium text-foreground">Rounded floating</span> — Round the &ldquo;Raw floating&rdquo;
-              to nearest 0.25. Allow editable in Step 3.1; and stay fixed from Step 3.2 onwards.
-            </p>
-            <p>
-              <span className="font-medium text-foreground">Non-floating</span> — PCA on this team from Step 2 (often{' '}
-              <span className="tabular-nums">1.00</span>).
-            </p>
-            <p>
-              <span className="font-medium text-foreground">Pending floating</span> — Floating FTE still needed from the
-              pool (large number). Adjust with ± in Step 3.1 only; from Step 3.2 onward this need stays fixed unless you
-              go back to Step 3.1.
-            </p>
-            <p>
-              <span className="font-medium text-foreground">Assigned floating</span> — Floating PCA already placed on
-              this team in Steps 3.2–3.4.
-            </p>
-            </div>
-          ) : null}
-        </div>
       </div>
     </div>
   )

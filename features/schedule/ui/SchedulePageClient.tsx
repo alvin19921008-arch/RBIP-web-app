@@ -53,6 +53,7 @@ import { SchedulePageSplitMainPaneHeader } from '@/features/schedule/ui/sections
 import { ScheduleWorkflowStepShell } from '@/features/schedule/ui/sections/ScheduleWorkflowStepShell'
 import { PcaAllocationLegendPopover } from '@/components/allocation/PcaAllocationLegendPopover'
 import { AvgPcaFormulaPopoverContent } from '@/components/help/AvgPcaFormulaPopoverContent'
+import { FormulaBlock, FormulaChip } from '@/components/help/avgPcaFormulaSteps'
 import dynamic from 'next/dynamic'
 import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopover'
 import { StaffContextMenu } from '@/components/allocation/StaffContextMenu'
@@ -11344,23 +11345,25 @@ function SchedulePageContent() {
                       <PopoverContent
                         align="center"
                         side="top"
-                        className="w-[420px] max-h-[min(520px,70vh)] overflow-y-auto rounded-md border border-amber-200 bg-amber-50/95 p-3"
+                        className="flex w-[420px] max-h-[min(520px,70vh)] min-h-0 flex-col overflow-hidden rounded-md border border-amber-200 bg-amber-50/95 p-0"
                       >
                         <AvgPcaFormulaPopoverContent
                           sanityCheckFooter={
-                            <div className="space-y-1">
-                              <div className="text-muted-foreground">
-                                For each team, compute <span className="font-mono">balance = Assigned − Avg</span>.
-                                Use <span className="font-mono">finalAvg[DRO]</span> as DRO’s Avg on DRM days
-                                (otherwise use base Avg). Then:
+                            <div className="space-y-2">
+                              <div className="text-muted-foreground text-xs">
+                                For each team, compare <span className="font-medium text-foreground">assigned FTE</span>{' '}
+                                to <span className="font-medium text-foreground">Avg</span>. On DRM days, use DRO’s{' '}
+                                <span className="font-medium text-foreground">final</span> Avg (including the add-on).
+                                Check: <FormulaChip>balance = Assigned − Avg</FormulaChip>. Then:
                               </div>
-                              <div className="text-muted-foreground font-mono">
+                              <FormulaBlock className="mt-0">
                                 Over-assigned: {pcaBalanceSanity.positiveSum.toFixed(2)} | Under-assigned:{' '}
-                                {pcaBalanceSanity.negativeAbsSum.toFixed(2)} | Net: {pcaBalanceSanity.netDiff.toFixed(2)}
-                              </div>
-                              <div className="text-muted-foreground text-[11px]">
+                                {pcaBalanceSanity.negativeAbsSum.toFixed(2)} | Net:{' '}
+                                {pcaBalanceSanity.netDiff.toFixed(2)}
+                              </FormulaBlock>
+                              <FormulaBlock className="mt-0 block w-full max-w-full text-[11px] leading-snug">
                                 Team balances (today): {pcaBalanceSanity.perTeamText}
-                              </div>
+                              </FormulaBlock>
                               <div className="text-muted-foreground text-[11px]">
                                 Small drift can happen due to quarter-slot rounding and 2-decimal display.
                               </div>
