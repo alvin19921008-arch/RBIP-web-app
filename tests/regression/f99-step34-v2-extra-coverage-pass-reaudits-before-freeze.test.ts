@@ -7,12 +7,15 @@ import type { PCAPreference } from '../../types/allocation'
 import type { Team } from '../../types/staff'
 
 /**
- * Task 6 (RED): after `applyExtraCoverageRoundRobin()` mutates allocations, the allocator must
+ * Section A — after `applyExtraCoverageRoundRobin()` mutates allocations, the allocator must
  * re-run ranked V2 repair audit (and repair scoring loop) before freezing the final tracker.
  *
  * Contract: `tracker[team].summary.repairAuditDefects` must match a fresh
  * `detectRankedV2RepairDefects` pass on the final `result.allocations` (Kinds `B1`, `F1`, `A1`,
  * `C1` only — `A2` is omitted from the tracker summary today, so both sides filter `A2` out).
+ *
+ * Section B — `extraAfterNeedsPolicy` budgeted-under-assigned-first: extra slots are capped by
+ * `budgetSlots` and favor the most under-assigned team per policy balances.
  */
 
 function emptyTeamRecord<T>(value: T): Record<Team, T> {
@@ -82,7 +85,15 @@ function defectsFromTrackerSummary(
   return rows
 }
 
-async function main() {
+function countExtraCoverageSlotEntries(
+  extra: Record<string, Array<1 | 2 | 3 | 4>> | undefined
+): number {
+  if (!extra) return 0
+  return Object.values(extra).reduce((sum, slots) => sum + slots.length, 0)
+}
+
+/** Section A — repair audit stays in sync after unbounded round-robin extra coverage (original f99). */
+async function sectionRepairAuditAfterRoundRobinExtraCoverage() {
   const teamOrder: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
   const currentPendingFTE = emptyTeamRecord(0.25)
   const pcaPool: PCAData[] = [
@@ -147,6 +158,67 @@ async function main() {
     signatureForDefects(trackerComparable),
     'Final tracker repairAuditDefects must be recomputed after extra coverage so it matches a fresh audit of the frozen allocation snapshot.'
   )
+}
+
+/** Section B — budgeted extra-after-needs: at most [budgetSlots] extras, under-assigned-first team wins. */
+async function sectionBudgetedExtraAfterNeedsRespectsBudgetAndTeam() {
+  const teamOrder: Team[] = ['FO', 'SMM', 'SFM', 'CPPC', 'MC', 'GMC', 'NSM', 'DRO']
+  const currentPendingFTE = emptyTeamRecord(0)
+  currentPendingFTE.FO = 0.25
+  const pcaPool: PCAData[] = [makePca('pool-a', [1, 2]), makePca('pool-b', [1, 2])]
+  const pcaPreferences: PCAPreference[] = [
+    {
+      id: 'pref-fo',
+      team: 'FO',
+      preferred_pca_ids: [],
+      preferred_slots: [1],
+      gym_schedule: 4,
+      avoid_gym_schedule: true,
+      floor_pca_selection: 'upper',
+    },
+  ]
+  const existingAllocations: [] = []
+
+  const balanceAfterRoundedNeedsByTeam = emptyTeamRecord(0)
+  balanceAfterRoundedNeedsByTeam.FO = -2
+
+  const result = await allocateFloatingPCA_v2RankedSlot({
+    teamOrder,
+    currentPendingFTE,
+    existingAllocations,
+    pcaPool,
+    pcaPreferences,
+    specialPrograms: [],
+    mode: 'standard',
+    extraCoverageMode: 'none',
+    extraAfterNeedsPolicy: {
+      mode: 'budgeted-under-assigned-first',
+      budgetSlots: 1,
+      balanceAfterRoundedNeedsByTeam,
+      tieBreakSeed: '2026-04-20',
+    },
+    preferenceSelectionMode: 'legacy',
+    selectedPreferenceAssignments: [],
+  })
+
+  const extraSlots = countExtraCoverageSlotEntries(result.extraCoverageByStaffId)
+  assert.ok(
+    extraSlots <= 1,
+    `Expected at most one budgeted extra slot; got ${extraSlots} from extraCoverageByStaffId`
+  )
+  assert.ok(extraSlots >= 1, 'Expected fixture to place exactly one budgeted extra when required coverage is satisfied')
+
+  const extraOnFo = result.tracker.FO.assignments.filter((row) => row.assignmentTag === 'extra')
+  assert.equal(
+    extraOnFo.length,
+    1,
+    'Expected the single budgeted extra to be attributed to FO (clearly most under-assigned in policy balances)'
+  )
+}
+
+async function main() {
+  await sectionRepairAuditAfterRoundRobinExtraCoverage()
+  await sectionBudgetedExtraAfterNeedsRespectsBudgetAndTeam()
 }
 
 main().catch((error) => {

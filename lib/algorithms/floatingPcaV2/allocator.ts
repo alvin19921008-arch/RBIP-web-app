@@ -40,6 +40,7 @@ import {
   compareScores,
 } from '@/lib/algorithms/floatingPcaV2/scoreSchedule'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
+import { seededShuffle } from '@/lib/utils/seededRandom'
 
 /** Bounded iterations for required-repair loop (`runRepairLoop`). */
 const MAX_REPAIR_ITERATIONS = 8
@@ -534,6 +535,120 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
   runOptionalRankedPromotionPass()
 
   // Extra coverage runs between repair passes; a second repair loop re-audits after mutations (f99).
+  const applyExtraAfterNeedsBudgeted = () => {
+    if (extraAfterNeedsPolicy.mode !== 'budgeted-under-assigned-first') return
+    const policy = extraAfterNeedsPolicy
+    if (policy.budgetSlots <= 0) return
+
+    const allSatisfied = TEAMS.every(
+      (team) => roundToNearestQuarterWithMidpoint(pendingFTE[team] ?? 0) < 0.25
+    )
+    if (!allSatisfied) return
+
+    const remainingUnder = createEmptyPendingFTE()
+    for (const team of TEAMS) {
+      const bal = policy.balanceAfterRoundedNeedsByTeam[team] ?? 0
+      remainingUnder[team] = Math.max(0, -bal)
+    }
+
+    const zeroPending = TEAMS.reduce((record, team) => {
+      record[team] = 0
+      return record
+    }, {} as Record<Team, number>)
+
+    let extrasPlaced = 0
+    let tieCursor = 0
+    const maxAttempts = policy.budgetSlots * TEAMS.length + TEAMS.length
+    let attempts = 0
+
+    while (extrasPlaced < policy.budgetSlots && attempts < maxAttempts) {
+      attempts += 1
+      const maxUnder = Math.max(...TEAMS.map((t) => remainingUnder[t] ?? 0))
+      if (maxUnder <= 1e-12) break
+
+      const tied = TEAMS.filter((t) => Math.abs((remainingUnder[t] ?? 0) - maxUnder) < 1e-9)
+      const tieOrder = seededShuffle(tied, `${policy.tieBreakSeed}|allocator:${extrasPlaced}`)
+      const team = tieOrder[tieCursor % tieOrder.length]!
+      tieCursor += 1
+
+      const pref = teamPrefs[team]
+      const candidates = findAvailablePCAs({
+        pcaPool,
+        team,
+        teamFloor: pref.teamFloor,
+        floorMatch: 'any',
+        excludePreferredOfOtherTeams: false,
+        preferredPCAIdsOfOtherTeams: new Map<string, Team[]>(),
+        pendingFTEPerTeam: zeroPending,
+        existingAllocations: allocations,
+        gymSlot: pref.gymSlot ?? null,
+        avoidGym: pref.avoidGym ?? false,
+      })
+
+      if (candidates.length === 0) {
+        remainingUnder[team] = 0
+        continue
+      }
+
+      const winner = [...candidates].sort((a, b) => {
+        const aAllocation = allocations.find((allocation) => allocation.staff_id === a.id)
+        const bAllocation = allocations.find((allocation) => allocation.staff_id === b.id)
+        const aFte = aAllocation?.fte_remaining ?? a.fte_pca
+        const bFte = bAllocation?.fte_remaining ?? b.fte_pca
+        if (bFte !== aFte) return bFte - aFte
+        return String(a.id).localeCompare(String(b.id))
+      })[0]!
+
+      const allocation = getOrCreateAllocation(
+        winner.id,
+        winner.name,
+        winner.fte_pca,
+        winner.leave_type,
+        team,
+        allocations
+      )
+
+      const extraResult = assignSlotsToTeam({
+        pca: winner,
+        allocation,
+        team,
+        pendingFTE: 0.25,
+        teamExistingSlots: getTeamExistingSlots(team, allocations),
+        gymSlot: pref.gymSlot ?? null,
+        avoidGym: pref.avoidGym ?? false,
+      })
+
+      if (extraResult.slotsAssigned.length === 0) {
+        remainingUnder[team] = 0
+        continue
+      }
+
+      for (const slot of extraResult.slotsAssigned) {
+        if (slot === 1 || slot === 2 || slot === 3 || slot === 4) {
+          const existing = extraCoverageByStaffId[winner.id] ?? []
+          existing.push(slot)
+          extraCoverageByStaffId[winner.id] = existing
+        }
+        recordAssignmentWithOrder(team, {
+          slot,
+          pcaId: winner.id,
+          pcaName: winner.name,
+          assignedIn: 'step34',
+          cycle: 3,
+          allocationStage: 'extra-coverage',
+          assignmentTag: 'extra',
+          wasFloorPCA: isFloorPCAForTeam(
+            winner as PCAData & { floor_pca?: ('upper' | 'lower')[] | null },
+            pref.teamFloor
+          ),
+        })
+      }
+
+      remainingUnder[team] = Math.max(0, (remainingUnder[team] ?? 0) - 0.25)
+      extrasPlaced += 1
+    }
+  }
+
   const applyExtraCoverageRoundRobin = () => {
     if (extraAfterNeedsPolicy.mode !== 'none') return
     if (extraCoverageMode !== 'round-robin-team-order') return
@@ -620,6 +735,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
     }
   }
 
+  applyExtraAfterNeedsBudgeted()
   applyExtraCoverageRoundRobin()
   runRepairLoop()
   applyInvalidSlotPairingForDisplay(allocations, pcaPool)
