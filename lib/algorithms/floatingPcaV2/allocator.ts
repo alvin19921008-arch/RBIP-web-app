@@ -41,6 +41,7 @@ import {
 } from '@/lib/algorithms/floatingPcaV2/scoreSchedule'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import { seededShuffle } from '@/lib/utils/seededRandom'
+import { TEAMS as SCHED_TEAM_ORDER } from '@/lib/utils/types'
 
 /** Bounded iterations for required-repair loop (`runRepairLoop`). */
 const MAX_REPAIR_ITERATIONS = 8
@@ -546,27 +547,27 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
     if (!allSatisfied) return
 
     const remainingUnder = createEmptyPendingFTE()
-    for (const team of TEAMS) {
+    for (const team of SCHED_TEAM_ORDER) {
       const bal = policy.balanceAfterRoundedNeedsByTeam[team] ?? 0
       remainingUnder[team] = Math.max(0, -bal)
     }
 
-    const zeroPending = TEAMS.reduce((record, team) => {
+    const zeroPending = SCHED_TEAM_ORDER.reduce((record, team) => {
       record[team] = 0
       return record
     }, {} as Record<Team, number>)
 
     let extrasPlaced = 0
     let tieCursor = 0
-    const maxAttempts = policy.budgetSlots * TEAMS.length + TEAMS.length
+    const maxAttempts = policy.budgetSlots * SCHED_TEAM_ORDER.length + SCHED_TEAM_ORDER.length
     let attempts = 0
 
     while (extrasPlaced < policy.budgetSlots && attempts < maxAttempts) {
       attempts += 1
-      const maxUnder = Math.max(...TEAMS.map((t) => remainingUnder[t] ?? 0))
+      const maxUnder = Math.max(...SCHED_TEAM_ORDER.map((t) => remainingUnder[t] ?? 0))
       if (maxUnder <= 1e-12) break
 
-      const tied = TEAMS.filter((t) => Math.abs((remainingUnder[t] ?? 0) - maxUnder) < 1e-9)
+      const tied = SCHED_TEAM_ORDER.filter((t) => Math.abs((remainingUnder[t] ?? 0) - maxUnder) < 1e-9)
       const tieOrder = seededShuffle(tied, `${policy.tieBreakSeed}|allocator:${extrasPlaced}`)
       const team = tieOrder[tieCursor % tieOrder.length]!
       tieCursor += 1

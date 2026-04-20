@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 
 import {
   buildProjectedExtraSlotsTooltipLines,
-  buildStep31PreviewExtraCoverageOptions,
+  buildStep31BudgetDisclosureParts,
   countProjectedExtraSlots,
+  formatStep31LikelyExtrasPreviewPlain,
 } from '../../lib/features/schedule/step31ProjectedExtraSlots'
 import { computeStep31ExtraAfterNeedsBudget } from '../../lib/features/schedule/step3ExtraAfterNeedsBudget'
 import { createEmptyTeamRecord } from '../../lib/utils/types'
@@ -35,17 +36,13 @@ async function main() {
     'Expected tooltip lines to explain projected extra slots using Step 3 demand vs floating supply'
   )
 
-  assert.deepEqual(
-    buildStep31PreviewExtraCoverageOptions({
-      mode: 'standard' as const,
-      teamOrder: ['FO'],
-    }),
-    {
-      mode: 'standard',
-      teamOrder: ['FO'],
-      extraCoverageMode: 'round-robin-team-order',
-    },
-    'Expected Step 3.1 preview allocation options to enable round-robin extra coverage so preview matches the final Extra-tag behavior'
+  assert.equal(
+    formatStep31LikelyExtrasPreviewPlain(2),
+    'Likely extras: up to 2 optional slots in Step 3.4 after needs are met (Extra after needs).'
+  )
+  assert.equal(
+    formatStep31LikelyExtrasPreviewPlain(1),
+    'Likely extras: up to 1 optional slot in Step 3.4 after needs are met (Extra after needs).'
   )
 
   const input = ['FO', 'SMM', 'DRO', 'NSM']
@@ -91,6 +88,7 @@ async function main() {
   })
   assert.equal(noSpare.poolSpareSlots, 0)
   assert.equal(noSpare.extraBudgetSlots, 0, 'Expected no extras when pool spare is zero')
+  assert.equal(noSpare.availableFloatingSlots, 2)
 
   const withSpare = computeStep31ExtraAfterNeedsBudget({
     teams,
@@ -102,7 +100,13 @@ async function main() {
   })
   assert.equal(withSpare.poolSpareSlots, 1)
   assert.equal(withSpare.extraBudgetSlots, 1, 'Expected one extra when aggregate qualifies and pool spare is one')
+  assert.equal(withSpare.availableFloatingSlots, 3)
   assert.ok(withSpare.recipientsPreview.length > 0)
+
+  const disclosure = buildStep31BudgetDisclosureParts(withSpare)
+  assert.ok(disclosure.supplyLines[0].includes('3'))
+  assert.ok(disclosure.demandSummaryLine.includes('Over-assigned'))
+  assert.ok(disclosure.recipientLines.length > 0)
 }
 
 main().catch((error) => {

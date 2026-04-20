@@ -1,5 +1,5 @@
 import { seededShuffle } from '@/lib/utils/seededRandom'
-import { createEmptyTeamRecord } from '@/lib/utils/types'
+import { createEmptyTeamRecord, TEAMS as CANONICAL_TEAMS } from '@/lib/utils/types'
 import type { Team } from '@/types/staff'
 
 const Q = 0.25
@@ -14,11 +14,14 @@ export type TeamBalanceSummary = {
 
 export type Step31ExtraAfterNeedsBudget = {
   neededSlots: number
+  /** Executable floating pool size (quarter slots) passed into the budget helper. */
+  availableFloatingSlots: number
   poolSpareSlots: number
   qualifyingExtraSlotsFromAggregate: number
   extraBudgetSlots: number
   balanceAfterRoundedNeedsByTeam: Record<Team, number>
   balanceSummary: TeamBalanceSummary
+  /** Top recipients preview (max 3), with after-slot balance flip shown. */
   recipientsPreview: Array<{ team: Team; before: number; after: number }>
 }
 
@@ -63,15 +66,19 @@ function buildRecipientsPreview(args: {
     remainingUnder[team] = Math.max(0, -bal)
   }
 
+  const teamSet = new Set(args.teams)
   let tieCursor = 0
   for (let i = 0; i < Math.min(args.extraBudgetSlots, args.previewLimit); i += 1) {
     let maxUnder = 0
-    for (const team of args.teams) {
+    for (const team of CANONICAL_TEAMS) {
+      if (!teamSet.has(team)) continue
       maxUnder = Math.max(maxUnder, remainingUnder[team] ?? 0)
     }
     if (maxUnder <= 1e-12) break
 
-    const tied = args.teams.filter((t) => Math.abs((remainingUnder[t] ?? 0) - maxUnder) < 1e-9)
+    const tied = CANONICAL_TEAMS.filter(
+      (t) => teamSet.has(t) && Math.abs((remainingUnder[t] ?? 0) - maxUnder) < 1e-9
+    )
     const tieOrder = seededShuffle(tied, `${args.tieBreakSeed}|tie:${i}`)
     const winner = tieOrder[tieCursor % tieOrder.length]!
     tieCursor += 1
@@ -120,6 +127,7 @@ export function computeStep31ExtraAfterNeedsBudget(args: {
 
   return {
     neededSlots,
+    availableFloatingSlots: args.availableFloatingSlots,
     poolSpareSlots,
     qualifyingExtraSlotsFromAggregate,
     extraBudgetSlots,

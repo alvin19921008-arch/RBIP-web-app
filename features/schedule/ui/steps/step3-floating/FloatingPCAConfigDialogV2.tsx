@@ -50,9 +50,11 @@ import {
   type FloatingPCAAllocationResultV2,
 } from '@/lib/algorithms/pcaAllocation'
 import {
-  buildStep31PreviewExtraCoverageOptions,
+  buildStep31BudgetDisclosureParts,
   countProjectedExtraSlots,
+  formatStep31LikelyExtrasPreviewPlain,
 } from '@/lib/features/schedule/step31ProjectedExtraSlots'
+import { computeStep31ExtraAfterNeedsBudget } from '@/lib/features/schedule/step3ExtraAfterNeedsBudget'
 import { buildV2Step31ScarcitySummary } from '@/lib/features/schedule/step31V2ScarcitySummary'
 import { runStep3V2CommittedSelections } from '@/lib/features/schedule/step3V2CommittedSelections'
 import { computeStep3V2ReservationPreview } from '@/lib/features/schedule/step3V2ReservationPreview'
@@ -81,6 +83,7 @@ import {
   type Step3BootstrapSummary,
   type Step3ProjectionV2,
 } from '@/lib/features/schedule/step3Bootstrap'
+import { createEmptyTeamRecord, TEAMS as CANONICAL_TEAMS } from '@/lib/utils/types'
 
 type FloatingPCAConfigDialogV2Props = FloatingPCAConfigDialogV1Props & {
   /** Therapist-weighted demand for V2 surplus projection (kept separate from floating [teamTargets]). */
@@ -443,6 +446,7 @@ export function FloatingPCAConfigDialogV2({
   const [step31Preview, setStep31Preview] = useState<Step31PreviewState>({ status: 'idle' })
   const [step31CardLegendOpen, setStep31CardLegendOpen] = useState(false)
   const [step31SharedSpareDetailsOpen, setStep31SharedSpareDetailsOpen] = useState(false)
+  const [step31LikelyExtrasDetailsOpen, setStep31LikelyExtrasDetailsOpen] = useState(false)
   const [selectedStep32Team, setSelectedStep32Team] = useState<Team | null>(null)
   const [selectedStep32OutcomeByTeam, setSelectedStep32OutcomeByTeam] = useState<Partial<Record<Team, string>>>({})
   const [selectedStep32PcaByTeam, setSelectedStep32PcaByTeam] = useState<Partial<Record<Team, string>>>({})
@@ -470,6 +474,81 @@ export function FloatingPCAConfigDialogV2({
   const [dialogFitWidthPx, setDialogFitWidthPx] = useState(0)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+
+  const step3ProjectionVersionNow = useMemo(() => {
+    if (!step31TeamTargets || !step31AssignedByTeam) return null
+    return buildStep3ProjectionVersionKey({
+      teams: activeTeams,
+      teamTargets: step31TeamTargets as Record<Team, number>,
+      existingTeamPCAAssigned: step31AssignedByTeam as Record<Team, number>,
+      floatingPCAs,
+      existingAllocations,
+      staffOverrides,
+      reservedSpecialProgramPcaFte: step31ReservedSpecialProgramPcaFte,
+      floatingPcaAllocationVersion: 'v2',
+      rawAveragePCAPerTeamByTeam: step31RawAveragePCAPerTeamByTeam,
+    })
+  }, [
+    activeTeams,
+    step31TeamTargets,
+    step31AssignedByTeam,
+    floatingPCAs,
+    existingAllocations,
+    staffOverrides,
+    step31ReservedSpecialProgramPcaFte,
+    step31RawAveragePCAPerTeamByTeam,
+  ])
+
+  const projectionBootstrapAligned = useMemo(
+    () =>
+      !!initialStep3ProjectionV2 &&
+      step3ProjectionVersionNow != null &&
+      initialStep3ProjectionV2.projectionVersion === step3ProjectionVersionNow,
+    [initialStep3ProjectionV2, step3ProjectionVersionNow]
+  )
+
+  const step31ExtraBudgetSnapshot = useMemo(() => {
+    if (!open) return null
+    const bootstrap =
+      projectionBootstrapAligned && initialStep3ProjectionV2
+        ? initialStep3ProjectionV2.bootstrapSummary
+        : step31BootstrapSummary
+    if (!bootstrap) return null
+
+    const displayTargetByTeam =
+      projectionBootstrapAligned && initialStep3ProjectionV2
+        ? initialStep3ProjectionV2.displayTargetByTeam
+        : bootstrap.teamTargets
+    const existingAssignedByTeam =
+      projectionBootstrapAligned && initialStep3ProjectionV2
+        ? initialStep3ProjectionV2.existingAssignedByTeam
+        : bootstrap.existingAssignedByTeam
+
+    const avgByTeam = { ...createEmptyTeamRecord(0), ...displayTargetByTeam }
+    const existing = { ...createEmptyTeamRecord(0), ...existingAssignedByTeam }
+    const pending = createEmptyTeamRecord(0)
+    for (const team of CANONICAL_TEAMS) {
+      pending[team] = adjustedFTE[team] ?? 0
+    }
+    const tieBreakSeed = `${String(weekday)}|${step3ProjectionVersionNow ?? 'unversioned'}`
+    const budget = computeStep31ExtraAfterNeedsBudget({
+      teams: [...CANONICAL_TEAMS],
+      avgByTeam,
+      existingAssignedFteByTeam: existing,
+      pendingFloatingFteByTeam: pending,
+      availableFloatingSlots: bootstrap.availableFloatingSlots,
+      tieBreakSeed,
+    })
+    return { budget, tieBreakSeed }
+  }, [
+    open,
+    weekday,
+    adjustedFTE,
+    step31BootstrapSummary,
+    initialStep3ProjectionV2,
+    projectionBootstrapAligned,
+    step3ProjectionVersionNow,
+  ])
 
   useEffect(() => {
     if (!open) return
@@ -563,6 +642,7 @@ export function FloatingPCAConfigDialogV2({
     setStep34PreviewResult(null)
     setStep34SelectedTeam(null)
     setStep34Loading(false)
+    setStep31LikelyExtrasDetailsOpen(false)
   }, [
     open,
     activeTeams,
@@ -637,20 +717,30 @@ export function FloatingPCAConfigDialogV2({
         // Ranked V2 + selected_only preserves base [preferred_slots] order; empty Step 3.2 picks here
         // fall back to DB [preferred_pca_ids]. Manual selections may bias PCA choice in Step 3.4 but
         // must not erase ranked-slot priority.
-        const standardRes = await allocateFloatingPCA_v2RankedSlot(
-          buildStep31PreviewExtraCoverageOptions({
-            mode: 'standard' as const,
-            teamOrder,
-            currentPendingFTE: { ...adjustedFTE },
-            existingAllocations: existingAllocations.map((allocation) => ({ ...allocation })),
-            pcaPool: floatingPCAs,
-            pcaPreferences,
-            specialPrograms,
-            preferenceSelectionMode: 'selected_only' as const,
-            preferenceProtectionMode: 'exclusive' as const,
-            selectedPreferenceAssignments: [],
-          })
-        )
+        const budgetPolicy =
+          step31ExtraBudgetSnapshot && step31ExtraBudgetSnapshot.budget.extraBudgetSlots > 0
+            ? ({
+                mode: 'budgeted-under-assigned-first' as const,
+                budgetSlots: step31ExtraBudgetSnapshot.budget.extraBudgetSlots,
+                balanceAfterRoundedNeedsByTeam: step31ExtraBudgetSnapshot.budget.balanceAfterRoundedNeedsByTeam,
+                tieBreakSeed: step31ExtraBudgetSnapshot.tieBreakSeed,
+              })
+            : null
+
+        const standardRes = await allocateFloatingPCA_v2RankedSlot({
+          mode: 'standard' as const,
+          teamOrder,
+          currentPendingFTE: { ...adjustedFTE },
+          existingAllocations: existingAllocations.map((allocation) => ({ ...allocation })),
+          pcaPool: floatingPCAs,
+          pcaPreferences,
+          specialPrograms,
+          preferenceSelectionMode: 'selected_only' as const,
+          preferenceProtectionMode: 'exclusive' as const,
+          selectedPreferenceAssignments: [],
+          extraCoverageMode: 'none',
+          ...(budgetPolicy ? { extraAfterNeedsPolicy: budgetPolicy } : {}),
+        })
 
         if (cancelled) return
 
@@ -676,7 +766,7 @@ export function FloatingPCAConfigDialogV2({
                 message: 'step31 preview projected extra snapshot',
                 data: {
                   adjustedFTE: { FO: adjustedFTE.FO ?? null, DRO: adjustedFTE.DRO ?? null },
-                  standardProjectedExtraSlots: countProjectedExtraSlots(standardRes.extraCoverageByStaffId),
+                  standardProjectedExtraSlots: step31ExtraBudgetSnapshot?.budget.extraBudgetSlots ?? 0,
                   extraCoverageByStaffId: standardRes.extraCoverageByStaffId ?? {},
                   standardZeroTeams,
                   balancedShortTeams,
@@ -709,7 +799,7 @@ export function FloatingPCAConfigDialogV2({
           status: 'ready',
           standardZeroTeams,
           balancedShortTeams,
-          standardProjectedExtraSlots: countProjectedExtraSlots(standardRes.extraCoverageByStaffId),
+          standardProjectedExtraSlots: step31ExtraBudgetSnapshot?.budget.extraBudgetSlots ?? 0,
           balancedProjectedExtraSlots: 0,
         })
       } catch (error) {
@@ -735,6 +825,7 @@ export function FloatingPCAConfigDialogV2({
     specialPrograms,
     step31AssignedByTeam,
     step31TeamTargets,
+    step31ExtraBudgetSnapshot,
   ])
 
   const reservationPreview = useMemo(
@@ -1105,25 +1196,7 @@ export function FloatingPCAConfigDialogV2({
   const runStep34Preview = useCallback(async () => {
     setStep34Loading(true)
     try {
-      const projectionVersionNow =
-        step31TeamTargets && step31AssignedByTeam
-          ? buildStep3ProjectionVersionKey({
-              teams: activeTeams,
-              teamTargets: step31TeamTargets as Record<Team, number>,
-              existingTeamPCAAssigned: step31AssignedByTeam as Record<Team, number>,
-              floatingPCAs,
-              existingAllocations,
-              staffOverrides,
-              reservedSpecialProgramPcaFte: step31ReservedSpecialProgramPcaFte,
-              floatingPcaAllocationVersion: 'v2',
-              rawAveragePCAPerTeamByTeam: step31RawAveragePCAPerTeamByTeam,
-            })
-          : null
-
-      const projectionAligned =
-        !!initialStep3ProjectionV2 &&
-        projectionVersionNow != null &&
-        initialStep3ProjectionV2.projectionVersion === projectionVersionNow
+      const projectionAligned = projectionBootstrapAligned
 
       const displayTargetByTeamForBaseline = projectionAligned
         ? initialStep3ProjectionV2!.displayTargetByTeam
@@ -1201,6 +1274,16 @@ export function FloatingPCAConfigDialogV2({
         : Promise.resolve())
       // #endregion
 
+      const extraPolicy =
+        step31ExtraBudgetSnapshot && step31ExtraBudgetSnapshot.budget.extraBudgetSlots > 0
+          ? {
+              mode: 'budgeted-under-assigned-first' as const,
+              budgetSlots: step31ExtraBudgetSnapshot.budget.extraBudgetSlots,
+              balanceAfterRoundedNeedsByTeam: step31ExtraBudgetSnapshot.budget.balanceAfterRoundedNeedsByTeam,
+              tieBreakSeed: step31ExtraBudgetSnapshot.tieBreakSeed,
+            }
+          : undefined
+
       const result = await runStep3V2CommittedSelections({
         teamOrder,
         currentPendingFTE: { ...adjustedFTE },
@@ -1212,10 +1295,11 @@ export function FloatingPCAConfigDialogV2({
         step33Assignments: step33AssignmentsForSave,
         mode: 'standard',
         preferenceSelectionMode: 'legacy',
-        extraCoverageMode: 'round-robin-team-order',
+        extraCoverageMode: 'none',
+        ...(extraPolicy ? { extraAfterNeedsPolicy: extraPolicy } : {}),
         step34SurplusProvenanceByTeam,
         step34SurplusProvenanceMeta: {
-          projectionVersion: projectionVersionNow,
+          projectionVersion: step3ProjectionVersionNow,
           grantReadSource: projectionAligned ? 'step3_projection_v2' : 'bootstrap_summary',
         },
       })
@@ -1242,6 +1326,9 @@ export function FloatingPCAConfigDialogV2({
     step33AssignmentsForSave,
     teamOrder,
     originalRoundedFTE,
+    projectionBootstrapAligned,
+    step3ProjectionVersionNow,
+    step31ExtraBudgetSnapshot,
   ])
 
   useEffect(() => {
@@ -1659,19 +1746,81 @@ export function FloatingPCAConfigDialogV2({
           )
         })()}
 
-        {step31Preview.status === 'ready' && step31Preview.standardProjectedExtraSlots > 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Preview: up to{' '}
-            <span className={cn(STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS, 'tabular-nums')}>
-              {step31Preview.standardProjectedExtraSlots}
-            </span>{' '}
-            optional slot
-            {step31Preview.standardProjectedExtraSlots === 1 ? '' : 's'} in Step 3.4 after needs are met (
-            <span className={STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS}>Extra after needs</span>).
-            <span className="pl-3">
-              <WizardAvgSlotsHelpInlinePopover variant="extra-after-needs" />
-            </span>
-          </p>
+        {step31Preview.status === 'ready' &&
+        step31ExtraBudgetSnapshot &&
+        step31ExtraBudgetSnapshot.budget.extraBudgetSlots > 0 ? (
+          <div className="space-y-1.5">
+            <p className="text-sm text-muted-foreground">
+              <span className={STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS}>
+                {formatStep31LikelyExtrasPreviewPlain(step31ExtraBudgetSnapshot.budget.extraBudgetSlots)}
+              </span>
+              <span className="pl-3">
+                <WizardAvgSlotsHelpInlinePopover variant="extra-after-needs" />
+              </span>
+            </p>
+            <button
+              type="button"
+              aria-expanded={step31LikelyExtrasDetailsOpen}
+              onClick={() => setStep31LikelyExtrasDetailsOpen((v) => !v)}
+              className="flex w-full max-w-full items-center gap-1.5 rounded-sm py-1 text-left text-[11px] font-medium text-foreground/90 outline-none ring-offset-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              <ChevronDown
+                className={cn(
+                  'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
+                  step31LikelyExtrasDetailsOpen && 'rotate-180'
+                )}
+                aria-hidden
+              />
+              <span>Show how we estimate this</span>
+            </button>
+            {step31LikelyExtrasDetailsOpen ? (
+              <div className="mt-1.5 space-y-3 pl-1 text-[11px] leading-snug text-muted-foreground">
+                {(() => {
+                  const parts = buildStep31BudgetDisclosureParts(step31ExtraBudgetSnapshot.budget)
+                  return (
+                    <>
+                      <div className="space-y-1">
+                        <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          Supply (pool)
+                        </div>
+                        <ul className="list-outside list-disc space-y-0.5 pl-5 marker:text-muted-foreground">
+                          {parts.supplyLines.map((line) => (
+                            <li key={line} className="pl-1">
+                              {line}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          Demand (after rounded needs)
+                        </div>
+                        <p>{parts.demandSummaryLine}</p>
+                        <p>{parts.demandPerTeamLine}</p>
+                        <p className="text-muted-foreground/90">{parts.demandLegend}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          Under-assigned-first preview
+                        </div>
+                        {parts.recipientLines.length === 0 ? (
+                          <p>No recipient preview for this budget.</p>
+                        ) : (
+                          <ul className="list-outside list-decimal space-y-0.5 pl-5 marker:text-muted-foreground">
+                            {parts.recipientLines.map((line) => (
+                              <li key={line} className="pl-1">
+                                {line}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </>
+                  )
+                })()}
+              </div>
+            ) : null}
+          </div>
         ) : null}
 
         <div>

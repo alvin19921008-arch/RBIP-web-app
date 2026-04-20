@@ -536,7 +536,7 @@ git commit -m "feat(step34): budget extra-after-needs and pick under-assigned fi
 - Modify: `lib/features/schedule/step31ProjectedExtraSlots.ts` (or remove its usage)
 - Modify: `tests/regression/f61-step31-projected-extra-slots-preview.test.ts`
 
-- [ ] **Step 1: Update Step 3.1 preview to use new module**
+- [x] **Step 1: Update Step 3.1 preview to use new module**
 
 In `FloatingPCAConfigDialogV2.tsx`, compute:
 
@@ -559,7 +559,7 @@ Render:
   - Demand mono line (`Over-assigned / Under-assigned / Net`) + per-team text + legend
   - Recipient preview (top 2–3 `before → after`)
 
-- [ ] **Step 2: Update Step 3.4 preview call to pass policy**
+- [x] **Step 2: Update Step 3.4 preview call to pass policy**
 
 When calling `runStep3V2CommittedSelections(...)`, pass:
 
@@ -574,17 +574,17 @@ extraAfterNeedsPolicy: {
 
 Remove `extraCoverageMode: 'round-robin-team-order'` from the V2 path.
 
-- [ ] **Step 3: Reconcile `f61` with Tasks 1–2 (avoid duplicate blocks)**
+- [x] **Step 3: Reconcile `f61` with Tasks 1–2 (avoid duplicate blocks)**
 
 If Tasks 1–2 already added `seededShuffle` + `computeStep31ExtraAfterNeedsBudget` assertions to `f61`, **only** remove obsolete imports/expectations (e.g. `buildStep31PreviewExtraCoverageOptions` / round-robin-only preview) and add any **UI-specific** checks still missing. Do not duplicate the same budget math in two places inside `f61`.
 
-- [ ] **Step 4: Run regressions**
+- [x] **Step 4: Run regressions**
 
 ```bash
 npx tsx tests/regression/f61-step31-projected-extra-slots-preview.test.ts
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add features/schedule/ui/steps/step3-floating/FloatingPCAConfigDialogV2.tsx lib/features/schedule/step31ProjectedExtraSlots.ts tests/regression/f61-step31-projected-extra-slots-preview.test.ts

@@ -1,3 +1,4 @@
+import type { ExtraAfterNeedsPolicy } from '@/lib/algorithms/floatingPcaShared/contracts'
 import {
   allocateFloatingPCA_v2RankedSlot,
   type FloatingPCAAllocationResultV2,
@@ -29,6 +30,7 @@ interface RunStep3V2CommittedSelectionsArgs {
   step33Assignments: SlotAssignment[]
   mode?: 'standard' | 'balanced'
   extraCoverageMode?: 'none' | 'round-robin-team-order'
+  extraAfterNeedsPolicy?: ExtraAfterNeedsPolicy
   preferenceSelectionMode?: 'legacy' | 'selected_only'
   step34SurplusProvenanceByTeam?: Partial<
     Record<
@@ -161,6 +163,10 @@ export async function runStep3V2CommittedSelections(
     args.teamOrder.map((team) => [team, roundToNearestQuarterWithMidpoint(pendingFTE[team] || 0)])
   ) as Record<Team, number>
 
+  const extraPolicy = args.extraAfterNeedsPolicy
+  const extraCoverageForAllocator =
+    extraPolicy?.mode === 'budgeted-under-assigned-first' ? 'none' : args.extraCoverageMode ?? 'none'
+
   const result = await allocateFloatingPCA_v2RankedSlot({
     teamOrder: args.teamOrder,
     currentPendingFTE: pendingFTE,
@@ -169,7 +175,8 @@ export async function runStep3V2CommittedSelections(
     pcaPreferences: args.pcaPreferences,
     specialPrograms: args.specialPrograms,
     mode: args.mode ?? 'standard',
-    extraCoverageMode: args.extraCoverageMode ?? 'none',
+    extraCoverageMode: extraCoverageForAllocator,
+    ...(extraPolicy != null ? { extraAfterNeedsPolicy: extraPolicy } : {}),
     preferenceSelectionMode: 'legacy',
     committedStep3Assignments: committedAssignments.map((assignment) => ({
       team: assignment.team,
