@@ -407,7 +407,7 @@ git commit -m "feat(step3): compute budgeted extra-after-needs preview"
 - Modify: `lib/features/schedule/step3V2CommittedSelections.ts`
 - Tests: keep `f61` green; adjust Step 3.4 regressions in Task 4 (`f99` / `f69`)
 
-- [ ] **Step 1: Update contracts**
+- [x] **Step 1: Update contracts**
 
 Edit `lib/algorithms/floatingPcaShared/contracts.ts` to add:
 
@@ -429,11 +429,11 @@ And add to `FloatingPCAAllocationContextV2`:
 extraAfterNeedsPolicy?: ExtraAfterNeedsPolicy
 ```
 
-- [ ] **Step 2: Ensure current callers compile (temporary default)**
+- [x] **Step 2: Ensure current callers compile (temporary default)**
 
 In the same edit, ensure `extraAfterNeedsPolicy` defaults to `{ mode: 'none' }` inside V2 allocator entry if missing.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add lib/algorithms/floatingPcaShared/contracts.ts
