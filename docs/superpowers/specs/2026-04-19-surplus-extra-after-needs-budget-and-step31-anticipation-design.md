@@ -9,7 +9,7 @@
 Make Step 3.4 “Extra after needs” **predictable and explainable** *before* an editor finishes Step 3, by:
 
 - Showing a Step 3.1 preview line (**Likely extras: up to N slots**) with progressive disclosure for the math.
-- Replacing unbounded round-robin “extras” with a **budgeted** extra pass that is **owe-first**.
+- Replacing unbounded round-robin “extras” with a **budgeted** extra pass that is **under-assigned-first**.
 - Rejecting “sum of per-team `ceil(raw/0.25)`” as the editor-facing definition of slack eligibility.
 
 This doc also harmonizes the app’s sign convention and language for the “continuous vs slots” mismatch story.
@@ -90,24 +90,24 @@ These are not explained together and the current slack cap for surplus uses the 
 
 ---
 
-## Proposed approach: Approach B (phased)
+## Proposed approach (phased, but ends in full replacement)
 
-We lean to **Approach B**:
+We implement in phases, but the end-state is a **full replacement** of the old V2 “Raised target (shared spare)” mechanism:
 
-- **Phase 1 (primary value)**: Revamp Step 3.4 extra-after-needs into a **budgeted** pass with **owe-first** selection + Step 3.1 anticipation UI.
-- **Phase 2 (follow-up)**: Revisit how V2 “Raised target (shared spare)” computes and exposes slack (replace editor-facing “discrete need” story; potentially replace executable cap math).
+- **Phase 1 (primary value)**: Revamp Step 3.4 extra-after-needs into a **budgeted** pass with **under-assigned-first** selection + Step 3.1 anticipation UI.
+- **Phase 2 (replacement)**: Remove “Raised target (shared spare)” surplus grants and their UI surfaces. The only discrete realization of continuous-vs-slots mismatch becomes **budgeted Extra after needs** (bounded + explainable).
 
-This yields predictable Step 3.4 behavior quickly without forcing a full surplus redesign in the same change set.
+This yields predictable Step 3.4 behavior quickly, while converging to a single mental model (no parallel surplus pathway).
 
 ---
 
-## Step 3.4 “Extra after needs” — budgeted, owe-first
+## Step 3.4 “Extra after needs” — budgeted, under-assigned-first
 
 ### High-level behavior (locked)
 
 1. Extra-after-needs runs **only after required floating need is satisfied** (same concept as today).
 2. Extra-after-needs is **bounded** by a budget (`extraBudgetSlots`).
-3. Extra-after-needs assigns extras **owe-first**, not purely round-robin.
+3. Extra-after-needs assigns extras **under-assigned-first**, not purely round-robin.
 
 ### Eligibility & budget (two-gate model)
 
@@ -147,16 +147,19 @@ Then:
 
 **Why this resolves the “long consumes dust” concern:** over-assigned teams “spend” pool slots via `neededSlots` / supply constraints, so even if aggregate under-assigned qualifies, `poolSpareSlots = 0` blocks extras.
 
-### Recipient selection (owe-first)
+### Recipient selection (under-assigned-first)
 
-At the start of extra-after-needs placement, compute an owe metric. For determinism and alignment with editor intuition, use the same “after rounded needs” balance:
+At the start of extra-after-needs placement, compute an under-assigned metric. For determinism and alignment with editor intuition, use the same “after rounded needs” balance:
 
 - Under-assigned magnitude: `under[team] = max(0, -balanceAfterRoundedNeeds[team])`
 
 Then repeatedly, for up to `extraBudgetSlots` times:
 
 - Pick the team with the **largest** `under[team]`.
-- Tie-break: stable ordering (or “team order” if a single stable list exists across Step 3).
+- Tie-break: if multiple teams tie for max-under, choose with a **fair, randomized order** that is still reproducible:
+  - Build `tied = teams where under[team] == maxUnder (within epsilon)`.
+  - Deterministically shuffle `tied` using a seed derived from schedule context (e.g. schedule date + Step 3 projection fingerprint).
+  - Use that shuffled order as a **round-robin ring** for the tied group so no fixed ordering starves the same team forever.
 - Assign one extra 0.25 slot to that team (subject to feasibility).
 - Update `under[team] = max(0, under[team] - 0.25)` for the preview ordering / multi-slot distribution.
 
@@ -184,7 +187,7 @@ If the computed budget is non-zero:
 
 If it’s zero:
 
-- No preview line (or show a muted “Likely extras: none” only if stakeholders want explicit negative feedback).
+- **Silent** (no preview line).
 
 ### Progressive disclosure (click to expand)
 
@@ -203,7 +206,7 @@ Under the preview line, add a chevron “Show how we estimate this” that revea
    - A small sign legend:
      - “(+ = over-assigned, − = under-assigned)”
 
-3. **Owe-first preview (top 2–3 only)**
+3. **Under-assigned-first preview (top 2–3 only)**
    - Show the first recipient(s) in a compact, numeric way:
      - “1) FO: -0.11 → +0.14 after 1 extra slot”
      - “2) SMM: -0.09 → +0.16 after 1 extra slot”
@@ -223,14 +226,15 @@ This is explicitly designed to fit into the `AvgPcaFormulaPopoverContent`/sanity
 
 ## Relationship to “Raised target (shared spare)” (V2 surplus)
 
-Phase 1 does not remove raised targets. Instead:
+This design treats the old V2 “Raised target (shared spare)” pathway as **invalid for the new product model**.
 
-- Keep existing raised-target behavior (V2 surplus grants) as allocator authority for required pending.
-- Ensure Step 3.1 copy and math make it clear:
-  - **Raised target (shared spare)** is about a slightly higher required floating target (hand-off uplift).
-  - **Extra after needs** is a separate, optional, post-need placement bounded by the new budget.
+- **Phase 1** may temporarily coexist with the old fields for migration safety, but Step 3.1 anticipation and Step 3.4 Extra-after-needs must follow the new **budgeted** model.
+- **Phase 2** removes:
+  - surplus-grant computation and fields (e.g. `redistributableSlackSlots`, `realizedSurplusSlotGrantsByTeam`)
+  - Step 3.1 “Raised target (shared spare)” line + expander
+  - any help copy that frames raised targets as authoritative slack
 
-Phase 2 will revisit the “slack cap” math so editor-facing slack is not defined by per-team ceil sums.
+After Phase 2, the **only** outlet that can materialize discrete optional coverage from continuous-vs-slot mismatch is **budgeted Extra after needs**.
 
 ---
 
@@ -239,7 +243,7 @@ Phase 2 will revisit the “slack cap” math so editor-facing slack is not defi
 If `Avg < existingAssignedFTE` for a team (common when Avg is < 1.0 but the sheet baseline is ~1.0):
 
 - `balanceAfterRoundedNeeds` is positive (over-assigned), contributing to the Over-assigned sum.
-- Under-assigned for that team is zero, so it is never selected as an owe-first recipient.
+- Under-assigned for that team is zero, so it is never selected as an under-assigned-first recipient.
 
 This matches the intent: teams that are already above their Avg should not receive extra-after-needs slots.
 
@@ -289,7 +293,7 @@ For a helper that computes:
 - `qualifyingExtraSlotsFromAggregate`
 - `poolSpareSlots`
 - `extraBudgetSlots`
-- owe-first preview recipients (deterministic ordering)
+- under-assigned-first preview recipients (deterministic ordering)
 
 Include:
 
@@ -301,7 +305,7 @@ Include:
 ### Allocator regression
 
 - extra-after-needs never exceeds budget
-- owe-first ordering is respected when multiple extras exist
+- under-assigned-first ordering is respected when multiple extras exist
 - tracker tagging remains stable so Step 3.4 UI continues to show “Extra after needs” chips/reason bullets
 
 ### UI regression
@@ -325,13 +329,12 @@ Avoid “long/short” (HK interpretation risk) and avoid “abs” (math-y).
 - Update `/help/avg-and-slots` and Step 3.1 inline popovers so the “continuous vs slots” mismatch explanation aligns with:
   - “grid mismatch can create spare slots or tight pool”
   - “extras are optional and budgeted”
-  - “owe-first recipients may flip to over-assigned when a 0.25 slot is placed”
+  - “under-assigned-first recipients may flip to over-assigned when a 0.25 slot is placed”
 
 ---
 
 ## Open questions (for stakeholder validation)
 
-1. **Negative preview line**: do we want “Likely extras: none” explicitly, or silence when budget = 0?
-2. **Tie-break policy**: stable alphabetical vs canonical team order vs editor override UI (future).
-3. **Phase 2**: whether to refactor/replace V2 raised-target slack cap (`redistributableSlackSlots`) to align with the new aggregate + pool story.
+1. **Seed definition for “random” tie-break**: confirm what constitutes the stable seed (e.g. schedule date + projection fingerprint) so results are reproducible within a day but fair across days.
+2. **Editor override UI**: whether Step 3.1 should allow editors to override the under-assigned-first ordering when ties occur (future).
 
