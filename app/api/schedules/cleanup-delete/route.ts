@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
 import { createServerComponentClient } from '@/lib/supabase/server'
-import { requireAuth } from '@/lib/auth'
 import { getRequesterContext } from '@/app/api/accounts/_utils'
 import { classifyScheduleMeaning } from '@/lib/utils/staffOverridesMeaningful'
 
@@ -23,7 +22,6 @@ function isStep1OrLess(workflowState: any): boolean {
 
 export async function POST(req: Request) {
   try {
-    await requireAuth()
     const { requesterRole } = await getRequesterContext()
     if (requesterRole !== 'admin' && requesterRole !== 'developer') {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })

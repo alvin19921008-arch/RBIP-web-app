@@ -1,7 +1,8 @@
+import { cache } from 'react'
 import { createServerComponentClient } from './supabase/server'
 import { redirect } from 'next/navigation'
 
-export async function getCurrentUser() {
+async function getCurrentUserImpl() {
   try {
     const supabase = await createServerComponentClient()
     // Always validate with Supabase for trusted user identity.
@@ -25,6 +26,8 @@ export async function getCurrentUser() {
   }
 }
 
+export const getCurrentUser = cache(getCurrentUserImpl)
+
 export async function requireAuth() {
   const user = await getCurrentUser()
   if (!user) {
@@ -35,23 +38,33 @@ export async function requireAuth() {
 
 export type UserRole = 'user' | 'admin' | 'developer'
 
-export async function getUserRole(userId: string): Promise<UserRole> {
+async function getUserRoleImpl(userId: string): Promise<UserRole> {
   const supabase = await createServerComponentClient()
   const { data, error } = await supabase
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
     .single()
-  
-  if (error || !data) {
+
+  // Missing profile: behave as least-privileged role (matches prior maybeSingle default).
+  if (error && (error as { code?: string }).code === 'PGRST116') {
     return 'user'
   }
-  
+  if (error) {
+    console.error('[getUserRole]', userId, error)
+    throw new Error('Failed to resolve user role')
+  }
+  if (!data) {
+    return 'user'
+  }
+
   const role = (data as any).role
   if (role === 'developer' || role === 'admin' || role === 'user') return role
   if (role === 'regular') return 'user'
   return 'user'
 }
+
+export const getUserRole = cache(getUserRoleImpl)
 
 export async function requireAdmin() {
   const user = await requireAuth()

@@ -23,7 +23,11 @@ export function HelpCenterDialog(props: { open: boolean; onOpenChange: (open: bo
         <DialogHeader className="pr-10">
           <DialogTitle>Help Center</DialogTitle>
         </DialogHeader>
-        <HelpCenterContent onAfterStartTour={() => props.onOpenChange(false)} />
+        <HelpCenterContent
+          onAfterStartTour={() => props.onOpenChange(false)}
+          showFullPageLink
+          onRequestNavigateToFullPage={() => props.onOpenChange(false)}
+        />
       </DialogContent>
     </Dialog>
   )

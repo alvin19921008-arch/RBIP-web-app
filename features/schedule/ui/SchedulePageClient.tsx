@@ -414,7 +414,6 @@ import type { PCAAllocationErrors } from '@/lib/features/schedule/controller/use
 import type { BedCountsOverridesByTeam } from '@/lib/features/schedule/controller/scheduleControllerTypes'
 import { AllocationExportView } from '@/features/schedule/ui/panes/AllocationExportView'
 import { downloadBlobAsFile, renderElementToImageBlob } from '@/lib/utils/exportPng'
-import { HelpCenterDialog } from '@/components/help/HelpCenterDialog'
 import { HELP_TOUR_PENDING_KEY } from '@/lib/help/tours'
 import { startHelpTourWithRetry } from '@/lib/help/startTour'
 import {
@@ -1424,7 +1423,6 @@ function SchedulePageContent() {
   ])
   const gridLoadingUsesLocalBarRef = useRef(false)
   const [userRole, setUserRole] = useState<'developer' | 'admin' | 'user'>('user')
-  const [helpDialogOpen, setHelpDialogOpen] = useState(false)
   const [devLeaveSimOpen, setDevLeaveSimOpen] = useState(false)
   const toastApi = useToast()
   const lastShownToastRef = useRef<{ id: number; title: string } | null>(null)
@@ -7005,7 +7003,6 @@ function SchedulePageContent() {
       saving={saving}
       copying={copying}
       access={access}
-      onOpenHelp={() => setHelpDialogOpen(true)}
       onOpenLeaveSim={() => setDevLeaveSimOpen(true)}
       snapshotHealthReport={snapshotHealthReport}
       lastCopyTiming={lastCopyTiming}
@@ -12272,7 +12269,6 @@ function SchedulePageContent() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-        <HelpCenterDialog open={helpDialogOpen} onOpenChange={setHelpDialogOpen} />
       </ScheduleMainBoardChrome>
     </ScheduleDndContextShell>
   )

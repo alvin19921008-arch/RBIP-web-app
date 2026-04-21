@@ -9,7 +9,7 @@ import { DashboardSidebar, DASHBOARD_CATEGORIES, type CategoryId } from '@/compo
 import { useAccessControl } from '@/lib/access/useAccessControl'
 import type { FeatureId } from '@/lib/access/types'
 import { Button } from '@/components/ui/button'
-import { HelpCenterDialog } from '@/components/help/HelpCenterDialog'
+import { useHelpCenter } from '@/components/help/HelpCenterProvider'
 import { HELP_TOUR_PENDING_KEY } from '@/lib/help/tours'
 import { startHelpTourWithRetry } from '@/lib/help/startTour'
 
@@ -107,11 +107,11 @@ const PANEL_CONFIG: Record<
 
 export default function DashboardPage() {
   const access = useAccessControl()
+  const { openHelp } = useHelpCenter()
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const [activePanel, setActivePanel] = useState<CategoryId>(null)
-  const [helpDialogOpen, setHelpDialogOpen] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [topLoadingVisible, setTopLoadingVisible] = useState(false)
   const [topLoadingProgress, setTopLoadingProgress] = useState(0)
@@ -267,7 +267,7 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {activePanel !== 'sync-publish' && <DashboardConfigMetaInline />}
-            <Button variant="outline" type="button" onClick={() => setHelpDialogOpen(true)} data-tour="dashboard-help">
+            <Button variant="outline" type="button" onClick={() => openHelp()} data-tour="dashboard-help">
             <CircleHelp className="h-4 w-4 mr-1.5" />
             Help
           </Button>
@@ -304,7 +304,6 @@ export default function DashboardPage() {
             )}
           </div>
         )}
-        <HelpCenterDialog open={helpDialogOpen} onOpenChange={setHelpDialogOpen} />
       </div>
     </div>
   )

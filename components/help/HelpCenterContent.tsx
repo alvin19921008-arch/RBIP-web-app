@@ -10,7 +10,13 @@ import { startHelpTourWithRetry } from '@/lib/help/startTour'
 import { HELP_TOUR_PENDING_KEY, type HelpTourId } from '@/lib/help/tours'
 import { useAccessControl } from '@/lib/access/useAccessControl'
 
-export function HelpCenterContent(props: { onAfterStartTour?: () => void }) {
+export function HelpCenterContent(props: {
+  onAfterStartTour?: () => void
+  /** When true (dialog shell), show a callout linking to the dedicated `/help` route. */
+  showFullPageLink?: boolean
+  /** Close the hosting dialog before navigating to `/help`. */
+  onRequestNavigateToFullPage?: () => void
+}) {
   const router = useRouter()
   const pathname = usePathname()
   const toast = useToast()
@@ -66,6 +72,29 @@ export function HelpCenterContent(props: { onAfterStartTour?: () => void }) {
 
   return (
     <div className="space-y-6">
+      {props.showFullPageLink ? (
+        <div className="rounded-lg border border-primary/25 bg-primary/5 p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1 min-w-0">
+              <p className="text-sm font-semibold text-foreground">Dedicated Help Center page</p>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Same tours and FAQ on a full page — useful for a separate tab, sharing the URL, or printing.
+              </p>
+            </div>
+            <Button asChild className="shrink-0 w-full sm:w-auto" variant="default" size="sm">
+              <Link
+                href="/help"
+                onClick={() => {
+                  props.onRequestNavigateToFullPage?.()
+                }}
+              >
+                Open /help
+              </Link>
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       <section className="space-y-3">
         <h2 className="text-base font-semibold">Onboarding Tours</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

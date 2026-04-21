@@ -1,6 +1,6 @@
 'use client'
 
-import { CircleHelp, Copy } from 'lucide-react'
+import { Copy } from 'lucide-react'
 import type { Dispatch, MutableRefObject, ReactNode, SetStateAction } from 'react'
 
 import { ScheduleSaveButton } from '@/features/schedule/ui/layout/ScheduleSaveButton'
@@ -28,7 +28,6 @@ export type SchedulePageHeaderRightActionsProps = {
   saving: boolean
   copying: boolean
   access: AccessGate
-  onOpenHelp: () => void
   onOpenLeaveSim: () => void
   snapshotHealthReport: {
     status: string
@@ -62,14 +61,13 @@ export type SchedulePageHeaderRightActionsProps = {
   onSaveSchedule: () => void | Promise<void>
 }
 
-/** Schedule toolbar: Help, Leave Sim, Copy (+ diagnostics), Export, Save (Phase 2d). */
+/** Schedule toolbar: Leave Sim, Copy (+ diagnostics), Export, Save (Phase 2d). Help lives in the top nav. */
 export function SchedulePageHeaderRightActions({
   userRole,
   isViewingMode,
   saving,
   copying,
   access,
-  onOpenHelp,
   onOpenLeaveSim,
   snapshotHealthReport,
   lastCopyTiming,
@@ -97,10 +95,6 @@ export function SchedulePageHeaderRightActions({
 }: SchedulePageHeaderRightActionsProps) {
   return (
     <>
-      <Button data-tour="schedule-help" variant="outline" type="button" onClick={onOpenHelp} disabled={saving || copying}>
-        <CircleHelp className="h-4 w-4 mr-1.5" />
-        Help
-      </Button>
       {isViewingMode ? null : (
         <>
           {userRole === 'developer' ? (

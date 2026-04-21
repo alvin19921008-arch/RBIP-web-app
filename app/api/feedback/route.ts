@@ -14,6 +14,34 @@ export async function GET(request: NextRequest) {
     const category = searchParams.get('category')
     const type = searchParams.get('type')
     const severity = searchParams.get('severity')
+    const badge = searchParams.get('badge')
+
+    // Badge-only: mode=review&status=new&badge=1, no other query keys (avoids accidental fast-path).
+    // Response: { newReportCount } — head count via `select('id', …)` only (no `select('*')`).
+    const badgeParamKeys = new Set(Array.from(searchParams.keys()))
+    const isBadgeOnly =
+      badgeParamKeys.size === 3 &&
+      badgeParamKeys.has('mode') &&
+      badgeParamKeys.has('status') &&
+      badgeParamKeys.has('badge') &&
+      mode === 'review' &&
+      status === 'new' &&
+      badge === '1' &&
+      !category &&
+      !type &&
+      !severity
+
+    if (isBadgeOnly) {
+      if (requesterRole !== 'developer') {
+        return NextResponse.json({ error: 'FORBIDDEN' }, { status: 403 })
+      }
+      const { count, error } = await supabase
+        .from('feedback_reports')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'new')
+      if (error) throw error
+      return NextResponse.json({ newReportCount: count ?? 0 })
+    }
 
     let query = supabase
       .from('feedback_reports')

@@ -1,5 +1,5 @@
-import { createServerComponentClient } from '@/lib/supabase/server'
-import { requireAuth } from '@/lib/auth'
+import { cache } from 'react'
+import { getUserRole, requireAuth } from '@/lib/auth'
 
 export type AccountRole = 'user' | 'admin' | 'developer'
 
@@ -8,30 +8,20 @@ export type RequesterContext = {
   requesterRole: AccountRole
 }
 
-export async function getRequesterContext(): Promise<RequesterContext> {
+async function getRequesterContextImpl(): Promise<RequesterContext> {
   const user = await requireAuth()
-  const supabase = await createServerComponentClient()
-
-  const { data, error } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle()
-
-  if (error) throw new Error(error.message)
-
-  const roleRaw = (data as any)?.role
-  const role: AccountRole =
-    roleRaw === 'developer' || roleRaw === 'admin' || roleRaw === 'user'
-      ? roleRaw
-      : roleRaw === 'regular'
-        ? 'user'
-        : roleRaw === 'admin'
-          ? 'admin'
-          : 'user'
-
-  return { requesterId: user.id, requesterRole: role }
+  const role = await getUserRole(user.id)
+  return {
+    requesterId: user.id,
+    requesterRole: role,
+  }
 }
+
+/**
+ * Per-request memoization: multiple calls in the same server request share one
+ * resolved context. Trusted identity still comes from `requireAuth` → `getUser()`.
+ */
+export const getRequesterContext = cache(getRequesterContextImpl)
 
 export function assertCanManageAccounts(role: AccountRole) {
   if (role === 'user') {
@@ -57,4 +47,3 @@ export function assertAdminRoleAssignment(requesterRole: AccountRole, nextRole: 
     throw new Error('FORBIDDEN: admin cannot assign developer role')
   }
 }
-

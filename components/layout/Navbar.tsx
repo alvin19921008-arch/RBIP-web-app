@@ -23,10 +23,16 @@ import {
   MessageSquarePlus,
   ClipboardList,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import useSWR from 'swr'
+import {
+  FEEDBACK_REVIEW_BADGE_URL,
+  type FeedbackReviewBadgeResponse,
+} from '@/lib/feedback/review-badge'
 import { ChangePasswordDialog } from '@/components/auth/ChangePasswordDialog'
 import { EditProfileDialog } from '@/components/auth/EditProfileDialog'
 import { FeedbackButton } from '@/components/feedback/FeedbackButton'
+import { useHelpCenter } from '@/components/help/HelpCenterProvider'
 import { useAccessControl } from '@/lib/access/useAccessControl'
 
 type AccountRole = 'user' | 'admin' | 'developer'
@@ -40,8 +46,9 @@ function roleBadgeVariant(role: AccountRole): 'roleDeveloper' | 'roleAdmin' | 'r
 export function Navbar() {
   const pathname = usePathname()
   const router = useRouter()
-  const supabase = createClientComponentClient()
+  const supabase = useMemo(() => createClientComponentClient(), [])
   const navLoading = useNavigationLoading()
+  const { openHelp } = useHelpCenter()
   const access = useAccessControl()
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -50,7 +57,8 @@ export function Navbar() {
   const [changePwOpen, setChangePwOpen] = useState(false)
   const [editProfileOpen, setEditProfileOpen] = useState(false)
   const [profileRefreshKey, setProfileRefreshKey] = useState(0)
-  const [newReportCount, setNewReportCount] = useState(0)
+  /** null until browser idle when [showFeedbackReview] — SWR key disabled so no fetch on critical path */
+  const [feedbackBadgeSwrKey, setFeedbackBadgeSwrKey] = useState<string | null>(null)
   const [devViewRole, setDevViewRole] = useState<AccountRole | null>(null)
   const isDev = process.env.NODE_ENV !== 'production'
 
@@ -117,24 +125,49 @@ export function Navbar() {
     return () => {
       cancelled = true
     }
-  }, [supabase, profileRefreshKey])
+  }, [profileRefreshKey, supabase])
 
-  // Fetch unread "new" report count for the review badge
+  // Defer first badge fetch until browser idle; SWR key stays null until then (no network on critical path)
   useEffect(() => {
-    if (!showFeedbackReview) return
-    let cancelled = false
-    const load = async () => {
-      try {
-        const res = await fetch('/api/feedback?mode=review&status=new')
-        if (!res.ok || cancelled) return
-        const data = await res.json()
-        if (!cancelled) setNewReportCount((data.reports ?? []).length)
-      } catch {}
+    if (!showFeedbackReview) {
+      setFeedbackBadgeSwrKey(null)
+      return
     }
-    load()
-    const interval = setInterval(load, 60_000)
-    return () => { cancelled = true; clearInterval(interval) }
+    let cancelled = false
+    const run = () => {
+      if (!cancelled) setFeedbackBadgeSwrKey(FEEDBACK_REVIEW_BADGE_URL)
+    }
+    let idleHandle: number | ReturnType<typeof setTimeout>
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      idleHandle = window.requestIdleCallback(run, { timeout: 2000 })
+    } else {
+      idleHandle = setTimeout(run, 0)
+    }
+    return () => {
+      cancelled = true
+      if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+        window.cancelIdleCallback(idleHandle as number)
+      } else {
+        clearTimeout(idleHandle)
+      }
+    }
   }, [showFeedbackReview])
+
+  // Stale window ~60s: refreshInterval + dedupingInterval match prior ~60s poll; revalidateOnFocus refreshes when returning to the tab
+  const { data: feedbackBadgeData, mutate: mutateFeedbackBadge } = useSWR(
+    feedbackBadgeSwrKey,
+    (url) =>
+      fetch(url).then(async (res) => {
+        if (!res.ok) throw new Error('Failed to load feedback badge')
+        return res.json() as Promise<FeedbackReviewBadgeResponse>
+      }),
+    {
+      refreshInterval: 60_000,
+      dedupingInterval: 60_000,
+      revalidateOnFocus: true,
+    }
+  )
+  const newReportCount = feedbackBadgeData?.newReportCount ?? 0
 
   // Load current dev impersonation state on mount (dev-only)
   useEffect(() => {
@@ -175,20 +208,43 @@ export function Navbar() {
             {navItems.map((item) => {
               const isReview = item.href === '/feedback/review'
               const badge = isReview && newReportCount > 0 ? newReportCount : 0
+              const isHelp = item.href === '/help'
+              const helpActive = isHelp && pathname != null && pathname.startsWith('/help')
+              const navItemClass = cn(
+                'relative text-sm font-medium transition-colors rbip-hover-scale hover:text-primary inline-flex items-center gap-1.5 rounded-md px-2 py-1',
+                (isHelp ? helpActive : pathname === item.href)
+                  ? 'bg-muted/50 text-foreground'
+                  : 'text-muted-foreground hover:bg-muted/50'
+              )
+
+              if (isHelp) {
+                return (
+                  <button
+                    key={item.href}
+                    type="button"
+                    data-tour="schedule-help"
+                    aria-haspopup="dialog"
+                    aria-current={helpActive ? 'page' : undefined}
+                    onClick={() => openHelp()}
+                    className={navItemClass}
+                  >
+                    <item.icon className="h-4 w-4" />
+                    <span>{item.label}</span>
+                  </button>
+                )
+              }
+
               return (
                 <Link
                   key={item.href}
                   href={item.href}
                   onClick={() => {
                     navLoading.start(item.href)
-                    if (isReview) setNewReportCount(0)
+                    if (isReview) {
+                      void mutateFeedbackBadge({ newReportCount: 0 }, { revalidate: false })
+                    }
                   }}
-                  className={cn(
-                    "relative text-sm font-medium transition-colors rbip-hover-scale hover:text-primary inline-flex items-center gap-1.5 rounded-md px-2 py-1",
-                    pathname === item.href
-                      ? "bg-muted/50 text-foreground"
-                      : "text-muted-foreground hover:bg-muted/50"
-                  )}
+                  className={navItemClass}
                 >
                   <item.icon className="h-4 w-4" />
                   <span>{item.label}</span>

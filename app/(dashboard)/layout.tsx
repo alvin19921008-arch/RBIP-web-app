@@ -1,5 +1,6 @@
 import { requireAuth } from '@/lib/auth'
 import { Navbar } from '@/components/layout/Navbar'
+import { HelpCenterProvider } from '@/components/help/HelpCenterProvider'
 import { NavigationLoadingProvider } from '@/components/ui/navigation-loading'
 import { getAccessSettings } from '@/lib/access/server'
 import { AccessProvider } from '@/lib/access/AccessContext'
@@ -17,10 +18,12 @@ export default async function DashboardLayout({
     <div className={`min-h-screen ${RBIP_APP_MIN_WIDTH_CLASS} mx-auto bg-background`} style={{ maxWidth: 'var(--rbip-app-max-width)' }}>
       <NavigationLoadingProvider>
         <AccessProvider initialRole={role} initialSettings={settings}>
-          <Navbar />
-          <main className="mx-auto w-full" style={{ maxWidth: 'var(--rbip-app-max-width)' }}>
-            {children}
-          </main>
+          <HelpCenterProvider>
+            <Navbar />
+            <main className="mx-auto w-full" style={{ maxWidth: 'var(--rbip-app-max-width)' }}>
+              {children}
+            </main>
+          </HelpCenterProvider>
         </AccessProvider>
       </NavigationLoadingProvider>
     </div>

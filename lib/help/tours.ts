@@ -78,7 +78,7 @@ export const HELP_TOURS: Record<HelpTourId, { title: string; steps: HelpTourStep
       {
         selector: '[data-tour="schedule-help"]',
         title: 'Replay Help Anytime',
-        description: 'Use this Help button whenever you want to rerun the tour or open FAQ.',
+        description: 'Use Help in the top bar whenever you want to rerun the tour or open FAQ.',
         side: 'bottom',
       },
     ],
