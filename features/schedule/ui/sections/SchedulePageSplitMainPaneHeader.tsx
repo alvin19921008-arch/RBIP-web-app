@@ -7,10 +7,10 @@ import { cn } from '@/lib/utils'
 
 export type SchedulePageSplitMainPaneHeaderProps = {
   isRefHidden: boolean
-  isViewingMode: boolean
+  isDisplayMode: boolean
   canUndo: boolean
   canRedo: boolean
-  onToggleViewingMode: () => void
+  onToggleDisplayMode: () => void
   onExitSplitMode: () => void
   onUndoManualEdit: () => void
   onRedoManualEdit: () => void
@@ -19,10 +19,10 @@ export type SchedulePageSplitMainPaneHeaderProps = {
 /** Split layout: fixed “Main (Editable)” strip with view / split / undo / redo (Phase 2d). */
 export function SchedulePageSplitMainPaneHeader({
   isRefHidden,
-  isViewingMode,
+  isDisplayMode,
   canUndo,
   canRedo,
-  onToggleViewingMode,
+  onToggleDisplayMode,
   onExitSplitMode,
   onUndoManualEdit,
   onRedoManualEdit,
@@ -39,18 +39,18 @@ export function SchedulePageSplitMainPaneHeader({
         </div>
         <div className="shrink-0 flex items-center gap-2">
           <div className="inline-flex items-center border border-border rounded-md overflow-hidden bg-background shadow-xs">
-            <Tooltip side="bottom" content={isViewingMode ? 'Exit viewing mode' : 'Enter viewing mode'}>
+            <Tooltip side="bottom" content={isDisplayMode ? 'Exit display mode' : 'Enter display mode (read-only)'}>
               <button
                 type="button"
-                onClick={onToggleViewingMode}
+                onClick={onToggleDisplayMode}
                 className={cn(
                   'px-2 py-1.5 text-xs font-medium transition-colors inline-flex items-center gap-1.5',
-                  isViewingMode ? 'bg-blue-600 text-white hover:bg-blue-700' : 'text-muted-foreground hover:text-primary hover:bg-muted/60'
+                  isDisplayMode ? 'bg-blue-600 text-white hover:bg-blue-700' : 'text-muted-foreground hover:text-primary hover:bg-muted/60'
                 )}
-                aria-pressed={isViewingMode}
+                aria-pressed={isDisplayMode}
               >
-                {isViewingMode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                <span className="hidden md:inline">View</span>
+                {isDisplayMode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                <span className="hidden md:inline">Display</span>
               </button>
             </Tooltip>
             <Tooltip side="bottom" content="Exit split mode">
@@ -68,19 +68,19 @@ export function SchedulePageSplitMainPaneHeader({
             </Tooltip>
             <Tooltip
               side="bottom"
-              content={isViewingMode ? 'Undo disabled in viewing mode' : canUndo ? 'Undo last manual edit' : 'Nothing to undo'}
+              content={isDisplayMode ? 'Undo disabled in display mode' : canUndo ? 'Undo last manual edit' : 'Nothing to undo'}
             >
               <button
                 type="button"
                 onClick={onUndoManualEdit}
-                disabled={!canUndo || isViewingMode}
+                disabled={!canUndo || isDisplayMode}
                 className={cn(
                   'px-2 py-1.5 text-xs font-medium transition-colors inline-flex items-center gap-1.5 border-l border-border',
-                  canUndo && !isViewingMode
+                  canUndo && !isDisplayMode
                     ? 'text-muted-foreground hover:text-primary hover:bg-muted/60'
                     : 'text-muted-foreground/50 cursor-not-allowed'
                 )}
-                aria-disabled={!canUndo || isViewingMode}
+                aria-disabled={!canUndo || isDisplayMode}
               >
                 <Undo2 className="h-4 w-4" />
                 <span className="hidden md:inline">Undo</span>
@@ -88,19 +88,19 @@ export function SchedulePageSplitMainPaneHeader({
             </Tooltip>
             <Tooltip
               side="bottom"
-              content={isViewingMode ? 'Redo disabled in viewing mode' : canRedo ? 'Redo last undone edit' : 'Nothing to redo'}
+              content={isDisplayMode ? 'Redo disabled in display mode' : canRedo ? 'Redo last undone edit' : 'Nothing to redo'}
             >
               <button
                 type="button"
                 onClick={onRedoManualEdit}
-                disabled={!canRedo || isViewingMode}
+                disabled={!canRedo || isDisplayMode}
                 className={cn(
                   'px-2 py-1.5 text-xs font-medium transition-colors inline-flex items-center gap-1.5 border-l border-border',
-                  canRedo && !isViewingMode
+                  canRedo && !isDisplayMode
                     ? 'text-muted-foreground hover:text-primary hover:bg-muted/60'
                     : 'text-muted-foreground/50 cursor-not-allowed'
                 )}
-                aria-disabled={!canRedo || isViewingMode}
+                aria-disabled={!canRedo || isDisplayMode}
               >
                 <Redo2 className="h-4 w-4" />
                 <span className="hidden md:inline">Redo</span>
