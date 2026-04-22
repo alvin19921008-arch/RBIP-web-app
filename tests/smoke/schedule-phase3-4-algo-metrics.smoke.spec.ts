@@ -123,6 +123,10 @@ test.describe('Schedule Phase 3.4 algorithm smoke', () => {
     await chooseFloatingPcaV2RankedFromEntryDialog(page)
     await expectFloatingPcaV2ConfigDialogFromStep31(page)
     await expect(page.getByText('Step 2 must be completed before Step 3.')).toHaveCount(0)
+
+    // Dismiss Step 3 config surface (footer may show Close or Back depending on step history).
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('heading', { name: 'Floating PCA allocation' })).toBeHidden({ timeout: 20_000 })
   })
 })
 

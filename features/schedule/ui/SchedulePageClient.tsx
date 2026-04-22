@@ -67,6 +67,8 @@ import {
   useSchedulePaneHydrationEndEffect,
 } from '@/features/schedule/ui/hooks/useSchedulePaneHydration'
 import { useSchedulePageQueryState } from '@/features/schedule/ui/hooks/useSchedulePageQueryState'
+import { useStep3DialogProjection } from '@/features/schedule/ui/hooks/useStep3DialogProjection'
+import type { Step2ResultSurplusProjection } from '@/features/schedule/ui/hooks/useStep3DialogProjectionTypes'
 import { ScheduleMainLayout } from '@/features/schedule/ui/layout/ScheduleMainLayout'
 import { SplitPane } from '@/components/ui/SplitPane'
 import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, ImageDown, Undo2, Redo2, Info } from 'lucide-react'
@@ -79,18 +81,8 @@ import { useAccessControl } from '@/lib/access/useAccessControl'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
 import { getWeekday, formatDateDDMMYYYY, formatDateForInput, parseDateFromInput } from '@/lib/features/schedule/date'
 import { computeDrmAddOnFte, computeReservedSpecialProgramPcaFte } from '@/lib/utils/specialProgramPcaCapacity'
-import { getAllocationSpecialProgramSlotsForTeam, isAllocationSlotFromSpecialProgram } from '@/lib/utils/scheduleReservationRuntime'
-import { buildDisplayViewForWeekday } from '@/lib/utils/scheduleRuntimeProjection'
-import {
-  buildStep3ProjectionV2FromBootstrapSummary,
-  buildStep3ProjectionVersionKey,
-  computeStep3BootstrapSummary,
-  computeStep3NonFloatingFteBreakdownByTeamFromAllocations,
-  describeStep3BootstrapDelta,
-  getStep3AveragePcaDisplayTargets,
-  type Step3BootstrapSummary,
-  type Step3ProjectionV2,
-} from '@/lib/features/schedule/step3Bootstrap'
+import { getAllocationSpecialProgramSlotsForTeam } from '@/lib/utils/scheduleReservationRuntime'
+import { describeStep3BootstrapDelta, type Step3BootstrapSummary } from '@/lib/features/schedule/step3Bootstrap'
 import {
   closeStep3DialogSurface,
   openStep3EntrySurface,
@@ -130,40 +122,10 @@ import { computeBedsDesignatedByTeam, computeBedsForRelieving, formatWardLabel }
 import { getSptWeekdayConfigMap } from '@/lib/features/schedule/sptConfig'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Step2DialogReminder } from '@/components/allocation/Step2DialogReminder'
-type Step3DependencyFingerprint = {
-  teamTargetsByTeam: Record<Team, number>
-  existingAssignedByTeam: Record<Team, number>
-  reservedSpecialProgramPcaFte: number
-  floatingPcas: Array<{
-    id: string
-    ftePca: number
-    availableSlots: number[]
-    invalidSlot: 1 | 2 | 3 | 4 | null
-    team: Team | null
-    floorPca: string[]
-  }>
-  existingAllocations: Array<{
-    staffId: string
-    slot1: Team | null
-    slot2: Team | null
-    slot3: Team | null
-    slot4: Team | null
-    invalidSlot: 1 | 2 | 3 | 4 | null
-    specialProgramIds: string[]
-    isFloating: boolean
-  }>
-}
-
 type Step2FinalizeContext = {
   kind: Step2ImpactKind
   explicitStep3Change?: boolean
   explicitStep4Change?: boolean
-}
-
-type Step2ResultSurplusProjection = {
-  rawAveragePCAPerTeam?: Record<Team, number>
-  step3FloatingBootstrapSummaryV2?: Step3BootstrapSummary
-  step3ProjectionV2?: Step3ProjectionV2
 }
 
 const DEFAULT_STEP2_FINALIZE_CONTEXT: Step2FinalizeContext = {
@@ -172,81 +134,6 @@ const DEFAULT_STEP2_FINALIZE_CONTEXT: Step2FinalizeContext = {
   explicitStep4Change: false,
 }
 
-function jsonFingerprint(value: unknown): string {
-  return JSON.stringify(value)
-}
-
-function buildPtPerTeamFingerprint(args: {
-  therapistAllocations: Record<Team, (TherapistAllocation & { staff: Staff })[]>
-  teams?: Team[]
-}): Record<Team, number> {
-  const teams = args.teams ?? TEAMS
-  const out = createEmptyTeamRecord<number>(0)
-  teams.forEach((team) => {
-    out[team] = Number(
-      (args.therapistAllocations[team] || [])
-        .reduce((sum, allocation) => sum + (allocation.fte_therapist ?? 0), 0)
-        .toFixed(2)
-    )
-  })
-  return out
-}
-
-function buildStep3DependencyFingerprint(args: {
-  visibleTeams: Team[]
-  teamTargetsByTeam: Record<Team, number>
-  existingAssignedByTeam: Record<Team, number>
-  reservedSpecialProgramPcaFte: number
-  floatingPCAs: PCAData[]
-  existingAllocations: PCAAllocation[]
-  staffById: Map<string, Staff>
-}): Step3DependencyFingerprint {
-  const teamTargetsByTeam = createEmptyTeamRecord<number>(0)
-  const existingAssignedByTeam = createEmptyTeamRecord<number>(0)
-  for (const team of args.visibleTeams) {
-    teamTargetsByTeam[team] = Number((args.teamTargetsByTeam[team] ?? 0).toFixed(2))
-    existingAssignedByTeam[team] = Number((args.existingAssignedByTeam[team] ?? 0).toFixed(2))
-  }
-
-  return {
-    teamTargetsByTeam,
-    existingAssignedByTeam,
-    reservedSpecialProgramPcaFte: Number(args.reservedSpecialProgramPcaFte.toFixed(2)),
-    floatingPcas: [...args.floatingPCAs]
-      .map((pca) => ({
-        id: pca.id,
-        ftePca: Number((pca.fte_pca ?? 0).toFixed(2)),
-        availableSlots: [...(Array.isArray(pca.availableSlots) ? pca.availableSlots : [1, 2, 3, 4])].sort((a, b) => a - b),
-        invalidSlot:
-          pca.invalidSlot === 1 || pca.invalidSlot === 2 || pca.invalidSlot === 3 || pca.invalidSlot === 4
-            ? (pca.invalidSlot as 1 | 2 | 3 | 4)
-            : null,
-        team: (pca.team as Team | null) ?? null,
-        floorPca: Array.isArray(pca.floor_pca) ? [...pca.floor_pca].sort() : [],
-      }))
-      .sort((a, b) => a.id.localeCompare(b.id)),
-    existingAllocations: [...args.existingAllocations]
-      .map((allocation) => ({
-        staffId: allocation.staff_id,
-        slot1: (allocation.slot1 as Team | null) ?? null,
-        slot2: (allocation.slot2 as Team | null) ?? null,
-        slot3: (allocation.slot3 as Team | null) ?? null,
-        slot4: (allocation.slot4 as Team | null) ?? null,
-        invalidSlot:
-          (allocation as any).invalid_slot === 1 ||
-          (allocation as any).invalid_slot === 2 ||
-          (allocation as any).invalid_slot === 3 ||
-          (allocation as any).invalid_slot === 4
-            ? ((allocation as any).invalid_slot as 1 | 2 | 3 | 4)
-            : null,
-        specialProgramIds: Array.isArray((allocation as any).special_program_ids)
-          ? [...((allocation as any).special_program_ids as string[])].sort()
-          : [],
-        isFloating: !!args.staffById.get(allocation.staff_id)?.floating,
-      }))
-      .sort((a, b) => a.staffId.localeCompare(b.staffId)),
-  }
-}
 import type { PCAData, FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
 import type { BedAllocationContext } from '@/lib/algorithms/bedAllocation'
 import type { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation'
@@ -5724,16 +5611,6 @@ function SchedulePageContent() {
 
   const currentWeekday = getWeekday(selectedDate)
   const weekdayName = WEEKDAY_NAMES[WEEKDAYS.indexOf(currentWeekday)]
-  const reservedSpecialProgramPcaFteForStep3 = useMemo(
-    () =>
-      computeReservedSpecialProgramPcaFte({
-        specialPrograms,
-        weekday: currentWeekday,
-        staffOverrides,
-      }),
-    [currentWeekday, specialPrograms, staffOverrides]
-  )
-
   const teamContributorsByMain = useMemo(() => {
     const out: Partial<Record<Team, Team[]>> = {}
     visibleTeams.forEach((mainTeam) => {
@@ -5742,318 +5619,35 @@ function SchedulePageContent() {
     return out
   }, [visibleTeams, effectiveTeamMergeConfig.mergedInto])
 
-  const displayViewForCurrentWeekday = useMemo(
-    () =>
-      buildDisplayViewForWeekday({
-        weekday: getWeekday(selectedDate),
-        specialPrograms: specialPrograms as any,
-        staffOverrides: staffOverrides as any,
-      }),
-    [selectedDate, specialPrograms, staffOverrides]
-  )
-
-  const existingAllocationsForStep3Dialog = useMemo(() => {
-    const canonical = (value: Team | null | undefined): Team | null => {
-      if (!value) return null
-      return getMainTeam(value, effectiveTeamMergeConfig.mergedInto)
-    }
-    return existingAllocationsForStep3.map((alloc) => ({
-      ...alloc,
-      team: canonical(alloc.team as Team | null) ?? alloc.team,
-      slot1: canonical(alloc.slot1 as Team | null),
-      slot2: canonical(alloc.slot2 as Team | null),
-      slot3: canonical(alloc.slot3 as Team | null),
-      slot4: canonical(alloc.slot4 as Team | null),
-    }))
-  }, [existingAllocationsForStep3, effectiveTeamMergeConfig.mergedInto])
-
-  const existingAssignedValidForStep3Dialog = useMemo(() => {
-    const out = createEmptyTeamRecord<number>(0)
-    for (const alloc of existingAllocationsForStep3Dialog) {
-      const invalidSlot = (alloc as any)?.invalid_slot as number | undefined
-      const add = (slot: 1 | 2 | 3 | 4, team: Team | null) => {
-        if (!team) return
-        if (invalidSlot === slot) return
-        out[team] = (out[team] || 0) + 0.25
-      }
-      add(1, alloc.slot1 ?? null)
-      add(2, alloc.slot2 ?? null)
-      add(3, alloc.slot3 ?? null)
-      add(4, alloc.slot4 ?? null)
-    }
-    return out
-  }, [existingAllocationsForStep3Dialog])
-
-  const specialProgramAssignedForStep3Dialog = useMemo(() => {
-    const out = createEmptyTeamRecord<number>(0)
-
-    for (const alloc of existingAllocationsForStep3Dialog) {
-      const ids = (alloc as any)?.special_program_ids
-      if (!Array.isArray(ids) || ids.length === 0) continue
-      const specialProgramsById = displayViewForCurrentWeekday.getProgramsByAllocationTeam(alloc.team as Team | null | undefined)
-
-      const add = (slot: 1 | 2 | 3 | 4, team: Team | null) => {
-        if (!team) return
-        if (!isAllocationSlotFromSpecialProgram({ allocation: alloc, slot, team, specialProgramsById })) return
-        out[team] = (out[team] || 0) + 0.25
-      }
-      add(1, alloc.slot1 ?? null)
-      add(2, alloc.slot2 ?? null)
-      add(3, alloc.slot3 ?? null)
-      add(4, alloc.slot4 ?? null)
-
-      const inv = (alloc as any)?.invalid_slot as 1 | 2 | 3 | 4 | null | undefined
-      if (inv === 1 || inv === 2 || inv === 3 || inv === 4) {
-        const invTeam = (inv === 1 ? alloc.slot1 : inv === 2 ? alloc.slot2 : inv === 3 ? alloc.slot3 : alloc.slot4) as Team | null
-        if (
-          invTeam &&
-          isAllocationSlotFromSpecialProgram({
-            allocation: alloc,
-            slot: inv,
-            team: invTeam,
-            specialProgramsById,
-          })
-        ) {
-          out[invTeam] = Math.max(0, (out[invTeam] || 0) - 0.25)
-        }
-      }
-    }
-
-    return out
-  }, [existingAllocationsForStep3Dialog, displayViewForCurrentWeekday])
-
-  const targetAverageForStep3Dialog = useMemo(() => {
-    const out = createEmptyTeamRecord<number>(0)
-    visibleTeams.forEach((mainTeam) => {
-      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
-      out[mainTeam] = contributors.reduce((sum, team) => sum + (calculations[team]?.average_pca_per_team || 0), 0)
-    })
-    return out
-  }, [visibleTeams, teamContributorsByMain, calculations])
-
-  const existingAssignedForCapForStep3Dialog = useMemo(() => {
-    const out = createEmptyTeamRecord<number>(0)
-    visibleTeams.forEach((mainTeam) => {
-      const rawAssignedForCap = existingAssignedValidForStep3Dialog[mainTeam] || 0
-      const specialAssignedForCap = specialProgramAssignedForStep3Dialog[mainTeam] || 0
-      out[mainTeam] = Math.max(0, rawAssignedForCap - specialAssignedForCap)
-    })
-    return out
-  }, [visibleTeams, existingAssignedValidForStep3Dialog, specialProgramAssignedForStep3Dialog])
-
-  const step3NonFloatingFteBreakdownForDialog = useMemo(
-    () =>
-      computeStep3NonFloatingFteBreakdownByTeamFromAllocations({
-        existingAllocations: existingAllocationsForStep3Dialog,
-        staff: [...staff, ...bufferStaff],
-        specialPrograms: specialPrograms as any,
-        weekday: getWeekday(selectedDate),
-        staffOverrides,
-        canonicalSlotTeam: (t) => (t ? getMainTeam(t, effectiveTeamMergeConfig.mergedInto) : null),
-      }),
-    [
-      existingAllocationsForStep3Dialog,
-      staff,
-      bufferStaff,
-      specialPrograms,
-      selectedDate,
-      staffOverrides,
-      effectiveTeamMergeConfig.mergedInto,
-    ]
-  )
-
-  const staffByIdForStepDependencies = useMemo(
-    () => buildStaffByIdMap([...staff, ...bufferStaff]),
-    [staff, bufferStaff]
-  )
-
-  const step3DependencyFingerprint = useMemo(
-    () =>
-      buildStep3DependencyFingerprint({
-        visibleTeams,
-        teamTargetsByTeam: targetAverageForStep3Dialog,
-        existingAssignedByTeam: existingAssignedForCapForStep3Dialog,
-        reservedSpecialProgramPcaFte: reservedSpecialProgramPcaFteForStep3,
-        floatingPCAs: floatingPCAsForStep3,
-        existingAllocations: existingAllocationsForStep3Dialog,
-        staffById: staffByIdForStepDependencies,
-      }),
-    [
-      visibleTeams,
-      targetAverageForStep3Dialog,
-      existingAssignedForCapForStep3Dialog,
-      reservedSpecialProgramPcaFteForStep3,
-      floatingPCAsForStep3,
-      existingAllocationsForStep3Dialog,
-      staffByIdForStepDependencies,
-    ]
-  )
-
-  const step4DependencyFingerprint = useMemo(
-    () => buildPtPerTeamFingerprint({ therapistAllocations }),
-    [therapistAllocations]
-  )
-
-  // Keep refs in sync during commit (useLayoutEffect), not after paint (useEffect).
-  // Step 2 apply paths use flushSync + synchronous finalize so fingerprint refs match the post-edit
-  // snapshot; queueMicrotask alone can run before React commits, leaving stale refs and empty deltas.
-  useLayoutEffect(() => {
-    latestStep3DependencyFingerprintRef.current = jsonFingerprint(step3DependencyFingerprint)
-  }, [step3DependencyFingerprint])
-
-  useLayoutEffect(() => {
-    latestStep4DependencyFingerprintRef.current = jsonFingerprint(step4DependencyFingerprint)
-  }, [step4DependencyFingerprint])
-
-  const step3BootstrapSummary = useMemo(
-    () =>
-      computeStep3BootstrapSummary({
-        teams: visibleTeams,
-        teamTargets: targetAverageForStep3Dialog,
-        existingTeamPCAAssigned: existingAssignedForCapForStep3Dialog,
-        floatingPCAs: floatingPCAsForStep3,
-        existingAllocations: existingAllocationsForStep3Dialog,
-        staffOverrides,
-        reservedSpecialProgramPcaFte: reservedSpecialProgramPcaFteForStep3,
-        nonFloatingFteBreakdownByTeam: step3NonFloatingFteBreakdownForDialog,
-      }),
-    [
-      visibleTeams,
-      targetAverageForStep3Dialog,
-      existingAssignedForCapForStep3Dialog,
-      floatingPCAsForStep3,
-      existingAllocationsForStep3Dialog,
-      staffOverrides,
-      reservedSpecialProgramPcaFteForStep3,
-      step3NonFloatingFteBreakdownForDialog,
-    ]
-  )
-
-  const step3BootstrapSummaryV2 = useMemo(
-    () =>
-      computeStep3BootstrapSummary({
-        teams: visibleTeams,
-        teamTargets: targetAverageForStep3Dialog,
-        existingTeamPCAAssigned: existingAssignedForCapForStep3Dialog,
-        floatingPCAs: floatingPCAsForStep3,
-        existingAllocations: existingAllocationsForStep3Dialog,
-        staffOverrides,
-        reservedSpecialProgramPcaFte: reservedSpecialProgramPcaFteForStep3,
-        floatingPcaAllocationVersion: 'v2',
-        rawAveragePCAPerTeamByTeam: (step2Result as Step2ResultSurplusProjection | null)?.rawAveragePCAPerTeam,
-        nonFloatingFteBreakdownByTeam: step3NonFloatingFteBreakdownForDialog,
-      }),
-    [
-      visibleTeams,
-      targetAverageForStep3Dialog,
-      existingAssignedForCapForStep3Dialog,
-      floatingPCAsForStep3,
-      existingAllocationsForStep3Dialog,
-      staffOverrides,
-      reservedSpecialProgramPcaFteForStep3,
-      step2Result,
-      step3NonFloatingFteBreakdownForDialog,
-    ]
-  )
-
-  const step3ProjectionV2 = useMemo(() => {
-    const projectionVersion = buildStep3ProjectionVersionKey({
-      teams: visibleTeams,
-      teamTargets: targetAverageForStep3Dialog,
-      existingTeamPCAAssigned: existingAssignedForCapForStep3Dialog,
-      floatingPCAs: floatingPCAsForStep3,
-      existingAllocations: existingAllocationsForStep3Dialog,
-      staffOverrides,
-      reservedSpecialProgramPcaFte: reservedSpecialProgramPcaFteForStep3,
-      floatingPcaAllocationVersion: 'v2',
-      rawAveragePCAPerTeamByTeam: (step2Result as Step2ResultSurplusProjection | null)?.rawAveragePCAPerTeam,
-    })
-    return buildStep3ProjectionV2FromBootstrapSummary(step3BootstrapSummaryV2, { projectionVersion })
-  }, [
-    step3BootstrapSummaryV2,
-    visibleTeams,
-    targetAverageForStep3Dialog,
-    existingAssignedForCapForStep3Dialog,
-    floatingPCAsForStep3,
-    existingAllocationsForStep3Dialog,
-    staffOverrides,
+  const {
+    displayViewForCurrentWeekday,
     reservedSpecialProgramPcaFteForStep3,
-    step2Result,
-  ])
-
-  const step3DashboardAvgPcaDisplayByTeam = useMemo(() => {
-    const partial = getStep3AveragePcaDisplayTargets(step3ProjectionV2)
-    if (!partial) return null
-    const next: Partial<Record<Team, number>> = {}
-    for (const team of TEAMS) {
-      const v = partial[team]
-      if (typeof v === 'number' && Number.isFinite(v)) {
-        next[team] = v
-      }
-    }
-    return Object.keys(next).length ? next : null
-  }, [step3ProjectionV2])
-
-  const pendingPCAFTEForStep3Dialog = useMemo(() => {
-    const out = createEmptyTeamRecord<number>(0)
-    visibleTeams.forEach((mainTeam) => {
-      const displayedTarget = step3BootstrapSummary.teamTargets[mainTeam] || 0
-      const recomputedPending =
-        step3DialogSurface === 'v2-ranked'
-          ? step3BootstrapSummaryV2.pendingByTeam[mainTeam] || 0
-          : step3BootstrapSummary.pendingByTeam[mainTeam] || 0
-
-      // Fallback for early hydration / missing calculations: preserve legacy pending source.
-      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
-      const pendingFromState = contributors.reduce((sum, team) => sum + (pendingPCAFTEPerTeam?.[team] || 0), 0)
-      out[mainTeam] = displayedTarget > 0 ? recomputedPending : pendingFromState
-    })
-    return out
-  }, [
-    visibleTeams,
-    teamContributorsByMain,
+    existingAllocationsForStep3Dialog,
     step3BootstrapSummary,
     step3BootstrapSummaryV2,
-    step3DialogSurface,
-    pendingPCAFTEPerTeam,
-  ])
-
-  // #region agent log (H1/H3/H5) page-level Step 3 projection wiring
-  useEffect(() => {
-    const rawAvg = (step2Result as Step2ResultSurplusProjection | null)?.rawAveragePCAPerTeam
-    const hasRawAvg =
-      !!rawAvg &&
-      Object.values(rawAvg).some((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)
-    ;(typeof fetch === 'function'
-      ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '41d21d' },
-          body: JSON.stringify({
-            sessionId: '41d21d',
-            runId: 'surplus-debug-initial',
-            hypothesisId: 'H3',
-            location: 'features/schedule/ui/SchedulePageClient.tsx:step3ProjectionWiring',
-            message: 'Computed page Step 3 projection summaries and dialog pending source',
-            data: {
-              step3DialogSurface,
-              hasStep2Result: !!step2Result,
-              hasRawAvg,
-              rawAvgFO: Number((rawAvg?.FO ?? 0).toFixed(3)),
-              rawAvgDRO: Number((rawAvg?.DRO ?? 0).toFixed(3)),
-              pendingFO: Number((pendingPCAFTEForStep3Dialog.FO ?? 0).toFixed(3)),
-              pendingDRO: Number((pendingPCAFTEForStep3Dialog.DRO ?? 0).toFixed(3)),
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {})
-      : Promise.resolve())
-  }, [
+    step3ProjectionV2,
+    step3DashboardAvgPcaDisplayByTeam,
+    pendingPCAFTEForStep3Dialog,
+  } = useStep3DialogProjection({
+    latestStep3DependencyFingerprintRef,
+    latestStep4DependencyFingerprintRef,
+    therapistAllocations,
+    selectedDate,
+    specialPrograms,
+    staffOverrides,
+    staff,
+    bufferStaff,
+    existingAllocationsForStep3,
+    floatingPCAsForStep3,
+    visibleTeams,
+    teamContributorsByMain,
+    calculations,
+    mergedInto: effectiveTeamMergeConfig.mergedInto,
     step2Result,
     step3DialogSurface,
-    step3BootstrapSummaryV2,
-    pendingPCAFTEForStep3Dialog,
-  ])
-  // #endregion
+    pendingPCAFTEPerTeam,
+    currentWeekday,
+  })
 
   const captureStep3BootstrapBaseline = useCallback(() => {
     step3BootstrapBaselineRef.current = step3BootstrapSummary
