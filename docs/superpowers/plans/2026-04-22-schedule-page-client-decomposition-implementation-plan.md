@@ -38,7 +38,7 @@
 | 6 | `useScheduleBoardDnd` | Done | `e5a8e3b`. Code review **PASS**. **Manual §6.2 DnD (PCA + therapist):** user confirmed 2026-04-22. |
 | 7 | Dev harness lazy-load | Done | `f95e32e`. **Manual Step 3** (harness + leave sim in dev): user confirmed 2026-04-22. |
 | 8 | Render splits + context checkpoint | Done | `0e2867f`. `ScheduleMainGrid` + `ScheduleSplitLayout` in `layout/`; spec §9.2 **props-only**. Code review **PASS** (no fix loop). Gates green. |
-| 9 | Type tightening (ongoing) | Not started | |
+| 9 | Type tightening (ongoing) | In progress | **Batch 1 (Step 1) done:** `15550ac` — `SplitReferencePortal` `supabase: ReturnType<typeof createClientComponentClient>`. Code review **PASS**. Steps 2–3 continue in future batches. |
 
 **Status values:** `Not started` · `In progress` · `Done`
 
@@ -285,11 +285,11 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 
 **Files:** Incremental — only files touched for typing PRs.
 
-- [ ] **Step 1:** Replace `supabase: any` on `SplitReferencePortal` props with `SupabaseClient` from `@supabase/supabase-js` or the project’s typed wrapper — **one PR at a time**.
+- [x] **Step 1:** Replace `supabase: any` on `SplitReferencePortal` props with `SupabaseClient` from `@supabase/supabase-js` or the project’s typed wrapper — **one PR at a time**. *(`15550ac`: `ReturnType<typeof createClientComponentClient>` + `import type`; review **PASS**.)*
 
-- [ ] **Step 2:** Remove `as any` at boundaries where `scheduleControllerTypes` or DB types already exist; never “fix” types without runtime parity.
+- [ ] **Step 2:** Remove `as any` at boundaries where `scheduleControllerTypes` or DB types already exist; never “fix” types without runtime parity. *(Ongoing — next sub-agent batches.)*
 
-- [ ] **Step 3:** Global gates after each typing batch; avoid combining large moves + mass typing in one PR (spec risk R3).
+- [ ] **Step 3:** Global gates after each typing batch; avoid combining large moves + mass typing in one PR (spec risk R3). *(Applied after `15550ac` batch: gates green; re-run per batch.)*
 
 ---
 
@@ -324,3 +324,4 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 | 2026-04-22 | **Orchestrator: code fixes only via sub-agent loop;** Phase 6 `e5a8e3b`; code review PASS; manual DnD flagged. |
 | 2026-04-22 | Phase 6 **Done** (user DnD). Phase 7 **Done** — `f95e32e`; user confirmed dev harness + leave sim. |
 | 2026-04-22 | **Phase 8** — `0e2867f`: `ScheduleMainGrid` + `ScheduleSplitLayout`; spec §9.2 props-only; code review **PASS**. |
+| 2026-04-22 | **Spec §9.2** — props-only **locked** (product agreement). **Phase 9** type tightening started. |

@@ -245,22 +245,23 @@ That gives you clarity without merging incompatible state into one hook by mista
 
 **Status:** **Locked** — implement Phases 1–2 per above (two controllers; shared hydration/orchestration hook).
 
-### 9.2 Context vs props (Q2) — **default until a checkpoint**
+### 9.2 Context vs props (Q2) — **locked: props-only**
 
 **Through Phase 7 (inclusive):** **No separate decision required.** Use **props + colocated hooks** only. Do **not** add schedule-page-wide React context for decomposition convenience.
 
-**Mandatory decision checkpoint — after Phase 8 completes**
+**Checkpoint (after Phase 8) — record the decision, then treat it as stable**
 
 | When | What to decide |
 |------|----------------|
 | **End of Phase 8** (`ScheduleMainGrid` / `ScheduleSplitLayout` and related layout splits are in) | **Yes / no / partial:** introduce **narrow** React context (e.g. chrome-only) **if** prop lists are still unmaintainable after extraction. If **no**, document “props-only for schedule shell” and close the topic. |
 | **2026-04-22 (post Phase 8 review)** | **Decision: props-only for schedule shell** — `ScheduleMainGrid` and `ScheduleSplitLayout` use **explicit prop interfaces** only; split chrome composes pre-built `ReactNode`s (`mainLayout`, `splitHeaderBar`, portal layer). **No** schedule-wide or narrow layout React context. The main board / grid **body** (summary column, team grid, notes) remains composed in `SchedulePageClient` and is passed as `leftColumn` / `rightColumn` to `ScheduleMainGrid` to avoid a very large single-module prop surface; that partial boundary is an intentional trade-off, not a case for context. |
+| **Product agreement (2026-04-22)** | The **props-only** approach above is **accepted and locked** for the schedule page shell. **Do not** re-open this choice for “convenience” refactors. Revisit **only** if a **future** change makes prop lists **genuinely unmaintainable** and the bar in **“Criteria to revisit”** below is met. |
 
 **Optional early trigger (any phase):** If a **single** extraction makes prop drilling **obviously** worse than a small context, the team may decide sooner — but this is **exceptional**, not the default plan.
 
-**Criteria at the checkpoint:** Introduce context only when **both** hold: (a) the same values cross **many** layers, and (b) threading props is **clearly** worse than a **narrow**, well-named provider (never the full controller in context).
+**Criteria to revisit (only if both are true):** (a) the same small set of values crosses **many** layers, and (b) threading props is **clearly** worse than a **narrow**, well-named provider (never the full controller in context).
 
-**Status (Q2):** **Resolved** — **props-only** for the schedule shell at this checkpoint; revisit only if a future extraction creates unmaintainable prop drilling (per criteria above).
+**Status (Q2):** **Locked — props-only** for the schedule shell unless the criteria to revisit are met in a **later** design discussion.
 
 ### 9.3 Other items (product owner input)
 
@@ -281,3 +282,4 @@ That gives you clarity without merging incompatible state into one hook by mista
 | 2026-04-22 | §9: Q1 locked; Q2 explicit checkpoint — decide context **after Phase 8** (optional earlier if drilling pain). |
 | 2026-04-22 | Linked implementation plan: `2026-04-22-schedule-page-client-decomposition-implementation-plan.md`. |
 | 2026-04-22 | §9.2 Q2: **Decision — props-only for schedule shell** after Phase 8 (`ScheduleMainGrid` / `ScheduleSplitLayout`); no new schedule-wide or narrow layout context. |
+| 2026-04-22 | §9.2: **Props-only locked** (product agreement); reworded checkpoint as stable decision, not TBD. |
