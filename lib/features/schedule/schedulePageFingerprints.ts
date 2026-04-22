@@ -2,12 +2,12 @@ import type { Team, Staff } from '@/types/staff'
 import type { PCAAllocation, TherapistAllocation } from '@/types/schedule'
 import type { PCAData } from '@/lib/algorithms/pcaAllocation'
 import type { Step3BootstrapSummary, Step3ProjectionV2 } from '@/lib/features/schedule/step3Bootstrap'
+import type { Step2ResultSurplusProjection as Step2ResultSurplusProjectionDomain } from '@/lib/features/schedule/controller/scheduleDomainState'
 import { createEmptyTeamRecord } from '@/lib/utils/types'
 import { TEAMS } from '@/lib/features/schedule/constants'
 
-/** Step 2 surplus payload fields consumed by Step 3 projection (page + dialogs). */
-export type Step2ResultSurplusProjection = {
-  rawAveragePCAPerTeam?: Record<Team, number>
+/** Step 2 surplus + optional Step 3 artifacts for the schedule page (distinct name from `scheduleDomainState`’s `Step2ResultSurplusProjection`). */
+export type Step2ResultSurplusProjectionForStep3 = Step2ResultSurplusProjectionDomain & {
   step3FloatingBootstrapSummaryV2?: Step3BootstrapSummary
   step3ProjectionV2?: Step3ProjectionV2
 }

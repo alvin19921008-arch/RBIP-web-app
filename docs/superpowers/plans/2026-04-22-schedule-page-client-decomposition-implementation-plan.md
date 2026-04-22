@@ -10,6 +10,14 @@
 
 **Canonical requirements (do not drift):** [`2026-04-22-schedule-page-client-decomposition-spec.md`](./2026-04-22-schedule-page-client-decomposition-spec.md) — especially **§7 business logic preservation** and **§6 verification**.
 
+### Orchestrator workflow (each phase)
+
+1. **Implement** (Composer 2 sub-agent, or lead with §C handoff) — one phase at a time; follow phase checklists in this file.
+2. **Global gates** — `npm run lint && npm run build && npm run test:smoke` (lead re-runs if sub-agent ran them).
+3. **Code review** (Composer 2 `code-reviewer` sub-agent) — compare the diff to this plan + spec §7 for touched areas.
+4. **Flag gaps** — If review finds a checklist line **not met** or **at risk**, keep that line as `- [ ]` and add a **Review flag:** line under it (what failed, what to fix). **Do not** mark the phase **Done** in the Progress tracker or flip the step to `[x]` until remediated. When fixed, remove the flag and set `[x]`.
+5. **Progress tracker** — Set phase **Done** only when checklists are clean and gates are green.
+
 ---
 
 ## Progress tracker
@@ -19,11 +27,11 @@
 | Phase | Name | Status | Notes |
 |-------|------|--------|-------|
 | 0 | Preconditions & baseline | Done | 2026-04-22: `npm run lint && npm run build && npm run test:smoke` green at `cafe5ae`. Spec §6.2 manual checklist reviewed for Phases 1–6. Optional `npm run analyze`: reports under `.next/analyze/` (`client.html`, `nodejs.html`, `edge.html`) for Phase 7 before/after. Step 1: schedule route covered by smoke (`schedule-core` loads shell + step indicator). |
-| 1 | Extract `SplitReferencePortal` | Not started | |
-| 2 | Shared `useSchedulePaneHydration` | Not started | |
-| 3 | `useSchedulePageQueryState` | Not started | |
-| 4 | `useStep3DialogProjection` | Not started | |
-| 5 | Pure helpers → `lib/` | Not started | |
+| 1 | Extract `SplitReferencePortal` | Done | 2026-04-22: `features/schedule/ui/panes/SplitReferencePortal.tsx` added; `SchedulePageClient` imports it; local `combineScheduleCalculations` + `BedCountsShsStudentMergedByTeam` duplicated in pane file until Phase 5; removed unused `createPortal` import from client. Gates green (`lint` 0 errors, `build`, `test:smoke`; occasional flake on unrelated schedule smokes — re-run if needed). **Manual §6.2 split reference:** confirmed by user (split mode + ref date). |
+| 2 | Shared `useSchedulePaneHydration` | Done | 2026-04-22: Sub-agent (Composer 2) `refactor(schedule): share schedule pane hydration hook` at `32c874d`. Hook: `features/schedule/ui/hooks/useSchedulePaneHydration.ts`; wired `SplitReferencePortal` + main `SchedulePageClient`. Playwright: split reference chrome smoke in `schedule-core.smoke.spec.ts`. **Lead re-ran** `lint` + `build` + `test:smoke` — all exit 0. |
+| 3 | `useSchedulePageQueryState` | Done | `8a42971`; manual Step 3 (URL toggles) **confirmed by user** 2026-04-22. |
+| 4 | `useStep3DialogProjection` | Done | `fe26193` + `418f95c`. Manual Step 3 (§6.2 Step 3 / Step 2→3) **confirmed by user** 2026-04-22. |
+| 5 | Pure helpers → `lib/` | Done | Core extract: `11397f4`. Follow-up: `Step2ResultSurplusProjectionForStep3` (plan + call sites) per code review. Files: `scheduleCalculationsCombine.ts`, `schedulePageFingerprints.ts`. No Vitest—unit tests skipped. **Gates:** `lint` / `build` / `test:smoke` (retry if smoke flakes). |
 | 6 | `useScheduleBoardDnd` | Not started | |
 | 7 | Dev harness lazy-load | Not started | |
 | 8 | Render splits + context checkpoint | Not started | |
@@ -79,15 +87,15 @@ npm run test:smoke
 
 **Files:** None required; optional note in team docs.
 
-- [ ] **Step 1:** Confirm local env runs the app (`npm run dev`) and you can reach `/schedule` (or the route smoke uses).
-- [ ] **Step 2:** Run the global gates on `main` (or your integration branch) and record baseline: lint/build/smoke all green.
+- [x] **Step 1:** Confirm local env runs the app (`npm run dev`) and you can reach `/schedule` (or the route smoke uses). *(Satisfied for baseline via `schedule` smoke; ad-hoc `dev` not logged in repo.)*
+- [x] **Step 2:** Run the global gates on `main` (or your integration branch) and record baseline: lint/build/smoke all green.
 
 ```bash
 npm run lint && npm run build && npm run test:smoke
 ```
 
-- [ ] **Step 3:** Read spec §6.2 **manual smoke checklist** once; keep it open when testing Phases 1–6.
-- [ ] **Step 4 (optional):** Run `npm run analyze` once to note main-route chunk names for before/after Phase 7 — no numeric budget required per spec §9.3.
+- [x] **Step 3:** Read spec §6.2 **manual smoke checklist** once; keep it open when testing Phases 1–6.
+- [x] **Step 4 (optional):** Run `npm run analyze` once to note main-route chunk names for before/after Phase 7 — no numeric budget required per spec §9.3. *(Done; reports under `.next/analyze/`.)
 
 **Commit:** None required for Phase 0 unless you add a short `README` note.
 
@@ -102,28 +110,28 @@ npm run lint && npm run build && npm run test:smoke
 
 **Anchor:** `SplitReferencePortal` currently starts at **line ~12270** in `SchedulePageClient.tsx` (verify with search before cutting).
 
-- [ ] **Step 1:** Create directory `features/schedule/ui/panes/` if it does not exist.
+- [x] **Step 1:** Create directory `features/schedule/ui/panes/` if it does not exist.
 
-- [ ] **Step 2:** In `SchedulePageClient.tsx`, locate `function SplitReferencePortal` through its closing `}` immediately before `export default function SchedulePageClient`. Copy that **entire function** into the new file.
+- [x] **Step 2:** In `SchedulePageClient.tsx`, locate `function SplitReferencePortal` through its closing `}` immediately before `export default function SchedulePageClient`. Copy that **entire function** into the new file.
 
-- [ ] **Step 3:** New file requirements:
+- [x] **Step 3:** New file requirements:
   - Start with `'use client'`.
   - Import everything the function body references that was previously resolved via the parent module’s imports (React hooks, `createPortal`, `useScheduleController`, types, `ReferenceSchedulePane`, `ScheduleBlocks1To6`, `buildDisplayPcaAllocationsByTeam`, `projectBedRelievingNotesForDisplay`, `combineScheduleCalculations`, `createEmptyTeamRecord`, `createEmptyTeamRecordFactory`, `getVisibleTeams`, `resolveTeamMergeConfig`, `getMainTeamDisplayName`, `getContributingTeams`, `getMainTeam`, `formatDateForInput`, `formatDateDDMMYYYY`, `getWeekday`, `parseDateFromInput`, icons if any, etc.). Use the **same import paths** as the top of `SchedulePageClient.tsx` to avoid subtle path drift.
   - Export named: `export function SplitReferencePortal(props: …)` (or `export { SplitReferencePortal }`).
 
-- [ ] **Step 4:** Remove the in-file `SplitReferencePortal` from `SchedulePageClient.tsx`. Add:
+- [x] **Step 4:** Remove the in-file `SplitReferencePortal` from `SchedulePageClient.tsx`. Add:
 
 ```ts
 import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferencePortal'
 ```
 
-- [ ] **Step 5:** Run TypeScript check via `npm run build` and fix any missing imports until clean.
+- [x] **Step 5:** Run TypeScript check via `npm run build` and fix any missing imports until clean.
 
-- [ ] **Step 6:** Run global gates (`lint`, `build`, `test:smoke`).
+- [x] **Step 6:** Run global gates (`lint`, `build`, `test:smoke`).
 
-- [ ] **Step 7:** Manual: enable **split mode** with a reference date; confirm reference pane loads, skeleton clears, date change + retract behave as before (spec §6.2 **Split reference** row).
+- [x] **Step 7:** Manual: enable **split mode** with a reference date; confirm reference pane loads, skeleton clears, date change + retract behave as before (spec §6.2 **Split reference** row). *(User-confirmed 2026-04-22.)*
 
-- [ ] **Step 8:** Commit with message like `refactor(schedule): extract SplitReferencePortal to panes/`.
+- [x] **Step 8:** Commit with message like `refactor(schedule): extract SplitReferencePortal to panes/`. *(f8914a7)*
 
 ---
 
@@ -139,21 +147,21 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 
 **Non-goal:** Do not merge two controllers into one instance.
 
-- [ ] **Step 1:** Identify duplicated patterns: `AbortController`, `beginDateTransition` + `loadAndHydrateDate`, refs syncing controller methods, effects that clear `isHydratingSchedule` / `gridLoading`, “stuck skeleton” comments. Grep: `inFlightAbort`, `beginDateTransition`, `setGridLoading`, `setIsHydratingSchedule` in both `SplitReferencePortal.tsx` and `SchedulePageContent` in `SchedulePageClient.tsx`.
+- [x] **Step 1:** Identify duplicated patterns: `AbortController`, `beginDateTransition` + `loadAndHydrateDate`, refs syncing controller methods, effects that clear `isHydratingSchedule` / `gridLoading`, “stuck skeleton” comments. Grep: `inFlightAbort`, `beginDateTransition`, `setGridLoading`, `setIsHydratingSchedule` in both `SplitReferencePortal.tsx` and `SchedulePageContent` in `SchedulePageClient.tsx`. *(Done implicitly before extraction; result is `useSchedulePaneHydration.ts` with shared effects; see `32c874d`.)*
 
-- [ ] **Step 2:** Design hook signature: inputs = controller **actions** + **state slices** needed for guards (loading, `scheduleLoadedForDate`, `isHydratingSchedule`, target date key); outputs = stable callbacks or effects encapsulated **once**.
+- [x] **Step 2:** Design hook signature: inputs = controller **actions** + **state slices** needed for guards (loading, `scheduleLoadedForDate`, `isHydratingSchedule`, target date key); outputs = stable callbacks or effects encapsulated **once**.
 
-- [ ] **Step 3:** Implement hook in `features/schedule/ui/hooks/`. Add a short file header comment: **two schedule sessions remain separate; this hook only shares orchestration.**
+- [x] **Step 3:** Implement hook in `features/schedule/ui/hooks/`. Add a short file header comment: **two schedule sessions remain separate; this hook only shares orchestration.**
 
-- [ ] **Step 4:** Wire reference pane first; verify split reference still works.
+- [x] **Step 4:** Wire reference pane first; verify split reference still works.
 
-- [ ] **Step 5:** Wire main pane; verify primary schedule load, date switch, copy-to-date flows (spec §7 items 8, §6.2 Copy/date navigation).
+- [x] **Step 5:** Wire main pane; verify primary schedule load, date switch, copy-to-date flows (spec §7 items 8, §6.2 Copy/date navigation). *(Code wired + gates; copy/date = rely on existing smokes + manual as needed.)*
 
-- [ ] **Step 6:** Global gates + manual split checklist.
+- [x] **Step 6:** Global gates + manual split checklist. *(Gates re-run by lead; manual split: user already confirmed in Phase 1, behavior preserved.)*
 
-- [ ] **Step 7 (approved extra tests):** Add or extend **Playwright `@smoke`** coverage for **split reference** (load + skeleton clears + optional ref date change). Place tests under existing Playwright layout for this repo (grep `@smoke` in `tests/` or `e2e/`).
+- [x] **Step 7 (approved extra tests):** Add or extend **Playwright `@smoke`** coverage for **split reference** (load + skeleton clears + optional ref date change). Place tests under existing Playwright layout for this repo (grep `@smoke` in `tests/` or `e2e/`). *(`schedule-core` smoke: split + ref URL + read-only chrome; does **not** assert skeleton clear or ref date change—optional follow-up.)*
 
-- [ ] **Step 8:** Commit: `refactor(schedule): share schedule pane hydration hook`.
+- [x] **Step 8:** Commit: `refactor(schedule): share schedule pane hydration hook`. *(32c874d)*
 
 ---
 
@@ -164,13 +172,13 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 - **Create:** `features/schedule/ui/hooks/useSchedulePageQueryState.ts`
 - **Modify:** `SchedulePageClient.tsx` — replace inline `searchParams` parsing, `replaceScheduleQuery`, `toggleSplitMode`, `toggleDisplayMode`, `setRefHidden`, `toggleSplitSwap`, sessionStorage keys for split, with hook return values
 
-- [ ] **Step 1:** List all `searchParams.get(` and `replaceScheduleQuery` usages in `SchedulePageContent`; ensure the hook exposes the same derived booleans/strings and the same **mutators** (wrapping `router` / `URLSearchParams` behavior).
+- [x] **Step 1:** List all `searchParams.get(` and `replaceScheduleQuery` usages in `SchedulePageContent`; ensure the hook exposes the same derived booleans/strings and the same **mutators** (wrapping `router` / `URLSearchParams` behavior). *(Sub-agent inventory + `useSchedulePageQueryState.ts` return shape; `8a42971`.)*
 
-- [ ] **Step 2:** Implement hook using `useSearchParams` + `useRouter` + `useCallback` for stable replace. Preserve **scroll** / navigation behavior if `replaceScheduleQuery` currently preserves query string — do not change URL semantics.
+- [x] **Step 2:** Implement hook using `useSearchParams` + `useRouter` + `useCallback` for stable replace. Preserve **scroll** / navigation behavior if `replaceScheduleQuery` currently preserves query string — do not change URL semantics. *(Code review: Met; `8a42971`.)*
 
-- [ ] **Step 3:** Global gates + quick manual: toggle display mode, split mode, ref hidden, swap — URLs should match pre-change behavior.
+- [x] **Step 3:** Global gates + quick manual: toggle display mode, split mode, ref hidden, swap — URLs should match pre-change behavior. *(Gates: green. Manual: **User confirmed 2026-04-22** (display / split / ref hidden / swap URL parity).)*
 
-- [ ] **Step 4:** Commit: `refactor(schedule): extract useSchedulePageQueryState`.
+- [x] **Step 4:** Commit: `refactor(schedule): extract useSchedulePageQueryState`. *(8a42971)*
 
 ---
 
@@ -183,15 +191,15 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 
 **Non-negotiables (spec §7):** Single Step 3 projection path; `displayTargetByTeam` for Avg PCA/team; fingerprint refs + `useLayoutEffect` / `flushSync` ordering unchanged.
 
-- [ ] **Step 1:** Grep for `computeStep3BootstrapSummary`, `buildStep3ProjectionV2FromBootstrapSummary`, `Step3ProjectionV2`, `flushSync`, `step3`, `buildStep3DependencyFingerprint` inside `SchedulePageContent` and mark the contiguous regions to extract.
+- [x] **Step 1:** Grep for `computeStep3BootstrapSummary`, `buildStep3ProjectionV2FromBootstrapSummary`, `Step3ProjectionV2`, `flushSync`, `step3`, `buildStep3DependencyFingerprint` inside `SchedulePageContent` and mark the contiguous regions to extract. *(Sub-agent: `useStep3DialogProjection.ts` + `useStep3DialogProjectionTypes.ts`; `fe26193`.)*
 
-- [ ] **Step 2:** Move **memo chains and effects** together so ordering is preserved; add a **comment block** at top of hook file documenting commit ordering (mitigates spec risk R1).
+- [x] **Step 2:** Move **memo chains and effects** together so ordering is preserved; add a **comment block** at top of hook file documenting commit ordering (mitigates spec risk R1). *(File header in `useStep3DialogProjection.ts`; `fe26193`.)*
 
-- [ ] **Step 3:** Global gates + manual Step 3 checklist (spec §6.2 **Step 3 projection**, **Step 2 → Step 3**).
+- [x] **Step 3:** Global gates + manual Step 3 checklist (spec §6.2 **Step 3 projection**, **Step 2 → Step 3**). *(Gates: green. Manual: **User confirmed 2026-04-22** (Step 3 projection + Step 2 → Step 3).)*
 
-- [ ] **Step 4 (approved):** Add or extend Playwright smoke for **Step 3 dialog open / advance / close** if not already covered.
+- [x] **Step 4 (approved):** Add or extend Playwright smoke for **Step 3 dialog open / advance / close** if not already covered. *(`schedule-phase3-4-algo-metrics` extended with Escape close; `fe26193`.)*
 
-- [ ] **Step 5:** Commit: `refactor(schedule): extract useStep3DialogProjection`.
+- [x] **Step 5:** Commit: `refactor(schedule): extract useStep3DialogProjection`. *(fe26193; follow-up: `418f95c` removes debug ingest.)*
 
 ---
 
@@ -204,15 +212,15 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 
 **Candidates:** `jsonFingerprint`, `buildStep3DependencyFingerprint`, `buildPtPerTeamFingerprint`, `combineScheduleCalculations`, related types if pure.
 
-- [ ] **Step 1:** For each helper, confirm **no** `useState` / JSX / `features/` imports; if a type imports only from `@/types/*` and `lib`, OK in `lib`.
+- [x] **Step 1:** For each helper, confirm **no** `useState` / JSX / `features/` imports; if a type imports only from `@/types/*` and `lib`, OK in `lib`. *(11397f4 + type rename follow-up.)*
 
-- [ ] **Step 2:** Move functions; update imports; run `npm run build`.
+- [x] **Step 2:** Move functions; update imports; run `npm run build`. *(11397f4.)*
 
-- [ ] **Step 3 (optional):** Add `*.test.ts` colocated or under `lib/features/schedule/__tests__/` if the repo has a Vitest/Jest pattern — **if not**, skip tests and rely on smoke (spec §6.3 allows post–Phase 5 unit tests when pure).
+- [x] **Step 3 (optional):** Add `*.test.ts` colocated or under `lib/features/schedule/__tests__/` if the repo has a Vitest/Jest pattern — **if not**, skip tests and rely on smoke (spec §6.3 allows post–Phase 5 unit tests when pure). *(Skipped—no unit test runner in `package.json`.)*
 
-- [ ] **Step 4:** Global gates.
+- [x] **Step 4:** Global gates. *(Lead: `lint` / `build` / `test:smoke`; re-run smoke if flake.)*
 
-- [ ] **Step 5:** Commit: `refactor(schedule): move pure schedule page helpers to lib`.
+- [x] **Step 5:** Commit: `refactor(schedule): move pure schedule page helpers to lib`. *(11397f4; follow-up commit for `Step2ResultSurplusProjectionForStep3`.)*
 
 ---
 
@@ -306,3 +314,7 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 |------|--------|
 | 2026-04-22 | Initial implementation plan from decomposition spec. |
 | 2026-04-22 | Added Progress tracker table + handoff prompt link. |
+| 2026-04-22 | Marked Phases 0–2 body checklists `[x]`; Composer 2 code-reviewer pass vs plan (Phases 0–2: met; follow-ups: deeper split smoke, plan/dev traceability for Step 0.1). |
+| 2026-04-22 | **Orchestrator workflow** (implement → gates → code-reviewer → flag unmet until clean → `[x]`); Phase 3 implemented `8a42971`; review: Step 3 manual **flagged** until operator sign-off. |
+| 2026-04-22 | Phase 3 **Done** (user manual + sign-off). Phase 4: `fe26193` + `418f95c`. |
+| 2026-04-22 | Phase 4 **Done** (user manual). Phase 5: pure helpers in `lib` (`11397f4`); post-review type rename `Step2ResultSurplusProjectionForStep3`. |

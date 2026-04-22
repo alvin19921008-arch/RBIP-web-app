@@ -56,7 +56,7 @@ import {
   buildPtPerTeamFingerprint,
   buildStep3DependencyFingerprint,
   jsonFingerprint,
-  type Step2ResultSurplusProjection,
+  type Step2ResultSurplusProjectionForStep3,
 } from '@/lib/features/schedule/schedulePageFingerprints'
 
 export type UseStep3DialogProjectionArgs = {
@@ -321,7 +321,7 @@ export function useStep3DialogProjection(args: UseStep3DialogProjectionArgs): Us
         staffOverrides,
         reservedSpecialProgramPcaFte: reservedSpecialProgramPcaFteForStep3,
         floatingPcaAllocationVersion: 'v2',
-        rawAveragePCAPerTeamByTeam: (step2Result as Step2ResultSurplusProjection | null)?.rawAveragePCAPerTeam,
+        rawAveragePCAPerTeamByTeam: (step2Result as Step2ResultSurplusProjectionForStep3 | null)?.rawAveragePCAPerTeam,
         nonFloatingFteBreakdownByTeam: step3NonFloatingFteBreakdownForDialog,
       }),
     [
@@ -347,7 +347,7 @@ export function useStep3DialogProjection(args: UseStep3DialogProjectionArgs): Us
       staffOverrides,
       reservedSpecialProgramPcaFte: reservedSpecialProgramPcaFteForStep3,
       floatingPcaAllocationVersion: 'v2',
-      rawAveragePCAPerTeamByTeam: (step2Result as Step2ResultSurplusProjection | null)?.rawAveragePCAPerTeam,
+      rawAveragePCAPerTeamByTeam: (step2Result as Step2ResultSurplusProjectionForStep3 | null)?.rawAveragePCAPerTeam,
     })
     return buildStep3ProjectionV2FromBootstrapSummary(step3BootstrapSummaryV2, { projectionVersion })
   }, [

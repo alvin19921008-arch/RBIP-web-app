@@ -68,7 +68,7 @@ import {
 } from '@/features/schedule/ui/hooks/useSchedulePaneHydration'
 import { useSchedulePageQueryState } from '@/features/schedule/ui/hooks/useSchedulePageQueryState'
 import { useStep3DialogProjection } from '@/features/schedule/ui/hooks/useStep3DialogProjection'
-import type { Step2ResultSurplusProjection } from '@/lib/features/schedule/schedulePageFingerprints'
+import type { Step2ResultSurplusProjectionForStep3 } from '@/lib/features/schedule/schedulePageFingerprints'
 import { combineScheduleCalculations } from '@/lib/features/schedule/scheduleCalculationsCombine'
 import { ScheduleMainLayout } from '@/features/schedule/ui/layout/ScheduleMainLayout'
 import { SplitPane } from '@/components/ui/SplitPane'
@@ -795,7 +795,7 @@ function SchedulePageContent() {
     () => getVisibleTeams(effectiveTeamMergeConfig.mergedInto),
     [effectiveTeamMergeConfig.mergedInto]
   )
-  const step2ResultSurplusProjection = step2Result as Step2ResultSurplusProjection | null
+  const step2ResultSurplusProjection = step2Result as Step2ResultSurplusProjectionForStep3 | null
   const visibleTeamGridStyle = useMemo(
     () => ({ gridTemplateColumns: `repeat(${Math.max(1, visibleTeams.length)}, minmax(0, 1fr))` }),
     [visibleTeams.length]
@@ -11322,7 +11322,7 @@ function SchedulePageContent() {
                   step31AssignedByTeam={step3BootstrapSummary.existingAssignedByTeam}
                   step31TeamTargets={step3ProjectionV2.displayTargetByTeam}
                   step31RawAveragePCAPerTeamByTeam={
-                    (step2Result as Step2ResultSurplusProjection | null)?.rawAveragePCAPerTeam
+                    (step2Result as Step2ResultSurplusProjectionForStep3 | null)?.rawAveragePCAPerTeam
                   }
                   initialStep3ProjectionV2={step3ProjectionV2}
                   step31ReservedSpecialProgramPcaFte={reservedSpecialProgramPcaFteForStep3}
