@@ -48,6 +48,6 @@ These routes exist for local debugging only and return 404 in production:
 - **Essential Patterns**: `.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc` (auto-loaded)
 - **Database Types**: `.cursor/rules/database-types.mdc` (auto-loaded)
 - **TypeScript Patterns**: `.cursor/rules/typescript-strict-patterns.mdc` (auto-loaded)
-- **Design Elements**: `.cursor/rules/design-elements-commonality.mdc` (auto-loaded)
+- **RBIP UI design**: `.cursor/rules/rbip-ui-design.mdc` (auto-loaded for `components/**`, `app/**`)
 - **Workflow Data**: `.cursor/rules/stepwise-workflow-data.mdc` (auto-loaded)
 - **Detailed History**: `CHANGELOG.md` (read when needed for historical context)

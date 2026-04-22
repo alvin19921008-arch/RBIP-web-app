@@ -1,0 +1,108 @@
+---
+description: RBIP UI design — flat hierarchy, tokens, Step 3 colors, spacing, and interaction patterns for dashboard components and app routes.
+globs: ["components/**/*.tsx", "app/**/*.tsx"]
+alwaysApply: false
+---
+
+# RBIP UI design
+
+**Flat surfaces**, **progressive disclosure**, **clear hierarchy** without nested cards. Prefer `divide-y`, spacing, and type over stacked borders.
+
+## Philosophy
+
+- One outer frame (page → panel); avoid nested bordered cards for every block; thin accent (`border-l-2`) over a second card.
+- Numbering and typography create layers; users scan steps and titles, not extra chrome.
+- Summary first; destructive actions need explicit confirmation (inline confirm/cancel, not only a toast).
+
+## Components & controls
+
+| Element | Rule |
+|---------|------|
+| Icons | lucide-react only (no emojis) |
+| Select | Radix `@/components/ui/select` — never native `<select>` |
+| Selection buttons | Active `bg-blue-600 text-white` / idle `bg-gray-100 text-gray-700` |
+| Actions | `Button` variants `default`, `outline`, `destructive` (avoid one-off raw slate hex unless matching an existing control) |
+
+## Layout
+
+- Max nesting: **2** levels (page → section/card). Dialogs: `max-w-lg` default, `max-w-2xl` tables/wide forms; no `max-w-4xl`+ without justification.
+- Group sections: `space-y-6`, `divide-y divide-border`, `gap-4`. Text wraps; avoid `whitespace-nowrap` except tight icon/button labels.
+- **Chapter forms:** parent `className="divide-y divide-border"`; children `pb-6` / `py-6` / `pt-6`; actions row `pt-6` with `flex gap-2` (not nested `Card` stacks).
+
+## Multi-step chapters (short procedures)
+
+| Layer | Pattern |
+|-------|---------|
+| Step badge | `rounded-full h-7 w-7`, `border border-amber-200/90 bg-amber-50 text-amber-950 shadow-sm`, `text-[11px] font-semibold tabular-nums`; `aria-hidden` on digit if `h3` repeats the step number |
+| Chapter title | `h3` + `text-sm font-semibold text-foreground`, **sentence case**; `flex items-center gap-2.5` with badge |
+| Subhead (same chapter) | `text-xs font-medium text-foreground`; `mt-8` before second block — **no** new bordered card |
+| Helper | `text-xs text-muted-foreground`; emphasize phrases with `font-medium text-foreground` |
+| Dense toolbar/table label | `text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3` |
+
+**Grouping:** one user goal (e.g. pick then order) → one `<section>` + subheads, not two numbered steps.
+
+## Schedule — slot labels
+
+- **Tight / lane / chip:** slot index (`Slot 1`… or `PCA · Slot N`).
+- **Wide / primary:** time interval (e.g. `0900-1030`) via `@/lib/utils/slotHelpers` (`getSlotTime`, `formatTimeRange`).
+
+## Step 3 — Raised target vs Extra after needs
+
+**Emerald** vs **violet** only for these meanings (badges, inline, tables, Step 3.1 copy). **Never** `purple-*` for Extra after needs — use `violet-*` (aligns `STEP34_*` badge classes).
+
+| Meaning | Hue | Tokens |
+|---------|-----|--------|
+| Raised target (shared spare) | Emerald | Badges: `STEP34_RAISED_TARGET_BADGE_CLASS`; copy: `STEP31_RAISED_TARGET_TEXT_CLASS` / `text-emerald-800 dark:text-emerald-200` |
+| Extra after needs | Violet | Badges: `STEP34_EXTRA_AFTER_NEEDS_BADGE_CLASS`; copy: `STEP31_EXTRA_AFTER_NEEDS_TEXT_CLASS`; small labels `text-violet-700 dark:text-violet-300` |
+
+**Step 3.1:** Scarcity preview stays **amber** for shortage only. Under the team lane: collapsible **What the card numbers mean** first, then **Extra after needs** in the same flat `space-y-2` — no card-on-card.
+
+## Visual tokens
+
+| Surface | Rule |
+|---------|------|
+| Tooltips | `bg-white border border-border shadow-md` |
+| Cards | Self-contained only; not wrappers for every sub-block |
+| Elevation | One subtle shadow level max |
+| Borders | `border-border` / `divide-y`; avoid harsh stacked borders |
+| Form panes | No border on inner edit forms; inputs in `bg-muted/30 rounded p-3`; corners `rounded` / `rounded-md` |
+
+## Informational banners
+
+- Container: `rounded-xl`, `bg-{color}-50/40`, `border-{color}-100/60`, `shadow-sm`, `p-3`, `w-full max-w-2xl`, `mt-3` as needed.
+- Inner: `flex items-start gap-2 text-sm text-{color}-900`; icon `text-{color}-600` + `mt-0.5`.
+
+## Wide viewport — proximity
+
+Keep control + its label/status in one **left-aligned** cluster (`flex gap-*`). Do **not** use `justify-between` or `flex-1` spacers to push related metadata to opposite edges. Wide dense lists: prefer `lg:grid lg:grid-cols-2 lg:gap-px lg:bg-border` over a single stretched column.
+
+## Progressive disclosure & lists
+
+- **Collapse:** `Set` in React state; header `button` + `ChevronRight` / `ChevronDown` from lucide; group labels use **sentence case** in new UI.
+- **Scrollable checklist:** `max-h-40 overflow-y-auto bg-muted/30 rounded p-2 pr-1 scrollbar-visible`; separate cohorts with `<hr className="border-border my-2" />`.
+- **Ghost:** `variant="ghost"` for secondary, icon, cancel; destructive row uses `variant="destructive"` + `ghost` cancel.
+
+## Typography & spacing
+
+| Element | Class |
+|---------|--------|
+| Page title | `text-xl font-semibold` |
+| Large section | `text-lg font-semibold` |
+| Chapter `h3` | `text-sm font-semibold text-foreground` |
+| Subhead | `text-xs font-medium text-foreground` |
+| Label | `text-sm text-muted-foreground` |
+| Helper | `text-xs text-muted-foreground` |
+
+| Context | Scale |
+|---------|--------|
+| Panel | `pt-6 space-y-6` |
+| Section gap | `space-y-6`, `gap-6` |
+| Major separation | `space-y-8` |
+| Internal padding | `p-3`, `p-4` |
+| Icon gaps | `gap-1`, `gap-2` |
+
+## Anti-patterns
+
+- Nested `Card` beyond the outer panel without strong reason; 3+ border tiers; multiple accent hues (except **emerald vs violet** pair above).
+- Native `<select>`; emoji as icons; destructive actions without confirm.
+- Numbering unrelated widgets; exposing everything when a collapse would reduce noise.

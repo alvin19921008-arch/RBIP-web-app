@@ -24,7 +24,7 @@ You do **not** need the previous conversation. Treat the two specs below plus th
 
 3. **Optional visual reference (static HTML mock, not production):**  
    `.superpowers/brainstorm/96515-1775525468/content/step3-family-preview-v2.html`  
-   Open in a browser for layout/spacing intent only; implement in React using existing RBIP components and `design-elements-commonality` rules.
+   Open in a browser for layout/spacing intent only; implement in React using existing RBIP components and `rbip-ui-design` rules (`.cursor/rules/rbip-ui-design.mdc`).
 
 ### Problem this work solves (product)
 

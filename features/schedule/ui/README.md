@@ -15,7 +15,7 @@ That line is part of Phase 1 / Phase 2f so utilities used only under `features/`
 ## Design tokens & UI constraints
 
 - **Step / app tokens:** [`../../../styles/rbip-design-tokens.css`](../../../styles/rbip-design-tokens.css)
-- **RBIP UI patterns (tooltips, borders, Step 3 colors):** [`../../../.cursor/rules/design-elements-commonality.mdc`](../../../.cursor/rules/design-elements-commonality.mdc)
+- **RBIP UI patterns (tooltips, borders, Step 3 colors):** [`../../../.cursor/rules/rbip-ui-design.mdc`](../../../.cursor/rules/rbip-ui-design.mdc)
 
 Prefer semantic shadcn-style variables (`bg-popover`, `border-border`, `text-muted-foreground`, etc.). **Light-first today:** dark mode is not a product target yet; avoid growing `dark:` surface area unless you are intentionally shipping dual-theme for a component.
 

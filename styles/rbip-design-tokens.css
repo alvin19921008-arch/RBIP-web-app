@@ -1,7 +1,7 @@
 /**
  * RBIP design tokens — shared CSS variables + small utility classes.
  *
- * Alignment: `.cursor/rules/design-elements-commonality.mdc`
+ * Alignment: `.cursor/rules/rbip-ui-design.mdc`
  *
  * Step themes (Floating PCA wizard):
  * - **3.1 / 3.4** — informational “cool” blue: keep existing Tailwind `sky-*` usage in those views.
