@@ -287,9 +287,9 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 
 - [x] **Step 1:** Replace `supabase: any` on `SplitReferencePortal` props with `SupabaseClient` from `@supabase/supabase-js` or the project’s typed wrapper — **one PR at a time**. *(`15550ac`: `ReturnType<typeof createClientComponentClient>` + `import type`; review **PASS**.)*
 
-- [ ] **Step 2:** Remove `as any` at boundaries where `scheduleControllerTypes` or DB types already exist; never “fix” types without runtime parity. *(Ongoing.)* *(`042c2ef`: `SchedulePageClient` / `useScheduleBoardDnd` — as above; review **PASS**.)* *(`08d5aa4`: `useStep3DialogProjection` — `PCAAllocation` fields + lib-typed `specialPrograms` / `staffOverrides` (no `as any` on alloc or helpers); `useSchedulePageQueryState` — two-arg `scrollTo(0, y)` for stable post-`replace` scroll (drops `behavior: 'instant' as any`); gates green.)*
+- [x] **Step 2:** Remove `as any` at boundaries where `scheduleControllerTypes` or DB types already exist; never “fix” types without runtime parity. *Batches: `042c2ef` (client + DnD), `08d5aa4` (Step 3 hook + query scroll), **`8088602` (final high-ROI sweep: 9 files including `SchedulePageClient`, `ScheduleBlocks1To6`, `SplitReferencePortal`, header/snapshot/export panes; ~**79** fewer ` as any` under `features/schedule/`, **~267** line-matches left — dev harness / floating Step 3 / deep RPC-undo paths deferred). Review **PASS** on `8088602` (note: `ScheduleHeaderBar` dropped the Show/Hide Steps control and its **never-wired** required props from parent — was effectively dead UI; reintroduce only with real state from `SchedulePageClient`). Gates green on `8088602` (`lint` / `build` / `test:smoke`).*
 
-- [ ] **Step 3:** Global gates after each typing batch; avoid combining large moves + mass typing in one PR (spec risk R3). *(Applied after `15550ac` batch: gates green; re-run per batch.)*
+- [x] **Step 3:** Global gates after each typing batch; avoid combining large moves + mass typing in one PR (spec risk R3). *(`8088602` final pass: gates as above; keep the rule for future PRs.)*
 
 ---
 
