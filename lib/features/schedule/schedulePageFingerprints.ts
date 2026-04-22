@@ -1,8 +1,9 @@
 import type { Team, Staff } from '@/types/staff'
-import type { PCAAllocation } from '@/types/schedule'
+import type { PCAAllocation, TherapistAllocation } from '@/types/schedule'
 import type { PCAData } from '@/lib/algorithms/pcaAllocation'
 import type { Step3BootstrapSummary, Step3ProjectionV2 } from '@/lib/features/schedule/step3Bootstrap'
 import { createEmptyTeamRecord } from '@/lib/utils/types'
+import { TEAMS } from '@/lib/features/schedule/constants'
 
 /** Step 2 surplus payload fields consumed by Step 3 projection (page + dialogs). */
 export type Step2ResultSurplusProjection = {
@@ -33,6 +34,26 @@ export type Step3DependencyFingerprint = {
     specialProgramIds: string[]
     isFloating: boolean
   }>
+}
+
+export function jsonFingerprint(value: unknown): string {
+  return JSON.stringify(value)
+}
+
+export function buildPtPerTeamFingerprint(args: {
+  therapistAllocations: Record<Team, (TherapistAllocation & { staff: Staff })[]>
+  teams?: Team[]
+}): Record<Team, number> {
+  const teams = args.teams ?? TEAMS
+  const out = createEmptyTeamRecord<number>(0)
+  teams.forEach((team) => {
+    out[team] = Number(
+      (args.therapistAllocations[team] || [])
+        .reduce((sum, allocation) => sum + (allocation.fte_therapist ?? 0), 0)
+        .toFixed(2)
+    )
+  })
+  return out
 }
 
 export function buildStep3DependencyFingerprint(args: {

@@ -52,27 +52,12 @@ import { buildStaffByIdMap } from '@/lib/features/schedule/grouping'
 import { isAllocationSlotFromSpecialProgram } from '@/lib/utils/scheduleReservationRuntime'
 import { createEmptyTeamRecord } from '@/lib/utils/types'
 import { TEAMS } from '@/lib/features/schedule/constants'
-import { buildStep3DependencyFingerprint, type Step2ResultSurplusProjection } from './useStep3DialogProjectionTypes'
-
-function jsonFingerprint(value: unknown): string {
-  return JSON.stringify(value)
-}
-
-function buildPtPerTeamFingerprint(args: {
-  therapistAllocations: Record<Team, (TherapistAllocation & { staff: Staff })[]>
-  teams?: Team[]
-}): Record<Team, number> {
-  const teams = args.teams ?? TEAMS
-  const out = createEmptyTeamRecord<number>(0)
-  teams.forEach((team) => {
-    out[team] = Number(
-      (args.therapistAllocations[team] || [])
-        .reduce((sum, allocation) => sum + (allocation.fte_therapist ?? 0), 0)
-        .toFixed(2)
-    )
-  })
-  return out
-}
+import {
+  buildPtPerTeamFingerprint,
+  buildStep3DependencyFingerprint,
+  jsonFingerprint,
+  type Step2ResultSurplusProjection,
+} from '@/lib/features/schedule/schedulePageFingerprints'
 
 export type UseStep3DialogProjectionArgs = {
   latestStep3DependencyFingerprintRef: MutableRefObject<string>
