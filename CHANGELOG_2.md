@@ -1,5 +1,7 @@
 # Changelog 2
 
+**2026-04-22–23:** Large **schedule page UI refactor** (`refactor/schedule-ui-lib-separation`): split reference + shared pane hydration hook, URL/query hook, Step 3 projection hook, DnD hook, pure page helpers in `lib/features/schedule/`, dev-only harness lazy-load, `ScheduleMainGrid` / `ScheduleSplitLayout`, Phase 9 typing pass; orchestration + two-controller/split + props-only notes in **`docs/schedule-architecture-core.md`**; **AGENTS** / **ARCHITECTURE_ESSENTIALS** keep links minimal.
+
 **2026-04-17:** Schedule UI/lib (Phase **6**): `step34ViewModel` under `steps/step3-floating/substeps/step34-preview/`; Bucket **B** wizard peel + **B** closed; agent map **`docs/schedule-architecture-core.md`**; slim **`ARCHITECTURE_ESSENTIALS`**, **`lib-import-layering`**, **`AGENTS`** (long separation plan demoted).
 
 **2026-04-17 (later):** Updated UI for V2 Step 3 dialogs (copy, lane/save/reason polish across 3.2–3.4).
