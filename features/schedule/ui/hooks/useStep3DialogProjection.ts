@@ -24,15 +24,12 @@
  *    Step 2 `flushSync` finalize paths assume these refs match the **post-edit** memos in the same
  *    commit as the layout effects above (do not move ref sync to `useEffect`).
  *
- * **Post-paint — `useEffect`:**
- * 13. Debug ingest for Step 3 wiring (non-authoritative; must not affect projection math).
- *
  * Parent `SchedulePageContent` continues with Step 2 buffered-toast and other memos **after** this
  * hook returns; do not insert unrelated memos/effects between this hook and its caller’s next hooks
  * if those hooks consumed Step 3 fingerprint refs mid-commit.
  */
 
-import { useEffect, useLayoutEffect, useMemo, type MutableRefObject } from 'react'
+import { useLayoutEffect, useMemo, type MutableRefObject } from 'react'
 import type { Team, Staff, Weekday } from '@/types/staff'
 import type { PCAAllocation, ScheduleCalculations, TherapistAllocation } from '@/types/schedule'
 import type { PCAData } from '@/lib/algorithms/pcaAllocation'
@@ -416,38 +413,6 @@ export function useStep3DialogProjection(args: UseStep3DialogProjectionArgs): Us
     step3DialogSurface,
     pendingPCAFTEPerTeam,
   ])
-
-  // #region agent log (H1/H3/H5) page-level Step 3 projection wiring
-  useEffect(() => {
-    const rawAvg = (step2Result as Step2ResultSurplusProjection | null)?.rawAveragePCAPerTeam
-    const hasRawAvg =
-      !!rawAvg &&
-      Object.values(rawAvg).some((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)
-    ;(typeof fetch === 'function'
-      ? fetch('http://127.0.0.1:7321/ingest/76ac89bc-8813-496d-9eb0-551725b988b5', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '41d21d' },
-          body: JSON.stringify({
-            sessionId: '41d21d',
-            runId: 'surplus-debug-initial',
-            hypothesisId: 'H3',
-            location: 'features/schedule/ui/hooks/useStep3DialogProjection.ts:step3ProjectionWiring',
-            message: 'Computed page Step 3 projection summaries and dialog pending source',
-            data: {
-              step3DialogSurface,
-              hasStep2Result: !!step2Result,
-              hasRawAvg,
-              rawAvgFO: Number((rawAvg?.FO ?? 0).toFixed(3)),
-              rawAvgDRO: Number((rawAvg?.DRO ?? 0).toFixed(3)),
-              pendingFO: Number((pendingPCAFTEForStep3Dialog.FO ?? 0).toFixed(3)),
-              pendingDRO: Number((pendingPCAFTEForStep3Dialog.DRO ?? 0).toFixed(3)),
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {})
-      : Promise.resolve())
-  }, [step2Result, step3DialogSurface, step3BootstrapSummaryV2, pendingPCAFTEForStep3Dialog])
-  // #endregion
 
   return {
     displayViewForCurrentWeekday,
