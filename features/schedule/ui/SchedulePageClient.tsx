@@ -131,9 +131,7 @@ import type { BedAllocationContext } from '@/lib/algorithms/bedAllocation'
 import type { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import type { SlotAssignment } from '@/lib/utils/reservationLogic'
-import { executeStep3V2HarnessAuto } from '@/lib/features/schedule/step3Harness/runStep3V2Harness'
 import { Input } from '@/components/ui/input'
-import { ScheduleDevLeaveSimBridge } from '@/features/schedule/ui/dev/ScheduleDevLeaveSimBridge'
 
 const ScheduleCopyWizard = dynamic(
   () => import('@/components/allocation/ScheduleCopyWizard').then(m => m.ScheduleCopyWizard),
@@ -199,6 +197,11 @@ const ScheduleBlocks1To6 = dynamic(
 )
 const PCADedicatedScheduleTable = dynamic(
   () => import('@/components/allocation/PCADedicatedScheduleTable').then(m => m.PCADedicatedScheduleTable),
+  { ssr: false }
+)
+const ScheduleDevLeaveSimBridgeDynamic = dynamic(
+  () =>
+    import('@/features/schedule/ui/dev/ScheduleDevLeaveSimBridge').then((m) => m.ScheduleDevLeaveSimBridge),
   { ssr: false }
 )
 
@@ -1203,6 +1206,9 @@ function SchedulePageContent() {
     },
     [onPerfRender, userRole]
   )
+
+  const allowScheduleDevHarnessRuntime =
+    userRole === 'developer' || process.env.NODE_ENV === 'development'
 
   useEffect(() => {
     try {
@@ -9109,7 +9115,8 @@ function SchedulePageContent() {
           onClearCache={handleDeveloperCacheClear}
         />
         )}
-        <ScheduleDevLeaveSimBridge
+        {allowScheduleDevHarnessRuntime ? (
+        <ScheduleDevLeaveSimBridgeDynamic
             open={devLeaveSimOpen}
             onOpenChange={setDevLeaveSimOpen}
             userRole={userRole}
@@ -9296,6 +9303,9 @@ function SchedulePageContent() {
               const floatingPCAs = floatingPCAsForStep3
               const baseExistingAllocations = existingAllocationsForStep3
 
+              const { executeStep3V2HarnessAuto } = await import(
+                '@/lib/features/schedule/step3Harness/runStep3V2Harness'
+              )
               const harnessRun = await executeStep3V2HarnessAuto({
                 currentPendingFTE: pending0 as Record<Team, number>,
                 visibleTeams,
@@ -9334,6 +9344,7 @@ function SchedulePageContent() {
             pcaAllocationsByTeam={pcaAllocations as any}
             calculationsByTeam={calculations as any}
           />
+        ) : null}
 
         {/* Step Indicator with Navigation — see ScheduleWorkflowStepShell (Phase 2b) */}
         <ScheduleWorkflowStepShell
