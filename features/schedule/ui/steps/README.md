@@ -20,5 +20,5 @@ Prefer **direct imports** to real files under `steps/` so search and go-to-defin
 
 ## References
 
-- Schedule page decomposition (spec + phased implementation): [2026-04-22 schedule-page-client-decomposition spec](../../../../docs/superpowers/plans/2026-04-22-schedule-page-client-decomposition-spec.md) · [implementation plan](../../../../docs/superpowers/plans/2026-04-22-schedule-page-client-decomposition-implementation-plan.md)
+- Tree + orchestration boundaries: [docs/schedule-architecture-core.md](../../../../docs/schedule-architecture-core.md)
 - Schedule UI vs lib map and gotchas: [.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc](../../../../.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc)

@@ -25,10 +25,18 @@ Stable **where things go** summary. Allocation workflow, Step 3 projection, and 
 
 - **UI → `lib` / types:** allowed. **`lib/**` → `features/**`:** forbidden (see `lib-import-layering.mdc`).
 
+## Schedule page client (composition)
+
+`SchedulePageClient` is the **orchestrator**; it stays a single (large) module that composes smaller units — **not** a place to re-encode domain rules (those live in `lib/features/schedule` / `lib/algorithms` only; **no** new schedule screen **`.tsx`** under `lib/`).
+
+- **Where pieces live:** `sections/` (macro step strip, display vs edit chrome), `panes/` (e.g. split reference), `layout/` (main grid, split layout), `steps/` (in-step wizards), `hooks/` (URL/query, Step 3 projection + fingerprints, DnD, **shared** pane load / abort / hydration with the main grid), `dialogs/`, `dev/`.
+- **Split view (two dates):** two **`useScheduleController`** instances; **orchestration** (hydration, load, abort) is **shared** via a hook; **state** is not merged into one controller.
+- **Shell:** compose with **explicit props** (and colocated hooks) — **no** schedule-wide React context added for “decomposition convenience.”
+- **Refactor gate:** `npm run lint && npm run build && npm run test:smoke` on meaningful changes here.
+
 ## Heavier / living docs
 
 - **Tailwind `@source`**, tokens, peel inventory, Phase notes:** [`features/schedule/ui/README.md`](../features/schedule/ui/README.md)
 - **Step 3 floating vs non-floating (glossary):** [`glossary/step3-floating-nonfloating.md`](glossary/step3-floating-nonfloating.md)
-- **Schedule page decomposition (phased checklist, gates, tracker):** [`superpowers/plans/2026-04-22-schedule-page-client-decomposition-implementation-plan.md`](superpowers/plans/2026-04-22-schedule-page-client-decomposition-implementation-plan.md) (spec: [`2026-04-22-schedule-page-client-decomposition-spec.md`](superpowers/plans/2026-04-22-schedule-page-client-decomposition-spec.md)).
 
-Other long-form plans under `docs/superpowers/plans/` are **optional** for day-to-day layout — use **this file** + **`ARCHITECTURE_ESSENTIALS.mdc`** first.
+Long-form plans under `docs/superpowers/plans/` are **optional** — this file + **`ARCHITECTURE_ESSENTIALS.mdc`** are the defaults for layout and invariants.
