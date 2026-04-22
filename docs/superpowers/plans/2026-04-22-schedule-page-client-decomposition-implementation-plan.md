@@ -13,10 +13,13 @@
 ### Orchestrator workflow (each phase)
 
 1. **Implement** (Composer 2 sub-agent, or lead with §C handoff) — one phase at a time; follow phase checklists in this file.
-2. **Global gates** — `npm run lint && npm run build && npm run test:smoke` (lead re-runs if sub-agent ran them).
+2. **Global gates** — `npm run lint && npm run build && npm run test:smoke` (orchestrator may re-run to verify; same commands).
 3. **Code review** (Composer 2 `code-reviewer` sub-agent) — compare the diff to this plan + spec §7 for touched areas.
-4. **Flag gaps** — If review finds a checklist line **not met** or **at risk**, keep that line as `- [ ]` and add a **Review flag:** line under it (what failed, what to fix). **Do not** mark the phase **Done** in the Progress tracker or flip the step to `[x]` until remediated. When fixed, remove the flag and set `[x]`.
-5. **Progress tracker** — Set phase **Done** only when checklists are clean and gates are green.
+4. **Flag gaps** — If review finds a checklist line **not met** or **at risk**, keep that line as `- [ ]` and add a **Review flag:** line under it (what failed, what to fix). **Do not** mark the phase **Done** in the Progress tracker or flip the step to `[x]` until remediated.
+5. **Review–fix loop (orchestrator chat is *not* for patches)** — If the code review reports **Gaps** or **must-fix** items, the orchestrator does **not** apply fixes inline in this chat. Instead: **(a)** dispatch a **Composer 2** **implement / fix** sub-agent with the reviewer’s exact remediation list and current `HEAD` context; **(b)** re-run **global gates** (sub-agent or orchestrator re-run); **(c)** dispatch **code-reviewer** again. Repeat **(a)–(c)** until the reviewer reports **no blocking gaps** (or only acknowledged follow-ups), then clear flags and set checkboxes to `[x]`.
+6. **Progress tracker** — Set phase **Done** only when checklists are clean and gates are green.
+
+**Orchestrator chat scope:** this thread **does not** apply product code changes for review findings; only **sub-agents** implement fixes, then **code-reviewer** re-runs until **PASS** or only non-blocking suggestions.
 
 ---
 
@@ -32,7 +35,7 @@
 | 3 | `useSchedulePageQueryState` | Done | `8a42971`; manual Step 3 (URL toggles) **confirmed by user** 2026-04-22. |
 | 4 | `useStep3DialogProjection` | Done | `fe26193` + `418f95c`. Manual Step 3 (§6.2 Step 3 / Step 2→3) **confirmed by user** 2026-04-22. |
 | 5 | Pure helpers → `lib/` | Done | Core extract: `11397f4`. Follow-up: `Step2ResultSurplusProjectionForStep3` (plan + call sites) per code review. Files: `scheduleCalculationsCombine.ts`, `schedulePageFingerprints.ts`. No Vitest—unit tests skipped. **Gates:** `lint` / `build` / `test:smoke` (retry if smoke flakes). |
-| 6 | `useScheduleBoardDnd` | Not started | |
+| 6 | `useScheduleBoardDnd` | In progress | `e5a8e3b`. Code review **PASS** (no fix loop). **Gates** green. **Manual plan Step 2 (§6.2 DnD)** — pending user sign-off. |
 | 7 | Dev harness lazy-load | Not started | |
 | 8 | Render splits + context checkpoint | Not started | |
 | 9 | Type tightening (ongoing) | Not started | |
@@ -231,11 +234,13 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 - **Create:** `features/schedule/ui/hooks/useScheduleBoardDnd.ts` (plus small types file if needed)
 - **Modify:** `SchedulePageClient.tsx` — sensors, `onDragStart` / `onDragEnd` / `onDragMove`, optimistic PCA queue wiring stay behavior-identical
 
-- [ ] **Step 1:** Extract `@dnd-kit` sensor setup and handler functions that reference `scheduleActions`, `queueOptimisticPcaAction`, drag overlay state.
+- [x] **Step 1:** Extract `@dnd-kit` sensor setup and handler functions that reference `scheduleActions`, `queueOptimisticPcaAction`, drag overlay state. *(`e5a8e3b`; `useScheduleBoardDnd.ts`; `queueOptimisticPcaAction` remains in `performSlotTransfer` / `performSlotDiscard` on the page per review.)*
 
 - [ ] **Step 2:** Global gates + manual DnD: drag therapist/PCA as in spec §6.2 **DnD**.
+  - **Review flag (2026-04-22):** **Automated gates met** (orchestrator: `lint` / `build` / `test:smoke` exit 0). **Code review — PASS** (no fix sub-agent). **Manual** §6.2 DnD **not yet user-confirmed**; do not mark phase **Done** or flip this to `[x]` until sign-off.
+  - *Operator sign-off (when done):* …
 
-- [ ] **Step 3:** Commit: `refactor(schedule): extract useScheduleBoardDnd`.
+- [x] **Step 3:** Commit: `refactor(schedule): extract useScheduleBoardDnd`. *(e5a8e3b)*
 
 ---
 
@@ -318,3 +323,4 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 | 2026-04-22 | **Orchestrator workflow** (implement → gates → code-reviewer → flag unmet until clean → `[x]`); Phase 3 implemented `8a42971`; review: Step 3 manual **flagged** until operator sign-off. |
 | 2026-04-22 | Phase 3 **Done** (user manual + sign-off). Phase 4: `fe26193` + `418f95c`. |
 | 2026-04-22 | Phase 4 **Done** (user manual). Phase 5: pure helpers in `lib` (`11397f4`); post-review type rename `Step2ResultSurplusProjectionForStep3`. |
+| 2026-04-22 | **Orchestrator: code fixes only via sub-agent loop;** Phase 6 `e5a8e3b`; code review PASS; manual DnD flagged. |
