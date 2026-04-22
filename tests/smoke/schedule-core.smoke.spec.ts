@@ -190,6 +190,20 @@ test.describe('Schedule smoke suite', () => {
     }
   })
 
+  test('split reference pane enables and shows read-only chrome @smoke', async ({ page }) => {
+    await ensureAuthenticated(page)
+    await page.goto(`${appBaseURL}/schedule`, { waitUntil: 'domcontentloaded' })
+    await waitForScheduleReady(page)
+
+    await page.getByRole('button', { name: /^Split$/ }).click()
+    await expect(page).toHaveURL(/split=1/)
+    await expect(page).toHaveURL(/refDate=\d{4}-\d{2}-\d{2}/)
+
+    await expect(page.getByText('Reference (Read-only)')).toBeVisible({ timeout: 20000 })
+    // Reference header shows the formatted ref date (calendar control has no stable accessible name).
+    await expect(page.getByText(/^Date:/)).toBeVisible()
+  })
+
   test('navigates to step 2 and opens legend popover @smoke', async ({ page }) => {
     await ensureAuthenticated(page)
     await page.goto(`${appBaseURL}/schedule`, { waitUntil: 'domcontentloaded' })

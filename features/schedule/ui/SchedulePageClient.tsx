@@ -62,6 +62,10 @@ import { ConfirmPopover } from '@/components/allocation/ConfirmPopover'
 import { ScheduleOverlays } from '@/features/schedule/ui/overlays/ScheduleOverlays'
 import { ScheduleHeaderBar } from '@/features/schedule/ui/layout/ScheduleHeaderBar'
 import { ScheduleDialogsLayer } from '@/features/schedule/ui/overlays/ScheduleDialogsLayer'
+import {
+  useMainPaneLoadAndHydrateDateEffect,
+  useSchedulePaneHydrationEndEffect,
+} from '@/features/schedule/ui/hooks/useSchedulePaneHydration'
 import { ScheduleMainLayout } from '@/features/schedule/ui/layout/ScheduleMainLayout'
 import { SplitPane } from '@/components/ui/SplitPane'
 import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, ImageDown, Undo2, Redo2, Info } from 'lucide-react'
@@ -1474,6 +1478,14 @@ function SchedulePageContent() {
   const [lastCopyTiming, setLastCopyTiming] = useState<TimingReport | null>(null)
   const [lastLoadTiming, setLastLoadTiming] = useState<TimingReport | null>(null)
   const latestLoadTimingKeyRef = useRef<string | null>(null)
+  /** Filled after `recalculateScheduleCalculations` is defined; main-pane load hook calls through here. */
+  const recalculateScheduleCalculationsForLoadRef = useRef<
+    | ((opts?: { allowDuringHydration?: boolean; forceWithoutAllocations?: boolean; source?: unknown }) => void)
+    | null
+  >(null)
+  const invokeRecalculateForMainLoad = useCallback(() => {
+    recalculateScheduleCalculationsForLoadRef.current?.()
+  }, [])
   const perfStatsRef = useRef<
     Record<
       string,
@@ -2677,19 +2689,7 @@ function SchedulePageContent() {
     })
   }, [navToScheduleTiming])
 
-
-  // Load + hydrate schedule when date changes (domain logic is in controller).
-  useEffect(() => {
-    if (!initialDateResolved) return
-    let cancelled = false
-
-    const year = selectedDate.getFullYear()
-    const month = String(selectedDate.getMonth() + 1).padStart(2, '0')
-    const day = String(selectedDate.getDate()).padStart(2, '0')
-    const dateStr = `${year}-${month}-${day}`
-    if (scheduleLoadedForDate === dateStr) return
-    latestLoadTimingKeyRef.current = dateStr
-
+  const onMainPaneLoadScheduled = useCallback(({ dateStr }: { dateStr: string }) => {
     // Immediately reflect the *current* selected date in the diagnostics tooltip to avoid a
     // transient "stale" display while the async load for this date is still in-flight.
     setLastLoadTiming((prev) => {
@@ -2715,46 +2715,39 @@ function SchedulePageContent() {
 
       return pending
     })
+  }, [])
 
-    const controller = new AbortController()
-
-    ;(async () => {
-      const report = await loadAndHydrateDate({
-        date: selectedDate,
-        signal: controller.signal,
-        recalculateScheduleCalculations,
-      })
-      if (cancelled || controller.signal.aborted) return
-
-      if (latestLoadTimingKeyRef.current !== dateStr) {
-        return
-      }
-      if (report) setLastLoadTiming(report)
-    })().catch((e) => {
-      console.error('Error loading schedule:', e)
-      if (cancelled || controller.signal.aborted) {
-        return
-      }
-      if (latestLoadTimingKeyRef.current !== dateStr) {
-        return
-      }
-      setLastLoadTiming(
-        createTimingCollector().finalize({
-          dateStr,
-          error: (e as any)?.message || String(e),
-        })
-      )
-    })
-
-    return () => {
-      cancelled = true
-      controller.abort()
+  const onMainPaneLoadedForDate = useCallback(({ dateStr, report }: { dateStr: string; report: unknown | null }) => {
+    if (latestLoadTimingKeyRef.current !== dateStr) {
+      return
     }
-    // NOTE: do not depend on scheduleLoadedForDate here; it is set during loadAndHydrateDate(),
-    // and including it would cause this effect to re-run and abort in-flight loads (leaving
-    // diagnostics stuck in "pending" on cache-hit navigations).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialDateResolved, selectedDate])
+    if (report) setLastLoadTiming(report as TimingReport)
+  }, [])
+
+  const onMainPaneLoadError = useCallback(({ dateStr, error }: { dateStr: string; error: unknown }) => {
+    if (latestLoadTimingKeyRef.current !== dateStr) {
+      return
+    }
+    setLastLoadTiming(
+      createTimingCollector().finalize({
+        dateStr,
+        error: (error as any)?.message || String(error),
+      })
+    )
+  }, [])
+
+  // Load + hydrate schedule when date changes (domain logic is in controller).
+  useMainPaneLoadAndHydrateDateEffect({
+    initialDateResolved,
+    selectedDate,
+    scheduleLoadedForDate,
+    loadAndHydrateDate,
+    recalculateScheduleCalculations: invokeRecalculateForMainLoad,
+    onLoadScheduled: onMainPaneLoadScheduled,
+    onLoadedForDate: onMainPaneLoadedForDate,
+    onLoadError: onMainPaneLoadError,
+    latestLoadKeyRef: latestLoadTimingKeyRef,
+  })
 
   // Once the grid is ready (and skeleton is gone), render below-the-fold heavy components when the browser is idle.
   useEffect(() => {
@@ -2778,16 +2771,17 @@ function SchedulePageContent() {
   // End hydration AFTER the load-driven state updates flush to the screen.
   // This ensures downstream hooks (e.g., useAllocationSync TRIGGER2) can reliably see isHydratingSchedule=true
   // during the load-driven currentStep/staffOverrides updates.
-  useEffect(() => {
-    if (!isHydratingSchedule) return
-    if (loading) return
-    const year = selectedDate.getFullYear()
-    const month = String(selectedDate.getMonth() + 1).padStart(2, '0')
-    const day = String(selectedDate.getDate()).padStart(2, '0')
-    const dateStr = `${year}-${month}-${day}`
-    if (scheduleLoadedForDate !== dateStr) return
-    setIsHydratingSchedule(false)
-  }, [isHydratingSchedule, loading, staff.length, selectedDate, scheduleLoadedForDate, hasLoadedStoredCalculations, hasSavedAllocations])
+  useSchedulePaneHydrationEndEffect({
+    endMode: 'sync',
+    targetDateKey: toDateKey(selectedDate),
+    isHydratingSchedule,
+    loading,
+    scheduleLoadedForDate,
+    setIsHydratingSchedule,
+    mainPaneStaffLength: staff.length,
+    mainPaneHasLoadedStoredCalculations: hasLoadedStoredCalculations,
+    mainPaneHasSavedAllocations: hasSavedAllocations,
+  })
 
   // NOTE: Auto-regeneration on staffOverrides change has been DISABLED for step-wise workflow
   // User must now explicitly click "Next Step" to regenerate allocations
@@ -3836,6 +3830,13 @@ function SchedulePageContent() {
     recalculationTeams,
     effectiveTeamMergeConfig.mergedInto,
   ])
+
+  recalculateScheduleCalculationsForLoadRef.current =
+    recalculateScheduleCalculations as unknown as (opts?: {
+      allowDuringHydration?: boolean
+      forceWithoutAllocations?: boolean
+      source?: unknown
+    }) => void
 
   // Auto-recalculate when allocations change (e.g., after Step 2 algo, therapist transfer)
   useEffect(() => {

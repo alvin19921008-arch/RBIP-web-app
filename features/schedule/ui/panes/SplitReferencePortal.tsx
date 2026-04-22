@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
 import type { Team, Staff } from '@/types/staff'
@@ -18,6 +18,11 @@ import {
   resolveTeamMergeConfig,
   type TeamSettingsMergeRow,
 } from '@/lib/utils/teamMerge'
+import {
+  useSchedulePaneInFlightAbortCleanup,
+  useSchedulePaneHydrationEndEffect,
+  useSplitReferenceDateLoadEffect,
+} from '@/features/schedule/ui/hooks/useSchedulePaneHydration'
 
 const ReferenceSchedulePane = dynamic(
   () => import('@/features/schedule/ui/panes/ReferenceSchedulePane').then((m) => m.ReferenceSchedulePane),
@@ -112,6 +117,10 @@ export function SplitReferencePortal(props: {
   setRefGridLoadingRef.current = setRefGridLoading
   setRefIsHydratingScheduleRef.current = setRefIsHydratingSchedule
 
+  const setRefIsHydratingScheduleProxy = useCallback((next: boolean) => {
+    setRefIsHydratingScheduleRef.current(next)
+  }, [])
+
   useEffect(() => {
     statusRef.current = {
       loading: refScheduleState.loading,
@@ -119,83 +128,30 @@ export function SplitReferencePortal(props: {
     }
   }, [refScheduleState.loading, refScheduleState.scheduleLoadedForDate])
 
-  // Split mode: hydrate reference schedule when refDate changes.
-  useEffect(() => {
-    if (!props.refDateParam) return
+  // Split mode: hydrate reference schedule when refDate changes (shared orchestration hook).
+  useSplitReferenceDateLoadEffect({
+    refDateParam: props.refDateParam,
+    parseDateFromInput,
+    statusRef,
+    lastRequestedRef,
+    inFlightAbortRef,
+    beginDateTransitionRef,
+    loadAndHydrateRef,
+    setGridLoadingRef: setRefGridLoadingRef,
+  })
 
-    try {
-      window.sessionStorage.setItem('rbip_split_ref_date', props.refDateParam)
-    } catch {
-      // ignore
-    }
-
-    const status = statusRef.current
-    if (status.loadedForDate === props.refDateParam && !status.loading) {
-      lastRequestedRef.current = props.refDateParam
-      return
-    }
-
-    // Guard against duplicate retriggers for the same date while a load is in flight.
-    if (lastRequestedRef.current === props.refDateParam && status.loading) {
-      return
-    }
-
-    let parsed: Date
-    try {
-      parsed = parseDateFromInput(props.refDateParam)
-    } catch {
-      return
-    }
-
-    inFlightAbortRef.current?.abort()
-    const ac = new AbortController()
-    inFlightAbortRef.current = ac
-    lastRequestedRef.current = props.refDateParam
-    beginDateTransitionRef.current(parsed, { resetLoadedForDate: true })
-    void (async () => {
-      try {
-        await loadAndHydrateRef.current({ date: parsed, signal: ac.signal })
-      } finally {
-        if (!ac.signal.aborted) {
-          // Unlike the main schedule page, the reference pane doesn't have the page-level
-          // gridLoading finalizer effect; ensure this doesn't get stuck true.
-          setRefGridLoadingRef.current(false)
-        }
-      }
-    })()
-    return () => {
-      ac.abort()
-      if (inFlightAbortRef.current === ac) inFlightAbortRef.current = null
-    }
-  }, [props.refDateParam])
-
-  useEffect(() => {
-    return () => {
-      inFlightAbortRef.current?.abort()
-    }
-  }, [])
+  useSchedulePaneInFlightAbortCleanup(inFlightAbortRef)
 
   // Split mode: the reference controller doesn't include the page-level hydration finalizer
-  // effect used by the main schedule page. Without this, the reference pane can remain
-  // stuck showing its skeleton forever.
-  useEffect(() => {
-    if (!props.refDateParam) return
-    if (!refScheduleState.isHydratingSchedule) return
-    if (refScheduleState.loading) return
-    if (refScheduleState.scheduleLoadedForDate !== props.refDateParam) return
-
-    // End hydration on next frame to ensure load-driven state updates have flushed.
-    try {
-      window.requestAnimationFrame(() => setRefIsHydratingScheduleRef.current(false))
-    } catch {
-      setRefIsHydratingScheduleRef.current(false)
-    }
-  }, [
-    props.refDateParam,
-    refScheduleState.isHydratingSchedule,
-    refScheduleState.loading,
-    refScheduleState.scheduleLoadedForDate,
-  ])
+  // used by the main schedule page. Without this, the reference pane can stay stuck on skeleton.
+  useSchedulePaneHydrationEndEffect({
+    endMode: 'requestAnimationFrame',
+    targetDateKey: props.refDateParam,
+    isHydratingSchedule: refScheduleState.isHydratingSchedule,
+    loading: refScheduleState.loading,
+    scheduleLoadedForDate: refScheduleState.scheduleLoadedForDate,
+    setIsHydratingSchedule: setRefIsHydratingScheduleProxy,
+  })
 
   const refSelectedDate = refScheduleState.selectedDate
   const refWeekday = getWeekday(refSelectedDate)
