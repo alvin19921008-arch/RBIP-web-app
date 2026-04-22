@@ -61,7 +61,8 @@ export function useSchedulePageQueryState(selectedDateForSplitSeed: Date) {
       try {
         window.requestAnimationFrame(() => {
           try {
-            window.scrollTo({ top: y, left: 0, behavior: 'instant' as any })
+            // Two-arg form: no ScrollBehavior, avoids DOM typings that omit `instant` on some TS/lib versions.
+            window.scrollTo(0, y)
           } catch {
             window.scrollTo(0, y)
           }

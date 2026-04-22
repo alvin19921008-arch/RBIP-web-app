@@ -118,7 +118,7 @@ export function useStep3DialogProjection(args: UseStep3DialogProjectionArgs): Us
       computeReservedSpecialProgramPcaFte({
         specialPrograms: specialPrograms ?? [],
         weekday: currentWeekday,
-        staffOverrides: staffOverrides as Record<string, any>,
+        staffOverrides,
       }),
     [currentWeekday, specialPrograms, staffOverrides]
   )
@@ -127,8 +127,8 @@ export function useStep3DialogProjection(args: UseStep3DialogProjectionArgs): Us
     () =>
       buildDisplayViewForWeekday({
         weekday: getWeekday(selectedDate),
-        specialPrograms: specialPrograms as any,
-        staffOverrides: staffOverrides as any,
+        specialPrograms: specialPrograms ?? [],
+        staffOverrides,
       }),
     [selectedDate, specialPrograms, staffOverrides]
   )
@@ -151,7 +151,7 @@ export function useStep3DialogProjection(args: UseStep3DialogProjectionArgs): Us
   const existingAssignedValidForStep3Dialog = useMemo(() => {
     const out = createEmptyTeamRecord<number>(0)
     for (const alloc of existingAllocationsForStep3Dialog) {
-      const invalidSlot = (alloc as any)?.invalid_slot as number | undefined
+      const invalidSlot = alloc.invalid_slot
       const add = (slot: 1 | 2 | 3 | 4, team: Team | null) => {
         if (!team) return
         if (invalidSlot === slot) return
@@ -169,7 +169,7 @@ export function useStep3DialogProjection(args: UseStep3DialogProjectionArgs): Us
     const out = createEmptyTeamRecord<number>(0)
 
     for (const alloc of existingAllocationsForStep3Dialog) {
-      const ids = (alloc as any)?.special_program_ids
+      const ids = alloc.special_program_ids
       if (!Array.isArray(ids) || ids.length === 0) continue
       const specialProgramsById = displayViewForCurrentWeekday.getProgramsByAllocationTeam(alloc.team as Team | null | undefined)
 
@@ -183,7 +183,7 @@ export function useStep3DialogProjection(args: UseStep3DialogProjectionArgs): Us
       add(3, alloc.slot3 ?? null)
       add(4, alloc.slot4 ?? null)
 
-      const inv = (alloc as any)?.invalid_slot as 1 | 2 | 3 | 4 | null | undefined
+      const inv = alloc.invalid_slot
       if (inv === 1 || inv === 2 || inv === 3 || inv === 4) {
         const invTeam = (inv === 1 ? alloc.slot1 : inv === 2 ? alloc.slot2 : inv === 3 ? alloc.slot3 : alloc.slot4) as Team | null
         if (
@@ -227,7 +227,7 @@ export function useStep3DialogProjection(args: UseStep3DialogProjectionArgs): Us
       computeStep3NonFloatingFteBreakdownByTeamFromAllocations({
         existingAllocations: existingAllocationsForStep3Dialog,
         staff: [...staff, ...bufferStaff],
-        specialPrograms: specialPrograms as any,
+        specialPrograms: specialPrograms ?? [],
         weekday: getWeekday(selectedDate),
         staffOverrides,
         canonicalSlotTeam: (t) => (t ? getMainTeam(t, mergedInto) : null),
