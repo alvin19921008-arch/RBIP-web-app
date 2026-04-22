@@ -29,6 +29,6 @@ Stable **where things go** summary. Allocation workflow, Step 3 projection, and 
 
 - **Tailwind `@source`**, tokens, peel inventory, Phase notes:** [`features/schedule/ui/README.md`](../features/schedule/ui/README.md)
 - **Step 3 floating vs non-floating (glossary):** [`glossary/step3-floating-nonfloating.md`](glossary/step3-floating-nonfloating.md)
-- **Verification commands / phase matrix (longer):** [`superpowers/plans/2026-04-11-schedule-ui-lib-separation-implementation-plan.md`](superpowers/plans/2026-04-11-schedule-ui-lib-separation-implementation-plan.md) — optional; may move or split over time.
+- **Schedule page decomposition (phased checklist, gates, tracker):** [`superpowers/plans/2026-04-22-schedule-page-client-decomposition-implementation-plan.md`](superpowers/plans/2026-04-22-schedule-page-client-decomposition-implementation-plan.md) (spec: [`2026-04-22-schedule-page-client-decomposition-spec.md`](superpowers/plans/2026-04-22-schedule-page-client-decomposition-spec.md)).
 
-Phased refactor drafts under `docs/superpowers/plans/` (e.g. older separation narratives) are **not** required reading for day-to-day layout — use **this file** + **`ARCHITECTURE_ESSENTIALS.mdc`** first.
+Other long-form plans under `docs/superpowers/plans/` are **optional** for day-to-day layout — use **this file** + **`ARCHITECTURE_ESSENTIALS.mdc`** first.

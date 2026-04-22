@@ -1,7 +1,7 @@
 # SchedulePageClient decomposition — implementation specification
 
-**Status:** Draft  
-**Last updated:** 2026-04-22  
+**Status:** Complete (phases 0–9; see linked implementation plan Progress tracker)  
+**Last updated:** 2026-04-23  
 **Scope:** Major refactor of `features/schedule/ui/SchedulePageClient.tsx` (~12,600 lines) in a Next.js App Router + TypeScript codebase.
 
 **Authoritative references (must stay aligned):**
@@ -283,3 +283,4 @@ That gives you clarity without merging incompatible state into one hook by mista
 | 2026-04-22 | Linked implementation plan: `2026-04-22-schedule-page-client-decomposition-implementation-plan.md`. |
 | 2026-04-22 | §9.2 Q2: **Decision — props-only for schedule shell** after Phase 8 (`ScheduleMainGrid` / `ScheduleSplitLayout`); no new schedule-wide or narrow layout context. |
 | 2026-04-22 | §9.2: **Props-only locked** (product agreement); reworded checkpoint as stable decision, not TBD. |
+| 2026-04-23 | **Status → Complete:** implementation plan Phases 0–9 done; spec exit criteria for phased decomposition satisfied (see plan Progress tracker + §6). |

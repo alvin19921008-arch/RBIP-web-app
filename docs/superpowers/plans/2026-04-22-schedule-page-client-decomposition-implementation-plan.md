@@ -38,7 +38,7 @@
 | 6 | `useScheduleBoardDnd` | Done | `e5a8e3b`. Code review **PASS**. **Manual §6.2 DnD (PCA + therapist):** user confirmed 2026-04-22. |
 | 7 | Dev harness lazy-load | Done | `f95e32e`. **Manual Step 3** (harness + leave sim in dev): user confirmed 2026-04-22. |
 | 8 | Render splits + context checkpoint | Done | `0e2867f`. `ScheduleMainGrid` + `ScheduleSplitLayout` in `layout/`; spec §9.2 **props-only**. Code review **PASS** (no fix loop). Gates green. |
-| 9 | Type tightening (ongoing) | In progress | **Batch 1 (Step 1) done:** `15550ac` — `SplitReferencePortal` `supabase: ReturnType<typeof createClientComponentClient>`. Code review **PASS**. Steps 2–3 continue in future batches. |
+| 9 | Type tightening | Done | `15550ac` (Step 1), `042c2ef` + `08d5aa4` + `8088602` (Step 2), Step 3 gate rule on final batch. **Display** / step-strip: `551d1be` (docs + `ScheduleWorkflowStepShell` comments). Code review **PASS** on typ­ing batches. Spec §4 Phase 9 + §9.3 Q5: stricter types in touched modules, smoke-clean; **~267** ` as any` line-matches remain under `features/schedule/` (ongoing hygiene). |
 
 **Status values:** `Not started` · `In progress` · `Done`
 
@@ -325,3 +325,4 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 | 2026-04-22 | Phase 6 **Done** (user DnD). Phase 7 **Done** — `f95e32e`; user confirmed dev harness + leave sim. |
 | 2026-04-22 | **Phase 8** — `0e2867f`: `ScheduleMainGrid` + `ScheduleSplitLayout`; spec §9.2 props-only; code review **PASS**. |
 | 2026-04-22 | **Spec §9.2** — props-only **locked** (product agreement). **Phase 9** type tightening started. |
+| 2026-04-23 | **Progress tracker:** Phase 9 **Done** (spec §4 / §9.3 Q5: ongoing `as any` hygiene, not zero in monolith). **AGENTS / architecture-core / README links** → `2026-04-22` spec+plan (replaces removed `2026-04-11` plan paths). |

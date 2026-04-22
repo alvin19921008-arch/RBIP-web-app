@@ -20,5 +20,5 @@ Prefer **direct imports** to real files under `steps/` so search and go-to-defin
 
 ## References
 
-- Phase **2e** and broader schedule UI plan: [docs/superpowers/plans/2026-04-11-schedule-ui-lib-separation-plan.md](../../../../docs/superpowers/plans/2026-04-11-schedule-ui-lib-separation-plan.md)
+- Schedule page decomposition (spec + phased implementation): [2026-04-22 schedule-page-client-decomposition spec](../../../../docs/superpowers/plans/2026-04-22-schedule-page-client-decomposition-spec.md) · [implementation plan](../../../../docs/superpowers/plans/2026-04-22-schedule-page-client-decomposition-implementation-plan.md)
 - Schedule UI vs lib map and gotchas: [.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc](../../../../.cursor/rules/ARCHITECTURE_ESSENTIALS.mdc)

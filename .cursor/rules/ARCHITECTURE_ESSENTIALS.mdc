@@ -15,7 +15,7 @@ alwaysApply: false
 
 **Hard import rule (everywhere):** `lib/**` must **not** import `features/**`. UI imports `lib`; not the reverse. On any file under `lib/`, `.cursor/rules/lib-import-layering.mdc` should also attach (same rule, shorter reminder).
 
-**Deep dives:** stable layout map — `docs/schedule-architecture-core.md`; Step 3 glossary — `docs/glossary/step3-floating-nonfloating.md`; optional verification matrix — `docs/superpowers/plans/2026-04-11-schedule-ui-lib-separation-implementation-plan.md`; UI tokens — `.cursor/rules/design-elements-commonality.mdc`, `styles/rbip-design-tokens.css`. Changelog: `CHANGELOG.md`.
+**Deep dives:** stable layout map — `docs/schedule-architecture-core.md`; Step 3 glossary — `docs/glossary/step3-floating-nonfloating.md`; schedule `SchedulePageClient` decomposition (phases + gates) — `docs/superpowers/plans/2026-04-22-schedule-page-client-decomposition-implementation-plan.md`; UI tokens — `.cursor/rules/design-elements-commonality.mdc`, `styles/rbip-design-tokens.css`. Changelog: `CHANGELOG.md`.
 
 ## Schedule UI / lib layout (grep map)
 
