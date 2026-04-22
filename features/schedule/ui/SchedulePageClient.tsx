@@ -3125,7 +3125,7 @@ function SchedulePageContent() {
         fteByStaffId.set(staffId, entry)
 
         if (!leaveTypeByStaffId.has(staffId)) {
-          const lt = (alloc.leave_type as any) ?? null
+          const lt = alloc.leave_type ?? null
           leaveTypeByStaffId.set(staffId, lt)
         }
       }
@@ -3137,11 +3137,11 @@ function SchedulePageContent() {
   const getTherapistFteByTeam = (staffId: string): Partial<Record<Team, number>> => {
     const o = staffOverrides[staffId]
     if (o?.therapistTeamFTEByTeam && Object.keys(o.therapistTeamFTEByTeam).length > 0) {
-      return { ...(o.therapistTeamFTEByTeam as any) }
+      return { ...(o.therapistTeamFTEByTeam ?? {}) }
     }
 
     const fromAlloc = therapistAllocationIndex.fteByStaffId.get(staffId)
-    return fromAlloc ? { ...(fromAlloc as any) } : {}
+    return fromAlloc ? { ...fromAlloc } : {}
   }
 
   const getTherapistLeaveType = (staffId: string): LeaveType | null => {

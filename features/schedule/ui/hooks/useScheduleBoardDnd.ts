@@ -23,7 +23,17 @@ import {
   buildSharedTherapistTeamFteByTeam,
   type SharedTherapistSlotTeams,
 } from '@/lib/features/schedule/sharedTherapistStep'
+import type { StaffOverrideState } from '@/lib/features/schedule/controller/scheduleControllerTypes'
 import { updateBufferStaffTeamAction } from '@/app/(dashboard)/schedule/actions'
+
+/** Mirrors `components/allocation/StaffCard` `useDraggable({ data })` (staff + optional allocation + drag team). */
+type StaffCardDraggablePayload = {
+  staff: Staff
+  allocation?: TherapistAllocation
+  team?: string
+}
+
+type TherapistSlotTeamKey = keyof Pick<TherapistAllocation, 'slot1' | 'slot2' | 'slot3' | 'slot4'>
 
 /** Dependencies for schedule board drag-and-drop (sensors + dnd-kit handlers). */
 export type ScheduleBoardDndParams = {
@@ -35,7 +45,7 @@ export type ScheduleBoardDndParams = {
   pcaAllocationBlockRef: RefObject<HTMLDivElement | null>
   currentStep: ScheduleStepId | string
   therapistAllocations: Record<Team, TherapistAllocation[]>
-  staffOverrides: Record<string, any>
+  staffOverrides: Record<string, StaffOverrideState>
   setTherapistDragState: Dispatch<SetStateAction<TherapistDragState>>
   pcaAllocations: Record<Team, PCAAllocation[]>
   pcaDragState: PcaDragState
@@ -51,7 +61,7 @@ export type ScheduleBoardDndParams = {
   getSlotsForTeam: (allocation: PCAAllocation, team: Team) => number[]
   getSpecialProgramSlotsForTeam: (allocation: PCAAllocation & { staff: Staff }, team: Team) => number[]
   captureUndoCheckpoint: (label: string) => void
-  setStaffOverrides: Dispatch<SetStateAction<Record<string, any>>>
+  setStaffOverrides: Dispatch<SetStateAction<Record<string, StaffOverrideState>>>
   performSlotTransfer: (
     targetTeam: Team,
     options?: { staffId: string; sourceTeam: Team | null; selectedSlots: number[]; closeSlotPopover?: boolean }
@@ -129,7 +139,8 @@ export function useScheduleBoardDnd(p: ScheduleBoardDndParams) {
     // Auto-scroll to the relevant allocation block when dragging in the correct step.
     // - Therapists (SPT/APPT/RPT) in Step 2 → Block 1 (Therapist Allocation)
     // - Floating PCAs in Step 3 → Block 2 (PCA Allocation)
-    const activeRank = (active.data.current as any)?.staff?.rank ?? staffMember.rank
+    const dragPayload = active.data.current as StaffCardDraggablePayload | undefined
+    const activeRank = dragPayload?.staff?.rank ?? staffMember.rank
     const isTherapistRank = ['RPT', 'SPT', 'APPT'].includes(activeRank)
     const isPcaRank = activeRank === 'PCA'
     if (isTherapistRank && currentStep === 'therapist-pca') {
@@ -745,11 +756,11 @@ export function useScheduleBoardDnd(p: ScheduleBoardDndParams) {
     if (isSharedTherapist && currentTeam) {
       const allocOnSource = therapistAllocations[currentTeam]?.find(a => a.staff_id === staffId)
       if (!allocOnSource) return
-      const existingSlotTeams = (staffOverrides[staffId] as any)?.sharedTherapistSlotTeams as SharedTherapistSlotTeams | undefined
+      const existingSlotTeams = staffOverrides[staffId]?.sharedTherapistSlotTeams
       const nextSlotTeams: SharedTherapistSlotTeams = { ...(existingSlotTeams ?? {}) }
       for (const s of [1, 2, 3, 4] as const) {
-        const slotKey = `slot${s}` as 'slot1' | 'slot2' | 'slot3' | 'slot4'
-        if ((allocOnSource as any)[slotKey] === currentTeam) nextSlotTeams[s] = targetTeam
+        const slotKey = `slot${s}` as TherapistSlotTeamKey
+        if (allocOnSource[slotKey] === currentTeam) nextSlotTeams[s] = targetTeam
       }
       const nextMap = buildSharedTherapistTeamFteByTeam({ slotTeamBySlot: nextSlotTeams })
       const total = Object.values(nextMap).reduce((sum, v) => sum + (v ?? 0), 0)
