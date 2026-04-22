@@ -61,8 +61,8 @@ import { useStep3DialogProjection } from '@/features/schedule/ui/hooks/useStep3D
 import { useScheduleBoardDnd } from '@/features/schedule/ui/hooks/useScheduleBoardDnd'
 import type { Step2ResultSurplusProjectionForStep3 } from '@/lib/features/schedule/schedulePageFingerprints'
 import { combineScheduleCalculations } from '@/lib/features/schedule/scheduleCalculationsCombine'
-import { ScheduleMainLayout } from '@/features/schedule/ui/layout/ScheduleMainLayout'
-import { SplitPane } from '@/components/ui/SplitPane'
+import { ScheduleMainGrid } from '@/features/schedule/ui/layout/ScheduleMainGrid'
+import { ScheduleSplitLayout } from '@/features/schedule/ui/layout/ScheduleSplitLayout'
 import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, ImageDown, Undo2, Redo2, Info } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -185,10 +185,6 @@ const BufferStaffCreateDialog = dynamic(
 )
 const ScheduleCalendarPopover = dynamic(
   () => import('@/features/schedule/ui/overlays/ScheduleCalendarPopover').then(m => m.ScheduleCalendarPopover),
-  { ssr: false }
-)
-const ReferenceSchedulePane = dynamic(
-  () => import('@/features/schedule/ui/panes/ReferenceSchedulePane').then(m => m.ReferenceSchedulePane),
   { ssr: false }
 )
 const ScheduleBlocks1To6 = dynamic(
@@ -9437,11 +9433,10 @@ function SchedulePageContent() {
         <div className={cn(isSplitMode && 'flex-1 min-h-0 overflow-hidden')}>
           {(() => {
           const mainLayout = (
-            <ScheduleMainLayout>
-          <div
-            className="shrink-0 flex flex-col gap-4 self-start min-h-0"
-            style={typeof rightContentHeight === 'number' && rightContentHeight > 0 ? { height: rightContentHeight } : undefined}
-          >
+            <ScheduleMainGrid
+              rightContentHeight={typeof rightContentHeight === 'number' && rightContentHeight > 0 ? rightContentHeight : undefined}
+              leftColumn={
+            <>
             {/* Summary */}
             {(() => {
               const totalBeds = wards.reduce((sum, ward) => sum + ward.total_beds, 0)
@@ -9760,8 +9755,10 @@ function SchedulePageContent() {
                 </MaybeProfiler>
               </div>
             </div>
-          </div>
-
+            </>
+              }
+              rightColumn={
+          <>
           <div className="flex-1 min-w-0 bg-background relative">
             {/* Display mode: block editing interactions over the grid (drag/edit/click). */}
             {isDisplayMode ? (
@@ -10136,7 +10133,9 @@ function SchedulePageContent() {
           </div>
             </MaybeProfiler>
         </div>
-            </ScheduleMainLayout>
+            </>
+              }
+            />
           )
 
           if (!isSplitMode) {
@@ -10181,18 +10180,8 @@ function SchedulePageContent() {
             />
           )
 
-          if (!showReference) {
-            const refCollapsedDateLabel = formatDateDDMMYYYY(refSelectedDateForUi)
-            return (
-              <>
-                <div className={cn('h-full min-h-0 flex overflow-hidden', splitDirection === 'col' ? 'flex-row' : 'flex-col')}>
-                  <div className="flex-1 min-w-0 flex flex-col min-h-0">
-                    {/* Fixed header for Main Pane in retracted mode */}
-                    {mainHeader}
-
-                    <div className="flex-1 min-w-0 min-h-0 overflow-auto">
-                      <div className="inline-block min-w-full align-top">
-                        <ScheduleHeaderBar
+          const splitHeaderBar = (
+            <ScheduleHeaderBar
           userRole={userRole}
           showLoadDiagnostics={access.can('schedule.diagnostics.load')}
           showCacheStatus={access.can('schedule.diagnostics.cache-status')}
@@ -10222,144 +10211,30 @@ function SchedulePageContent() {
           displayTools={isSplitMode ? null : displayToolsInlineNode}
           rightActions={renderSchedulePageHeaderRightActions()}
         />
-                        {mainLayout}
-                      </div>
-                    </div>
-                  </div>
-                  <ReferenceSchedulePane
-                    collapsed={true}
-                    direction={splitDirection}
-                    refHidden={true}
-                    disableBlur={isSplitMode}
-                    showTeamHeader={false}
-                    refDateLabel={refCollapsedDateLabel}
-                    selectedDate={refSelectedDateForUi}
-                    datesWithData={datesWithData}
-                    holidays={holidays}
-                    onSelectDate={() => {}}
-                    onToggleDirection={() => {}}
-                    onRetract={() => {}}
-                    onExpand={revealReferencePane}
-                  />
-                </div>
-              </>
-            )
-          }
-
-          const splitLayout = (
-            <MaybeProfiler id="SplitPane">
-              <div className="flex-1 min-h-0">
-                <SplitPane
-                  direction={splitDirection}
-                  ratio={splitRatio}
-                  swapped={isSplitSwapped}
-                  liveResize={false}
-                  paneOverflow="hidden"
-                  dividerOverlay={
-                  <div
-                    className={cn(
-                      'group/pill rounded-full border border-border bg-background/95 shadow-sm',
-                      'overflow-hidden transition-[max-width] duration-150 ease-out',
-                      // Retracted by default; expands only when hovering the pill itself.
-                      'max-w-9 hover:max-w-[220px]'
-                    )}
-                    aria-label="Split controls"
-                    title="Split controls"
-                  >
-                    <div className="flex items-center gap-1 px-1 py-1">
-                      {/* Retracted indicator */}
-                      <div className="px-2 py-1 text-[11px] font-medium text-muted-foreground group-hover/pill:hidden select-none">
-                        ⋯
-                      </div>
-
-                      {/* Expanded controls */}
-                      <div className="hidden group-hover/pill:flex items-center gap-1">
-                        <button
-                          type="button"
-                          className="px-2 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 rounded-full transition-colors"
-                          onClick={toggleSplitSwap}
-                          aria-label="Swap panes"
-                          title="Swap panes"
-                        >
-                          Swap
-                        </button>
-                        <div className="h-4 w-px bg-border" aria-hidden />
-                        <button
-                          type="button"
-                          className="px-2 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 rounded-full transition-colors"
-                          onClick={() => setRefHidden(!isRefHidden)}
-                          aria-label={isRefHidden ? 'Show reference pane' : 'Hide reference pane'}
-                          title={isRefHidden ? 'Show reference pane' : 'Hide reference pane'}
-                        >
-                          {isRefHidden ? 'Show ref' : 'Hide ref'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                }
-                onRatioCommit={commitSplitRatio}
-                minPx={splitDirection === 'row' ? 240 : 420}
-                // Explicit height is required for top-down (row) mode percentage tracks.
-                // Outer split wrapper is `h-[calc(100vh-64px)]` with `py-4` (2rem total), so match its content box.
-                className="min-h-0 w-full h-[calc(100vh-64px-2rem)]"
-                paneAClassName="bg-blue-50/20 dark:bg-blue-950/10"
-                paneBClassName="bg-amber-50/20 dark:bg-amber-950/10"
-                paneA={
-                    <MaybeProfiler id="SplitMainPane">
-                      <div className="h-full min-h-0 flex flex-col">
-                        {/* Fixed header for Main Pane */}
-                        {mainHeader}
-
-                        {/* Scrollable Main content (includes schedule header bar + full layout) */}
-                        <div className="flex-1 min-w-0 min-h-0 overflow-auto">
-                          <div className="inline-block min-w-full align-top">
-                            <ScheduleHeaderBar
-          userRole={userRole}
-          showLoadDiagnostics={access.can('schedule.diagnostics.load')}
-          showCacheStatus={access.can('schedule.diagnostics.cache-status')}
-          lastLoadTiming={lastLoadTiming}
-          navToScheduleTiming={navToScheduleTiming}
-          perfTick={perfTick}
-          perfStats={perfStatsRef.current}
-          selectedDate={selectedDate}
-          selectedDateKey={toDateKey(selectedDate)}
-          weekdayName={weekdayName}
-          isDateHighlighted={isDateHighlighted}
-          calendarButtonRef={calendarButtonRef}
-          onToggleCalendar={() => setCalendarOpen(!calendarOpen)}
-          onSelectDate={(date) => {
-                            setCalendarOpen(false)
-            queueDateTransition(date)
-          }}
-          showSnapshotUiReminder={showSnapshotUiReminder && !isDisplayMode}
-          savedSetupPopoverOpen={savedSetupPopoverOpen}
-          onSavedSetupPopoverOpenChange={setSavedSetupPopoverOpen}
-          snapshotDiffButtonRef={snapshotDiffButtonRef}
-          snapshotDiffExpanded={snapshotDiffExpanded}
-          onToggleSnapshotDiffExpanded={() => setSnapshotDiffExpanded((v) => !v)}
-          snapshotDiffLoading={snapshotDiffLoading}
-          snapshotDiffError={snapshotDiffError}
-          snapshotDiffResult={snapshotDiffResult}
-          displayTools={isSplitMode ? null : displayToolsInlineNode}
-          rightActions={renderSchedulePageHeaderRightActions()}
-        />
-                          {mainLayout}
-                        </div>
-                  </div>
-                    </div>
-                  </MaybeProfiler>
-                }
-                paneB={<div ref={setRefPortalHost} className="h-full min-h-0" />}
-              />
-              </div>
-            </MaybeProfiler>
           )
 
           return (
-            <>
-              {splitLayout}
-              {splitReferenceLayer}
-            </>
+            <ScheduleSplitLayout
+              MaybeProfiler={MaybeProfiler}
+              showReference={showReference}
+              isRefHidden={isRefHidden}
+              onToggleRefHidden={() => setRefHidden(!isRefHidden)}
+              splitDirection={splitDirection}
+              splitRatio={splitRatio}
+              isSplitSwapped={isSplitSwapped}
+              onSplitSwap={toggleSplitSwap}
+              onSplitRatioCommit={commitSplitRatio}
+              setRefPortalHost={setRefPortalHost}
+              referenceDateForPane={refSelectedDateForUi}
+              datesWithData={datesWithData}
+              holidays={holidays}
+              onRevealReferencePane={revealReferencePane}
+              isSplitMode={isSplitMode}
+              mainHeader={mainHeader}
+              splitHeaderBar={splitHeaderBar}
+              mainLayout={mainLayout}
+              splitReferenceLayer={splitReferenceLayer}
+            />
           )
         })()}
         </div>

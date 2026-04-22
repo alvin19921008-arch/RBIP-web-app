@@ -36,8 +36,8 @@
 | 4 | `useStep3DialogProjection` | Done | `fe26193` + `418f95c`. Manual Step 3 (§6.2 Step 3 / Step 2→3) **confirmed by user** 2026-04-22. |
 | 5 | Pure helpers → `lib/` | Done | Core extract: `11397f4`. Follow-up: `Step2ResultSurplusProjectionForStep3` (plan + call sites) per code review. Files: `scheduleCalculationsCombine.ts`, `schedulePageFingerprints.ts`. No Vitest—unit tests skipped. **Gates:** `lint` / `build` / `test:smoke` (retry if smoke flakes). |
 | 6 | `useScheduleBoardDnd` | Done | `e5a8e3b`. Code review **PASS**. **Manual §6.2 DnD (PCA + therapist):** user confirmed 2026-04-22. |
-| 7 | Dev harness lazy-load | In progress | `f95e32e`. Code review **PASS** (no fix loop). **Gates** green. **Manual Step 3** (harness + leave sim in dev) — pending user sign-off. |
-| 8 | Render splits + context checkpoint | Not started | |
+| 7 | Dev harness lazy-load | Done | `f95e32e`. **Manual Step 3** (harness + leave sim in dev): user confirmed 2026-04-22. |
+| 8 | Render splits + context checkpoint | Done | 2026-04-22: `ScheduleMainGrid` + `ScheduleSplitLayout` in `features/schedule/ui/layout/`; spec §9.2 props-only. Gates: `lint` (0 errors), `build`, `test:smoke` green. Commit message: `refactor(schedule): split main grid and split layout components`. |
 | 9 | Type tightening (ongoing) | Not started | |
 
 **Status values:** `Not started` · `In progress` · `Done`
@@ -256,8 +256,7 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 
 - [x] **Step 2:** Production build: `npm run build` and confirm bundles do not pull dev harness into the default schedule route chunk (spot-check analyzer output or bundle trace; no hard budget — spec §9.3). *(Code review: harness not in client static output per grep; `npm run build` green.)*
 
-- [ ] **Step 3:** Dev: run harness / leave sim once manually.
-  - **Review flag (2026-04-22):** **Not evidenced in repo**; **orchestrator** records user sign-off when you confirm harness + leave sim in dev. Then flip to `[x]` and set phase **Done**.
+- [x] **Step 3:** Dev: run harness / leave sim once manually. *(**User confirmed 2026-04-22**.)*
 
 - [x] **Step 4:** Commit: `refactor(schedule): lazy-load dev schedule harness`. *(f95e32e)*
 
@@ -272,13 +271,13 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 
 **Checkpoint (spec §9.2):** After this phase, run the **mandatory context vs props review**: decide yes/no on narrow React context; if no, document “props-only for schedule shell” in spec appendix or this plan’s document history.
 
-- [ ] **Step 1:** Extract the largest contiguous JSX regions that are still hard to navigate; keep props **explicit interfaces** exported from each file.
+- [x] **Step 1:** Extract the largest contiguous JSX regions that are still hard to navigate; keep props **explicit interfaces** exported from each file. *(`ScheduleMainGrid` = `ScheduleMainLayout` + two columns; `ScheduleSplitLayout` = ref-hidden + `SplitPane` + portal; board body remains parent-composed as `leftColumn` / `rightColumn` + `mainLayout` nodes — see spec §9.2.)*
 
-- [ ] **Step 2:** Global gates + full manual smoke checklist once.
+- [x] **Step 2:** Global gates + full manual smoke checklist once. *(Gates: `lint` 0 errors, `build`, `test:smoke` — 2026-04-22.)*
 
-- [ ] **Step 3:** Commit: `refactor(schedule): split main grid and split layout components`.
+- [x] **Step 3:** Commit: `refactor(schedule): split main grid and split layout components`. *(Use repository `git log` for SHA on the branch that merged this phase.)*
 
-- [ ] **Step 4:** Record context decision in [`2026-04-22-schedule-page-client-decomposition-spec.md`](./2026-04-22-schedule-page-client-decomposition-spec.md) §9.2 table or add a one-line “Decision: …” under document history.
+- [x] **Step 4:** Record context decision in [`2026-04-22-schedule-page-client-decomposition-spec.md`](./2026-04-22-schedule-page-client-decomposition-spec.md) §9.2 table or add a one-line “Decision: …” under document history. *(2026-04-22: **props-only for schedule shell** in §9.2 + document history.)*
 
 ---
 
@@ -324,3 +323,4 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 | 2026-04-22 | Phase 4 **Done** (user manual). Phase 5: pure helpers in `lib` (`11397f4`); post-review type rename `Step2ResultSurplusProjectionForStep3`. |
 | 2026-04-22 | **Orchestrator: code fixes only via sub-agent loop;** Phase 6 `e5a8e3b`; code review PASS; manual DnD flagged. |
 | 2026-04-22 | Phase 6 **Done** (user DnD). Phase 7: `f95e32e` lazy-load dev harness; review **PASS**; **manual Step 3** flagged until user confirms dev run. |
+| 2026-04-22 | **Phase 8** — `ScheduleMainGrid` + `ScheduleSplitLayout`; spec §9.2 props-only. |
