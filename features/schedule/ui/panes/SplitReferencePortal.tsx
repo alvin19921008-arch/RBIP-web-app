@@ -5,7 +5,8 @@ import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
 import type { createClientComponentClient } from '@/lib/supabase/client'
 import type { Team, Staff } from '@/types/staff'
-import type { PCAAllocation, ScheduleCalculations } from '@/types/schedule'
+import type { PCAAllocation, ScheduleCalculations, TherapistAllocation } from '@/types/schedule'
+import type { DisplayPcaAllocation } from '@/lib/features/schedule/pcaDisplayProjection'
 import { combineScheduleCalculations } from '@/lib/features/schedule/scheduleCalculationsCombine'
 import { formatDateDDMMYYYY, formatDateForInput, getWeekday, parseDateFromInput } from '@/lib/features/schedule/date'
 import { buildDisplayPcaAllocationsByTeam } from '@/lib/features/schedule/pcaDisplayProjection'
@@ -123,8 +124,8 @@ export function SplitReferencePortal(props: {
     () =>
       resolveTeamMergeConfig({
         teamSettingsRows: props.liveTeamSettingsRows,
-        snapshotMerge: (refScheduleState.baselineSnapshot as any)?.teamMerge ?? null,
-        snapshotDisplayNames: (refScheduleState.baselineSnapshot as any)?.teamDisplayNames ?? null,
+        snapshotMerge: refScheduleState.baselineSnapshot?.teamMerge ?? null,
+        snapshotDisplayNames: refScheduleState.baselineSnapshot?.teamDisplayNames ?? null,
         hasBaselineSnapshot: !!refScheduleState.baselineSnapshot,
       }),
     [props.liveTeamSettingsRows, refScheduleState.baselineSnapshot]
@@ -153,7 +154,7 @@ export function SplitReferencePortal(props: {
     return out
   }, [refVisibleTeams, refEffectiveTeamMergeConfig.mergedInto])
   const refTherapistAllocationsForDisplay = useMemo(() => {
-    const out = createEmptyTeamRecordFactory<any[]>(() => [])
+    const out = createEmptyTeamRecordFactory<(TherapistAllocation & { staff: Staff })[]>(() => [])
     refVisibleTeams.forEach((mainTeam) => {
       const contributors = refContributorsByMain[mainTeam] || [mainTeam]
       out[mainTeam] = contributors.flatMap((team) => refScheduleState.therapistAllocations[team] || [])
@@ -165,7 +166,7 @@ export function SplitReferencePortal(props: {
       buildDisplayPcaAllocationsByTeam({
         selectedDate: refSelectedDate,
         staff: [...refScheduleState.staff, ...refScheduleState.bufferStaff],
-        staffOverrides: refScheduleState.staffOverrides as any,
+        staffOverrides: refScheduleState.staffOverrides,
         pcaAllocationsByTeam: refScheduleState.pcaAllocations as Record<Team, Array<PCAAllocation & { staff?: Staff }>>,
       }),
     [
@@ -177,7 +178,7 @@ export function SplitReferencePortal(props: {
     ]
   )
   const refPcaAllocationsForDisplay = useMemo(() => {
-    const out = createEmptyTeamRecordFactory<any[]>(() => [])
+    const out = createEmptyTeamRecordFactory<DisplayPcaAllocation[]>(() => [])
     refVisibleTeams.forEach((mainTeam) => {
       const contributors = refContributorsByMain[mainTeam] || [mainTeam]
       out[mainTeam] = contributors.flatMap((team) => refPcaDisplayAllocationsByTeam[team] || [])
@@ -296,19 +297,19 @@ export function SplitReferencePortal(props: {
           mode="reference"
           teams={refVisibleTeams}
           weekday={refWeekday}
-          sptAllocations={refScheduleState.sptAllocations as any}
-          specialPrograms={refScheduleState.specialPrograms as any}
-          therapistAllocationsByTeam={refTherapistAllocationsForDisplay as any}
-          pcaAllocationsByTeam={refPcaAllocationsForDisplay as any}
-          bedAllocations={refBedAllocationsForDisplay as any}
-          wards={refScheduleState.wards as any}
-          calculationsByTeam={refCalculationsForDisplay as any}
-          staff={refScheduleState.staff as any}
-          staffOverrides={refScheduleState.staffOverrides as any}
+          sptAllocations={refScheduleState.sptAllocations}
+          specialPrograms={refScheduleState.specialPrograms}
+          therapistAllocationsByTeam={refTherapistAllocationsForDisplay}
+          pcaAllocationsByTeam={refPcaAllocationsForDisplay}
+          bedAllocations={refBedAllocationsForDisplay}
+          wards={refScheduleState.wards}
+          calculationsByTeam={refCalculationsForDisplay}
+          staff={refScheduleState.staff}
+          staffOverrides={refScheduleState.staffOverrides}
           bedCountsOverridesByTeam={refBedCountsOverridesByTeamForDisplay}
-          bedRelievingNotesByToTeam={refBedRelievingNotesByToTeamForDisplay as any}
-          stepStatus={refScheduleState.stepStatus as any}
-          initializedSteps={refScheduleState.initializedSteps as any}
+          bedRelievingNotesByToTeam={refBedRelievingNotesByToTeamForDisplay}
+          stepStatus={refScheduleState.stepStatus}
+          initializedSteps={refScheduleState.initializedSteps}
         />
       )}
     </ReferenceSchedulePane>

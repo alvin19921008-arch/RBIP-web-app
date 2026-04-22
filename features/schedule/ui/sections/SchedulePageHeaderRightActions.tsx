@@ -13,6 +13,42 @@ import type { TimingReport } from '@/lib/utils/timing'
 const SCHEDULE_HEADER_DEV_TOOLTIP_PANEL_CLASS =
   'w-56 bg-popover text-popover-foreground border border-border shadow-lg rounded-md'
 
+/** Shapes of `TimingReport['meta']` for Copy/Save developer diagnostics (best-effort). */
+type CopyTimingServer = {
+  totalMs?: number
+  meta?: {
+    rpcUsed?: boolean
+    baselineBytes?: number
+    specialProgramsBytes?: number
+    rpcError?: { message?: string } | null
+  }
+  stages?: { name: string; ms?: number }[]
+}
+type SaveTimingMeta = {
+  rpcUsed?: boolean
+  rpcAttempted?: boolean
+  rpcProxyUsed?: boolean
+  rpcFallbackReason?: string
+  rpcErrorCode?: string
+  snapshotWritten?: boolean
+  snapshotBytes?: number
+  specialProgramsBytes?: number
+  rowCounts?: { therapist?: number; pca?: number; bed?: number; calc?: number }
+  payloadBytes?: { total?: number }
+  rpcServerDiagnostics?: {
+    timings?: {
+      total_ms?: number
+      therapist_ms?: number
+      pca_ms?: number
+      bed_ms?: number
+      calc_ms?: number
+      metadata_ms?: number
+    }
+  }
+  rpcProxyError?: string
+  rpcErrorMessage?: string
+}
+
 export type ScheduleCopyWizardLaunchConfig = {
   sourceDate: Date
   targetDate: Date | null
@@ -24,7 +60,7 @@ type AccessGate = { can: (featureId: FeatureId) => boolean }
 
 export type SchedulePageHeaderRightActionsProps = {
   userRole: 'developer' | 'admin' | 'user'
-  isViewingMode: boolean
+  isDisplayMode: boolean
   saving: boolean
   copying: boolean
   access: AccessGate
@@ -64,7 +100,7 @@ export type SchedulePageHeaderRightActionsProps = {
 /** Schedule toolbar: Leave Sim, Copy (+ diagnostics), Export, Save (Phase 2d). Help lives in the top nav. */
 export function SchedulePageHeaderRightActions({
   userRole,
-  isViewingMode,
+  isDisplayMode,
   saving,
   copying,
   access,
@@ -95,7 +131,7 @@ export function SchedulePageHeaderRightActions({
 }: SchedulePageHeaderRightActionsProps) {
   return (
     <>
-      {isViewingMode ? null : (
+      {isDisplayMode ? null : (
         <>
           {userRole === 'developer' ? (
             <Tooltip side="bottom" content="Developer-only: seeded leave simulation harness (generate/apply/replay + invariants).">
@@ -161,7 +197,7 @@ export function SchedulePageHeaderRightActions({
                                 </div>
                               )}
                               {(() => {
-                                const server = (lastCopyTiming.meta as any)?.server
+                                const server = (lastCopyTiming.meta as { server?: CopyTimingServer } | undefined)?.server
                                 if (!server) return null
                                 return (
                                   <div className="pt-1">
@@ -179,13 +215,17 @@ export function SchedulePageHeaderRightActions({
                                       {server?.meta?.rpcError ? (
                                         <span className="text-amber-700 dark:text-amber-400">
                                           {' '}
-                                          rpcError:{String((server.meta.rpcError as any)?.message || 'unknown')}
+                                          rpcError:
+                                          {String(
+                                            (server.meta?.rpcError as { message?: string } | null | undefined)?.message ||
+                                              'unknown'
+                                          )}
                                         </span>
                                       ) : null}
                                     </div>
                                     {Array.isArray(server.stages) && server.stages.length > 0 && (
                                       <div className="text-[11px] text-muted-foreground space-y-0.5">
-                                        {server.stages.map((s: any) => (
+                                        {server.stages.map((s) => (
                                           <div key={`copy-server-${s.name}`}>
                                             <span className="text-muted-foreground">{s.name}:</span> {Math.round(s.ms ?? 0)}ms
                                           </div>
@@ -311,7 +351,7 @@ export function SchedulePageHeaderRightActions({
                           <span className="text-muted-foreground">total:</span> {Math.round(lastSaveTiming.totalMs)}ms
                         </div>
                         {(() => {
-                          const meta = lastSaveTiming.meta as any
+                          const meta = (lastSaveTiming?.meta as SaveTimingMeta | undefined) ?? null
                           if (!meta) return null
                           return (
                             <>

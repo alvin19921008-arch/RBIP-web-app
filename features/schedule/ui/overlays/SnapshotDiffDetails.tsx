@@ -30,17 +30,26 @@ export function SnapshotDiffDetails(props: { result: SnapshotDiffResult }) {
     if (!trimmed || trimmed === '∅') return trimmed || '∅'
     if (trimmed === 'null') return 'Not set'
     try {
-      const parsed = JSON.parse(trimmed) as any
-      if (!parsed || typeof parsed !== 'object') return trimmed
-      const preferredSlots = Array.isArray(parsed.preferred_slots) ? parsed.preferred_slots.filter((n: any) => typeof n === 'number') : []
-      const preferredPcaIds = Array.isArray(parsed.preferred_pca_ids) ? parsed.preferred_pca_ids.filter((s: any) => typeof s === 'string') : []
+      const parsed: unknown = JSON.parse(trimmed)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return trimmed
+      const p = parsed as {
+        source?: unknown
+        updatedAt?: unknown
+        preferred_slots?: unknown
+        preferred_pca_ids?: unknown
+        gym_schedule?: unknown
+        avoid_gym_schedule?: unknown
+        floor_pca_selection?: unknown
+      }
+      const preferredSlots = Array.isArray(p.preferred_slots) ? p.preferred_slots.filter((n): n is number => typeof n === 'number') : []
+      const preferredPcaIds = Array.isArray(p.preferred_pca_ids) ? p.preferred_pca_ids.filter((s): s is string => typeof s === 'string') : []
       const lines = [
-        `Source: ${prettyMergeSource(parsed.source)}`,
-        `Updated at: ${parsed.updatedAt ? String(parsed.updatedAt) : 'Not set'}`,
+        `Source: ${prettyMergeSource(p.source)}`,
+        `Updated at: ${p.updatedAt ? String(p.updatedAt) : 'Not set'}`,
         `Preferred slots: ${preferredSlots.length > 0 ? preferredSlots.join(', ') : 'None'}`,
-        `Gym slot: ${typeof parsed.gym_schedule === 'number' ? parsed.gym_schedule : 'None'}`,
-        `Avoid gym schedule: ${toBoolLabel(parsed.avoid_gym_schedule)}`,
-        `Floor: ${parsed.floor_pca_selection ? String(parsed.floor_pca_selection) : 'None'}`,
+        `Gym slot: ${typeof p.gym_schedule === 'number' ? p.gym_schedule : 'None'}`,
+        `Avoid gym schedule: ${toBoolLabel(p.avoid_gym_schedule)}`,
+        `Floor: ${p.floor_pca_selection ? String(p.floor_pca_selection) : 'None'}`,
         `Preferred non-floating PCA: ${preferredPcaIds.length > 0 ? preferredPcaIds.map((id: string) => resolveStaffName(id)).join(', ') : 'None'}`,
       ]
       return lines.join('\n')

@@ -20,6 +20,41 @@ type PerfStat = {
   lastPhase: 'mount' | 'update' | 'nested-update'
 }
 
+/** `TimingReport['meta']` in loadScheduleForDate diagnostics (best-effort, display-only). */
+type LoadTimingDisplayMeta = {
+  dateStr?: string
+  pending?: boolean
+  snapshotBytes?: number
+  nav?: NavTiming
+  rpcUsed?: boolean
+  batchedQueriesUsed?: boolean
+  baselineSnapshotUsed?: boolean
+  cacheHit?: boolean
+  cacheLayer?: string
+  cacheSource?: string
+  cacheSize?: number
+  loadFrom?: string
+  draftHit?: boolean
+  draftApplied?: boolean
+  draftIdentityMatched?: boolean
+  stateGuardVersion?: string | number
+  prefetchOnly?: boolean
+  stateApplyAllowed?: boolean
+  scheduleId?: string
+  scheduleUpdatedAt?: string
+  cacheEpoch?: number
+  cacheEntryEpoch?: number
+  calculationsSource?: string
+  counts?: {
+    therapistAllocs?: number
+    pcaAllocs?: number
+    bedAllocs?: number
+    calculationsRows?: number
+  }
+  stages?: { name: string; ms?: number }[]
+  rpcServerMs?: Record<string, number>
+}
+
 export function ScheduleTitleWithLoadDiagnostics(props: {
   userRole?: 'developer' | 'admin' | 'user'
   showDiagnostics?: boolean
@@ -49,7 +84,7 @@ export function ScheduleTitleWithLoadDiagnostics(props: {
                   <span className="text-muted-foreground">total:</span> {Math.round(props.lastLoadTiming.totalMs)}ms
                 </div>
                 <LoadMetaBlock
-                  meta={(props.lastLoadTiming.meta as any) || {}}
+                  meta={(props.lastLoadTiming?.meta as LoadTimingDisplayMeta | undefined) ?? {}}
                   currentDateKey={props.currentDateKey}
                   navToScheduleTiming={props.navToScheduleTiming}
                   perfTick={props.perfTick}
@@ -81,19 +116,19 @@ export function ScheduleTitleWithLoadDiagnostics(props: {
 }
 
 function LoadMetaBlock(props: {
-  meta: any
+  meta: LoadTimingDisplayMeta
   currentDateKey?: string
   navToScheduleTiming: NavTiming | null
   perfTick: number
   perfStats: Record<string, PerfStat | undefined>
 }) {
-  const meta = props.meta || {}
+  const meta: LoadTimingDisplayMeta = props.meta || {}
   const timingDateKey = typeof meta.dateStr === 'string' ? meta.dateStr : null
   const currentDateKey = props.currentDateKey ?? null
   const isStale = !!(timingDateKey && currentDateKey && timingDateKey !== currentDateKey)
   const isPending = !!meta.pending
   const snapshotKb = typeof meta.snapshotBytes === 'number' ? Math.round(meta.snapshotBytes / 1024) : null
-  const nav = (meta.nav as NavTiming | undefined) ?? (props.navToScheduleTiming ?? undefined)
+  const nav = (meta.nav ?? props.navToScheduleTiming) ?? undefined
   const fmtDelta = (from: number, to: number) => `${Math.max(0, Math.round(to - from))}ms`
 
   return (
@@ -166,7 +201,7 @@ function LoadMetaBlock(props: {
         <div className="pt-1">
           <div className="font-medium text-foreground">loadScheduleForDate stages</div>
           <div className="space-y-0.5">
-            {meta.stages.slice(0, 12).map((s: any) => (
+            {meta.stages.slice(0, 12).map((s) => (
               <div key={`inner-${s.name}`}>
                 <span className="text-muted-foreground">{s.name}:</span> {Math.round(s.ms ?? 0)}ms
               </div>
@@ -180,9 +215,9 @@ function LoadMetaBlock(props: {
         <div className="pt-1">
           <div className="font-medium text-foreground">rpc server breakdown</div>
           <div className="space-y-0.5">
-            {Object.entries(meta.rpcServerMs as any).map(([k, v]) => (
+            {Object.entries(meta.rpcServerMs).map(([k, v]) => (
               <div key={`rpcms-${k}`}>
-                <span className="text-muted-foreground">{k}:</span> {Math.round((v as any) ?? 0)}ms
+                <span className="text-muted-foreground">{k}:</span> {Math.round((typeof v === 'number' ? v : 0) ?? 0)}ms
               </div>
             ))}
           </div>
@@ -231,7 +266,7 @@ function RenderPerfBlock(props: { perfTick: number; perfStats: Record<string, Pe
   ]
   const rows = ids
     .map((id) => ({ id, s: props.perfStats[id] }))
-    .filter((r) => !!r.s && (r.s as any).commits > 0) as Array<{ id: string; s: PerfStat }>
+    .filter((r): r is { id: string; s: PerfStat } => r.s != null && r.s.commits > 0)
 
   if (rows.length === 0) return null
 

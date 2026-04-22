@@ -3,10 +3,10 @@
 import { type ReactNode } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
-import { AlertCircle, Calendar, ArrowLeftRight, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
+import { AlertCircle, Calendar, ArrowLeftRight, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react'
 import type { Weekday } from '@/types/staff'
+import type { TimingReport } from '@/lib/utils/timing'
 import { Tooltip } from '@/components/ui/tooltip'
-import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
 import { formatDateDDMMYYYY, getWeekday } from '@/lib/features/schedule/date'
@@ -42,10 +42,26 @@ export function ScheduleHeaderBar(props: {
   /** When true, show cache status badge and clear cache action (access-settings gated, admin+dev by default) */
   showCacheStatus?: boolean
   currentDateKey?: string
-  lastLoadTiming: any
-  navToScheduleTiming: any
+  lastLoadTiming: TimingReport | null
+  navToScheduleTiming: {
+    targetHref: string
+    startMs: number
+    loadingShownMs: number | null
+    mountedMs: number | null
+    gridReadyMs: number
+  } | null
   perfTick: number
-  perfStats: any
+  perfStats: Record<
+    string,
+    | {
+        commits: number
+        totalActualMs: number
+        maxActualMs: number
+        lastActualMs: number
+        lastPhase: 'mount' | 'update' | 'nested-update'
+      }
+    | undefined
+  >
 
   // Date controls
   selectedDate: Date
@@ -72,11 +88,6 @@ export function ScheduleHeaderBar(props: {
 
   onClearCache?: () => void
 
-  // Steps toggle (Show/Hide Steps)
-  isViewingMode: boolean
-  stepIndicatorCollapsed: boolean
-  onToggleStepIndicatorCollapsed: () => void
-
   // Right-side actions slot (copy/save/etc.)
   rightActions: ReactNode
 }) {
@@ -89,7 +100,25 @@ export function ScheduleHeaderBar(props: {
   const displayDate = props.selectedDateKey ? formatDateKeyDDMMYYYY(props.selectedDateKey) : formatDateDDMMYYYY(props.selectedDate)
 
   const shouldShowDevCache = props.showCacheStatus === true || props.showLoadDiagnostics === true
-  const devMeta: any = (props.lastLoadTiming as any)?.meta || {}
+  type DevLoadMeta = {
+    dateStr?: string
+    pending?: boolean
+    cacheHit?: boolean
+    cacheLayer?: string
+    cacheSource?: string
+    cacheEntryAt?: number
+    loadFrom?: string
+    draftHit?: boolean
+    draftApplied?: boolean
+    draftIdentityMatched?: boolean
+    draftIdentityMismatchReason?: string
+    scheduleId?: string
+    scheduleUpdatedAt?: string
+    cacheEpoch?: number
+    cacheEntryEpoch?: number
+    draftDirtyReasons?: string[]
+  }
+  const devMeta: DevLoadMeta = (props.lastLoadTiming as { meta?: DevLoadMeta } | null | undefined)?.meta ?? {}
   const currentKey = props.selectedDateKey ?? props.currentDateKey ?? null
   const metaKey = typeof devMeta?.dateStr === 'string' ? devMeta.dateStr : null
   const isDevMetaStale = !!(metaKey && currentKey && metaKey !== currentKey)
@@ -406,26 +435,6 @@ export function ScheduleHeaderBar(props: {
 
           <div className="flex flex-wrap items-center justify-end gap-2 w-full sm:w-auto sm:ml-auto">
             {props.displayTools ? <div className="shrink-0">{props.displayTools}</div> : null}
-            {props.isViewingMode ? null : (
-              <div className="vt-mode-anim flex justify-end">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={props.onToggleStepIndicatorCollapsed}
-                  className="h-6 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  {props.stepIndicatorCollapsed ? (
-                    <>
-                      Show Steps <ChevronDown className="ml-1 h-3 w-3" />
-                    </>
-                  ) : (
-                    <>
-                      Hide Steps <ChevronUp className="ml-1 h-3 w-3" />
-                    </>
-                  )}
-                </Button>
-              </div>
-            )}
           </div>
         </div>
       </div>

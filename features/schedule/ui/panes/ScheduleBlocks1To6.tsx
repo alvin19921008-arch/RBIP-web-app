@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import type { Team, Weekday } from '@/types/staff'
+import type { Team, Weekday, LeaveType } from '@/types/staff'
 import type { SpecialProgram, SPTAllocation } from '@/types/allocation'
 import type { Step3FlowChoice } from '@/lib/features/schedule/step3DialogFlow'
 import type {
@@ -10,6 +10,7 @@ import type {
   BedRelievingNotesForToTeam,
   PCAAllocation,
   ScheduleCalculations,
+  StepStatus,
   TherapistAllocation,
 } from '@/types/schedule'
 import type { Staff } from '@/types/staff'
@@ -33,7 +34,7 @@ import { Info } from 'lucide-react'
 type StaffOverrides = Record<
   string,
   {
-    leaveType?: any
+    leaveType?: LeaveType | null
     fteRemaining?: number
     fteSubtraction?: number
     availableSlots?: number[]
@@ -70,7 +71,7 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
   onSaveBedRelievingNotesForToTeam?: (toTeam: Team, notes: BedRelievingNotesForToTeam) => void
 
   // For PCA block diagnostics/styling (optional)
-  stepStatus?: Record<string, 'pending' | 'completed' | 'modified'>
+  stepStatus?: Record<string, StepStatus>
   initializedSteps?: Set<string>
   step3FlowChoice?: Step3FlowChoice | null
 }) {
@@ -128,7 +129,7 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
   }, [bedAllocations, readOnly, stepStatus])
 
   const staffOnLeaveByTeam = React.useMemo(() => {
-    const byTeam: Record<Team, Array<Staff & { leave_type: any; fteRemaining?: number }>> = {
+    const byTeam: Record<Team, Array<Staff & { leave_type: LeaveType | null; fteRemaining?: number }>> = {
       FO: [],
       SMM: [],
       SFM: [],
@@ -143,21 +144,21 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
       const therapistLeaves = (therapistAllocationsByTeam[team] ?? [])
         .filter((alloc) => {
           const override = staffOverrides?.[alloc.staff?.id]
-          const effectiveLeaveType =
-            override?.leaveType !== undefined ? override.leaveType : (alloc.leave_type as any)
+          const effectiveLeaveType: LeaveType | null =
+            override?.leaveType !== undefined ? override.leaveType : alloc.leave_type
           const hasLeaveType = effectiveLeaveType !== null && effectiveLeaveType !== undefined
-          const isTrulyOnLeave = hasLeaveType && !isOnDutyLeaveType(effectiveLeaveType as any)
+          const isTrulyOnLeave = hasLeaveType && !isOnDutyLeaveType(effectiveLeaveType)
           return isTrulyOnLeave
         })
         .map((alloc) => {
           const override = staffOverrides?.[alloc.staff?.id]
-          const effectiveLeaveType =
-            override?.leaveType !== undefined ? override.leaveType : (alloc.leave_type as any)
+          const effectiveLeaveType: LeaveType | null =
+            override?.leaveType !== undefined ? override.leaveType : alloc.leave_type
           const fteRemaining =
             override?.fteRemaining !== undefined ? override.fteRemaining : (alloc.fte_therapist || 0)
           return {
-            ...(alloc.staff as any),
-            leave_type: effectiveLeaveType as any,
+            ...alloc.staff,
+            leave_type: effectiveLeaveType,
             fteRemaining,
           }
         })
@@ -167,14 +168,14 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
           const staffMember = staff.find((s) => s.id === staffId)
           const isTherapist = !!staffMember && ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)
           const hasLeaveType = override.leaveType !== null && override.leaveType !== undefined
-          const isTrulyOnLeave = hasLeaveType && !isOnDutyLeaveType(override.leaveType as any)
+          const isTrulyOnLeave = hasLeaveType && !isOnDutyLeaveType(override.leaveType)
           return isTherapist && staffMember!.team === team && isTrulyOnLeave
         })
         .map(([staffId, override]) => {
           const staffMember = staff.find((s) => s.id === staffId)!
           return {
-            ...(staffMember as any),
-            leave_type: override.leaveType as any,
+            ...staffMember,
+            leave_type: override.leaveType ?? null,
             fteRemaining: override.fteRemaining,
           }
         })
@@ -202,10 +203,10 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
                 team={team}
                 allocations={therapistAllocationsByTeam[team] ?? []}
                 specialPrograms={specialPrograms}
-                weekday={weekday as any}
+                weekday={weekday}
                 currentStep={readOnly ? 'review' : undefined}
                 // no edit handlers in this wrapper
-                sptWeekdayByStaffId={sptWeekdayByStaffId as any}
+                sptWeekdayByStaffId={sptWeekdayByStaffId}
                 readOnly={readOnly}
                 droppableIdPrefix={readOnly ? 'ref-' : undefined}
               />
@@ -229,12 +230,12 @@ export const ScheduleBlocks1To6 = React.memo(function ScheduleBlocks1To6(props: 
                 averagePCAPerTeam={calculationsByTeam[team]?.average_pca_per_team}
                 baseAveragePCAPerTeam={calculationsByTeam[team]?.base_average_pca_per_team}
                 specialPrograms={specialPrograms}
-                allPCAAllocations={allPCAAllocationsFlat as any}
-                staffOverrides={staffOverrides as any}
+                allPCAAllocations={allPCAAllocationsFlat}
+                staffOverrides={staffOverrides}
                 currentStep={readOnly ? 'review' : undefined}
                 step2Initialized={true}
                 initializedSteps={initializedSteps}
-                weekday={weekday as any}
+                weekday={weekday}
                 step3FlowChoice={step3FlowChoice}
                 readOnly={readOnly}
                 droppableIdPrefix={readOnly ? 'ref-' : undefined}

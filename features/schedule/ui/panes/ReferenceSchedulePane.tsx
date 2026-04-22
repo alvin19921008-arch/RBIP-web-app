@@ -135,7 +135,7 @@ export function ReferenceSchedulePane(props: {
           <div className="flex items-center gap-2 flex-shrink-0">
             <Tooltip side="bottom" content="Pick reference date">
               <Button
-                ref={calendarButtonRef as any}
+                ref={calendarButtonRef}
                 type="button"
                 variant="outline"
                 size="sm"

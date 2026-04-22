@@ -18,6 +18,7 @@ import type {
   AllocationTracker,
   WorkflowState,
   ScheduleStepId,
+  StepStatus,
   BaselineSnapshot,
   SnapshotHealthReport,
 } from '@/types/schedule'
@@ -268,6 +269,8 @@ import {
   type PcaDragState,
   type TherapistDragState,
 } from '@/lib/features/schedule/dnd/dragState'
+import type { ScheduleWardRow } from '@/lib/features/schedule/controller/scheduleControllerTypes'
+import type { WardForScheduleBedMath } from '@/lib/features/schedule/bedMath'
 import {
   fetchSptAllocationsWithFallback,
   fetchStaffRowsWithFallback,
@@ -576,7 +579,7 @@ function SchedulePageContent() {
     typeof pcaAllocations,
     PcaOptimisticAction
   >(pcaAllocations, (currentAllocations, action) =>
-    applyPcaOptimisticAction(currentAllocations as any, action) as typeof pcaAllocations
+    applyPcaOptimisticAction(currentAllocations, action) as typeof pcaAllocations
   )
   const pcaAllocationsForUi = optimisticPcaAllocations
 
@@ -619,7 +622,7 @@ function SchedulePageContent() {
   const latestStaffOverridesRef = useRef(staffOverrides)
   const latestTherapistAllocationsRef = useRef(therapistAllocations)
   const latestPcaAllocationsRef = useRef(pcaAllocations)
-  const latestStepStatusRef = useRef(stepStatus)
+  const latestStepStatusRef = useRef<Record<string, StepStatus>>(stepStatus)
   const latestStep3DependencyFingerprintRef = useRef<string>('')
   const latestStep4DependencyFingerprintRef = useRef<string>('')
   const step2FingerprintBaselineRef = useRef<{ step3: string; step4: string } | null>(null)
@@ -662,7 +665,7 @@ function SchedulePageContent() {
       if (!args.step3Changed && !args.step4Changed) return
       setStepStatus((prev) => {
         let changed = false
-        const next = { ...(prev as any) }
+        const next: Record<string, StepStatus> = { ...prev }
         if (args.step3Changed && next['floating-pca'] === 'completed') {
           next['floating-pca'] = 'outdated'
           changed = true
@@ -733,7 +736,7 @@ function SchedulePageContent() {
       explicitStep4Change: !!finalizeContext.explicitStep4Change,
     })
 
-    const status = latestStepStatusRef.current as any
+    const status = latestStepStatusRef.current
     const step3Outdated = step3Changed && status?.['floating-pca'] === 'completed'
     const step4Outdated = step4Changed && status?.['bed-relieving'] === 'completed'
 
@@ -769,8 +772,8 @@ function SchedulePageContent() {
     () =>
       resolveTeamMergeConfig({
         teamSettingsRows,
-        snapshotMerge: (baselineSnapshot as any)?.teamMerge ?? null,
-        snapshotDisplayNames: (baselineSnapshot as any)?.teamDisplayNames ?? null,
+        snapshotMerge: baselineSnapshot?.teamMerge ?? null,
+        snapshotDisplayNames: baselineSnapshot?.teamDisplayNames ?? null,
         hasBaselineSnapshot: !!baselineSnapshot,
       }),
     [teamSettingsRows, baselineSnapshot]
@@ -821,7 +824,7 @@ function SchedulePageContent() {
   }
 
   const isScheduleCompletedToStep4 = useCallback((workflowState: WorkflowState | null | undefined) => {
-    const completed = (workflowState?.completedSteps || []) as any[]
+    const completed = workflowState?.completedSteps ?? []
     if (!Array.isArray(completed)) return false
     return completed.includes('bed-relieving') || completed.includes('review')
   }, [])
@@ -894,8 +897,9 @@ function SchedulePageContent() {
               .select('id,staff_overrides')
               .eq('date', stored)
               .maybeSingle()
-            const storedExists = !!(storedRes.data as any)?.id
-            const storedIsMeaningful = hasMeaningfulStep1Overrides((storedRes.data as any)?.staff_overrides)
+            const storedRow = storedRes.data
+            const storedExists = typeof storedRow?.id === 'string' && storedRow.id.length > 0
+            const storedIsMeaningful = hasMeaningfulStep1Overrides(storedRow?.staff_overrides)
 
             if (storedExists && storedIsMeaningful) {
               const parsed = parseDateFromInput(stored)
@@ -926,9 +930,10 @@ function SchedulePageContent() {
           .eq('date', todayKey)
           .maybeSingle()
 
-        const todayScheduleId = (todayRes.data as any)?.id as string | undefined
-        const todayWorkflow = (todayRes.data as any)?.workflow_state as WorkflowState | null | undefined
-        const todayOverrides = (todayRes.data as any)?.staff_overrides
+        const todayRow = todayRes.data
+        const todayScheduleId = typeof todayRow?.id === 'string' ? todayRow.id : undefined
+        const todayWorkflow = (todayRow?.workflow_state as WorkflowState | null | undefined) ?? null
+        const todayOverrides = todayRow?.staff_overrides
 
         const scheduleHasAnyAllocations = async (scheduleId: string): Promise<boolean> => {
           try {
@@ -939,9 +944,7 @@ function SchedulePageContent() {
             ])
             if (tRes.error || pRes.error || bRes.error) return true // be conservative: keep today on errors
             return (
-              (tRes.data && (tRes.data as any[]).length > 0) ||
-              (pRes.data && (pRes.data as any[]).length > 0) ||
-              (bRes.data && (bRes.data as any[]).length > 0)
+              ((tRes.data?.length ?? 0) > 0) || ((pRes.data?.length ?? 0) > 0) || ((bRes.data?.length ?? 0) > 0)
             )
           } catch {
             return true
@@ -2178,7 +2181,7 @@ function SchedulePageContent() {
           .select('role')
           .eq('id', userId)
           .maybeSingle()
-        const raw = (profile as any)?.role
+        const raw = profile?.role
         const role: 'developer' | 'admin' | 'user' =
           raw === 'developer' ? 'developer' : raw === 'admin' ? 'admin' : raw === 'user' || raw === 'regular' ? 'user' : 'user'
         if (!cancelled) setUserRole(role)
@@ -2202,10 +2205,10 @@ function SchedulePageContent() {
     const cached = getCachedSchedule(dateStr)
     const canSkipInitialOverlay =
       !!cached &&
-      ((cached as any).baselineSnapshot?.staff?.length > 0 ||
-        ((cached as any).therapistAllocs?.length ?? 0) > 0 ||
-        ((cached as any).pcaAllocs?.length ?? 0) > 0 ||
-        ((cached as any).bedAllocs?.length ?? 0) > 0)
+      ((Array.isArray(cached.baselineSnapshot?.staff) && cached.baselineSnapshot.staff.length > 0) ||
+        (cached.therapistAllocs?.length ?? 0) > 0 ||
+        (cached.pcaAllocs?.length ?? 0) > 0 ||
+        (cached.bedAllocs?.length ?? 0) > 0)
 
     if (canSkipInitialOverlay) {
       setGridLoading(false)
@@ -2303,9 +2306,9 @@ function SchedulePageContent() {
             gridReadyMs,
           }
           setNavToScheduleTiming(navMeta)
-          setLastLoadTiming(prev => {
+          setLastLoadTiming((prev) => {
             if (!prev) return prev
-            const metaPrev = (prev.meta as any) || {}
+            const metaPrev: Record<string, unknown> = { ...(prev.meta ?? {}) }
             return { ...prev, meta: { ...metaPrev, nav: navMeta } }
           })
         }
@@ -2321,10 +2324,10 @@ function SchedulePageContent() {
   // If we captured nav timing before lastLoadTiming was available, merge it in once load timing exists.
   useEffect(() => {
     if (!navToScheduleTiming) return
-    setLastLoadTiming(prev => {
+    setLastLoadTiming((prev) => {
       if (!prev) return prev
-      const metaPrev = (prev.meta as any) || {}
-      const existing = metaPrev.nav as any
+      const metaPrev: Record<string, unknown> = { ...(prev.meta ?? {}) }
+      const existing = metaPrev['nav'] as { startMs?: number } | undefined
       if (existing && typeof existing.startMs === 'number') return prev
       return { ...prev, meta: { ...metaPrev, nav: navToScheduleTiming } }
     })
@@ -2334,14 +2337,14 @@ function SchedulePageContent() {
     // Immediately reflect the *current* selected date in the diagnostics tooltip to avoid a
     // transient "stale" display while the async load for this date is still in-flight.
     setLastLoadTiming((prev) => {
-      const prevMeta: any = (prev as any)?.meta || {}
-      if (typeof prevMeta?.dateStr === 'string' && prevMeta.dateStr === dateStr && !prevMeta.pending) {
+      const prevMeta: Record<string, unknown> = { ...((prev?.meta as Record<string, unknown> | undefined) ?? {}) }
+      if (typeof prevMeta['dateStr'] === 'string' && prevMeta['dateStr'] === dateStr && !prevMeta['pending']) {
         return prev
       }
 
       const cachedNow = !!getCachedSchedule(dateStr)
       const draftNow = hasDraftSchedule(dateStr)
-      const pending: any = {
+      const pending: TimingReport = {
         at: new Date().toISOString(),
         totalMs: 0,
         stages: [],
@@ -2372,7 +2375,7 @@ function SchedulePageContent() {
     setLastLoadTiming(
       createTimingCollector().finalize({
         dateStr,
-        error: (error as any)?.message || String(error),
+        error: error instanceof Error ? error.message : String(error),
       })
     )
   }, [])
@@ -2394,17 +2397,18 @@ function SchedulePageContent() {
   useEffect(() => {
     if (gridLoading) return
     if (!deferBelowFold) return
-    const w = window as any
     let cancelled = false
     const run = () => {
       if (cancelled) return
       setDeferBelowFold(false)
     }
     const handle =
-      typeof w.requestIdleCallback === 'function' ? w.requestIdleCallback(run, { timeout: 750 }) : window.setTimeout(run, 150)
+      typeof window.requestIdleCallback === 'function'
+        ? window.requestIdleCallback(run, { timeout: 750 })
+        : window.setTimeout(run, 150)
     return () => {
       cancelled = true
-      if (typeof w.cancelIdleCallback === 'function') w.cancelIdleCallback(handle)
+      if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(handle as number)
       else window.clearTimeout(handle)
     }
   }, [deferBelowFold, gridLoading])
@@ -2466,8 +2470,8 @@ function SchedulePageContent() {
           return
         }
 
-        const schedules = (scheduleData || []) as any[]
-        const scheduleIds = schedules.map(s => s.id).filter(Boolean)
+        const schedules = scheduleData ?? []
+        const scheduleIds = schedules.map((s) => s.id).filter(Boolean)
 
         // If there are no schedules at all, clear dots.
         if (scheduleIds.length === 0) {
@@ -2493,9 +2497,15 @@ function SchedulePageContent() {
             supabase.from('schedule_pca_allocations').select('schedule_id').in('schedule_id', ids),
             supabase.from('schedule_bed_allocations').select('schedule_id').in('schedule_id', ids),
           ])
-          ;(therapistRes.data || []).forEach((r: any) => r?.schedule_id && hasTherapist.add(r.schedule_id))
-          ;(pcaRes.data || []).forEach((r: any) => r?.schedule_id && hasPca.add(r.schedule_id))
-          ;(bedRes.data || []).forEach((r: any) => r?.schedule_id && hasBed.add(r.schedule_id))
+          ;(therapistRes.data || []).forEach((r) => {
+            if (r?.schedule_id) hasTherapist.add(r.schedule_id)
+          })
+          ;(pcaRes.data || []).forEach((r) => {
+            if (r?.schedule_id) hasPca.add(r.schedule_id)
+          })
+          ;(bedRes.data || []).forEach((r) => {
+            if (r?.schedule_id) hasBed.add(r.schedule_id)
+          })
         }
 
         const dotDates = schedules
@@ -2556,12 +2566,11 @@ function SchedulePageContent() {
       loadDatesWithData().catch(() => {})
     }
 
-    const w = window as any
-    if (typeof w?.requestIdleCallback === 'function') {
-      const id = w.requestIdleCallback(run, { timeout: 1200 })
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(run, { timeout: 1200 })
       return () => {
         cancelled = true
-        if (typeof w?.cancelIdleCallback === 'function') w.cancelIdleCallback(id)
+        if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(id)
       }
     }
 
@@ -2593,7 +2602,6 @@ function SchedulePageContent() {
           if (adjacentSchedulePrefetchedDatesRef.current.has(dateKey)) return
 
           // Already cached → nothing to do.
-          const beforeCacheSize = getCacheSize()
           const alreadyCached = getCachedSchedule(dateKey)
           if (alreadyCached) {
             adjacentSchedulePrefetchedDatesRef.current.add(dateKey)
@@ -2601,8 +2609,8 @@ function SchedulePageContent() {
             // Surface updated cache size in the existing load diagnostics tooltip.
             setLastLoadTiming((prev) => {
               if (!prev) return prev
-              const metaPrev = (prev.meta as any) || {}
-            if (typeof metaPrev.dateStr === 'string' && metaPrev.dateStr !== baseKey) return prev
+              const metaPrev: Record<string, unknown> = { ...(prev.meta ?? {}) }
+              if (typeof metaPrev['dateStr'] === 'string' && metaPrev['dateStr'] !== baseKey) return prev
               return { ...prev, meta: { ...metaPrev, cacheSize: getCacheSize() } }
             })
             return
@@ -2616,8 +2624,8 @@ function SchedulePageContent() {
             .maybeSingle()
 
           if (schedErr || !schedRow?.id) return
-          const scheduleId = (schedRow as any).id as string
-          const rawStaffOverrides = (schedRow as any).staff_overrides
+          const scheduleId = schedRow.id
+          const rawStaffOverrides = schedRow.staff_overrides
 
           const step1Edits = hasMeaningfulStep1Overrides(rawStaffOverrides)
 
@@ -2640,9 +2648,9 @@ function SchedulePageContent() {
           // Surface updated cache size in the existing load diagnostics tooltip.
           setLastLoadTiming((prev) => {
             if (!prev) return prev
-            const metaPrev = (prev.meta as any) || {}
-            if (typeof metaPrev.dateStr === 'string' && metaPrev.dateStr !== baseKey) return prev
-            const nextMeta = {
+            const metaPrev: Record<string, unknown> = { ...(prev.meta ?? {}) }
+            if (typeof metaPrev['dateStr'] === 'string' && metaPrev['dateStr'] !== baseKey) return prev
+            const nextMeta: Record<string, unknown> = {
               ...metaPrev,
               cacheSize: getCacheSize(),
             }
@@ -2657,8 +2665,8 @@ function SchedulePageContent() {
         // Ensure the tooltip reflects the latest cache size even if we didn't prefetch (or hit cache short-circuits).
         setLastLoadTiming((prev) => {
           if (!prev) return prev
-          const metaPrev = (prev.meta as any) || {}
-          if (typeof metaPrev.dateStr === 'string' && metaPrev.dateStr !== baseKey) return prev
+          const metaPrev: Record<string, unknown> = { ...(prev.meta ?? {}) }
+          if (typeof metaPrev['dateStr'] === 'string' && metaPrev['dateStr'] !== baseKey) return prev
           return { ...prev, meta: { ...metaPrev, cacheSize: getCacheSize() } }
         })
       })()
@@ -2668,12 +2676,11 @@ function SchedulePageContent() {
         })
     }
 
-    const w = window as any
-    if (typeof w?.requestIdleCallback === 'function') {
-      const id = w.requestIdleCallback(run, { timeout: 1200 })
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(run, { timeout: 1200 })
       return () => {
         cancelled = true
-        if (typeof w?.cancelIdleCallback === 'function') w.cancelIdleCallback(id)
+        if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(id)
       }
     }
 
@@ -3157,7 +3164,7 @@ function SchedulePageContent() {
 
   const wardsForRecalculation = useMemo(() => {
     const mergedInto = effectiveTeamMergeConfig.mergedInto
-    return (wards || []).map((ward: any) => {
+    return (wards || []).map((ward: ScheduleWardRow) => {
       const rawAssignments = ((ward?.team_assignments as Partial<Record<Team, number>>) ?? {})
       const nextAssignments = createEmptyTeamRecord<number>(0)
       const nextPortions = createEmptyTeamRecord<string | undefined>(undefined)
@@ -3186,10 +3193,10 @@ function SchedulePageContent() {
   }, [wards, effectiveTeamMergeConfig.mergedInto])
 
   const wardsByTeam = useMemo(() => {
-    const byTeam = createEmptyTeamRecordFactory<any[]>(() => [])
+    const byTeam = createEmptyTeamRecordFactory<WardForScheduleBedMath[]>(() => [])
     for (const ward of wardsForRecalculation || []) {
       for (const team of recalculationTeams) {
-        if ((ward as any)?.team_assignments?.[team] > 0) {
+        if ((ward.team_assignments[team] ?? 0) > 0) {
           byTeam[team].push(ward)
         }
       }
@@ -3200,7 +3207,7 @@ function SchedulePageContent() {
   const designatedWardsByTeam = useMemo(() => {
     const byTeam = createEmptyTeamRecordFactory<string[]>(() => [])
     for (const team of recalculationTeams) {
-      byTeam[team] = (wardsByTeam[team] || []).map((ward: any) => formatWardLabel(ward as any, team))
+      byTeam[team] = (wardsByTeam[team] || []).map((ward) => formatWardLabel(ward, team))
     }
     return byTeam
   }, [wardsByTeam, recalculationTeams])
@@ -3328,7 +3335,7 @@ function SchedulePageContent() {
 
     const { bedsDesignatedByTeam, totalBedsEffectiveAllTeams } = computeBedsDesignatedByTeam({
       teams: recalculationTeams,
-      wards: wardsForRecalculation as any,
+      wards: wardsForRecalculation,
       bedCountsOverridesByTeam,
     })
     const { bedsForRelieving, overallBedsPerPT } = computeBedsForRelieving({
@@ -3528,7 +3535,7 @@ function SchedulePageContent() {
 
     const { totalBedsEffectiveAllTeams } = computeBedsDesignatedByTeam({
       teams: recalculationTeams,
-      wards: wardsForRecalculation as any,
+      wards: wardsForRecalculation,
       bedCountsOverridesByTeam,
     })
     if (!(totalBedsEffectiveAllTeams > 0)) return
@@ -3578,7 +3585,7 @@ function SchedulePageContent() {
       .reduce((sum, s) => {
         const overrideFTE = staffOverrides[s.id]?.fteRemaining
         const isBufferStaff = s.status === 'buffer'
-        const baseFTE = isBufferStaff && (s as any).buffer_fte !== undefined ? (s as any).buffer_fte : 1.0
+        const baseFTE = isBufferStaff && s.buffer_fte !== undefined ? s.buffer_fte : 1.0
         const isOnLeave = staffOverrides[s.id]?.leaveType && staffOverrides[s.id]?.fteRemaining === 0
         const currentFTE = overrideFTE !== undefined ? overrideFTE : isOnLeave ? 0 : baseFTE
         return sum + currentFTE
@@ -3599,7 +3606,7 @@ function SchedulePageContent() {
     // since DRM is taken out then added back to DRO.
     const expectedSum = effectiveTotalPCAForAvg + drmAddOnFte
     const observedSum = recalculationTeams.reduce(
-      (sum, team) => sum + ((calculations[team]?.average_pca_per_team as any) ?? 0),
+      (sum, team) => sum + (calculations[team]?.average_pca_per_team ?? 0),
       0
     )
 
@@ -3674,7 +3681,7 @@ function SchedulePageContent() {
 
     const { bedsDesignatedByTeam, totalBedsEffectiveAllTeams } = computeBedsDesignatedByTeam({
       teams: recalculationTeams,
-      wards: wardsForRecalculation as any,
+      wards: wardsForRecalculation,
       bedCountsOverridesByTeam,
     })
     const { bedsForRelieving } = computeBedsForRelieving({
