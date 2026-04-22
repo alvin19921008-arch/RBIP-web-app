@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClientComponentClient } from '@/lib/supabase/client'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Eye, EyeOff } from 'lucide-react'
@@ -14,17 +15,23 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
+  /** Set only in `useEffect` so we never call `createBrowserClient` during SSR/prerender (build fails if env is missing, e.g. Vercel without Supabase vars). */
+  const [supabase, setSupabase] = useState<SupabaseClient | null>(null)
   const router = useRouter()
-  
+
   useEffect(() => {
     setMounted(true)
+    try {
+      setSupabase(createClientComponentClient())
+    } catch (e) {
+      console.error(e)
+      setError('Authentication is not configured (missing Supabase URL or key).')
+    }
   }, [])
-
-  const supabase = createClientComponentClient()
 
   // Check if already logged in
   useEffect(() => {
-    if (!mounted) return
+    if (!mounted || !supabase) return
     const checkSession = async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser()
@@ -35,7 +42,7 @@ export default function LoginPage() {
         console.error('Session check error:', err)
       }
     }
-    checkSession()
+    void checkSession()
   }, [router, supabase, mounted])
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -47,7 +54,12 @@ export default function LoginPage() {
       setError('Please enter your email/username and password')
       return
     }
-    
+
+    if (!supabase) {
+      setError('Authentication is not ready. Check Supabase environment variables.')
+      return
+    }
+
     setLoading(true)
     setError(null)
 
@@ -161,7 +173,7 @@ export default function LoginPage() {
                 {error}
               </div>
             )}
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button type="submit" className="w-full" disabled={loading || !supabase}>
               {loading ? 'Logging in...' : 'Login'}
             </Button>
             {process.env.NODE_ENV !== 'production' ? (
