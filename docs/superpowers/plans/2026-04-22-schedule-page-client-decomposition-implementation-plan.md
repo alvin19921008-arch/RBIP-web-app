@@ -35,8 +35,8 @@
 | 3 | `useSchedulePageQueryState` | Done | `8a42971`; manual Step 3 (URL toggles) **confirmed by user** 2026-04-22. |
 | 4 | `useStep3DialogProjection` | Done | `fe26193` + `418f95c`. Manual Step 3 (§6.2 Step 3 / Step 2→3) **confirmed by user** 2026-04-22. |
 | 5 | Pure helpers → `lib/` | Done | Core extract: `11397f4`. Follow-up: `Step2ResultSurplusProjectionForStep3` (plan + call sites) per code review. Files: `scheduleCalculationsCombine.ts`, `schedulePageFingerprints.ts`. No Vitest—unit tests skipped. **Gates:** `lint` / `build` / `test:smoke` (retry if smoke flakes). |
-| 6 | `useScheduleBoardDnd` | In progress | `e5a8e3b`. Code review **PASS** (no fix loop). **Gates** green. **Manual plan Step 2 (§6.2 DnD)** — pending user sign-off. |
-| 7 | Dev harness lazy-load | Not started | |
+| 6 | `useScheduleBoardDnd` | Done | `e5a8e3b`. Code review **PASS**. **Manual §6.2 DnD (PCA + therapist):** user confirmed 2026-04-22. |
+| 7 | Dev harness lazy-load | In progress | `f95e32e`. Code review **PASS** (no fix loop). **Gates** green. **Manual Step 3** (harness + leave sim in dev) — pending user sign-off. |
 | 8 | Render splits + context checkpoint | Not started | |
 | 9 | Type tightening (ongoing) | Not started | |
 
@@ -236,9 +236,7 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 
 - [x] **Step 1:** Extract `@dnd-kit` sensor setup and handler functions that reference `scheduleActions`, `queueOptimisticPcaAction`, drag overlay state. *(`e5a8e3b`; `useScheduleBoardDnd.ts`; `queueOptimisticPcaAction` remains in `performSlotTransfer` / `performSlotDiscard` on the page per review.)*
 
-- [ ] **Step 2:** Global gates + manual DnD: drag therapist/PCA as in spec §6.2 **DnD**.
-  - **Review flag (2026-04-22):** **Automated gates met** (orchestrator: `lint` / `build` / `test:smoke` exit 0). **Code review — PASS** (no fix sub-agent). **Manual** §6.2 DnD **not yet user-confirmed**; do not mark phase **Done** or flip this to `[x]` until sign-off.
-  - *Operator sign-off (when done):* …
+- [x] **Step 2:** Global gates + manual DnD: drag therapist/PCA as in spec §6.2 **DnD**. *(Gates green. **User confirmed 2026-04-22** — PCA + therapist DnD.)*
 
 - [x] **Step 3:** Commit: `refactor(schedule): extract useScheduleBoardDnd`. *(e5a8e3b)*
 
@@ -254,13 +252,14 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 
   with `dynamic(() => import(...), { ssr: false })` or `void import()` inside **dev-only** branches.
 
-- [ ] **Step 1:** Confirm every render path that uses these symbols is behind **developer role** or `process.env.NODE_ENV === 'development'` — match existing Profiler gating pattern.
+- [x] **Step 1:** Confirm every render path that uses these symbols is behind **developer role** or `process.env.NODE_ENV === 'development'` — match existing Profiler gating pattern. *(`f95e32e`; `allowScheduleDevHarnessRuntime`.)*
 
-- [ ] **Step 2:** Production build: `npm run build` and confirm bundles do not pull dev harness into the default schedule route chunk (spot-check analyzer output or bundle trace; no hard budget — spec §9.3).
+- [x] **Step 2:** Production build: `npm run build` and confirm bundles do not pull dev harness into the default schedule route chunk (spot-check analyzer output or bundle trace; no hard budget — spec §9.3). *(Code review: harness not in client static output per grep; `npm run build` green.)*
 
 - [ ] **Step 3:** Dev: run harness / leave sim once manually.
+  - **Review flag (2026-04-22):** **Not evidenced in repo**; **orchestrator** records user sign-off when you confirm harness + leave sim in dev. Then flip to `[x]` and set phase **Done**.
 
-- [ ] **Step 4:** Commit: `refactor(schedule): lazy-load dev schedule harness`.
+- [x] **Step 4:** Commit: `refactor(schedule): lazy-load dev schedule harness`. *(f95e32e)*
 
 ---
 
@@ -324,3 +323,4 @@ import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferenc
 | 2026-04-22 | Phase 3 **Done** (user manual + sign-off). Phase 4: `fe26193` + `418f95c`. |
 | 2026-04-22 | Phase 4 **Done** (user manual). Phase 5: pure helpers in `lib` (`11397f4`); post-review type rename `Step2ResultSurplusProjectionForStep3`. |
 | 2026-04-22 | **Orchestrator: code fixes only via sub-agent loop;** Phase 6 `e5a8e3b`; code review PASS; manual DnD flagged. |
+| 2026-04-22 | Phase 6 **Done** (user DnD). Phase 7: `f95e32e` lazy-load dev harness; review **PASS**; **manual Step 3** flagged until user confirms dev run. |
