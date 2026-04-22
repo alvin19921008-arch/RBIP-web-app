@@ -12,10 +12,8 @@ import { useAccessControl } from '@/lib/access/useAccessControl'
 
 export function HelpCenterContent(props: {
   onAfterStartTour?: () => void
-  /** When true (dialog shell), show a callout linking to the dedicated `/help` route. */
-  showFullPageLink?: boolean
-  /** Close the hosting dialog before navigating to `/help`. */
-  onRequestNavigateToFullPage?: () => void
+  /** Close the hosting dialog before navigating to help sub-routes (when shown in the dialog). */
+  onRequestCloseBeforeNavigate?: () => void
 }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -72,36 +70,16 @@ export function HelpCenterContent(props: {
 
   return (
     <div className="space-y-6">
-      {props.showFullPageLink ? (
-        <div className="rounded-lg border border-primary/25 bg-primary/5 p-4 shadow-sm">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-1 min-w-0">
-              <p className="text-sm font-semibold text-foreground">Dedicated Help Center page</p>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Same tours and FAQ on a full page — useful for a separate tab, sharing the URL, or printing.
-              </p>
-            </div>
-            <Button asChild className="shrink-0 w-full sm:w-auto" variant="default" size="sm">
-              <Link
-                href="/help"
-                onClick={() => {
-                  props.onRequestNavigateToFullPage?.()
-                }}
-              >
-                Open /help
-              </Link>
-            </Button>
-          </div>
-        </div>
-      ) : null}
-
       <section className="space-y-3">
         <h2 className="text-base font-semibold">Onboarding Tours</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {tourCards
             .filter((x) => x.visible)
             .map((tour) => (
-              <div key={tour.id} className="rounded-md border border-border p-3 space-y-2">
+              <div
+                key={tour.id}
+                className="space-y-2 rounded-md border border-border/80 bg-muted/25 p-3"
+              >
                 <div className="text-sm font-medium">{tour.title}</div>
                 <p className="text-xs text-muted-foreground">{tour.description}</p>
                 <Button
@@ -119,15 +97,26 @@ export function HelpCenterContent(props: {
 
       <section className="space-y-3">
         <h2 className="text-base font-semibold">Guides</h2>
-        <div className="rounded-md border border-border p-3 space-y-2">
-          <div className="text-sm font-medium">Avg PCA/team and slots</div>
-          <p className="text-xs text-muted-foreground">
-            Plain-language notes on continuous FTE vs slots, when there are not enough slots or extra slack, and Extra
-            after needs (Step 3).
-          </p>
-          <Button asChild size="sm" variant="outline">
-            <Link href="/help/avg-and-slots">Open guide</Link>
-          </Button>
+        <div className="divide-y divide-border border-t border-b border-border">
+          <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+            <div className="min-w-0 space-y-1">
+              <div className="text-sm font-medium">Avg PCA/team and slots</div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Plain-language notes on continuous FTE vs slots, when there are not enough slots or extra slack, and
+                Extra after needs (Step 3).
+              </p>
+            </div>
+            <Button asChild className="shrink-0 self-start sm:self-center" size="sm" variant="outline">
+              <Link
+                href="/help/avg-and-slots"
+                onClick={() => {
+                  props.onRequestCloseBeforeNavigate?.()
+                }}
+              >
+                Open guide
+              </Link>
+            </Button>
+          </div>
         </div>
       </section>
 
