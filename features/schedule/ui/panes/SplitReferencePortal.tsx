@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
+import type { createClientComponentClient } from '@/lib/supabase/client'
 import type { Team, Staff } from '@/types/staff'
 import type { PCAAllocation, ScheduleCalculations } from '@/types/schedule'
 import { combineScheduleCalculations } from '@/lib/features/schedule/scheduleCalculationsCombine'
@@ -39,8 +40,10 @@ type BedCountsShsStudentMergedByTeam = Partial<
   Record<Team, { shsBedCounts: number; studentPlacementBedCounts: number }>
 >
 
+type SplitReferenceSupabaseClient = ReturnType<typeof createClientComponentClient>
+
 export function SplitReferencePortal(props: {
-  supabase: any
+  supabase: SplitReferenceSupabaseClient
   refDateParam: string | null
   splitDirection: 'col' | 'row'
   showReference: boolean
