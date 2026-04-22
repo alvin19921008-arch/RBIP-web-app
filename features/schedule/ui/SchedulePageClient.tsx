@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useLayoutEffect, useRef, Fragment, useCallback, useTransition, Suspense, useMemo, Profiler, useOptimistic, type ReactNode } from 'react'
-import { createPortal, flushSync } from 'react-dom'
+import { flushSync } from 'react-dom'
 import {
   DragOverlay,
   MouseSensor,
@@ -413,6 +413,7 @@ import { useScheduleController } from '@/lib/features/schedule/controller/useSch
 import type { PCAAllocationErrors } from '@/lib/features/schedule/controller/useScheduleController'
 import type { BedCountsOverridesByTeam } from '@/lib/features/schedule/controller/scheduleControllerTypes'
 import { AllocationExportView } from '@/features/schedule/ui/panes/AllocationExportView'
+import { SplitReferencePortal } from '@/features/schedule/ui/panes/SplitReferencePortal'
 import { downloadBlobAsFile, renderElementToImageBlob } from '@/lib/utils/exportPng'
 import { HELP_TOUR_PENDING_KEY } from '@/lib/help/tours'
 import { startHelpTourWithRetry } from '@/lib/help/startTour'
@@ -453,7 +454,9 @@ type BedCountsShsStudentMergedByTeam = Partial<
 function SchedulePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const isViewingMode = searchParams.get('view') === '1'
+  /** Read-only / presentation: `?display=1`. Legacy `?view=1` still activates display mode. */
+  const isDisplayMode =
+    searchParams.get('display') === '1' || searchParams.get('view') === '1'
   const isSplitMode = searchParams.get('split') === '1'
   const refDateParam = searchParams.get('refDate')
   const refHiddenParam = searchParams.get('refHidden')
@@ -488,7 +491,6 @@ function SchedulePageContent() {
   const splitDirection = splitDirParam
   const splitRatio = splitRatioParam
   const isSplitSwapped = splitSwapParam
-  const [stepIndicatorCollapsed, setStepIndicatorCollapsed] = useState(false)
   const lastHapticDropZoneRef = useRef<string | null>(null)
   const calcStaleRepairAttemptedDateRef = useRef<string | null>(null)
   const avgPcaTargetRepairAttemptedDateRef = useRef<string | null>(null)
@@ -513,11 +515,6 @@ function SchedulePageContent() {
     useSensor(TouchSensor, { activationConstraint: { delay: 240, tolerance: 10 } })
   )
   const [refPortalHost, setRefPortalHost] = useState<HTMLDivElement | null>(null)
-
-  // Auto-collapse step indicator when entering split mode
-  useEffect(() => {
-    setStepIndicatorCollapsed(isSplitMode)
-  }, [isSplitMode])
 
   useEffect(() => {
     return () => {
@@ -573,10 +570,16 @@ function SchedulePageContent() {
     [router, searchParams]
   )
 
-  const toggleViewingMode = useCallback(() => {
+  const toggleDisplayMode = useCallback(() => {
     replaceScheduleQuery((p) => {
-      if (p.get('view') === '1') p.delete('view')
-      else p.set('view', '1')
+      const on = p.get('display') === '1' || p.get('view') === '1'
+      if (on) {
+        p.delete('display')
+        p.delete('view')
+      } else {
+        p.set('display', '1')
+        p.delete('view')
+      }
     })
   }, [replaceScheduleQuery])
 
@@ -710,25 +713,25 @@ function SchedulePageContent() {
       )}
     >
       <span className="hidden lg:inline-flex px-2.5 py-1.5 text-[10px] font-bold text-muted-foreground/80 select-none pointer-events-none tracking-wider uppercase">
-        Display
+        Mode
       </span>
-      <Tooltip side="bottom" content={isViewingMode ? 'Exit viewing mode' : 'Enter viewing mode'}>
+      <Tooltip side="bottom" content={isDisplayMode ? 'Exit display mode' : 'Enter display mode (read-only)'}>
         <button
           type="button"
-          onClick={toggleViewingMode}
+          onClick={toggleDisplayMode}
           className={cn(
             'px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5',
             'transition-all duration-200',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            isViewingMode
+            isDisplayMode
               ? 'bg-blue-600 text-white shadow-inner'
               : 'text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200/80 dark:hover:bg-slate-800/80',
             'active:bg-muted/55'
           )}
-          aria-pressed={isViewingMode}
+          aria-pressed={isDisplayMode}
         >
-          {isViewingMode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-          <span>View</span>
+          {isDisplayMode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          <span>Display</span>
         </button>
       </Tooltip>
       <Tooltip
@@ -763,8 +766,8 @@ function SchedulePageContent() {
       <Tooltip
         side="bottom"
         content={
-          isViewingMode
-            ? 'Undo disabled in viewing mode'
+          isDisplayMode
+            ? 'Undo disabled in display mode'
             : scheduleActions.canUndo
               ? 'Undo last manual edit'
               : 'Nothing to undo'
@@ -773,22 +776,22 @@ function SchedulePageContent() {
         <button
           type="button"
           onClick={() => {
-            if (isViewingMode || !scheduleActions.canUndo) return
+            if (isDisplayMode || !scheduleActions.canUndo) return
             const undone = scheduleActions.undoLastManualEdit()
             if (undone) {
               showActionToast('Undo', 'success', `Undid: ${undone.label}`)
             }
           }}
-          disabled={!scheduleActions.canUndo || isViewingMode}
+          disabled={!scheduleActions.canUndo || isDisplayMode}
           className={cn(
             'px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5',
             'transition-all duration-200 border-l border-border/40',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            scheduleActions.canUndo && !isViewingMode
+            scheduleActions.canUndo && !isDisplayMode
               ? 'text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200/80 dark:hover:bg-slate-800/80 active:bg-muted/55'
               : 'text-slate-400/30 dark:text-slate-600/30 cursor-not-allowed'
           )}
-          aria-disabled={!scheduleActions.canUndo || isViewingMode}
+          aria-disabled={!scheduleActions.canUndo || isDisplayMode}
         >
           <Undo2 className="h-4 w-4" />
           <span>Undo</span>
@@ -797,8 +800,8 @@ function SchedulePageContent() {
       <Tooltip
         side="bottom"
         content={
-          isViewingMode
-            ? 'Redo disabled in viewing mode'
+          isDisplayMode
+            ? 'Redo disabled in display mode'
             : scheduleActions.canRedo
               ? 'Redo last undone edit'
               : 'Nothing to redo'
@@ -807,22 +810,22 @@ function SchedulePageContent() {
         <button
           type="button"
           onClick={() => {
-            if (isViewingMode || !scheduleActions.canRedo) return
+            if (isDisplayMode || !scheduleActions.canRedo) return
             const redone = scheduleActions.redoLastManualEdit()
             if (redone) {
               showActionToast('Redo', 'success', `Redid: ${redone.label}`)
             }
           }}
-          disabled={!scheduleActions.canRedo || isViewingMode}
+          disabled={!scheduleActions.canRedo || isDisplayMode}
           className={cn(
             'px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5',
             'transition-all duration-200 border-l border-border/40',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            scheduleActions.canRedo && !isViewingMode
+            scheduleActions.canRedo && !isDisplayMode
               ? 'text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200/80 dark:hover:bg-slate-800/80 active:bg-muted/55'
               : 'text-slate-400/30 dark:text-slate-600/30 cursor-not-allowed'
           )}
-          aria-disabled={!scheduleActions.canRedo || isViewingMode}
+          aria-disabled={!scheduleActions.canRedo || isDisplayMode}
         >
           <Redo2 className="h-4 w-4" />
           <span>Redo</span>
@@ -1704,20 +1707,20 @@ function SchedulePageContent() {
   )
 
   const handleUndoManualEdit = useCallback(() => {
-    if (isViewingMode || !canUndo) return
+    if (isDisplayMode || !canUndo) return
     const undone = undoLastManualEdit()
     if (undone) {
       showActionToast('Undo', 'success', `Undid: ${undone.label}`)
     }
-  }, [canUndo, isViewingMode, undoLastManualEdit, showActionToast])
+  }, [canUndo, isDisplayMode, undoLastManualEdit, showActionToast])
 
   const handleRedoManualEdit = useCallback(() => {
-    if (isViewingMode || !canRedo) return
+    if (isDisplayMode || !canRedo) return
     const redone = redoLastManualEdit()
     if (redone) {
       showActionToast('Redo', 'success', `Redid: ${redone.label}`)
     }
-  }, [canRedo, isViewingMode, redoLastManualEdit, showActionToast])
+  }, [canRedo, isDisplayMode, redoLastManualEdit, showActionToast])
 
   const isEditableTarget = useCallback((target: EventTarget | null) => {
     if (!(target instanceof HTMLElement)) return false
@@ -1805,9 +1808,9 @@ function SchedulePageContent() {
   // Step-wise allocation workflow domain state moved into useScheduleController().
   // Track which steps have been initialized (domain; moved into useScheduleController()).
   
-  // Viewing mode should behave like "read-only": close transient UI affordances that would otherwise linger.
+  // Display mode should behave like "read-only": close transient UI affordances that would otherwise linger.
   useEffect(() => {
-    if (!isViewingMode) return
+    if (!isDisplayMode) return
     setCalendarOpen(false)
     setCopyMenuOpen(false)
     setCopyWizardOpen(false)
@@ -1849,7 +1852,7 @@ function SchedulePageContent() {
       show: false,
       position: null,
     })
-  }, [isViewingMode])
+  }, [isDisplayMode])
 
   // Step 3 entry: launcher + isolated flow surfaces
   const [step3DialogSurface, setStep3DialogSurface] = useState<Step3DialogSurface>(closeStep3DialogSurface())
@@ -2371,14 +2374,14 @@ function SchedulePageContent() {
       if (!wantsUndo && !wantsRedo) return
 
       if (wantsUndo) {
-        if (!canUndo || isViewingMode) return
+        if (!canUndo || isDisplayMode) return
         e.preventDefault()
         handleUndoManualEdit()
         return
       }
 
       if (wantsRedo) {
-        if (!canRedo || isViewingMode) return
+        if (!canRedo || isDisplayMode) return
         e.preventDefault()
         handleRedoManualEdit()
       }
@@ -2391,7 +2394,7 @@ function SchedulePageContent() {
   }, [
     canUndo,
     canRedo,
-    isViewingMode,
+    isDisplayMode,
     isEditableTarget,
     handleUndoManualEdit,
     handleRedoManualEdit,
@@ -6999,7 +7002,7 @@ function SchedulePageContent() {
   const renderSchedulePageHeaderRightActions = () => (
     <SchedulePageHeaderRightActions
       userRole={userRole}
-      isViewingMode={isViewingMode}
+      isDisplayMode={isDisplayMode}
       saving={saving}
       copying={copying}
       access={access}
@@ -10398,7 +10401,7 @@ function SchedulePageContent() {
                             setCalendarOpen(false)
             queueDateTransition(date)
           }}
-          showSnapshotUiReminder={showSnapshotUiReminder && !isViewingMode}
+          showSnapshotUiReminder={showSnapshotUiReminder && !isDisplayMode}
           savedSetupPopoverOpen={savedSetupPopoverOpen}
           onSavedSetupPopoverOpenChange={setSavedSetupPopoverOpen}
           snapshotDiffButtonRef={snapshotDiffButtonRef}
@@ -10408,9 +10411,6 @@ function SchedulePageContent() {
           snapshotDiffError={snapshotDiffError}
           snapshotDiffResult={snapshotDiffResult}
           displayTools={isSplitMode ? null : displayToolsInlineNode}
-          isViewingMode={isViewingMode}
-          stepIndicatorCollapsed={stepIndicatorCollapsed}
-          onToggleStepIndicatorCollapsed={() => setStepIndicatorCollapsed((v) => !v)}
           rightActions={renderSchedulePageHeaderRightActions()}
           onClearCache={handleDeveloperCacheClear}
         />
@@ -10643,8 +10643,8 @@ function SchedulePageContent() {
 
         {/* Step Indicator with Navigation — see ScheduleWorkflowStepShell (Phase 2b) */}
         <ScheduleWorkflowStepShell
-          isViewingMode={isViewingMode}
-          stepIndicatorCollapsed={stepIndicatorCollapsed}
+          isDisplayMode={isDisplayMode}
+          isSplitMode={isSplitMode}
           steps={ALLOCATION_STEPS}
           currentStep={currentStep}
           stepStatus={stepStatus}
@@ -10714,7 +10714,7 @@ function SchedulePageContent() {
             else if (currentStep === 'floating-pca') prefetchStep3Algorithms()
             else if (currentStep === 'bed-relieving') prefetchBedAlgorithm()
           }}
-          onOpenLeaveSetup={isViewingMode ? undefined : () => setStep1LeaveSetupOpen(true)}
+          onOpenLeaveSetup={isDisplayMode ? undefined : () => setStep1LeaveSetupOpen(true)}
           onClearStep={handleClearStep}
           showClear={showClearForCurrentStep}
           isInitialized={initializedSteps.has(currentStep)}
@@ -10990,9 +10990,9 @@ function SchedulePageContent() {
               className={cn(
                 'vt-mode-anim',
                 'flex-1 min-h-0 flex flex-col min-w-0 overflow-hidden transition-[width,max-height,opacity,margin] duration-300 ease-in-out',
-                isViewingMode ? 'w-0 max-h-0 opacity-0 -mt-2 pointer-events-none' : 'w-40 max-h-[9999px] opacity-100 mt-0'
+                isDisplayMode ? 'w-0 max-h-0 opacity-0 -mt-2 pointer-events-none' : 'w-40 max-h-[9999px] opacity-100 mt-0'
               )}
-              aria-hidden={isViewingMode}
+              aria-hidden={isDisplayMode}
             >
               <div className="flex-1 min-h-0">
                 <MaybeProfiler id="StaffPool">
@@ -11058,8 +11058,8 @@ function SchedulePageContent() {
           </div>
 
           <div className="flex-1 min-w-0 bg-background relative">
-            {/* Viewing mode: block editing interactions over the grid (drag/edit/click). */}
-            {isViewingMode ? (
+            {/* Display mode: block editing interactions over the grid (drag/edit/click). */}
+            {isDisplayMode ? (
               <div
                 className="absolute inset-0 z-[60] pointer-events-auto cursor-not-allowed bg-transparent"
                 aria-hidden={true}
@@ -11410,11 +11410,11 @@ function SchedulePageContent() {
                     className={cn(
                       'vt-mode-anim',
                       'overflow-hidden transition-[max-height,opacity,transform,margin] duration-300 ease-in-out',
-                      isViewingMode
+                      isDisplayMode
                         ? 'max-h-0 opacity-0 -translate-y-2 mt-0 pointer-events-none'
                         : 'max-h-[9999px] opacity-100 translate-y-0 mt-0'
                     )}
-                    aria-hidden={isViewingMode}
+                    aria-hidden={isDisplayMode}
                   >
                     {!deferBelowFold ? (
                       <MaybeProfiler id="AllocationNotesBoard">
@@ -11466,10 +11466,10 @@ function SchedulePageContent() {
           const mainHeader = (
             <SchedulePageSplitMainPaneHeader
               isRefHidden={isRefHidden}
-              isViewingMode={isViewingMode}
+              isDisplayMode={isDisplayMode}
               canUndo={canUndo}
               canRedo={canRedo}
-              onToggleViewingMode={toggleViewingMode}
+              onToggleDisplayMode={toggleDisplayMode}
               onExitSplitMode={toggleSplitMode}
               onUndoManualEdit={handleUndoManualEdit}
               onRedoManualEdit={handleRedoManualEdit}
@@ -11505,7 +11505,7 @@ function SchedulePageContent() {
                             setCalendarOpen(false)
             queueDateTransition(date)
           }}
-          showSnapshotUiReminder={showSnapshotUiReminder && !isViewingMode}
+          showSnapshotUiReminder={showSnapshotUiReminder && !isDisplayMode}
           savedSetupPopoverOpen={savedSetupPopoverOpen}
           onSavedSetupPopoverOpenChange={setSavedSetupPopoverOpen}
           snapshotDiffButtonRef={snapshotDiffButtonRef}
@@ -11515,9 +11515,6 @@ function SchedulePageContent() {
           snapshotDiffError={snapshotDiffError}
           snapshotDiffResult={snapshotDiffResult}
           displayTools={isSplitMode ? null : displayToolsInlineNode}
-          isViewingMode={isViewingMode}
-          stepIndicatorCollapsed={stepIndicatorCollapsed}
-          onToggleStepIndicatorCollapsed={() => setStepIndicatorCollapsed((v) => !v)}
           rightActions={renderSchedulePageHeaderRightActions()}
         />
                         {mainLayout}
@@ -11648,7 +11645,7 @@ function SchedulePageContent() {
                             setCalendarOpen(false)
             queueDateTransition(date)
           }}
-          showSnapshotUiReminder={showSnapshotUiReminder && !isViewingMode}
+          showSnapshotUiReminder={showSnapshotUiReminder && !isDisplayMode}
           savedSetupPopoverOpen={savedSetupPopoverOpen}
           onSavedSetupPopoverOpenChange={setSavedSetupPopoverOpen}
           snapshotDiffButtonRef={snapshotDiffButtonRef}
@@ -11658,9 +11655,6 @@ function SchedulePageContent() {
           snapshotDiffError={snapshotDiffError}
           snapshotDiffResult={snapshotDiffResult}
           displayTools={isSplitMode ? null : displayToolsInlineNode}
-          isViewingMode={isViewingMode}
-          stepIndicatorCollapsed={stepIndicatorCollapsed}
-          onToggleStepIndicatorCollapsed={() => setStepIndicatorCollapsed((v) => !v)}
           rightActions={renderSchedulePageHeaderRightActions()}
         />
                           {mainLayout}
@@ -12272,331 +12266,6 @@ function SchedulePageContent() {
       </ScheduleMainBoardChrome>
     </ScheduleDndContextShell>
   )
-}
-
-function SplitReferencePortal(props: {
-  supabase: any
-  refDateParam: string | null
-  splitDirection: 'col' | 'row'
-  showReference: boolean
-  liveTeamSettingsRows: TeamSettingsMergeRow[]
-  datesWithData: Set<string>
-  holidays: Map<string, string>
-  replaceScheduleQuery: (mutate: (params: URLSearchParams) => void) => void
-  refPortalHost: HTMLDivElement | null
-}) {
-  const refInitialDefaultDate = useMemo(() => new Date(), [])
-  const refSchedule = useScheduleController({
-    defaultDate: refInitialDefaultDate,
-    supabase: props.supabase,
-    controllerRole: 'ref',
-    preserveUnsavedAcrossDateSwitch: false,
-  })
-  const { state: refScheduleState, actions: refScheduleActions } = refSchedule
-  const {
-    beginDateTransition: refControllerBeginDateTransition,
-    loadAndHydrateDate: refLoadAndHydrateDate,
-    _unsafe: refUnsafe,
-  } = refScheduleActions
-  const { setGridLoading: setRefGridLoading, setIsHydratingSchedule: setRefIsHydratingSchedule } = refUnsafe
-  const beginDateTransitionRef = useRef(refControllerBeginDateTransition)
-  const loadAndHydrateRef = useRef(refLoadAndHydrateDate)
-  const setRefGridLoadingRef = useRef(setRefGridLoading)
-  const setRefIsHydratingScheduleRef = useRef(setRefIsHydratingSchedule)
-  const statusRef = useRef({ loading: refScheduleState.loading, loadedForDate: refScheduleState.scheduleLoadedForDate })
-  const lastRequestedRef = useRef<string | null>(null)
-  const inFlightAbortRef = useRef<AbortController | null>(null)
-
-  beginDateTransitionRef.current = refControllerBeginDateTransition
-  loadAndHydrateRef.current = refLoadAndHydrateDate
-  setRefGridLoadingRef.current = setRefGridLoading
-  setRefIsHydratingScheduleRef.current = setRefIsHydratingSchedule
-
-  useEffect(() => {
-    statusRef.current = {
-      loading: refScheduleState.loading,
-      loadedForDate: refScheduleState.scheduleLoadedForDate,
-    }
-  }, [refScheduleState.loading, refScheduleState.scheduleLoadedForDate])
-
-  // Split mode: hydrate reference schedule when refDate changes.
-  useEffect(() => {
-    if (!props.refDateParam) return
-
-    try {
-      window.sessionStorage.setItem('rbip_split_ref_date', props.refDateParam)
-    } catch {
-      // ignore
-    }
-
-    const status = statusRef.current
-    if (status.loadedForDate === props.refDateParam && !status.loading) {
-      lastRequestedRef.current = props.refDateParam
-      return
-    }
-
-    // Guard against duplicate retriggers for the same date while a load is in flight.
-    if (lastRequestedRef.current === props.refDateParam && status.loading) {
-      return
-    }
-
-    let parsed: Date
-    try {
-      parsed = parseDateFromInput(props.refDateParam)
-    } catch {
-      return
-    }
-
-    inFlightAbortRef.current?.abort()
-    const ac = new AbortController()
-    inFlightAbortRef.current = ac
-    lastRequestedRef.current = props.refDateParam
-    beginDateTransitionRef.current(parsed, { resetLoadedForDate: true })
-    void (async () => {
-      try {
-        await loadAndHydrateRef.current({ date: parsed, signal: ac.signal })
-      } finally {
-        if (!ac.signal.aborted) {
-          // Unlike the main schedule page, the reference pane doesn't have the page-level
-          // gridLoading finalizer effect; ensure this doesn't get stuck true.
-          setRefGridLoadingRef.current(false)
-        }
-      }
-    })()
-    return () => {
-      ac.abort()
-      if (inFlightAbortRef.current === ac) inFlightAbortRef.current = null
-    }
-  }, [props.refDateParam])
-
-  useEffect(() => {
-    return () => {
-      inFlightAbortRef.current?.abort()
-    }
-  }, [])
-
-  // Split mode: the reference controller doesn't include the page-level hydration finalizer
-  // effect used by the main schedule page. Without this, the reference pane can remain
-  // stuck showing its skeleton forever.
-  useEffect(() => {
-    if (!props.refDateParam) return
-    if (!refScheduleState.isHydratingSchedule) return
-    if (refScheduleState.loading) return
-    if (refScheduleState.scheduleLoadedForDate !== props.refDateParam) return
-
-    // End hydration on next frame to ensure load-driven state updates have flushed.
-    try {
-      window.requestAnimationFrame(() => setRefIsHydratingScheduleRef.current(false))
-    } catch {
-      setRefIsHydratingScheduleRef.current(false)
-    }
-  }, [
-    props.refDateParam,
-    refScheduleState.isHydratingSchedule,
-    refScheduleState.loading,
-    refScheduleState.scheduleLoadedForDate,
-  ])
-
-  const refSelectedDate = refScheduleState.selectedDate
-  const refWeekday = getWeekday(refSelectedDate)
-  const refDateLabel = formatDateDDMMYYYY(refSelectedDate)
-  const refEffectiveTeamMergeConfig = useMemo(
-    () =>
-      resolveTeamMergeConfig({
-        teamSettingsRows: props.liveTeamSettingsRows,
-        snapshotMerge: (refScheduleState.baselineSnapshot as any)?.teamMerge ?? null,
-        snapshotDisplayNames: (refScheduleState.baselineSnapshot as any)?.teamDisplayNames ?? null,
-        hasBaselineSnapshot: !!refScheduleState.baselineSnapshot,
-      }),
-    [props.liveTeamSettingsRows, refScheduleState.baselineSnapshot]
-  )
-  const refVisibleTeams = useMemo(
-    () => getVisibleTeams(refEffectiveTeamMergeConfig.mergedInto),
-    [refEffectiveTeamMergeConfig.mergedInto]
-  )
-  const refMainTeamDisplayNames = useMemo(() => {
-    const out: Partial<Record<Team, string>> = {}
-    refVisibleTeams.forEach((mainTeam) => {
-      out[mainTeam] = getMainTeamDisplayName({
-        mainTeam,
-        mergedInto: refEffectiveTeamMergeConfig.mergedInto,
-        displayNames: refEffectiveTeamMergeConfig.displayNames,
-        mergeLabelOverrideByTeam: refEffectiveTeamMergeConfig.mergeLabelOverrideByTeam,
-      })
-    })
-    return out
-  }, [refVisibleTeams, refEffectiveTeamMergeConfig])
-  const refContributorsByMain = useMemo(() => {
-    const out: Partial<Record<Team, Team[]>> = {}
-    refVisibleTeams.forEach((mainTeam) => {
-      out[mainTeam] = getContributingTeams(mainTeam, refEffectiveTeamMergeConfig.mergedInto)
-    })
-    return out
-  }, [refVisibleTeams, refEffectiveTeamMergeConfig.mergedInto])
-  const refTherapistAllocationsForDisplay = useMemo(() => {
-    const out = createEmptyTeamRecordFactory<any[]>(() => [])
-    refVisibleTeams.forEach((mainTeam) => {
-      const contributors = refContributorsByMain[mainTeam] || [mainTeam]
-      out[mainTeam] = contributors.flatMap((team) => refScheduleState.therapistAllocations[team] || [])
-    })
-    return out
-  }, [refVisibleTeams, refContributorsByMain, refScheduleState.therapistAllocations])
-  const refPcaDisplayAllocationsByTeam = useMemo(
-    () =>
-      buildDisplayPcaAllocationsByTeam({
-        selectedDate: refSelectedDate,
-        staff: [...refScheduleState.staff, ...refScheduleState.bufferStaff],
-        staffOverrides: refScheduleState.staffOverrides as any,
-        pcaAllocationsByTeam: refScheduleState.pcaAllocations as Record<Team, Array<PCAAllocation & { staff?: Staff }>>,
-      }),
-    [
-      refSelectedDate,
-      refScheduleState.staff,
-      refScheduleState.bufferStaff,
-      refScheduleState.staffOverrides,
-      refScheduleState.pcaAllocations,
-    ]
-  )
-  const refPcaAllocationsForDisplay = useMemo(() => {
-    const out = createEmptyTeamRecordFactory<any[]>(() => [])
-    refVisibleTeams.forEach((mainTeam) => {
-      const contributors = refContributorsByMain[mainTeam] || [mainTeam]
-      out[mainTeam] = contributors.flatMap((team) => refPcaDisplayAllocationsByTeam[team] || [])
-    })
-    return out
-  }, [refVisibleTeams, refContributorsByMain, refPcaDisplayAllocationsByTeam])
-  const refCalculationsForDisplay = useMemo(() => {
-    const out = createEmptyTeamRecord<ScheduleCalculations | null>(null)
-    refVisibleTeams.forEach((mainTeam) => {
-      const contributors = refContributorsByMain[mainTeam] || [mainTeam]
-      out[mainTeam] = combineScheduleCalculations(
-        contributors.map((team) => refScheduleState.calculations[team])
-      )
-    })
-    return out
-  }, [refVisibleTeams, refContributorsByMain, refScheduleState.calculations])
-  const refBedCountsOverridesByTeamForDisplay = useMemo(() => {
-    const out: BedCountsShsStudentMergedByTeam = {}
-    refVisibleTeams.forEach((mainTeam) => {
-      const contributors = refContributorsByMain[mainTeam] || [mainTeam]
-      let shsTotal = 0
-      let studentTotal = 0
-      let hasAny = false
-      contributors.forEach((team) => {
-        const override = refScheduleState.bedCountsOverridesByTeam?.[team] ?? null
-        if (override && typeof override.shsBedCounts === 'number') {
-          shsTotal += override.shsBedCounts
-          hasAny = true
-        }
-        if (override && typeof override.studentPlacementBedCounts === 'number') {
-          studentTotal += override.studentPlacementBedCounts
-          hasAny = true
-        }
-      })
-      if (hasAny) {
-        out[mainTeam] = {
-          shsBedCounts: shsTotal,
-          studentPlacementBedCounts: studentTotal,
-        }
-      }
-    })
-    return out
-  }, [refVisibleTeams, refContributorsByMain, refScheduleState.bedCountsOverridesByTeam])
-  const refBedRelievingNotesByToTeamForDisplay = useMemo(() => {
-    return projectBedRelievingNotesForDisplay({
-      bedRelievingNotesByToTeam: refScheduleState.bedRelievingNotesByToTeam,
-      mergedInto: refEffectiveTeamMergeConfig.mergedInto,
-    })
-  }, [refScheduleState.bedRelievingNotesByToTeam, refEffectiveTeamMergeConfig.mergedInto])
-  const refBedAllocationsForDisplay = useMemo(() => {
-    const mapped = (refScheduleState.bedAllocations || []).map((allocation) => ({
-      ...allocation,
-      from_team: getMainTeam(allocation.from_team, refEffectiveTeamMergeConfig.mergedInto),
-      to_team: getMainTeam(allocation.to_team, refEffectiveTeamMergeConfig.mergedInto),
-    }))
-    return mapped.filter((allocation) => allocation.from_team !== allocation.to_team)
-  }, [refScheduleState.bedAllocations, refEffectiveTeamMergeConfig.mergedInto])
-
-  const referencePaneNode = (
-    <ReferenceSchedulePane
-        direction={props.splitDirection}
-        refHidden={!props.showReference}
-        disableBlur={true}
-        showTeamHeader={true}
-        teams={refVisibleTeams}
-        teamDisplayNames={refMainTeamDisplayNames}
-        refDateLabel={refDateLabel}
-        selectedDate={refSelectedDate}
-        datesWithData={props.datesWithData}
-        holidays={props.holidays}
-        onSelectDate={(d) => {
-          const key = formatDateForInput(d)
-          try {
-            window.sessionStorage.setItem('rbip_split_ref_date', key)
-          } catch {
-            // ignore
-          }
-          props.replaceScheduleQuery((p) => {
-            p.set('split', '1')
-            p.set('refDate', key)
-            p.set('refHidden', '0')
-          })
-        }}
-        onToggleDirection={() => {
-          const next = props.splitDirection === 'col' ? 'row' : 'col'
-          try {
-            window.sessionStorage.setItem('rbip_split_dir', next)
-          } catch {
-            // ignore
-          }
-          props.replaceScheduleQuery((p) => {
-            p.set('split', '1')
-            p.set('splitDir', next)
-            p.set('refHidden', '0')
-          })
-        }}
-        onRetract={() => {
-          try {
-            window.sessionStorage.setItem('rbip_split_ref_hidden', '1')
-          } catch {
-            // ignore
-          }
-          props.replaceScheduleQuery((p) => {
-            p.set('split', '1')
-            p.set('refHidden', '1')
-          })
-        }}
-      >
-        {refScheduleState.isHydratingSchedule ? (
-          <div className="rounded-lg border border-border bg-card p-3">
-            <div className="h-4 w-48 rounded-md bg-muted animate-pulse" />
-            <div className="mt-2 h-28 rounded-md bg-muted/70 animate-pulse" />
-          </div>
-        ) : (
-          <ScheduleBlocks1To6
-            mode="reference"
-            teams={refVisibleTeams}
-            weekday={refWeekday}
-            sptAllocations={refScheduleState.sptAllocations as any}
-            specialPrograms={refScheduleState.specialPrograms as any}
-            therapistAllocationsByTeam={refTherapistAllocationsForDisplay as any}
-            pcaAllocationsByTeam={refPcaAllocationsForDisplay as any}
-            bedAllocations={refBedAllocationsForDisplay as any}
-            wards={refScheduleState.wards as any}
-            calculationsByTeam={refCalculationsForDisplay as any}
-            staff={refScheduleState.staff as any}
-            staffOverrides={refScheduleState.staffOverrides as any}
-            bedCountsOverridesByTeam={refBedCountsOverridesByTeamForDisplay}
-            bedRelievingNotesByToTeam={refBedRelievingNotesByToTeamForDisplay as any}
-            stepStatus={refScheduleState.stepStatus as any}
-            initializedSteps={refScheduleState.initializedSteps as any}
-          />
-        )}
-      </ReferenceSchedulePane>
-  )
-
-  if (!props.showReference) return null
-  return props.refPortalHost ? createPortal(referencePaneNode, props.refPortalHost) : null
 }
 
 export default function SchedulePageClient() {
