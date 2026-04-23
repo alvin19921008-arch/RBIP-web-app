@@ -20,7 +20,7 @@
 |-------|------|--------|-------|
 | R3-20 | Pre-baseline & order | Done | 2026-04-24: `wc -l` **8159**; gates at **ba080b2** (pre-commit); orchestrator re-ran gates green on **38d787e**; smoke 13 passed, 3 skipped. Anchors: `useAllocationSync` → `SchedulePageClient.tsx:3578`; `handleInitializeAlgorithm` → `:4139`; `beginDateTransition` → `:5066`; `flushSync` → `:1168`. R1 §7 re-read. Doc commit **38d787e** (`chore(docs): round 3 baseline`). Reviewer **PASS** (non-blocking: untracked sibling plan/handoff `.md` files may be committed separately). |
 | R3-21 | Initial date + date/URL | Done | 2026-04-24: commit **20184a7**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (URL/calendar/cold load). Hooks: `useScheduleInitialDateResolution.ts`, `useScheduleDateTransition.ts`. |
-| R3-22 | Recalc + `useAllocationSync` + beds | In progress | 2026-04-24: implementer dispatched. High ordering risk — preserve effect order. |
+| R3-22 | Recalc + `useAllocationSync` + beds | Done | 2026-04-24: commit **c07c63c**; orchestrator gates green; smoke 12 passed, 4 skipped; reviewer **PASS** (non-blocking). `useScheduleAllocationRecalcAndSync.ts`. **Manual (owner):** Step 4 (overrides / bed step / double recalc) — still `- [ ]` in phase checklist. |
 | R3-23 | Step 2 dependency + buffered Step 2 toast | Not started | |
 | R3-24 | Substitution wizard | Not started | |
 | R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Not started | May split 25a / 25b |
