@@ -26,7 +26,7 @@
 | R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Done | 2026-04-24: commit **bbf4792**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (Initialize + Step 2 dialogs + Step 3 entry). `useScheduleAlgorithmEntry.ts`. |
 | R3-26 | DnD bridge wiring | Done | 2026-04-24: commit **c2db9fe**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (DnD / popover / discard / therapist drag). `useScheduleBoardDndWiring.ts`. |
 | R3-27 | Toolbar + interaction layer | Done | 2026-04-24: commit **a1793fa**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (Display/Split/Undo/Redo; overlay popover; pool assign). `sections/SchedulePageToolbar.tsx` (toolbar-only). |
-| R3-28 | Grouped dialog/board props (optional) | In progress | 2026-04-24: owner chose **execute**; typed grouped props merged (`npm run lint` 0 errors, `build` OK, `test:smoke` 13 passed). Orchestrator: set **Done** after review; owner Step 4 manual still open. |
+| R3-28 | Grouped dialog/board props (optional) | Done | 2026-04-24: commit **74bbc11**; orchestrator gates green (smoke 13 passed, 3 skipped); reviewer **PASS** (non-blocking). Six groups: `resolvers`, `step1AndStaff`, `copyWizard`, `step2Dialogs`, `step3Floating`, `calendarAndSnapshot`. **Manual (owner):** Step 4 (open each dialog class) — still `- [ ]` in phase checklist. |
 | R3-29 | Dev/perf + pure helper peel (optional) | Not started | |
 
 **Status values:** `Not started` · `In progress` · `Done` · `Skipped`
