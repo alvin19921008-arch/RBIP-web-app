@@ -23,7 +23,7 @@
 | R3-22 | Recalc + `useAllocationSync` + beds | Done | 2026-04-24: commit **c07c63c**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (overrides / bed / double recalc). `useScheduleAllocationRecalcAndSync.ts`. |
 | R3-23 | Step 2 dependency + buffered Step 2 toast | Done | 2026-04-24: commit **9b57bd3**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (toast + Step 3 bootstrap / badges). `useScheduleStep2DependencyAndToast.ts`. |
 | R3-24 | Substitution wizard | Done | 2026-04-24: commit **19ec57a**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (wizard cancel + confirm). `useScheduleSubstitutionWizard.ts`. |
-| R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | In progress | Single hook `useScheduleAlgorithmEntry.ts` (no 25a/25b split). Implementer: gates green **899e81a**; Step 4 manual unchecked. |
+| R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Done | 2026-04-24: commit **bbf4792**; orchestrator gates green (smoke 13 passed, 3 skipped); reviewer **PASS** (non-blocking). Single `useScheduleAlgorithmEntry.ts` (no 25a/25b). **Manual (owner):** Step 4 (Initialize strip + Step 2 dialogs + Step 3 entry) — still `- [ ]` in phase checklist. |
 | R3-26 | DnD bridge wiring | Not started | |
 | R3-27 | Toolbar + interaction layer | Not started | |
 | R3-28 | Grouped dialog/board props (optional) | Not started | |
