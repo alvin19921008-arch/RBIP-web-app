@@ -25,7 +25,7 @@
 | R3-24 | Substitution wizard | Done | 2026-04-24: commit **19ec57a**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (wizard cancel + confirm). `useScheduleSubstitutionWizard.ts`. |
 | R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Done | 2026-04-24: commit **bbf4792**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (Initialize + Step 2 dialogs + Step 3 entry). `useScheduleAlgorithmEntry.ts`. |
 | R3-26 | DnD bridge wiring | Done | 2026-04-24: commit **c2db9fe**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (DnD / popover / discard / therapist drag). `useScheduleBoardDndWiring.ts`. |
-| R3-27 | Toolbar + interaction layer | In progress | 2026-04-24: **`SchedulePageToolbar`** in `sections/SchedulePageToolbar.tsx`; **toolbar-only** (overlays block ~L4355–5679 couples 80+ locals — no `SchedulePageGridInteractionOverlays` this round). Step 1: `ScheduleDndContextShell` return is a **single implicit fragment** of siblings: `ScheduleOverlays` → … → `DragOverlay` → `ScheduleMainBoardChrome` (no extra `<>...</>`); toolbar extracted as `scheduleDisplayToolsNode` before cold-load gate. Gates green post-change. |
+| R3-27 | Toolbar + interaction layer | Done | 2026-04-24: commit **a1793fa**; orchestrator gates green (smoke 13 passed, 3 skipped); reviewer **PASS** (non-blocking: commit subject mentions “overlays” but slice is **toolbar-only** — overlays deferred per plan). `sections/SchedulePageToolbar.tsx`. **Manual (owner):** Step 4 (Display/Split/Undo/Redo; overlay popover; pool assign) — still `- [ ]` in phase checklist. |
 | R3-28 | Grouped dialog/board props (optional) | Not started | |
 | R3-29 | Dev/perf + pure helper peel (optional) | Not started | |
 
