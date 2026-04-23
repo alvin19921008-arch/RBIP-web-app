@@ -19,8 +19,8 @@
 | Phase | Name | Status | Notes |
 |-------|------|--------|-------|
 | R3-20 | Pre-baseline & order | Done | 2026-04-24: `wc -l` **8159**; gates at **ba080b2** (pre-commit); orchestrator re-ran gates green on **38d787e**; smoke 13 passed, 3 skipped. Anchors: `useAllocationSync` → `SchedulePageClient.tsx:3578`; `handleInitializeAlgorithm` → `:4139`; `beginDateTransition` → `:5066`; `flushSync` → `:1168`. R1 §7 re-read. Doc commit **38d787e** (`chore(docs): round 3 baseline`). Reviewer **PASS** (non-blocking: untracked sibling plan/handoff `.md` files may be committed separately). |
-| R3-21 | Initial date + date/URL | Done | 2026-04-24: commit **20184a7**; orchestrator gates green (`lint`+`build`+`test:smoke`); reviewer **PASS** (non-blocking: manual Step 4 still validates cold `?date=` / double-controller edge). Hooks: `useScheduleInitialDateResolution.ts`, `useScheduleDateTransition.ts`. **Manual (owner):** Step 4 URL/calendar/cold load — still pending sign-off in checklist. |
-| R3-22 | Recalc + `useAllocationSync` + beds | Not started | High ordering risk |
+| R3-21 | Initial date + date/URL | Done | 2026-04-24: commit **20184a7**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (URL/calendar/cold load). Hooks: `useScheduleInitialDateResolution.ts`, `useScheduleDateTransition.ts`. |
+| R3-22 | Recalc + `useAllocationSync` + beds | In progress | 2026-04-24: implementer dispatched. High ordering risk — preserve effect order. |
 | R3-23 | Step 2 dependency + buffered Step 2 toast | Not started | |
 | R3-24 | Substitution wizard | Not started | |
 | R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Not started | May split 25a / 25b |
@@ -97,7 +97,7 @@ Do not merge on failure unless environmental and documented.
 - [x] **Step 1:** Grep `initialDateResolved`, `useScheduleDateParam`, `beginDateTransition`, `replaceScheduleQuery`, `LAST_OPEN_SCHEDULE_DATE_KEY`.
 - [x] **Step 2:** Extract with **explicit** parameters (no implicit closure over half the component). Stabilize `queueDateTransition` + `useScheduleCopyWorkflow` interop.
 - [x] **Step 3:** Global gates.
-- [ ] **Step 4:** **Manual (owner):** URL date change, calendar picker, no snap-back; cold load (no “today → fallback” flicker).
+- [x] **Step 4:** **Manual (owner):** URL date change, calendar picker, no snap-back; cold load (no “today → fallback” flicker). (Owner confirmed OK 2026-04-24.)
 - [x] **Step 5:** Commit: `refactor(schedule): extract date bootstrap + date transition (round 3)`.
 
 ---
@@ -111,11 +111,11 @@ Do not merge on failure unless environmental and documented.
 - **Create:** `useScheduleAllocationRecalcAndSync.ts` (or split *only* if order is documented in spec comments)
 - **Modify:** `SchedulePageClient.tsx`
 
-- [ ] **Step 1:** Grep `useAllocationSync`, `useMainPaneLoadAndHydrateDateEffect` / `useSchedulePaneHydrationEndEffect`, `recalculateScheduleCalculations`, `allocateBeds`, `setBedAllocations`.
-- [ ] **Step 2:** Move in **one** slice or document `useEffect` order at top of new hook file. Do **not** change dependency arrays without justification.
-- [ ] **Step 3:** Global gates.
+- [x] **Step 1:** Grep `useAllocationSync`, `useMainPaneLoadAndHydrateDateEffect` / `useSchedulePaneHydrationEndEffect`, `recalculateScheduleCalculations`, `allocateBeds`, `setBedAllocations`.
+- [x] **Step 2:** Move in **one** slice or document `useEffect` order at top of new hook file. Do **not** change dependency arrays without justification.
+- [x] **Step 3:** Global gates.
 - [ ] **Step 4:** **Manual (owner):** load date, change overrides, step through bed step if applicable; watch for double network/recalc.
-- [ ] **Step 5:** Commit: `refactor(schedule): extract allocation recalc and sync (round 3)`.
+- [x] **Step 5:** Commit: `refactor(schedule): extract allocation recalc and sync (round 3)`.
 
 ---
 
