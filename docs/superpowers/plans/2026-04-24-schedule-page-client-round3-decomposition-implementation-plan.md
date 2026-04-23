@@ -22,8 +22,8 @@
 | R3-21 | Initial date + date/URL | Done | 2026-04-24: commit **20184a7**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (URL/calendar/cold load). Hooks: `useScheduleInitialDateResolution.ts`, `useScheduleDateTransition.ts`. |
 | R3-22 | Recalc + `useAllocationSync` + beds | Done | 2026-04-24: commit **c07c63c**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (overrides / bed / double recalc). `useScheduleAllocationRecalcAndSync.ts`. |
 | R3-23 | Step 2 dependency + buffered Step 2 toast | Done | 2026-04-24: commit **9b57bd3**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (toast + Step 3 bootstrap / badges). `useScheduleStep2DependencyAndToast.ts`. |
-| R3-24 | Substitution wizard | Done | 2026-04-24: commit **19ec57a**; orchestrator gates green (smoke 13 passed, 3 skipped); reviewer **PASS** (non-blocking). `useScheduleSubstitutionWizard.ts`. **Manual (owner):** Step 4 (wizard cancel + confirm) — still `- [ ]` in phase checklist. |
-| R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Not started | May split 25a / 25b |
+| R3-24 | Substitution wizard | Done | 2026-04-24: commit **19ec57a**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (wizard cancel + confirm). `useScheduleSubstitutionWizard.ts`. |
+| R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | In progress | Single hook `useScheduleAlgorithmEntry.ts` (no 25a/25b split). Implementer: gates green **899e81a**; Step 4 manual unchecked. |
 | R3-26 | DnD bridge wiring | Not started | |
 | R3-27 | Toolbar + interaction layer | Not started | |
 | R3-28 | Grouped dialog/board props (optional) | Not started | |
@@ -148,7 +148,7 @@ Do not merge on failure unless environmental and documented.
 - [x] **Step 1:** Grep `substitutionWizard`, `onNonFloatingSubstitutionWizard`.
 - [x] **Step 2:** `generateStep2` must still **await** the same Promise contract — **no** change to `scheduleActions.runStep2TherapistAndNonFloatingPCA` behavior.
 - [x] **Step 3:** Global gates.
-- [ ] **Step 4:** **Manual (owner):** Step 2 path that opens substitution wizard; cancel + confirm.
+- [x] **Step 4:** **Manual (owner):** Step 2 path that opens substitution wizard; cancel + confirm. (Owner confirmed OK 2026-04-24.)
 - [x] **Step 5:** Commit: `refactor(schedule): extract substitution wizard hook (round 3)`.
 
 ---
@@ -163,11 +163,11 @@ Do not merge on failure unless environmental and documented.
 - **Modify:** `SchedulePageClient.tsx`
 - **Optional create:** `lib/` pure peel only when React-free (see R3-29)
 
-- [ ] **Step 1:** Grep `handleInitializeAlgorithm`, `generateStep2`, `generateStep3`, `showStep2Point2`, `showStep2Point3`, resolver refs, `useScheduleController` actions.
-- [ ] **Step 2:** Extract **with** the same `scheduleActions` and toast/invalidate calls; do not fork dev harness `runStep2Auto` without shared subroutines.
-- [ ] **Step 3:** Global gates.
+- [x] **Step 1:** Grep `handleInitializeAlgorithm`, `generateStep2`, `generateStep3`, `showStep2Point2`, `showStep2Point3`, resolver refs, `useScheduleController` actions.
+- [x] **Step 2:** Extract **with** the same `scheduleActions` and toast/invalidate calls; do not fork dev harness `runStep2Auto` without shared subroutines.
+- [x] **Step 3:** Global gates.
 - [ ] **Step 4:** **Manual (owner):** run **Initialize** from step strip for each major step; Step 2.1 / 2.2 / 2.3 dialogs; Step 3 entry.
-- [ ] **Step 5:** Commit: `refactor(schedule): extract algorithm entry hook (round 3)`.
+- [x] **Step 5:** Commit: `refactor(schedule): extract algorithm entry hook (round 3)`.
 
 ---
 
