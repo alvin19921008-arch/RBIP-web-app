@@ -167,6 +167,7 @@ import {
   useScheduleBufferedStep2HandoffAfterProjection,
   type Step2FinalizeContext,
 } from '@/features/schedule/ui/hooks/useScheduleStep2DependencyAndToast'
+import { useScheduleSubstitutionWizard } from '@/features/schedule/ui/hooks/useScheduleSubstitutionWizard'
 import { resetStep2OverridesForAlgoEntry } from '@/lib/features/schedule/stepReset'
 import { applySptFinalEditToTherapistAllocations } from '@/lib/features/schedule/sptFinalEdit'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
@@ -613,6 +614,32 @@ function SchedulePageContent() {
     })
     return out
   }, [visibleTeams, effectiveTeamMergeConfig])
+
+  const teamContributorsByMain = useMemo(() => {
+    const out: Partial<Record<Team, Team[]>> = {}
+    visibleTeams.forEach((mainTeam) => {
+      out[mainTeam] = getContributingTeams(mainTeam, effectiveTeamMergeConfig.mergedInto)
+    })
+    return out
+  }, [visibleTeams, effectiveTeamMergeConfig.mergedInto])
+
+  const {
+    substitutionWizardOpen,
+    setSubstitutionWizardOpen,
+    setSubstitutionWizardData,
+    substitutionWizardResolverRef,
+    step2WizardAllowBackToSpecialProgramsRef,
+    onNonFloatingSubstitutionWizard,
+    substitutionWizardDataForDisplay,
+    handleSubstitutionWizardConfirm,
+    handleSubstitutionWizardCancel,
+    handleSubstitutionWizardSkip,
+    resetSubstitutionWizardForStepClear,
+  } = useScheduleSubstitutionWizard({
+    visibleTeams,
+    teamContributorsByMain,
+    mergedInto: effectiveTeamMergeConfig.mergedInto,
+  })
 
   const toDateKey = useCallback((d: Date) => {
     const y = d.getFullYear()
@@ -1207,34 +1234,7 @@ function SchedulePageContent() {
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingStep2AfterInactivePromotion, staff, inactiveStaff, bufferStaff])
-  
-  // Non-floating PCA substitution wizard state
-  const [substitutionWizardOpen, setSubstitutionWizardOpen] = useState(false)
-  const [substitutionWizardData, setSubstitutionWizardData] = useState<{
-    teams: Team[]
-    substitutionsByTeam: Record<Team, Array<{
-      nonFloatingPCAId: string
-      nonFloatingPCAName: string
-      team: Team
-      fte: number
-      missingSlots: number[]
-      availableFloatingPCAs: Array<{
-        id: string
-        name: string
-        availableSlots: number[]
-        isPreferred: boolean
-        isFloorPCA: boolean
-        blockedSlotsInfo?: Array<{ slot: number; reasons: string[] }>
-      }>
-    }>>
-    isWizardMode: boolean // true if multiple teams, false if single team
-    initialSelections?: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>
-    allowBackToSpecialPrograms?: boolean
-  } | null>(null)
-  const step2WizardAllowBackToSpecialProgramsRef = useRef(false)
-  const substitutionWizardResolverRef = useRef<
-    ((selections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>) => void) | null
-  >(null)
+
   const [adjustedPendingFTE, setAdjustedPendingFTE] = useState<Record<Team, number> | null>(null)
   const [teamAllocationOrder, setTeamAllocationOrder] = useState<Team[] | null>(null)
   const [allocationTracker, setAllocationTracker] = useState<AllocationTracker | null>(null)
@@ -3041,48 +3041,7 @@ function SchedulePageContent() {
       onStep21Projection: ({ showStep21 }) => {
         setStep21RuntimeVisible(showStep21)
       },
-      onNonFloatingSubstitutionWizard: async ({
-        teams,
-        substitutionsByTeam,
-        isWizardMode,
-        initialSelections,
-      }) => {
-        if (teams.length === 0) return {}
-
-        return await new Promise((resolve, reject) => {
-          setSubstitutionWizardData({
-            teams,
-            substitutionsByTeam: substitutionsByTeam as any,
-            isWizardMode,
-            initialSelections,
-            allowBackToSpecialPrograms: step2WizardAllowBackToSpecialProgramsRef.current,
-          })
-          setSubstitutionWizardOpen(true)
-
-          const resolver = (
-            selections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>,
-            opts?: { cancelled?: boolean; back?: boolean }
-          ) => {
-            setSubstitutionWizardOpen(false)
-            setSubstitutionWizardData(null)
-            if (opts?.cancelled) {
-              const err: any = new Error('user_cancelled')
-              err.code = 'user_cancelled'
-              reject(err)
-              return
-            }
-            if (opts?.back) {
-              const err: any = new Error('wizard_back')
-              err.code = 'wizard_back'
-              reject(err)
-              return
-            }
-            resolve(selections)
-          }
-
-          substitutionWizardResolverRef.current = resolver as any
-        })
-      },
+      onNonFloatingSubstitutionWizard,
     })
   }
 
@@ -3914,9 +3873,7 @@ function SchedulePageContent() {
     setSharedTherapistDialogData(null)
     sharedTherapistEditResolverRef.current = null
     setStep21RuntimeVisible(null)
-    setSubstitutionWizardOpen(false)
-    setSubstitutionWizardData(null)
-    substitutionWizardResolverRef.current = null
+    resetSubstitutionWizardForStepClear()
     closeAllStep3Dialogs()
 
     // Clear page-local Step 3 UI state
@@ -3937,9 +3894,7 @@ function SchedulePageContent() {
     setSharedTherapistDialogData(null)
     sharedTherapistEditResolverRef.current = null
     setStep21RuntimeVisible(null)
-    setSubstitutionWizardOpen(false)
-    setSubstitutionWizardData(null)
-    substitutionWizardResolverRef.current = null
+    resetSubstitutionWizardForStepClear()
     closeAllStep3Dialogs()
 
     // Clear page-local Step 3 UI state
@@ -4158,49 +4113,6 @@ function SchedulePageContent() {
   }
 
   /**
-   * Handle confirmation from NonFloatingSubstitutionDialog
-   * Resolves the promise in the algorithm callback with user's selections
-   */
-  const handleSubstitutionWizardConfirm = (
-    selections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>
-  ) => {
-    // Resolve the promise in the algorithm callback
-    if (substitutionWizardResolverRef.current) {
-      substitutionWizardResolverRef.current(selections)
-      substitutionWizardResolverRef.current = null
-    }
-    
-    // Substitution intent persistence is controller-authoritative.
-    // The page only relays wizard selections back to controller.
-  }
-
-  /**
-   * Handle cancel from NonFloatingSubstitutionDialog
-   * Resolves with empty selections (algorithm will use automatic fallback)
-   */
-  const handleSubstitutionWizardCancel = () => {
-    if (substitutionWizardResolverRef.current) {
-      ;(substitutionWizardResolverRef.current as any)({}, { cancelled: true })
-      substitutionWizardResolverRef.current = null
-    }
-    setSubstitutionWizardOpen(false)
-    setSubstitutionWizardData(null)
-  }
-
-  /**
-   * Handle skip from NonFloatingSubstitutionDialog
-   * Resolves with empty selections (algorithm will use automatic fallback)
-   */
-  const handleSubstitutionWizardSkip = () => {
-    if (substitutionWizardResolverRef.current) {
-      substitutionWizardResolverRef.current({})
-      substitutionWizardResolverRef.current = null
-    }
-    setSubstitutionWizardOpen(false)
-    setSubstitutionWizardData(null)
-  }
-
-  /**
    * Reset to baseline - clear all staff overrides and start fresh
    */
   const resetToBaseline = () => {
@@ -4319,13 +4231,6 @@ function SchedulePageContent() {
 
   const currentWeekday = getWeekday(selectedDate)
   const weekdayName = WEEKDAY_NAMES[WEEKDAYS.indexOf(currentWeekday)]
-  const teamContributorsByMain = useMemo(() => {
-    const out: Partial<Record<Team, Team[]>> = {}
-    visibleTeams.forEach((mainTeam) => {
-      out[mainTeam] = getContributingTeams(mainTeam, effectiveTeamMergeConfig.mergedInto)
-    })
-    return out
-  }, [visibleTeams, effectiveTeamMergeConfig.mergedInto])
 
   const {
     displayViewForCurrentWeekday,
@@ -4367,57 +4272,6 @@ function SchedulePageContent() {
       dismissToast: dismissActionToast,
       lastShownToastRef,
     })
-
-  const substitutionWizardDataForDisplay = useMemo(() => {
-    if (!substitutionWizardData) return null
-
-    const teams = visibleTeams.filter((mainTeam) => {
-      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
-      return contributors.some((team) => (substitutionWizardData.substitutionsByTeam[team] || []).length > 0)
-    })
-
-    const substitutionsByTeam = createEmptyTeamRecordFactory<
-      Array<{
-        nonFloatingPCAId: string
-        nonFloatingPCAName: string
-        team: Team
-        fte: number
-        missingSlots: number[]
-        availableFloatingPCAs: Array<{
-          id: string
-          name: string
-          availableSlots: number[]
-          isPreferred: boolean
-          isFloorPCA: boolean
-          blockedSlotsInfo?: Array<{ slot: number; reasons: string[] }>
-        }>
-      }>
-    >(() => [])
-
-    teams.forEach((mainTeam) => {
-      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
-      substitutionsByTeam[mainTeam] = contributors.flatMap(
-        (team) => substitutionWizardData.substitutionsByTeam[team] || []
-      )
-    })
-
-    // Keep original selection keys (sourceTeam-nonFloatingId).
-    // The Step 2 allocator matches selections by original team keys, not merged display keys.
-    const initialSelections = substitutionWizardData.initialSelections
-
-    return {
-      ...substitutionWizardData,
-      teams,
-      substitutionsByTeam,
-      isWizardMode: teams.length > 1,
-      initialSelections,
-    }
-  }, [
-    substitutionWizardData,
-    effectiveTeamMergeConfig.mergedInto,
-    visibleTeams,
-    teamContributorsByMain,
-  ])
 
   const therapistAllocationsForDisplay = useMemo(() => {
     const out = createEmptyTeamRecordFactory<any[]>(() => [])

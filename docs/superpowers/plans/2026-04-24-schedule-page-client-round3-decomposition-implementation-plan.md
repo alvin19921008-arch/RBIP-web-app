@@ -21,8 +21,8 @@
 | R3-20 | Pre-baseline & order | Done | 2026-04-24: `wc -l` **8159**; gates at **ba080b2** (pre-commit); orchestrator re-ran gates green on **38d787e**; smoke 13 passed, 3 skipped. Anchors: `useAllocationSync` → `SchedulePageClient.tsx:3578`; `handleInitializeAlgorithm` → `:4139`; `beginDateTransition` → `:5066`; `flushSync` → `:1168`. R1 §7 re-read. Doc commit **38d787e** (`chore(docs): round 3 baseline`). Reviewer **PASS** (non-blocking: untracked sibling plan/handoff `.md` files may be committed separately). |
 | R3-21 | Initial date + date/URL | Done | 2026-04-24: commit **20184a7**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (URL/calendar/cold load). Hooks: `useScheduleInitialDateResolution.ts`, `useScheduleDateTransition.ts`. |
 | R3-22 | Recalc + `useAllocationSync` + beds | Done | 2026-04-24: commit **c07c63c**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (overrides / bed / double recalc). `useScheduleAllocationRecalcAndSync.ts`. |
-| R3-23 | Step 2 dependency + buffered Step 2 toast | Done | 2026-04-24: commit **9b57bd3**; orchestrator gates green (smoke 12 passed, 4 skipped); reviewer **PASS** (non-blocking). `useScheduleStep2DependencyAndToast.ts` (3 hooks). **Manual (owner):** Step 4 (Step 2 toast + Step 3 bootstrap / badges) — still `- [ ]` in phase checklist. |
-| R3-24 | Substitution wizard | Not started | |
+| R3-23 | Step 2 dependency + buffered Step 2 toast | Done | 2026-04-24: commit **9b57bd3**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (toast + Step 3 bootstrap / badges). `useScheduleStep2DependencyAndToast.ts`. |
+| R3-24 | Substitution wizard | In progress | 2026-04-24: implementer dispatched. Preserve `generateStep2` / Step 2 Promise contract. |
 | R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Not started | May split 25a / 25b |
 | R3-26 | DnD bridge wiring | Not started | |
 | R3-27 | Toolbar + interaction layer | Not started | |
@@ -131,7 +131,7 @@ Do not merge on failure unless environmental and documented.
 - [x] **Step 1:** Grep `step2FingerprintBaselineRef`, `bufferedStep2`, `captureStep2DependencyBaseline`, `finalizeStep2DependencyChanges`, `useStep3DialogProjection` (call site only for deps).
 - [x] **Step 2:** Keep **all** `flushSync` + finalize pairings in the same module or explicitly imported from one place.
 - [x] **Step 3:** Global gates.
-- [ ] **Step 4:** **Manual (owner):** run Step 2, verify toast + Step 3 bootstrap / outdated badges.
+- [x] **Step 4:** **Manual (owner):** run Step 2, verify toast + Step 3 bootstrap / outdated badges. (Owner confirmed OK 2026-04-24.)
 - [x] **Step 5:** Commit: `refactor(schedule): extract step2 dependency and buffered toast (round 3)`.
 
 ---
@@ -145,11 +145,11 @@ Do not merge on failure unless environmental and documented.
 - **Create:** `features/schedule/ui/hooks/useScheduleSubstitutionWizard.ts`
 - **Modify:** `SchedulePageClient.tsx`, possibly `SchedulePageDialogNodes` props (thin)
 
-- [ ] **Step 1:** Grep `substitutionWizard`, `onNonFloatingSubstitutionWizard`.
-- [ ] **Step 2:** `generateStep2` must still **await** the same Promise contract — **no** change to `scheduleActions.runStep2TherapistAndNonFloatingPCA` behavior.
-- [ ] **Step 3:** Global gates.
+- [x] **Step 1:** Grep `substitutionWizard`, `onNonFloatingSubstitutionWizard`.
+- [x] **Step 2:** `generateStep2` must still **await** the same Promise contract — **no** change to `scheduleActions.runStep2TherapistAndNonFloatingPCA` behavior.
+- [x] **Step 3:** Global gates.
 - [ ] **Step 4:** **Manual (owner):** Step 2 path that opens substitution wizard; cancel + confirm.
-- [ ] **Step 5:** Commit: `refactor(schedule): extract substitution wizard hook (round 3)`.
+- [x] **Step 5:** Commit: `refactor(schedule): extract substitution wizard hook (round 3)`.
 
 ---
 
