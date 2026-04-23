@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useLayoutEffect, useRef, Fragment, useCallback, useTransition, Suspense, useMemo, Profiler, useOptimistic, type ReactNode } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useTransition, Suspense, useMemo, Profiler, useOptimistic, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { DragOverlay } from '@dnd-kit/core'
 import { snapCenterToCursor } from '@dnd-kit/modifiers'
@@ -23,16 +23,7 @@ import type {
   SnapshotHealthReport,
 } from '@/types/schedule'
 import { TeamColumn } from '@/components/allocation/TeamColumn'
-import { StaffPool } from '@/components/allocation/StaffPool'
-import { TherapistBlock } from '@/components/allocation/TherapistBlock'
-import { PCABlock } from '@/components/allocation/PCABlock'
-import { AllocationNotesBoard } from '@/components/allocation/AllocationNotesBoard'
-import { BedBlock } from '@/components/allocation/BedBlock'
-import { LeaveBlock } from '@/components/allocation/LeaveBlock'
-import { CalculationBlock } from '@/components/allocation/CalculationBlock'
 import { BedCountsEditDialog } from '@/features/schedule/ui/allocation/BedCountsEditDialog'
-import { PCACalculationBlock } from '@/components/allocation/PCACalculationBlock'
-import { ScheduleSummaryColumn } from '@/features/schedule/ui/layout/ScheduleSummaryColumn'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
@@ -42,9 +33,6 @@ import { ScheduleMainBoardChrome } from '@/features/schedule/ui/sections/Schedul
 import { SchedulePageHeaderRightActions } from '@/features/schedule/ui/sections/SchedulePageHeaderRightActions'
 import { SchedulePageSplitMainPaneHeader } from '@/features/schedule/ui/sections/SchedulePageSplitMainPaneHeader'
 import { ScheduleWorkflowStepShell } from '@/features/schedule/ui/sections/ScheduleWorkflowStepShell'
-import { PcaAllocationLegendPopover } from '@/components/allocation/PcaAllocationLegendPopover'
-import { AvgPcaFormulaPopoverContent } from '@/components/help/AvgPcaFormulaPopoverContent'
-import { FormulaBlock, FormulaChip } from '@/components/help/avgPcaFormulaSteps'
 import dynamic from 'next/dynamic'
 import { SlotSelectionPopover } from '@/components/allocation/SlotSelectionPopover'
 import { StaffContextMenu } from '@/components/allocation/StaffContextMenu'
@@ -67,9 +55,11 @@ import { useScheduleStepChromeNavigation } from '@/features/schedule/ui/hooks/us
 import { useScheduleAllocationContextMenus } from '@/features/schedule/ui/hooks/useScheduleAllocationContextMenus'
 import type { Step2ResultSurplusProjectionForStep3 } from '@/lib/features/schedule/schedulePageFingerprints'
 import { combineScheduleCalculations } from '@/lib/features/schedule/scheduleCalculationsCombine'
+import { ScheduleBoardLeftColumn } from '@/features/schedule/ui/layout/ScheduleBoardLeftColumn'
+import { ScheduleBoardRightColumn } from '@/features/schedule/ui/layout/ScheduleBoardRightColumn'
 import { ScheduleMainGrid } from '@/features/schedule/ui/layout/ScheduleMainGrid'
 import { ScheduleSplitLayout } from '@/features/schedule/ui/layout/ScheduleSplitLayout'
-import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, Undo2, Redo2, Info } from 'lucide-react'
+import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, Undo2, Redo2 } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
@@ -195,10 +185,6 @@ const ScheduleBlocks1To6 = dynamic(
   () => import('@/features/schedule/ui/panes/ScheduleBlocks1To6').then(m => m.ScheduleBlocks1To6),
   { ssr: false }
 )
-const PCADedicatedScheduleTable = dynamic(
-  () => import('@/components/allocation/PCADedicatedScheduleTable').then(m => m.PCADedicatedScheduleTable),
-  { ssr: false }
-)
 const ScheduleDevLeaveSimBridgeDynamic = dynamic(
   () =>
     import('@/features/schedule/ui/dev/ScheduleDevLeaveSimBridge').then((m) => m.ScheduleDevLeaveSimBridge),
@@ -250,7 +236,7 @@ import {
   getAllSubstitutionSlots,
   hasAnySubstitution,
 } from '@/lib/utils/substitutionFor'
-import { ALLOCATION_STEPS, EMPTY_BED_ALLOCATIONS, TEAMS, WEEKDAYS, WEEKDAY_NAMES } from '@/lib/features/schedule/constants'
+import { ALLOCATION_STEPS, TEAMS, WEEKDAYS, WEEKDAY_NAMES } from '@/lib/features/schedule/constants'
 import { useScheduleController } from '@/lib/features/schedule/controller/useScheduleController'
 import type { PCAAllocationErrors } from '@/lib/features/schedule/controller/useScheduleController'
 import type { BedCountsOverridesByTeam } from '@/lib/features/schedule/controller/scheduleControllerTypes'
@@ -8373,469 +8359,119 @@ function SchedulePageContent() {
             <ScheduleMainGrid
               rightContentHeight={typeof rightContentHeight === 'number' && rightContentHeight > 0 ? rightContentHeight : undefined}
               leftColumn={
-            <>
-            {/* Summary */}
-            <ScheduleSummaryColumn
-              wards={wards}
-              bedCountsOverridesByTeam={bedCountsOverridesByTeam}
-              calculations={calculations}
-              sptAllocations={sptAllocations}
-              currentWeekday={currentWeekday}
-              therapistAllocations={therapistAllocations}
-              staffOverrides={staffOverrides}
-              staff={staff}
-              bufferStaff={bufferStaff}
-              pcaAllocationsForUi={pcaAllocationsForUi}
-            />
-
-            <div
-              className={cn(
-                'vt-mode-anim',
-                'flex-1 min-h-0 flex flex-col min-w-0 overflow-hidden transition-[width,max-height,opacity,margin] duration-300 ease-in-out',
-                isDisplayMode ? 'w-0 max-h-0 opacity-0 -mt-2 pointer-events-none' : 'w-40 max-h-[9999px] opacity-100 mt-0'
-              )}
-              aria-hidden={isDisplayMode}
-            >
-              <div className="flex-1 min-h-0">
-                <MaybeProfiler id="StaffPool">
-                <StaffPool
-                  therapists={therapists}
-                  pcas={pcas}
-                  inactiveStaff={inactiveStaff}
-                  bufferStaff={bufferStaff}
-                  onConvertInactiveToBuffer={({ staff, bufferFTE }) => {
-                    scheduleActions.setScheduleStaffStatusOverride({
-                      staffId: staff.id,
-                      status: 'buffer',
-                      bufferFTE,
-                      nameAtTime: staff.name,
-                      rankAtTime: staff.rank,
-                    })
+                <ScheduleBoardLeftColumn
+                  summaryColumnProps={{
+                    wards,
+                    bedCountsOverridesByTeam,
+                    calculations,
+                    sptAllocations,
+                    currentWeekday,
+                    therapistAllocations,
+                    staffOverrides,
+                    staff,
+                    bufferStaff,
+                    pcaAllocationsForUi,
                   }}
-                  onOpenStaffContextMenu={openStaffPoolContextMenu}
-                  staffOverrides={staffOverrides}
-                  specialPrograms={specialPrograms}
-                  pcaAllocations={pcaAllocations}
-                  currentStep={currentStep}
-                  initializedSteps={initializedSteps}
-                  weekday={selectedDate ? getWeekday(selectedDate) : undefined}
-                  disableDragging={staffPoolContextMenu.show}
-                  snapshotNotice={
-                    showSnapshotUiReminder
-                      ? `Staff pool is shown from the saved snapshot for ${formatDateDDMMYYYY(selectedDate)}.`
-                      : undefined
-                  }
-                  snapshotDateLabel={showSnapshotUiReminder ? formatDateDDMMYYYY(selectedDate) : undefined}
-                  onSlotTransfer={(staffId: string, targetTeam: string, slots: number[]) => {
-                  // Find source team from allocations
-                  let sourceTeam: Team | null = null
-                  for (const [team, allocs] of Object.entries(pcaAllocations)) {
-                    if (allocs.some(a => a.staff_id === staffId)) {
-                      sourceTeam = team as Team
-                      break
-                    }
-                  }
-                  if (sourceTeam) {
-                    // Update drag state and perform transfer
-                    const staffMember = staff.find(s => s.id === staffId)
-                    const isBufferStaff = staffMember?.status === 'buffer'
-                    setPcaDragState(
-                      createActivePcaDragState({
-                        staffId,
-                        staffName: staffMember?.name || null,
-                        sourceTeam,
-                        availableSlots: staffOverrides[staffId]?.availableSlots || [1, 2, 3, 4],
-                        selectedSlots: slots,
-                        popoverPosition: null,
-                        isBufferStaff: isBufferStaff || false,
+                  isDisplayMode={isDisplayMode}
+                  MaybeProfiler={MaybeProfiler}
+                  staffPool={{
+                    therapists,
+                    pcas,
+                    inactiveStaff,
+                    bufferStaff,
+                    onConvertInactiveToBuffer: ({ staff, bufferFTE }) => {
+                      scheduleActions.setScheduleStaffStatusOverride({
+                        staffId: staff.id,
+                        status: 'buffer',
+                        bufferFTE,
+                        nameAtTime: staff.name,
+                        rankAtTime: staff.rank,
                       })
-                    )
-                    performSlotTransfer(targetTeam as Team)
-                  }
+                    },
+                    openStaffPoolContextMenu,
+                    staffOverrides,
+                    specialPrograms,
+                    pcaAllocations,
+                    currentStep,
+                    initializedSteps,
+                    poolWeekday: selectedDate ? getWeekday(selectedDate) : undefined,
+                    staffPoolContextMenuOpen: staffPoolContextMenu.show,
+                    snapshotNotice: showSnapshotUiReminder
+                      ? `Staff pool is shown from the saved snapshot for ${formatDateDDMMYYYY(selectedDate)}.`
+                      : undefined,
+                    snapshotDateLabel: showSnapshotUiReminder ? formatDateDDMMYYYY(selectedDate) : undefined,
+                    pcaSlotTransfer: {
+                      setPcaDragState,
+                      createActivePcaDragState,
+                      staff,
+                      performSlotTransfer,
+                    },
                   }}
                 />
-                </MaybeProfiler>
-              </div>
-            </div>
-            </>
               }
               rightColumn={
-          <>
-          <div className="flex-1 min-w-0 bg-background relative">
-            {/* Display mode: block editing interactions over the grid (drag/edit/click). */}
-            {isDisplayMode ? (
-              <div
-                className="absolute inset-0 z-[60] pointer-events-auto cursor-not-allowed bg-transparent"
-                aria-hidden={true}
-              />
-            ) : null}
-            {/* Team grid loading: prefer native skeleton (no dimming overlay) */}
-            {gridLoading && (
-              <div className="absolute inset-0 z-50 pointer-events-auto bg-background">
-                <div className="p-4 space-y-4">
-                  <div className="grid gap-2" style={visibleTeamGridStyle}>
-                    {Array.from({ length: visibleTeams.length }).map((_, i) => (
-                      <div key={`hdr-skel-${i}`} className="h-6 rounded-md bg-muted animate-pulse" />
-                    ))}
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="h-4 w-40 rounded-md bg-muted animate-pulse" />
-                    <div className="grid gap-2" style={visibleTeamGridStyle}>
-                      {Array.from({ length: visibleTeams.length }).map((_, i) => (
-                        <div key={`b1-skel-${i}`} className="h-24 rounded-lg border border-border bg-card animate-pulse" />
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="h-4 w-32 rounded-md bg-muted animate-pulse" />
-                    <div className="grid gap-2" style={visibleTeamGridStyle}>
-                      {Array.from({ length: visibleTeams.length }).map((_, i) => (
-                        <div key={`b2-skel-${i}`} className="h-28 rounded-lg border border-border bg-card animate-pulse" />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-            {/* Sticky Team headers row (Excel-like freeze) */}
-            <div
-              className={cn(
-                'sticky top-0 z-40 bg-background/95 border-b border-border',
-                !isSplitMode && 'backdrop-blur'
-              )}
-            >
-              <div className="grid gap-2 py-2" style={{ ...visibleTeamGridStyle, minWidth: `${scheduleMinWidthPx}px` }}>
-                {visibleTeams.map((team) => (
-                  <h2 key={`header-${team}`} className="text-lg font-bold text-center">
-                    {mainTeamDisplayNames[team] || team}
-                  </h2>
-                ))}
-              </div>
-            </div>
-
-            {/* Team grid content (page-level horizontal scroll) */}
-            <MaybeProfiler id="TeamGrid">
-            <div className="bg-background">
-              <div style={{ minWidth: `${scheduleMinWidthPx}px` }}>
-                {/* Height anchor for Staff Pool column: stop at bottom of PCA Dedicated table (exclude notes board). */}
-                <div ref={rightContentRef}>
-                
-                {/* Block 1: Therapist Allocation */}
-                <div ref={therapistAllocationBlockRef} className="mb-4">
-                  <h3 className="text-xs font-semibold text-center mb-2">Therapist Allocation</h3>
-                  <div className="grid gap-2" style={visibleTeamGridStyle}>
-                    {visibleTeams.map((team) => (
-                      <TherapistBlock
-                        key={`therapist-${team}`}
-                        team={team}
-                        allocations={therapistAllocationsForDisplay[team]}
-                        specialPrograms={specialPrograms}
-                        weekday={currentWeekday}
-                        currentStep={currentStep}
-                        onEditStaff={onEditTherapistByTeam[team]}
-                        staffOverrides={therapistOverridesByTeam[team]}
-                        sptWeekdayByStaffId={sptWeekdayByStaffId}
-                      />
-                    ))}
-                  </div>
-                </div>
-                
-                {/* Block 2: PCA Allocation */}
-                <div ref={pcaAllocationBlockRef} className="mb-4">
-                  <div className="mb-2 flex items-center justify-center gap-1">
-                    <h3 className="text-xs font-semibold">PCA Allocation</h3>
-                    <PcaAllocationLegendPopover />
-                  </div>
-                  <div className="grid gap-2" style={visibleTeamGridStyle}>
-                    {visibleTeams.map((team) => (
-                      <Fragment key={`pca-${team}`}>
-                        <PCABlock
-                          team={team}
-                          allocations={pcaAllocationsForDisplay[team]}
-                          onEditStaff={onEditPcaByTeam[team]}
-                          requiredPCA={calculationsForDisplay[team]?.required_pca_per_team}
-                          averagePCAPerTeam={
-                            step3DashboardAvgPcaDisplayByTeam?.[team] ??
-                            calculationsForDisplay[team]?.average_pca_per_team
-                          }
-                          baseAveragePCAPerTeam={calculationsForDisplay[team]?.base_average_pca_per_team}
-                        specialPrograms={specialPrograms}
-                          allPCAAllocations={allPCAAllocationsFlat}
-                          staffOverrides={pcaOverridesByTeam[team]}
-                          allPCAStaff={pcas}
-                          currentStep={currentStep}
-                          step2Initialized={initializedSteps.has('therapist-pca')}
-                          initializedSteps={initializedSteps}
-                          weekday={currentWeekday}
-                          externalHover={popoverDragHoverTeam === team}
-                          allocationLog={allocationTracker?.[team]}
-                          step3FlowChoice={step3FlowChoiceForTooltip}
-                          step3OrderPosition={step3OrderPositionByTeam[team]}
-                          pendingPcaFte={pendingPCAFTEPerTeam?.[team]}
-                          floatingPoolRemainingFte={floatingPoolRemainingFte}
-                      />
-                      </Fragment>
-                    ))}
-                  </div>
-                </div>
-                
-                {/* Block 3: Bed Allocation */}
-                <div className="mb-4">
-                  <h3 className="text-xs font-semibold text-center mb-2">Relieving Beds</h3>
-                  <div className="grid gap-2" style={visibleTeamGridStyle}>
-                    {(() => {
-                      const canShowBeds =
-                        stepStatus['bed-relieving'] === 'completed' ||
-                        currentStep === 'bed-relieving' ||
-                        currentStep === 'review'
-                      const visibleBedAllocs = canShowBeds ? bedAllocationsForDisplay : EMPTY_BED_ALLOCATIONS
-
-                      return visibleTeams.map((team) => (
-                        <BedBlock
-                          key={`bed-${team}`}
-                          team={team}
-                          allocations={visibleBedAllocs}
-                          wards={wards}
-                          bedRelievingNotesByToTeam={bedRelievingNotesByToTeamForDisplay}
-                          onSaveBedRelievingNotesForToTeam={saveBedRelievingNotesForToTeam}
-                          activeEditingTransfer={activeBedRelievingTransfer}
-                          onActiveEditingTransferChange={setActiveBedRelievingTransfer}
-                          currentStep={currentStep}
-                          onInvalidEditAttempt={(position) => {
-                            // Position is client coords (cursor). Render as fixed tooltip near cursor.
-                            const pad = 8
-                            const estW = 260
-                            const estH = 80
-                            let x = position.x + 12
-                            let y = position.y + 12
-                            if (x + estW > window.innerWidth - pad) x = window.innerWidth - estW - pad
-                            if (y + estH > window.innerHeight - pad) y = window.innerHeight - estH - pad
-                            x = Math.max(pad, x)
-                            y = Math.max(pad, y)
-                            setBedRelievingEditWarningPopover({ show: true, position: { x, y } })
-                          }}
-                        />
-                      ))
-                    })()}
-                  </div>
-                </div>
-                
-                {/* Block 4: Leave Arrangements */}
-                <div className="mb-4">
-                  <h3 className="text-xs font-semibold text-center mb-2">Leave Arrangements</h3>
-                  <div className="grid gap-2" style={visibleTeamGridStyle}>
-                    {visibleTeams.map((team) => {
-                      // Get staff on leave from allocations AND staffOverrides
-                      // Only include staff who are truly on leave (not on-duty).
-                      const therapistLeaves = therapistAllocationsForDisplay[team]
-                        .filter(alloc => {
-                          const override = staffOverrides[alloc.staff.id]
-                          const effectiveLeaveType =
-                            override?.leaveType !== undefined ? override.leaveType : (alloc.leave_type as any)
-                          const hasLeaveType = effectiveLeaveType !== null && effectiveLeaveType !== undefined
-                          const isTrulyOnLeave = hasLeaveType && !isOnDutyLeaveType(effectiveLeaveType as any)
-
-                          // IMPORTANT:
-                          // - SPT can be "on duty" with FTE=0 (supervisory), and should NOT show in leave block.
-                          // - Only show in leave block when leave type is truly a leave type (not on-duty).
-                          return isTrulyOnLeave
-                        })
-                        .map(alloc => {
-                          const override = staffOverrides[alloc.staff.id]
-                          const effectiveLeaveType =
-                            override?.leaveType !== undefined ? override.leaveType : (alloc.leave_type as any)
-                          // Use override FTE if available, otherwise use allocation FTE
-                          const fteRemaining = override?.fteRemaining !== undefined
-                            ? override.fteRemaining
-                            : (alloc.fte_therapist || 0)
-                          return { 
-                            ...alloc.staff, 
-                            leave_type: effectiveLeaveType as LeaveType,
-                            fteRemaining: fteRemaining
-                          }
-                        })
-                      
-                      // Also check staffOverrides for staff with leave types that might not be in allocations
-                      // This includes non-floating staff assigned to this team
-                      // Only include therapists (SPT, APPT, RPT) - exclude PCA
-                      const overrideLeaves = Object.entries(staffOverrides)
-                        .filter(([staffId, override]) => {
-                          const staffMember = staff.find(s => s.id === staffId)
-                          // Include only therapists with any leave type set, regardless of FTE
-                          const isTherapist = staffMember && ['SPT', 'APPT', 'RPT'].includes(staffMember.rank)
-                          const hasLeaveType = override.leaveType !== null && override.leaveType !== undefined
-                          const isTrulyOnLeave = hasLeaveType && !isOnDutyLeaveType(override.leaveType as any)
-                          const canonicalTeam = staffMember?.team
-                            ? getMainTeam(staffMember.team as Team, effectiveTeamMergeConfig.mergedInto)
-                            : null
-                          return isTherapist && canonicalTeam === team && isTrulyOnLeave
-                        })
-                        .map(([staffId, override]) => {
-                          const staffMember = staff.find(s => s.id === staffId)!
-                          return {
-                            ...staffMember,
-                            leave_type: override.leaveType as any,
-                            fteRemaining: override.fteRemaining
-                          }
-                        })
-                      
-                      // Combine and deduplicate by staff id, prioritizing override leaves
-                      // Only include therapists - exclude PCA leaves
-                      const allLeaves = [...therapistLeaves, ...overrideLeaves]
-                      const uniqueLeaves = allLeaves.filter((staff, index, self) =>
-                        index === self.findIndex(s => s.id === staff.id)
-                      )
-                      
-                      return (
-                        <LeaveBlock
-                          key={`leave-${team}`}
-                          team={team}
-                          staffOnLeave={uniqueLeaves}
-                          onEditStaff={handleEditStaff}
-                        />
-                      )
-                    })}
-                  </div>
-                </div>
-                
-                {/* Block 5: Calculations */}
-                <div className="mb-4">
-                  <h3 className="text-xs font-semibold text-center mb-2">Beds Calculations</h3>
-                  <div className="grid gap-2" style={visibleTeamGridStyle}>
-                    {visibleTeams.map((team) => {
-                      const bedOverride = bedCountsOverridesByTeamForDisplay?.[team]
-                      const shs =
-                        typeof bedOverride?.shsBedCounts === 'number' ? bedOverride.shsBedCounts : null
-                      const students =
-                        typeof bedOverride?.studentPlacementBedCounts === 'number'
-                          ? bedOverride.studentPlacementBedCounts
-                          : null
-
-                      return (
-                        <CalculationBlock
-                          key={`calc-${team}`}
-                          team={team}
-                          calculations={calculationsForDisplay[team]}
-                          shsBedCounts={shs}
-                          studentPlacementBedCounts={students}
-                          onEditBedCounts={() => setEditingBedTeam(team)}
-                        />
-                      )
-                    })}
-                  </div>
-                </div>
-                
-                {/* Block 6: PCA Calculations */}
-                <div className="mb-4">
-                  <div className="text-xs font-semibold text-center mb-2 flex items-center justify-center gap-1">
-                    <span>PCA Calculations</span>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-5 w-5 p-0 text-muted-foreground"
-                          aria-label="How Avg PCA/team is calculated"
-                        >
-                          <Info className="h-3.5 w-3.5" aria-hidden="true" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="center"
-                        side="top"
-                        className="flex w-[420px] max-h-[min(520px,70vh)] min-h-0 flex-col overflow-hidden rounded-md border border-amber-200 bg-amber-50/95 p-0"
-                      >
-                        <AvgPcaFormulaPopoverContent
-                          sanityCheckFooter={
-                            <div className="space-y-2">
-                              <div className="text-muted-foreground text-xs">
-                                For each team, compare <span className="font-medium text-foreground">assigned FTE</span>{' '}
-                                to <span className="font-medium text-foreground">Avg</span>. On DRM days, use DRO’s{' '}
-                                <span className="font-medium text-foreground">final</span> Avg (including the add-on).
-                                Check: <FormulaChip>balance = Assigned − Avg</FormulaChip>. Then:
-                              </div>
-                              <FormulaBlock className="mt-0">
-                                Over-assigned: {pcaBalanceSanity.positiveSum.toFixed(2)} | Under-assigned:{' '}
-                                {pcaBalanceSanity.negativeAbsSum.toFixed(2)} | Net:{' '}
-                                {pcaBalanceSanity.netDiff.toFixed(2)}
-                              </FormulaBlock>
-                              <FormulaBlock className="mt-0 block w-full max-w-full text-[11px] leading-snug">
-                                Team balances (today): {pcaBalanceSanity.perTeamText}
-                              </FormulaBlock>
-                              <div className="text-muted-foreground text-[11px]">
-                                Small drift can happen due to quarter-slot rounding and 2-decimal display.
-                              </div>
-                            </div>
-                          }
-                        />
-                      </PopoverContent>
-                    </Popover>
-                  </div>
-                  <div className="grid gap-2" style={visibleTeamGridStyle}>
-                    {visibleTeams.map((team) => (
-                      <PCACalculationBlock
-                        key={`pca-calc-${team}`}
-                        team={team}
-                        calculations={calculationsForDisplay[team]}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                {/* PCA Dedicated Schedule (separate table, below entire team grid) */}
-                  {!deferBelowFold ? (
-                    <MaybeProfiler id="PCADedicatedTable">
-                <PCADedicatedScheduleTable
-                  allPCAStaff={[
-                    ...staff.filter(s => s.rank === 'PCA'),
-                    ...bufferStaff.filter(s => s.rank === 'PCA'),
-                  ]}
-                  pcaAllocationsByTeam={pcaAllocations}
-                  staffOverrides={staffOverridesForPcaDisplay as any}
-                  specialPrograms={specialPrograms}
-                  weekday={currentWeekday}
-                  stepStatus={stepStatus}
-                  initializedSteps={initializedSteps}
-                  showStaffIds={userRole === 'developer'}
+                <ScheduleBoardRightColumn
+                  MaybeProfiler={MaybeProfiler}
+                  layoutShell={{
+                    isDisplayMode,
+                    isSplitMode,
+                    gridLoading,
+                    deferBelowFold,
+                    scheduleMinWidthPx,
+                    visibleTeams,
+                    visibleTeamGridStyle,
+                    mainTeamDisplayNames,
+                  }}
+                  boardRefs={{
+                    rightContentRef,
+                    therapistAllocationBlockRef,
+                    pcaAllocationBlockRef,
+                  }}
+                  teamGrid={{
+                    currentWeekday,
+                    currentStep,
+                    stepStatus,
+                    specialPrograms,
+                    therapistAllocationsForDisplay,
+                    onEditTherapistByTeam,
+                    therapistOverridesByTeam,
+                    sptWeekdayByStaffId,
+                    pcaAllocationsForDisplay,
+                    onEditPcaByTeam,
+                    calculationsForDisplay,
+                    step3DashboardAvgPcaDisplayByTeam,
+                    allPCAAllocationsFlat,
+                    pcaOverridesByTeam,
+                    pcas,
+                    initializedSteps,
+                    popoverDragHoverTeam,
+                    allocationTracker,
+                    step3FlowChoiceForTooltip,
+                    step3OrderPositionByTeam,
+                    pendingPCAFTEPerTeam,
+                    floatingPoolRemainingFte,
+                    bedAllocationsForDisplay,
+                    wards,
+                    bedRelievingNotesByToTeamForDisplay,
+                    saveBedRelievingNotesForToTeam,
+                    activeBedRelievingTransfer,
+                    setActiveBedRelievingTransfer,
+                    setBedRelievingEditWarningPopover,
+                    staffOverrides,
+                    staff,
+                    effectiveTeamMergeConfig,
+                    handleEditStaff,
+                    bedCountsOverridesByTeamForDisplay,
+                    setEditingBedTeam,
+                    pcaBalanceSanity,
+                    bufferStaff,
+                    pcaAllocations,
+                    staffOverridesForPcaDisplay,
+                    userRole,
+                    allocationNotesDoc,
+                    saveAllocationNotes,
+                  }}
                 />
-                    </MaybeProfiler>
-                  ) : (
-                    <div className="mt-3 rounded-lg border border-border bg-card p-3">
-                      <div className="h-4 w-48 rounded-md bg-muted animate-pulse" />
-                      <div className="mt-2 h-16 rounded-md bg-muted/70 animate-pulse" />
-                    </div>
-                  )}
-                </div>
-
-                  <div
-                    className={cn(
-                      'vt-mode-anim',
-                      'overflow-hidden transition-[max-height,opacity,transform,margin] duration-300 ease-in-out',
-                      isDisplayMode
-                        ? 'max-h-0 opacity-0 -translate-y-2 mt-0 pointer-events-none'
-                        : 'max-h-[9999px] opacity-100 translate-y-0 mt-0'
-                    )}
-                    aria-hidden={isDisplayMode}
-                  >
-                    {!deferBelowFold ? (
-                      <MaybeProfiler id="AllocationNotesBoard">
-                        <AllocationNotesBoard doc={allocationNotesDoc} onSave={saveAllocationNotes} />
-                      </MaybeProfiler>
-                    ) : (
-                      <div className="mt-3 rounded-lg border border-border bg-card p-3">
-                        <div className="h-4 w-40 rounded-md bg-muted animate-pulse" />
-                        <div className="mt-2 h-20 rounded-md bg-muted/70 animate-pulse" />
-                      </div>
-                    )}
-                  </div>
-            </div>
-          </div>
-            </MaybeProfiler>
-        </div>
-            </>
               }
             />
           )
