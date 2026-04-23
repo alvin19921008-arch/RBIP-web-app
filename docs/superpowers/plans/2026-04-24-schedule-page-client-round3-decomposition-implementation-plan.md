@@ -19,7 +19,7 @@
 | Phase | Name | Status | Notes |
 |-------|------|--------|-------|
 | R3-20 | Pre-baseline & order | Done | 2026-04-24: `wc -l` **8159**; gates at **ba080b2** (pre-commit); orchestrator re-ran gates green on **38d787e**; smoke 13 passed, 3 skipped. Anchors: `useAllocationSync` → `SchedulePageClient.tsx:3578`; `handleInitializeAlgorithm` → `:4139`; `beginDateTransition` → `:5066`; `flushSync` → `:1168`. R1 §7 re-read. Doc commit **38d787e** (`chore(docs): round 3 baseline`). Reviewer **PASS** (non-blocking: untracked sibling plan/handoff `.md` files may be committed separately). |
-| R3-21 | Initial date + date/URL | In progress | 2026-04-24: hooks extracted; gates green; manual URL/calendar TBD. |
+| R3-21 | Initial date + date/URL | Done | 2026-04-24: commit **20184a7**; orchestrator gates green (`lint`+`build`+`test:smoke`); reviewer **PASS** (non-blocking: manual Step 4 still validates cold `?date=` / double-controller edge). Hooks: `useScheduleInitialDateResolution.ts`, `useScheduleDateTransition.ts`. **Manual (owner):** Step 4 URL/calendar/cold load — still pending sign-off in checklist. |
 | R3-22 | Recalc + `useAllocationSync` + beds | Not started | High ordering risk |
 | R3-23 | Step 2 dependency + buffered Step 2 toast | Not started | |
 | R3-24 | Substitution wizard | Not started | |
