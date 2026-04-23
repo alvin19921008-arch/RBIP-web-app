@@ -176,7 +176,8 @@ import {
 } from '@/lib/db/types'
 import { useAllocationSync } from '@/lib/hooks/useAllocationSync'
 import { useResizeObservedHeight } from '@/lib/hooks/useResizeObservedHeight'
-import { useScheduleDateParam } from '@/lib/hooks/useScheduleDateParam'
+import { useScheduleInitialDateResolution } from '@/features/schedule/ui/hooks/useScheduleInitialDateResolution'
+import { useScheduleDateTransition } from '@/features/schedule/ui/hooks/useScheduleDateTransition'
 import { resetStep2OverridesForAlgoEntry } from '@/lib/features/schedule/stepReset'
 import { applySptFinalEditToTherapistAllocations } from '@/lib/features/schedule/sptFinalEdit'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
@@ -184,7 +185,7 @@ import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/
 import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
 import { createTimingCollector, type TimingReport } from '@/lib/utils/timing'
 import { getCachedSchedule, cacheSchedule, clearCachedSchedule, getCacheSize } from '@/lib/utils/scheduleCache'
-import { clearDraftSchedule, getMostRecentDirtyScheduleDate, hasDraftSchedule } from '@/lib/utils/scheduleDraftCache'
+import { clearDraftSchedule, hasDraftSchedule } from '@/lib/utils/scheduleDraftCache'
 import { hasMeaningfulStep1Overrides } from '@/lib/utils/staffOverridesMeaningful'
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import {
@@ -676,10 +677,6 @@ function SchedulePageContent() {
     fromTeam: Team
     toTeam: Team
   } | null>(null)
-  
-  const LAST_OPEN_SCHEDULE_DATE_KEY = 'rbip_last_open_schedule_date'
-  const [initialDateResolved, setInitialDateResolved] = useState(false)
-  const initialDateResolutionStartedRef = useRef(false)
 
   const effectiveTeamMergeConfig = useMemo(
     () =>
@@ -721,216 +718,25 @@ function SchedulePageContent() {
     return `${y}-${m}-${day}`
   }, [])
 
-  const handleDeveloperCacheClear = () => {
-    const dateStr = toDateKey(selectedDate)
-    clearCachedSchedule(dateStr)
-    clearDraftSchedule(dateStr)
-    showActionToast(
-      'Cache cleared',
-      'success',
-      `Cleared cache for ${formatDateDDMMYYYY(selectedDate)}. Reloading schedule data...`
-    )
-    queueDateTransition(new Date(selectedDate.getTime()), {
-      resetLoadedForDate: true,
-      useLocalTopBar: false,
-    })
-  }
-
   const isScheduleCompletedToStep4 = useCallback((workflowState: WorkflowState | null | undefined) => {
     const completed = workflowState?.completedSteps ?? []
     if (!Array.isArray(completed)) return false
     return completed.includes('bed-relieving') || completed.includes('review')
   }, [])
 
+  const { initialDateResolved } = useScheduleInitialDateResolution({
+    supabase,
+    searchParams,
+    selectedDate,
+    toDateKey,
+    controllerBeginDateTransition,
+    isScheduleCompletedToStep4,
+  })
+
   // Bed-relieving highlight is only meaningful while editing that step.
   useEffect(() => {
     if (currentStep !== 'bed-relieving') setActiveBedRelievingTransfer(null)
   }, [currentStep])
-
-  // Initial navigation behavior:
-  // - If URL has ?date=..., respect it.
-  // - Else if user previously opened a schedule in this session, restore it only when still meaningful.
-  // - Else open today, but if today has no saved data/progress, fall back to the latest meaningful Step 1 date.
-  useEffect(() => {
-    if (initialDateResolutionStartedRef.current) return
-    initialDateResolutionStartedRef.current = true
-
-    let cancelled = false
-
-    const resolve = async () => {
-      try {
-        const dateParam = searchParams.get('date')
-        if (dateParam) {
-          try {
-            const parsed = parseDateFromInput(dateParam)
-            controllerBeginDateTransition(parsed, { resetLoadedForDate: true })
-          } catch (e) {
-            console.warn('Invalid ?date= param; falling back to auto date selection.', e)
-          } finally {
-            if (!cancelled) setInitialDateResolved(true)
-          }
-          return
-        }
-
-        const recentDirty = getMostRecentDirtyScheduleDate()
-        if (recentDirty?.dateStr) {
-          try {
-            const parsed = parseDateFromInput(recentDirty.dateStr)
-            controllerBeginDateTransition(parsed, { resetLoadedForDate: true })
-            if (!cancelled) setInitialDateResolved(true)
-            return
-          } catch {
-            // Ignore malformed pointer and continue normal fallback resolution.
-          }
-        }
-
-        const findLastMeaningfulStep1ScheduleDateKey = async (): Promise<string | null> => {
-          const res = await supabase
-            .from('daily_schedules')
-            .select('date,staff_overrides')
-            .order('date', { ascending: false })
-            .limit(180)
-          if (res.error) return null
-          const rows = (res.data || []) as Array<{ date?: string; staff_overrides?: unknown }>
-          for (const row of rows) {
-            if (typeof row?.date !== 'string') continue
-            if (hasMeaningfulStep1Overrides(row.staff_overrides)) return row.date
-          }
-          return null
-        }
-
-        const stored =
-          typeof window !== 'undefined' ? window.sessionStorage.getItem(LAST_OPEN_SCHEDULE_DATE_KEY) : null
-        if (stored) {
-          try {
-            // Validate shape first.
-            parseDateFromInput(stored)
-            const storedRes = await supabase
-              .from('daily_schedules')
-              .select('id,staff_overrides')
-              .eq('date', stored)
-              .maybeSingle()
-            const storedRow = storedRes.data
-            const storedExists = typeof storedRow?.id === 'string' && storedRow.id.length > 0
-            const storedIsMeaningful = hasMeaningfulStep1Overrides(storedRow?.staff_overrides)
-
-            if (storedExists && storedIsMeaningful) {
-              const parsed = parseDateFromInput(stored)
-              controllerBeginDateTransition(parsed, { resetLoadedForDate: true })
-              if (!cancelled) setInitialDateResolved(true)
-              return
-            }
-
-            // Stored date was deleted/empty; drop the pointer so top-nav /schedule cannot resurrect it.
-            if (typeof window !== 'undefined') {
-              window.sessionStorage.removeItem(LAST_OPEN_SCHEDULE_DATE_KEY)
-            }
-          } catch (e) {
-            console.warn('Invalid stored last-open schedule date; falling back to auto date selection.', e)
-            if (typeof window !== 'undefined') {
-              window.sessionStorage.removeItem(LAST_OPEN_SCHEDULE_DATE_KEY)
-            }
-          }
-        }
-
-        const today = new Date()
-        const todayKey = toDateKey(today)
-
-        // Check if today already has a saved schedule row (without auto-creating a blank schedule).
-        const todayRes = await supabase
-          .from('daily_schedules')
-          .select('id,date,workflow_state,staff_overrides')
-          .eq('date', todayKey)
-          .maybeSingle()
-
-        const todayRow = todayRes.data
-        const todayScheduleId = typeof todayRow?.id === 'string' ? todayRow.id : undefined
-        const todayWorkflow = (todayRow?.workflow_state as WorkflowState | null | undefined) ?? null
-        const todayOverrides = todayRow?.staff_overrides
-
-        const scheduleHasAnyAllocations = async (scheduleId: string): Promise<boolean> => {
-          try {
-            const [tRes, pRes, bRes] = await Promise.all([
-              supabase.from('schedule_therapist_allocations').select('id').eq('schedule_id', scheduleId).limit(1),
-              supabase.from('schedule_pca_allocations').select('id').eq('schedule_id', scheduleId).limit(1),
-              supabase.from('schedule_bed_allocations').select('id').eq('schedule_id', scheduleId).limit(1),
-            ])
-            if (tRes.error || pRes.error || bRes.error) return true // be conservative: keep today on errors
-            return (
-              ((tRes.data?.length ?? 0) > 0) || ((pRes.data?.length ?? 0) > 0) || ((bRes.data?.length ?? 0) > 0)
-            )
-          } catch {
-            return true
-          }
-        }
-
-        let initialDate: Date = today
-
-        if (todayScheduleId) {
-          const hasSavedRows = await scheduleHasAnyAllocations(todayScheduleId)
-          const hasProgress =
-            isScheduleCompletedToStep4(todayWorkflow) ||
-            ((todayWorkflow?.completedSteps || [])?.length ?? 0) > 0 ||
-            hasMeaningfulStep1Overrides(todayOverrides)
-          if (!hasSavedRows && !hasProgress) {
-            const lastMeaningfulKey = await findLastMeaningfulStep1ScheduleDateKey()
-            if (lastMeaningfulKey) {
-              try {
-                initialDate = parseDateFromInput(lastMeaningfulKey)
-              } catch {
-                initialDate = today
-              }
-            }
-          }
-        } else {
-          // No schedule row for today yet: fall back to latest meaningful Step 1 date (if any) rather than creating a blank today schedule.
-          const lastMeaningfulKey = await findLastMeaningfulStep1ScheduleDateKey()
-          if (lastMeaningfulKey) {
-            try {
-              initialDate = parseDateFromInput(lastMeaningfulKey)
-            } catch {
-              initialDate = today
-            }
-          }
-        }
-
-        if (cancelled) return
-        controllerBeginDateTransition(initialDate, { resetLoadedForDate: true })
-        setInitialDateResolved(true)
-      } catch (e) {
-        console.error('Failed to resolve initial schedule date:', e)
-        if (cancelled) return
-        setInitialDateResolved(true)
-      }
-    }
-
-    resolve()
-    return () => {
-      cancelled = true
-      // Allow React dev strict-mode to re-run this effect after cleanup.
-      // Otherwise the second invocation can be short-circuited and leave initialDateResolved stuck false.
-      initialDateResolutionStartedRef.current = false
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // Persist "last opened schedule date" so navigating away and back restores the same date.
-  useEffect(() => {
-    if (!initialDateResolved) return
-    try {
-      if (typeof window === 'undefined') return
-      window.sessionStorage.setItem(LAST_OPEN_SCHEDULE_DATE_KEY, toDateKey(selectedDate))
-    } catch {
-      // ignore
-    }
-  }, [initialDateResolved, selectedDate, toDateKey])
-
-  useScheduleDateParam({
-    searchParams,
-    selectedDate,
-    // URL-driven date changes should be treated like "real navigation": reset loaded-for-date to force proper hydration.
-    setSelectedDate: (d) => controllerBeginDateTransition(d, { resetLoadedForDate: true }),
-  })
   const flushDraftForCurrentDateRef = useRef(flushDraftForCurrentDate)
   flushDraftForCurrentDateRef.current = flushDraftForCurrentDate
   const autoFlushTimerRef = useRef<number | null>(null)
@@ -2591,6 +2397,32 @@ function SchedulePageContent() {
       if (loadingBarHideTimeoutRef.current) window.clearTimeout(loadingBarHideTimeoutRef.current)
     }
   }, [])
+
+  const { queueDateTransition } = useScheduleDateTransition({
+    urlDateKey,
+    replaceScheduleQuery,
+    toDateKey,
+    controllerBeginDateTransition,
+    startUiTransition,
+    gridLoadingUsesLocalBarRef,
+    startTopLoading,
+    startSoftAdvance,
+  })
+
+  const handleDeveloperCacheClear = () => {
+    const dateStr = toDateKey(selectedDate)
+    clearCachedSchedule(dateStr)
+    clearDraftSchedule(dateStr)
+    showActionToast(
+      'Cache cleared',
+      'success',
+      `Cleared cache for ${formatDateDDMMYYYY(selectedDate)}. Reloading schedule data...`
+    )
+    queueDateTransition(new Date(selectedDate.getTime()), {
+      resetLoadedForDate: true,
+      useLocalTopBar: false,
+    })
+  }
 
   // applyBaselineSnapshot/buildBaselineSnapshotFromCurrentState moved into useScheduleController()
 
@@ -5061,39 +4893,6 @@ function SchedulePageContent() {
       savedAllocationNotesDoc,
       workflowDirty,
     ]
-  )
-
-  const beginDateTransition = (nextDate: Date, options?: { resetLoadedForDate?: boolean; useLocalTopBar?: boolean }) => {
-    const useLocalTopBar = options?.useLocalTopBar ?? true
-    gridLoadingUsesLocalBarRef.current = useLocalTopBar
-    if (useLocalTopBar) {
-      startTopLoading(0.08)
-      startSoftAdvance(0.75)
-    }
-    // IMPORTANT: Keep URL `?date=YYYY-MM-DD` in sync for user-driven date changes.
-    // Otherwise `useScheduleDateParam` may snap state back to the old URL date.
-    const key = toDateKey(nextDate)
-    if (urlDateKey !== key) {
-      replaceScheduleQuery((p) => {
-        p.set('date', key)
-      })
-      // IMPORTANT:
-      // Do NOT call controllerBeginDateTransition here.
-      // `useScheduleDateParam` will observe the URL change and drive the controller update once,
-      // preventing a brief URL/state mismatch that can trigger a snap-back loop and cache pollution.
-      return
-    }
-    // Fallback: if URL is already at the target date, update controller directly.
-    controllerBeginDateTransition(nextDate, { resetLoadedForDate: options?.resetLoadedForDate ?? true })
-  }
-
-  const queueDateTransition = useCallback(
-    (nextDate: Date, options?: { resetLoadedForDate?: boolean; useLocalTopBar?: boolean }) => {
-      startUiTransition(() => {
-        beginDateTransition(nextDate, options)
-      })
-    },
-    [beginDateTransition, startUiTransition]
   )
 
   const { handleConfirmCopy, leaveSetupPulseKey, isDateHighlighted } = useScheduleCopyWorkflow({

@@ -18,8 +18,8 @@
 
 | Phase | Name | Status | Notes |
 |-------|------|--------|-------|
-| R3-20 | Pre-baseline & order | Done | 2026-04-24: `wc -l` **8159**; gates run at **ba080b2**; `npm run lint && npm run build && npm run test:smoke` green (lint warnings only; smoke 12 passed, 4 skipped). Anchors: `useAllocationSync` → `SchedulePageClient.tsx:3578`; `handleInitializeAlgorithm` → `:4139`; `beginDateTransition` → `:5066`; `flushSync` → `:1168`. R1 spec §7 re-read this run. Optional `chore(docs): round 3 baseline` on branch tip. |
-| R3-21 | Initial date + date/URL | Not started | |
+| R3-20 | Pre-baseline & order | Done | 2026-04-24: `wc -l` **8159**; gates at **ba080b2** (pre-commit); orchestrator re-ran gates green on **38d787e**; smoke 13 passed, 3 skipped. Anchors: `useAllocationSync` → `SchedulePageClient.tsx:3578`; `handleInitializeAlgorithm` → `:4139`; `beginDateTransition` → `:5066`; `flushSync` → `:1168`. R1 §7 re-read. Doc commit **38d787e** (`chore(docs): round 3 baseline`). Reviewer **PASS** (non-blocking: untracked sibling plan/handoff `.md` files may be committed separately). |
+| R3-21 | Initial date + date/URL | In progress | 2026-04-24: hooks extracted; gates green; manual URL/calendar TBD. |
 | R3-22 | Recalc + `useAllocationSync` + beds | Not started | High ordering risk |
 | R3-23 | Step 2 dependency + buffered Step 2 toast | Not started | |
 | R3-24 | Substitution wizard | Not started | |
@@ -94,11 +94,11 @@ Do not merge on failure unless environmental and documented.
 - **Create:** hook(s) under `features/schedule/ui/hooks/`
 - **Modify:** `SchedulePageClient.tsx` — wire hook outputs; keep early return for `!initialDateResolved`
 
-- [ ] **Step 1:** Grep `initialDateResolved`, `useScheduleDateParam`, `beginDateTransition`, `replaceScheduleQuery`, `LAST_OPEN_SCHEDULE_DATE_KEY`.
-- [ ] **Step 2:** Extract with **explicit** parameters (no implicit closure over half the component). Stabilize `queueDateTransition` + `useScheduleCopyWorkflow` interop.
-- [ ] **Step 3:** Global gates.
+- [x] **Step 1:** Grep `initialDateResolved`, `useScheduleDateParam`, `beginDateTransition`, `replaceScheduleQuery`, `LAST_OPEN_SCHEDULE_DATE_KEY`.
+- [x] **Step 2:** Extract with **explicit** parameters (no implicit closure over half the component). Stabilize `queueDateTransition` + `useScheduleCopyWorkflow` interop.
+- [x] **Step 3:** Global gates.
 - [ ] **Step 4:** **Manual (owner):** URL date change, calendar picker, no snap-back; cold load (no “today → fallback” flicker).
-- [ ] **Step 5:** Commit: `refactor(schedule): extract date bootstrap + date transition (round 3)`.
+- [x] **Step 5:** Commit: `refactor(schedule): extract date bootstrap + date transition (round 3)`.
 
 ---
 
