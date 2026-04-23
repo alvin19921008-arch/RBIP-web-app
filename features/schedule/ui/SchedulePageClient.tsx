@@ -63,6 +63,7 @@ import { useScheduleBoardDnd } from '@/features/schedule/ui/hooks/useScheduleBoa
 import { useScheduleSnapshotDiff } from '@/features/schedule/ui/hooks/useScheduleSnapshotDiff'
 import { useScheduleExportActions } from '@/features/schedule/ui/hooks/useScheduleExportActions'
 import { useScheduleCopyWorkflow } from '@/features/schedule/ui/hooks/useScheduleCopyWorkflow'
+import { useScheduleStepChromeNavigation } from '@/features/schedule/ui/hooks/useScheduleStepChromeNavigation'
 import type { Step2ResultSurplusProjectionForStep3 } from '@/lib/features/schedule/schedulePageFingerprints'
 import { combineScheduleCalculations } from '@/lib/features/schedule/scheduleCalculationsCombine'
 import { ScheduleMainGrid } from '@/features/schedule/ui/layout/ScheduleMainGrid'
@@ -4023,16 +4024,6 @@ function SchedulePageContent() {
     runStep4BedRelieving({ toast: showActionToast })
   }
 
-  /**
-   * Handle advancing to the next step (navigation only, no algorithm)
-   */
-  const handleNextStep = async () => {
-    // Only navigate, don't run algorithms
-    startUiTransition(() => {
-      goToNextStep()
-    })
-  }
-
   const showStep2Point2_SptFinalEdit = useCallback(async (): Promise<Record<string, SptFinalEditUpdate> | null> => {
     const hasAnySPT = [...staff, ...bufferStaff].some((s) => s.rank === 'SPT')
     if (!hasAnySPT) return {}
@@ -4757,69 +4748,36 @@ function SchedulePageContent() {
     allocationTracker,
   ])
 
-  /** Same “saved work exists” signals as `showClearForCurrentStep`, for nav when workflow `stepStatus` lags DB rows. */
-  const allocationStepNavSignals = useMemo(() => {
-    const hasNonBaselineTherapistAllocs = TEAMS.some((team) =>
-      (therapistAllocations[team] || []).some(
-        (a) => typeof a.id === 'string' && !a.id.startsWith('baseline-therapist:')
-      )
-    )
-    const hasNonBaselinePcaAllocs = TEAMS.some((team) =>
-      (pcaAllocations[team] || []).some((a) => typeof a.id === 'string' && !a.id.startsWith('baseline-pca:'))
-    )
-    const hasStep2OverrideKeys = Object.values(staffOverrides ?? {}).some((o: any) => {
-      if (!o || typeof o !== 'object') return false
-      if (Array.isArray(o.specialProgramOverrides) && o.specialProgramOverrides.length > 0) return true
-      if (hasAnySubstitution(o)) return true
-      if (o.team != null) return true
-      return false
-    })
-    const hasStep2Data =
-      step2Result != null ||
-      initializedSteps.has('therapist-pca') ||
-      stepStatus['therapist-pca'] !== 'pending' ||
-      hasNonBaselineTherapistAllocs ||
-      hasNonBaselinePcaAllocs ||
-      hasStep2OverrideKeys
-
-    const hasStep3SlotOverrides = Object.values(staffOverrides ?? {}).some((o: any) => !!o?.slotOverrides)
-    const hasFloatingAllocations = TEAMS.some((team) =>
-      (pcaAllocations[team] || []).some((a) => {
-        const staffMember = staff.find((s) => s.id === a.staff_id)
-        return !!staffMember?.floating
-      })
-    )
-    const hasStep3Data =
-      initializedSteps.has('floating-pca') ||
-      stepStatus['floating-pca'] !== 'pending' ||
-      adjustedPendingFTE != null ||
-      teamAllocationOrder != null ||
-      allocationTracker != null ||
-      hasStep3SlotOverrides ||
-      hasFloatingAllocations
-
-    const hasStep4Notes = Object.keys(bedRelievingNotesByToTeam ?? {}).length > 0
-    const hasStep4Data =
-      initializedSteps.has('bed-relieving') ||
-      stepStatus['bed-relieving'] !== 'pending' ||
-      (bedAllocations?.length ?? 0) > 0 ||
-      hasStep4Notes
-
-    return { hasStep2Data, hasStep3Data, hasStep4Data }
-  }, [
-    staffOverrides,
+  const {
+    handleNextStep,
+    handlePreviousStep,
+    handleStepClick,
+    attentionStepIds,
+    canNavigateToStep,
+    handleStepInitializePrefetch,
+  } = useScheduleStepChromeNavigation({
+    startUiTransition,
+    goToNextStep,
+    goToPreviousStep,
+    goToStep,
+    currentStep,
+    stepStatus,
     staff,
+    staffOverrides,
     therapistAllocations,
     pcaAllocations,
     bedAllocations,
     bedRelievingNotesByToTeam,
     step2Result,
     initializedSteps,
-    stepStatus,
     adjustedPendingFTE,
     teamAllocationOrder,
     allocationTracker,
-  ])
+    step2DownstreamImpact,
+    prefetchStep2Algorithms,
+    prefetchStep3Algorithms,
+    prefetchBedAlgorithm,
+  })
 
   const removeStep2KeysFromOverrides = (overrides: Record<string, any>) => {
     return scheduleActions.removeStep2KeysFromOverrides(overrides as any) as any
@@ -5140,15 +5098,6 @@ function SchedulePageContent() {
   }
 
   /**
-   * Handle going to the previous step
-   */
-  const handlePreviousStep = () => {
-    startUiTransition(() => {
-      goToPreviousStep()
-    })
-  }
-
-  /**
    * Reset to baseline - clear all staff overrides and start fresh
    */
   const resetToBaseline = () => {
@@ -5289,13 +5238,6 @@ function SchedulePageContent() {
     setDatesWithData,
     loadDatesWithData,
   })
-
-  const handleStepClick = useCallback(
-    (stepId: string) => {
-      goToStep(stepId as any)
-    },
-    [goToStep]
-  )
 
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newDate = parseDateFromInput(e.target.value)
@@ -8868,72 +8810,18 @@ function SchedulePageContent() {
           steps={ALLOCATION_STEPS}
           currentStep={currentStep}
           stepStatus={stepStatus}
-          attentionStepIds={(() => {
-            const ids: string[] = []
-            if (step2DownstreamImpact?.step3Outdated) ids.push('floating-pca')
-            if (step2DownstreamImpact?.step4Outdated) ids.push('bed-relieving')
-            return ids
-          })()}
+          attentionStepIds={attentionStepIds}
           userRole={userRole}
           canResetToBaseline={access.can('schedule.tools.reset-to-baseline')}
           onResetToBaseline={resetToBaseline}
           onStepClick={handleStepClick}
-          canNavigateToStep={(stepId) => {
-            const targetIndex = ALLOCATION_STEPS.findIndex(s => s.id === stepId)
-            const currentIndex = ALLOCATION_STEPS.findIndex(s => s.id === currentStep)
-
-            // Can always go to earlier steps
-            if (targetIndex <= currentIndex) return true
-
-            const previousStep = ALLOCATION_STEPS[targetIndex - 1]
-            if (!previousStep) return false
-
-            // Special case for Step 1 -> Step 2 navigation
-            if (previousStep.id === 'leave-fte') {
-              // Allow if Step 1 has leave data configured (fresh schedule case)
-              const hasLeaveData = Object.keys(staffOverrides).length > 0
-
-              // Allow if any later step is completed (loaded schedule case)
-              const anyLaterStepCompleted = ['therapist-pca', 'floating-pca', 'bed-relieving', 'review']
-                .some(s => stepStatus[s] !== 'pending')
-
-              // Allow if Step 1 itself is completed/modified (normal case)
-              const step1Started = stepStatus['leave-fte'] !== 'pending'
-
-              return (
-                hasLeaveData ||
-                anyLaterStepCompleted ||
-                step1Started ||
-                allocationStepNavSignals.hasStep2Data ||
-                allocationStepNavSignals.hasStep3Data ||
-                allocationStepNavSignals.hasStep4Data
-              )
-            }
-
-            // Forward: require previous step started *or* matching saved allocation/workflow data
-            // (explicit workflow can leave `stepStatus` pending while rows exist — see load gating).
-            if (previousStep.id === 'therapist-pca') {
-              return stepStatus['therapist-pca'] !== 'pending' || allocationStepNavSignals.hasStep2Data
-            }
-            if (previousStep.id === 'floating-pca') {
-              return stepStatus['floating-pca'] !== 'pending' || allocationStepNavSignals.hasStep3Data
-            }
-            if (previousStep.id === 'bed-relieving') {
-              return stepStatus['bed-relieving'] !== 'pending' || allocationStepNavSignals.hasStep4Data
-            }
-
-            return stepStatus[previousStep.id] !== 'pending'
-          }}
+          canNavigateToStep={canNavigateToStep}
           onNext={handleNextStep}
           onPrevious={handlePreviousStep}
           canGoNext={currentStep !== 'review'}
           canGoPrevious={currentStep !== 'leave-fte'}
           onInitialize={handleInitializeAlgorithm}
-          onInitializePrefetch={() => {
-            if (currentStep === 'therapist-pca') prefetchStep2Algorithms()
-            else if (currentStep === 'floating-pca') prefetchStep3Algorithms()
-            else if (currentStep === 'bed-relieving') prefetchBedAlgorithm()
-          }}
+          onInitializePrefetch={handleStepInitializePrefetch}
           onOpenLeaveSetup={isDisplayMode ? undefined : () => setStep1LeaveSetupOpen(true)}
           onClearStep={handleClearStep}
           showClear={showClearForCurrentStep}
