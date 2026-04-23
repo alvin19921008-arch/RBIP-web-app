@@ -22,7 +22,7 @@
 | R3-21 | Initial date + date/URL | Done | 2026-04-24: commit **20184a7**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (URL/calendar/cold load). Hooks: `useScheduleInitialDateResolution.ts`, `useScheduleDateTransition.ts`. |
 | R3-22 | Recalc + `useAllocationSync` + beds | Done | 2026-04-24: commit **c07c63c**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (overrides / bed / double recalc). `useScheduleAllocationRecalcAndSync.ts`. |
 | R3-23 | Step 2 dependency + buffered Step 2 toast | Done | 2026-04-24: commit **9b57bd3**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (toast + Step 3 bootstrap / badges). `useScheduleStep2DependencyAndToast.ts`. |
-| R3-24 | Substitution wizard | In progress | 2026-04-24: implementer dispatched. Preserve `generateStep2` / Step 2 Promise contract. |
+| R3-24 | Substitution wizard | Done | 2026-04-24: commit **19ec57a**; orchestrator gates green (smoke 13 passed, 3 skipped); reviewer **PASS** (non-blocking). `useScheduleSubstitutionWizard.ts`. **Manual (owner):** Step 4 (wizard cancel + confirm) — still `- [ ]` in phase checklist. |
 | R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Not started | May split 25a / 25b |
 | R3-26 | DnD bridge wiring | Not started | |
 | R3-27 | Toolbar + interaction layer | Not started | |
