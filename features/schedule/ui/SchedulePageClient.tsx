@@ -11,9 +11,6 @@ import type {
   BedAllocation,
   BedRelievingNotesForToTeam,
   BedRelievingNotesByToTeam,
-  BedCountsOverridePayload,
-  BedCountsOverrideState,
-  BedCountsWardRow,
   ScheduleCalculations,
   AllocationTracker,
   WorkflowState,
@@ -23,7 +20,6 @@ import type {
   SnapshotHealthReport,
 } from '@/types/schedule'
 import { TeamColumn } from '@/components/allocation/TeamColumn'
-import { BedCountsEditDialog } from '@/features/schedule/ui/allocation/BedCountsEditDialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
@@ -40,7 +36,15 @@ import { TeamPickerPopover } from '@/components/allocation/TeamPickerPopover'
 import { ConfirmPopover } from '@/components/allocation/ConfirmPopover'
 import { ScheduleOverlays } from '@/features/schedule/ui/overlays/ScheduleOverlays'
 import { ScheduleHeaderBar } from '@/features/schedule/ui/layout/ScheduleHeaderBar'
-import { ScheduleDialogsLayer } from '@/features/schedule/ui/overlays/ScheduleDialogsLayer'
+import {
+  SchedulePageDialogNodes,
+  type SharedTherapistDialogCurrentAllocation,
+  type SharedTherapistDialogData,
+  type SpecialProgramOverrideEntry,
+  type SptFinalEditUpdate,
+  type SharedTherapistEditUpdate,
+  type Step1BulkEditPayload,
+} from '@/features/schedule/ui/overlays/SchedulePageDialogNodes'
 import {
   useMainPaneLoadAndHydrateDateEffect,
   useSchedulePaneHydrationEndEffect,
@@ -127,58 +131,8 @@ import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import type { SlotAssignment } from '@/lib/utils/reservationLogic'
 import { Input } from '@/components/ui/input'
 
-const ScheduleCopyWizard = dynamic(
-  () => import('@/components/allocation/ScheduleCopyWizard').then(m => m.ScheduleCopyWizard),
-  { ssr: false }
-)
-const StaffEditDialog = dynamic(() => import('@/components/allocation/StaffEditDialog').then(m => m.StaffEditDialog), {
-  ssr: false,
-})
-const Step1LeaveSetupDialog = dynamic(
-  () => import('@/components/allocation/Step1LeaveSetupDialog').then((m) => m.Step1LeaveSetupDialog),
-  { ssr: false }
-)
-const FloatingPCAEntryDialog = dynamic(
-  () =>
-    import('@/features/schedule/ui/steps/step3-floating/substeps/step30-entry-flow/FloatingPCAEntryDialog').then(
-      (m) => m.FloatingPCAEntryDialog
-    ),
-  { ssr: false }
-)
-const FloatingPCAConfigDialogV1 = dynamic(
-  () => import('@/features/schedule/ui/steps/step3-floating/FloatingPCAConfigDialogV1').then(m => m.FloatingPCAConfigDialogV1),
-  { ssr: false }
-)
-const FloatingPCAConfigDialogV2 = dynamic(
-  () => import('@/features/schedule/ui/steps/step3-floating/FloatingPCAConfigDialogV2').then(m => m.FloatingPCAConfigDialogV2),
-  { ssr: false }
-)
-const NonFloatingSubstitutionDialog = dynamic(
-  () => import('@/components/allocation/NonFloatingSubstitutionDialog').then(m => m.NonFloatingSubstitutionDialog),
-  { ssr: false }
-)
-const TieBreakDialog = dynamic(
-  () => import('@/components/allocation/TieBreakDialog').then(m => m.TieBreakDialog),
-  { ssr: false }
-)
-const SpecialProgramOverrideDialog = dynamic(
-  () => import('@/components/allocation/SpecialProgramOverrideDialog').then(m => m.SpecialProgramOverrideDialog),
-  { ssr: false }
-)
-const SptFinalEditDialog = dynamic(
-  () => import('@/components/allocation/SptFinalEditDialog').then(m => m.SptFinalEditDialog),
-  { ssr: false }
-)
-const SharedTherapistEditDialog = dynamic(
-  () => import('@/components/allocation/SharedTherapistEditDialog').then(m => m.SharedTherapistEditDialog),
-  { ssr: false }
-)
 const BufferStaffCreateDialog = dynamic(
   () => import('@/components/allocation/BufferStaffCreateDialog').then(m => m.BufferStaffCreateDialog),
-  { ssr: false }
-)
-const ScheduleCalendarPopover = dynamic(
-  () => import('@/features/schedule/ui/overlays/ScheduleCalendarPopover').then(m => m.ScheduleCalendarPopover),
   { ssr: false }
 )
 const ScheduleBlocks1To6 = dynamic(
@@ -1204,66 +1158,6 @@ function SchedulePageContent() {
   // NOTE: Team grid used to have an internal horizontal scroller with a synced sticky header scroller.
   // That caused a mismatch where the grid could scroll horizontally while the StepIndicator / top area did not,
   // creating an "underlay" strip on the right. We now rely on page-level horizontal scroll instead.
-
-  type SpecialProgramOverrideEntry = {
-    programId: string
-    enabled?: boolean
-    therapistId?: string
-    pcaId?: string
-    slots?: number[]
-    requiredSlots?: number[]
-    therapistFTESubtraction?: number
-    pcaFTESubtraction?: number
-    drmAddOn?: number
-  }
-
-  type SptFinalEditUpdate = {
-    leaveType: LeaveType | null
-    fteSubtraction: number
-    fteRemaining: number
-    team?: Team
-    sptOnDayOverride: {
-      enabled: boolean
-      contributesFte: boolean
-      slots: number[]
-      slotModes: { am: 'AND' | 'OR'; pm: 'AND' | 'OR' }
-      displayText?: string | null
-      assignedTeam?: Team | null
-    }
-  }
-
-  type SharedTherapistEditUpdate = {
-    leaveType: LeaveType | null
-    fteRemaining: number
-    sharedTherapistModeOverride?: import('@/types/staff').SharedTherapistAllocationMode
-    team?: Team
-    therapistTeamFTEByTeam?: Partial<Record<Team, number>>
-    sharedTherapistSlotTeams?: SharedTherapistSlotTeams
-  }
-
-  type SharedTherapistDialogCurrentAllocation = {
-    teamFteByTeam: Partial<Record<Team, number>>
-    slotTeamBySlot: SharedTherapistSlotTeams
-  } | null
-
-  type SharedTherapistDialogData = {
-    sharedTherapists: Staff[]
-    staffOverrides: Record<string, any>
-    currentAllocationByStaffId: Record<string, SharedTherapistDialogCurrentAllocation>
-    ptPerTeamByTeam: Record<Team, number>
-  }
-
-  type Step1BulkEditPayload = {
-    staffId: string
-    leaveType: LeaveType | null
-    fteRemaining: number
-    sharedTherapistModeOverride?: import('@/types/staff').SharedTherapistAllocationMode
-    fteSubtraction?: number
-    availableSlots?: number[]
-    invalidSlots?: Array<{ slot: number; timeRange: { start: string; end: string } }>
-    amPmSelection?: 'AM' | 'PM'
-    specialProgramAvailable?: boolean
-  }
 
   // Domain state moved into useScheduleController() (Stage 2 / Option A).
   const [editingBedTeam, setEditingBedTeam] = useState<Team | null>(null)
@@ -8578,524 +8472,103 @@ function SchedulePageContent() {
         </div>
         </div>
 
-        <ScheduleDialogsLayer
-          bedCountsDialog={editingBedTeam && (() => {
-          const team = editingBedTeam
-
-          const wardRows: BedCountsWardRow[] = wards
-            .filter(w => (w.team_assignments[team] || 0) > 0)
-            .map(w => ({
-              wardName: w.name,
-                wardLabel: formatWardLabel(w as any, team),
-              wardTotalBeds: w.total_beds,
-              baselineTeamBeds: w.team_assignments[team] || 0,
-            }))
-
-          const initialOverrides = bedCountsOverridesByTeam?.[team]
-
-          return (
-            <BedCountsEditDialog
-              open={true}
-              onOpenChange={(open) => {
-                if (!open) setEditingBedTeam(null)
-              }}
-              team={team}
-              wardRows={wardRows}
-              initialOverrides={initialOverrides}
-              onSave={(payload: BedCountsOverridePayload) => {
-                const wardBedCountsPruned: Record<string, number> = {}
-                Object.entries(payload.wardBedCounts || {}).forEach(([wardName, value]) => {
-                  if (typeof value === 'number') wardBedCountsPruned[wardName] = value
-                })
-
-                const shs = payload.shsBedCounts ?? null
-                const students = payload.studentPlacementBedCounts ?? null
-
-                captureUndoCheckpoint('Bed counts override')
-                setBedCountsOverridesByTeam(prev => {
-                  const next: BedCountsOverridesByTeam = { ...prev }
-                  const hasAny =
-                    Object.keys(wardBedCountsPruned).length > 0 ||
-                    (typeof shs === 'number' && shs > 0) ||
-                    (typeof students === 'number' && students > 0)
-                  if (!hasAny) {
-                    delete next[team]
-                    return next
-                  }
-                  next[team] = {
-                    wardBedCounts: wardBedCountsPruned,
-                    shsBedCounts: shs,
-                    studentPlacementBedCounts: students,
-                  } satisfies BedCountsOverrideState
-                  return next
-                })
-
-                // Mark bed relieving as modified (and review as pending) since bed math changed.
-                setStepStatus(prev => ({
-                  ...prev,
-                  'bed-relieving': prev['bed-relieving'] === 'completed' ? 'modified' : prev['bed-relieving'],
-                  'review': 'pending',
-                }))
-              }}
-            />
-          )
-        })()}
-          step1LeaveSetupDialog={
-            step1LeaveSetupOpen ? (
-              <Step1LeaveSetupDialog
-                open={step1LeaveSetupOpen}
-                onOpenChange={setStep1LeaveSetupOpen}
-                staff={staff}
-                staffOverrides={staffOverrides as any}
-                specialPrograms={specialPrograms}
-                sptAllocations={sptAllocations}
-                weekday={currentWeekday}
-                onSaveDraft={handleSaveStep1LeaveSetup}
-              />
-            ) : null
-          }
-          staffEditDialog={editingStaffId && (() => {
-          const staffMember = staff.find(s => s.id === editingStaffId)
-          if (!staffMember) return null
-
-          // Find current leave type and FTE from overrides first, then allocations
-          const override = staffOverrides[editingStaffId]
-          let currentLeaveType: LeaveType | null = override ? override.leaveType : null
-          let currentFTERemaining = override ? override.fteRemaining : 1.0
-          let currentFTESubtraction = override?.fteSubtraction // Changed from const to let to allow reassignment
-          let currentAvailableSlots = override?.availableSlots
-          // NEW: Invalid slots array
-          let currentInvalidSlots = override?.invalidSlots
-          // NEW: AM/PM selection
-          let currentAmPmSelection = override?.amPmSelection
-          // NEW: Special program availability
-          let currentSpecialProgramAvailable = override?.specialProgramAvailable
-          // SPT-specific: dashboard-configured base FTE and current base FTE used for leave calculations
-          let sptConfiguredFTE: number | undefined = undefined
-          let currentSPTBaseFTE: number | undefined = undefined
-
-          // If no override, check allocations
-          if (!override) {
-            // Check therapist allocations first
-            for (const team of TEAMS) {
-              const alloc = therapistAllocations[team].find(a => a.staff_id === editingStaffId)
-              if (alloc) {
-                currentLeaveType = alloc.leave_type
-                currentFTERemaining = alloc.fte_therapist ?? 1.0
-                break
-              }
-            }
-
-            // If not found in therapist allocations, check PCA allocations
-            if (currentLeaveType === null && currentFTERemaining === 1.0) {
-              // Find all PCA allocations for this staff member across all teams
-              const allPcaAllocations = TEAMS.flatMap(team => 
-                pcaAllocationsForUi[team].filter(a => a.staff_id === editingStaffId)
-              )
-              
-              if (allPcaAllocations.length > 0) {
-                // Use the leave type from the first allocation found
-                currentLeaveType = allPcaAllocations[0].leave_type
-                
-                // For PCA: Calculate base_FTE_remaining = 1.0 - fteSubtraction for display
-                const allocation = allPcaAllocations[0]
-                const slotAssigned = (allocation as any)?.slot_assigned ?? (allocation as any)?.fte_assigned ?? 0
-                currentFTERemaining = allocation.fte_pca ?? ((allocation.fte_remaining ?? 0) + slotAssigned)
-                currentFTESubtraction = 1.0 - currentFTERemaining
-                
-                // Load invalid slot fields from allocation if not in override
-                if ((allocation as any).invalid_slot !== undefined && (allocation as any).invalid_slot !== null) {
-                  const invalidSlot = (allocation as any).invalid_slot
-                  const getSlotStartTime = (slot: number): string => {
-                    const ranges: Record<number, string> = { 1: '0900', 2: '1030', 3: '1330', 4: '1500' }
-                    return ranges[slot] || '0900'
-                  }
-                  const getSlotEndTime = (slot: number): string => {
-                    const ranges: Record<number, string> = { 1: '1030', 2: '1200', 3: '1500', 4: '1630' }
-                    return ranges[slot] || '1030'
-                  }
-                  currentInvalidSlots = [{
-                    slot: invalidSlot,
-                    timeRange: {
-                      start: getSlotStartTime(invalidSlot),
-                      end: getSlotEndTime(invalidSlot)
-                    }
-                  }]
-                }
-                
-                // Reconstruct available slots (all slots assigned, excluding invalid slots)
-                const allSlots: number[] = []
-                if (allocation.slot1) allSlots.push(1)
-                if (allocation.slot2) allSlots.push(2)
-                if (allocation.slot3) allSlots.push(3)
-                if (allocation.slot4) allSlots.push(4)
-                if (allSlots.length > 0) {
-                  const invalidSlotNumbers = currentInvalidSlots?.map(is => is.slot) || []
-                  currentAvailableSlots = allSlots.filter(s => !invalidSlotNumbers.includes(s))
-                }
-              }
-            }
-          }
-
-          if (staffMember.rank === 'SPT') {
-            const cfg = sptAllocations.find(a => a.staff_id === editingStaffId && a.weekdays?.includes(currentWeekday))
-            const cfgFTEraw = (cfg as any)?.fte_addon
-            const cfgFTE =
-              typeof cfgFTEraw === 'number'
-                ? cfgFTEraw
-                : cfgFTEraw != null
-                  ? parseFloat(String(cfgFTEraw))
-                  : NaN
-            sptConfiguredFTE = Number.isFinite(cfgFTE) ? Math.max(0, Math.min(cfgFTE, 1.0)) : 0
-
-            const o = staffOverrides[editingStaffId]
-            const legacyAutoFilled =
-              !!o &&
-              (o.leaveType == null) &&
-              typeof o.fteSubtraction === 'number' &&
-              typeof sptConfiguredFTE === 'number' &&
-              Math.abs((o.fteRemaining ?? 0) - sptConfiguredFTE) < 0.01 &&
-              Math.abs((o.fteSubtraction ?? 0) - (1.0 - (o.fteRemaining ?? 0))) < 0.01
-
-            const leaveCost = legacyAutoFilled
-              ? 0
-              : (typeof o?.fteSubtraction === 'number' ? o.fteSubtraction : 0)
-
-            const derivedBase =
-              typeof o?.fteSubtraction === 'number'
-                ? (o.fteRemaining ?? (sptConfiguredFTE ?? currentFTERemaining)) + leaveCost
-                : (sptConfiguredFTE ?? (o?.fteRemaining ?? currentFTERemaining))
-
-            currentSPTBaseFTE = Math.max(0, Math.min(derivedBase, 1.0))
-            currentFTESubtraction = leaveCost
-            currentFTERemaining = Math.max(0, currentSPTBaseFTE - leaveCost)
-          }
-
-          return (
-            <StaffEditDialog
-              open={editDialogOpen}
-              onOpenChange={setEditDialogOpen}
-              staffName={staffMember.name}
-              staffId={editingStaffId}
-              staffRank={staffMember.rank}
-              currentLeaveType={currentLeaveType}
-              currentFTERemaining={currentFTERemaining}
-              currentFTESubtraction={currentFTESubtraction}
-              sptConfiguredFTE={sptConfiguredFTE}
-              currentSPTBaseFTE={currentSPTBaseFTE}
-              currentAvailableSlots={currentAvailableSlots}
-              currentInvalidSlots={currentInvalidSlots}
-              currentAmPmSelection={currentAmPmSelection}
-              currentSpecialProgramAvailable={currentSpecialProgramAvailable}
-              allStaff={staff}
-              specialPrograms={specialPrograms}
-              weekday={currentWeekday}
-              onSave={handleSaveStaffEdit}
-            />
-          )
-        })()}
-          tieBreakDialog={
-            tieBreakDialogOpen ? (
-              <TieBreakDialog
-                open={tieBreakDialogOpen}
-                teams={tieBreakTeams}
-                pendingFTE={tieBreakPendingFTE}
-                onSelect={(team) => {
-                  const resolver = tieBreakResolverRef.current
-                  if (resolver) {
-                    resolver(team)
-                    tieBreakResolverRef.current = null
-                  }
-                  setTieBreakDialogOpen(false)
-                }}
-              />
-            ) : null
-          }
-          copyWizardDialog={
-            copyWizardConfig ? (
-          <ScheduleCopyWizard
-            open={copyWizardOpen}
-            onOpenChange={(open) => {
-              if (!open) {
-                setCopyWizardOpen(false)
-                setCopyWizardConfig(null)
-              } else {
-                setCopyWizardOpen(true)
-              }
-            }}
-            sourceDate={copyWizardConfig.sourceDate}
-            initialTargetDate={copyWizardConfig.targetDate}
-            flowType={copyWizardConfig.flowType}
-            direction={copyWizardConfig.direction}
-            datesWithData={datesWithData}
-            holidays={holidays}
-            onConfirmCopy={handleConfirmCopy}
-          />
-            ) : null
-          }
-          floatingPcaDialog={
-            floatingPCAEntryOpen || floatingPCAConfigV1Open || floatingPCAConfigV2Open ? (
-              <>
-                <FloatingPCAEntryDialog
-                  open={floatingPCAEntryOpen}
-                  v2Enabled
-                  onSelectV1={() => {
-                    prefetchFloatingPCAConfigDialogV1().catch(() => {})
-                    openStep3V1Dialog()
-                  }}
-                  onSelectV2={() => {
-                    prefetchFloatingPCAConfigDialogV2().catch(() => {})
-                    openStep3V2Dialog()
-                  }}
-                  onCancel={handleFloatingPCAConfigCancel}
-                />
-                <FloatingPCAConfigDialogV1
-                  open={floatingPCAConfigV1Open}
-                  teams={visibleTeams}
-                  weekday={getWeekday(selectedDate)}
-                  initialPendingFTE={pendingPCAFTEForStep3Dialog}
-                  pcaPreferences={pcaPreferences}
-                  floatingPCAs={floatingPCAsForStep3}
-                  existingAllocations={existingAllocationsForStep3Dialog}
-                  specialPrograms={specialPrograms}
-                  bufferStaff={bufferStaff}
-                  staffOverrides={staffOverrides}
-                  step31AssignedByTeam={step3BootstrapSummary.existingAssignedByTeam}
-                  step31TeamTargets={step3ProjectionV2.displayTargetByTeam}
-                  onSave={handleFloatingPCAConfigSave}
-                  onCancel={handleFloatingPCAConfigCancel}
-                />
-                <FloatingPCAConfigDialogV2
-                  open={floatingPCAConfigV2Open}
-                  teams={visibleTeams}
-                  weekday={getWeekday(selectedDate)}
-                  initialPendingFTE={pendingPCAFTEForStep3Dialog}
-                  pcaPreferences={pcaPreferences}
-                  floatingPCAs={floatingPCAsForStep3}
-                  existingAllocations={existingAllocationsForStep3Dialog}
-                  specialPrograms={specialPrograms}
-                  bufferStaff={bufferStaff}
-                  staffOverrides={staffOverrides}
-                  step31AssignedByTeam={step3BootstrapSummary.existingAssignedByTeam}
-                  step31TeamTargets={step3ProjectionV2.displayTargetByTeam}
-                  step31RawAveragePCAPerTeamByTeam={
-                    (step2Result as Step2ResultSurplusProjectionForStep3 | null)?.rawAveragePCAPerTeam
-                  }
-                  initialStep3ProjectionV2={step3ProjectionV2}
-                  step31ReservedSpecialProgramPcaFte={reservedSpecialProgramPcaFteForStep3}
-                  step31BootstrapStaff={[...staff, ...bufferStaff]}
-                  onSave={handleFloatingPCAConfigSave}
-                  onCancel={handleFloatingPCAConfigCancel}
-                />
-              </>
-            ) : null
-          }
-          specialProgramOverrideDialog={
-            showSpecialProgramOverrideDialog ? (
-              <SpecialProgramOverrideDialog
-                open={showSpecialProgramOverrideDialog}
-                onOpenChange={(open) => {
-                  setShowSpecialProgramOverrideDialog(open)
-                  if (!open) {
-                    const resolver = specialProgramOverrideResolverRef.current
-                    if (resolver) {
-                      resolver(null)
-                      specialProgramOverrideResolverRef.current = null
-                    }
-                  }
-                }}
-                specialPrograms={specialPrograms}
-                allStaff={Array.from(new Map([...staff, ...inactiveStaff].map(s => [s.id, s])).values())}
-                sptBaseFteByStaffId={sptBaseFteByStaffId}
-                staffOverrides={staffOverrides}
-                weekday={getWeekday(selectedDate)}
-                showSubstituteStep={showStep21InStep2Stepper}
-                showSharedTherapistStep={showSharedTherapistStep}
-                downstreamImpact={step2DownstreamImpact}
-                onConfirm={(overrides) => {
-                  const resolver = specialProgramOverrideResolverRef.current
-                  if (resolver) {
-                    resolver(overrides)
-                    specialProgramOverrideResolverRef.current = null
-                  }
-                  setShowSpecialProgramOverrideDialog(false)
-                }}
-                onSkip={() => {
-                  const resolver = specialProgramOverrideResolverRef.current
-                  if (resolver) {
-                    resolver({})
-                    specialProgramOverrideResolverRef.current = null
-                  }
-                  setShowSpecialProgramOverrideDialog(false)
-                }}
-                onStaffRefresh={() => {
-                  return (async () => {
-                    try {
-                      await loadStaff()
-                      await loadSPTAllocations()
-                    } catch (e) {
-                      console.error('Error refreshing staff after buffer creation:', e)
-                    }
-                  })()
-                }}
-              />
-            ) : null
-          }
-          sptFinalEditDialog={
-            showSptFinalEditDialog ? (
-              <SptFinalEditDialog
-                open={showSptFinalEditDialog}
-                onOpenChange={(open) => {
-                  setShowSptFinalEditDialog(open)
-                  if (!open) {
-                    const resolver = sptFinalEditResolverRef.current
-                    if (resolver) {
-                      resolver(null)
-                      sptFinalEditResolverRef.current = null
-                    }
-                  }
-                }}
-                weekday={getWeekday(selectedDate)}
-                sptStaff={sptStaffForStep22}
-                allStaff={staff}
-                specialPrograms={specialPrograms}
-                sptWeekdayByStaffId={sptWeekdayByStaffId}
-                sptTeamsByStaffId={sptTeamsByStaffIdForStep22}
-                staffOverrides={staffOverrides as any}
-                showSubstituteStep={showStep21InStep2Stepper}
-                showSharedTherapistStep={showSharedTherapistStep}
-                downstreamImpact={step2DownstreamImpact}
-                currentAllocationByStaffId={currentSptAllocationByStaffIdForStep22}
-                ptPerTeamByTeam={ptPerTeamByTeamForStep22}
-                onConfirm={(updates) => {
-                  const resolver = sptFinalEditResolverRef.current
-                  if (resolver) {
-                    resolver(updates as any)
-                    sptFinalEditResolverRef.current = null
-                  }
-                  setShowSptFinalEditDialog(false)
-                }}
-                onSkip={() => {
-                  const resolver = sptFinalEditResolverRef.current
-                  if (resolver) {
-                    resolver({})
-                    sptFinalEditResolverRef.current = null
-                  }
-                  setShowSptFinalEditDialog(false)
-                }}
-                onBack={() => {
-                  const resolver = sptFinalEditResolverRef.current
-                  if (resolver) {
-                    resolver({ __nav: 'back' } as any)
-                    sptFinalEditResolverRef.current = null
-                  }
-                  setShowSptFinalEditDialog(false)
-                }}
-              />
-            ) : null
-          }
-          sharedTherapistEditDialog={
-            showSharedTherapistEditDialog && sharedTherapistDialogData ? (
-              <SharedTherapistEditDialog
-                open={showSharedTherapistEditDialog}
-                onOpenChange={(open) => {
-                  setShowSharedTherapistEditDialog(open)
-                  if (!open) {
-                    const resolver = sharedTherapistEditResolverRef.current
-                    if (resolver) {
-                      resolver(null)
-                      sharedTherapistEditResolverRef.current = null
-                    }
-                    setSharedTherapistDialogData(null)
-                  }
-                }}
-                sharedTherapists={sharedTherapistDialogData.sharedTherapists}
-                staffOverrides={sharedTherapistDialogData.staffOverrides}
-                currentAllocationByStaffId={sharedTherapistDialogData.currentAllocationByStaffId}
-                ptPerTeamByTeam={sharedTherapistDialogData.ptPerTeamByTeam}
-                showSubstituteStep={showStep21InStep2Stepper}
-                downstreamImpact={step2DownstreamImpact}
-                onConfirm={(updates) => {
-                  const resolver = sharedTherapistEditResolverRef.current
-                  if (resolver) {
-                    resolver(updates as any)
-                    sharedTherapistEditResolverRef.current = null
-                  }
-                  setShowSharedTherapistEditDialog(false)
-                  setSharedTherapistDialogData(null)
-                }}
-                onSkip={() => {
-                  const resolver = sharedTherapistEditResolverRef.current
-                  if (resolver) {
-                    resolver({})
-                    sharedTherapistEditResolverRef.current = null
-                  }
-                  setShowSharedTherapistEditDialog(false)
-                  setSharedTherapistDialogData(null)
-                }}
-                onBack={() => {
-                  const resolver = sharedTherapistEditResolverRef.current
-                  if (resolver) {
-                    resolver({ __nav: 'back' } as any)
-                    sharedTherapistEditResolverRef.current = null
-                  }
-                  setShowSharedTherapistEditDialog(false)
-                  setSharedTherapistDialogData(null)
-                }}
-              />
-            ) : null
-          }
-          nonFloatingSubstitutionDialog={
-            substitutionWizardDataForDisplay && substitutionWizardOpen ? (
-              <NonFloatingSubstitutionDialog
-                open={substitutionWizardOpen}
-                teams={substitutionWizardDataForDisplay.teams}
-                substitutionsByTeam={substitutionWizardDataForDisplay.substitutionsByTeam}
-                isWizardMode={substitutionWizardDataForDisplay.isWizardMode}
-                initialSelections={substitutionWizardDataForDisplay.initialSelections}
-                allStaff={staff}
-                pcaPreferences={pcaPreferences}
-                specialPrograms={specialPrograms}
-                weekday={getWeekday(selectedDate)}
-                currentAllocations={[]}
-                staffOverrides={staffOverrides}
-                showSharedTherapistStep={showSharedTherapistStep}
-                downstreamImpact={step2DownstreamImpact}
-                onConfirm={handleSubstitutionWizardConfirm}
-                onCancel={handleSubstitutionWizardCancel}
-                onSkip={handleSubstitutionWizardSkip}
-                onBack={
-                  substitutionWizardDataForDisplay.allowBackToSpecialPrograms
-                    ? () => {
-                        if (substitutionWizardResolverRef.current) {
-                          ;(substitutionWizardResolverRef.current as any)({}, { back: true })
-                          substitutionWizardResolverRef.current = null
-                        }
-                        setSubstitutionWizardOpen(false)
-                        setSubstitutionWizardData(null)
-                      }
-                    : undefined
-                }
-              />
-            ) : null
-          }
-          calendarPopover={
-            calendarOpen ? (
-              <ScheduleCalendarPopover
-                open={calendarOpen}
-                selectedDate={selectedDate}
-                datesWithData={datesWithData}
-                holidays={holidays}
-                onClose={() => setCalendarOpen(false)}
-                onDateSelect={(date) => {
-                  queueDateTransition(date)
-                  setCalendarOpen(false)
-                }}
-                anchorRef={calendarButtonRef}
-                popoverRef={calendarPopoverRef}
-              />
-            ) : null
-          }
+        <SchedulePageDialogNodes
+          tieBreakResolverRef={tieBreakResolverRef}
+          specialProgramOverrideResolverRef={specialProgramOverrideResolverRef}
+          sptFinalEditResolverRef={sptFinalEditResolverRef}
+          sharedTherapistEditResolverRef={sharedTherapistEditResolverRef}
+          substitutionWizardResolverRef={substitutionWizardResolverRef}
+          editingBedTeam={editingBedTeam}
+          setEditingBedTeam={setEditingBedTeam}
+          wards={wards}
+          bedCountsOverridesByTeam={bedCountsOverridesByTeam}
+          captureUndoCheckpoint={captureUndoCheckpoint}
+          setBedCountsOverridesByTeam={setBedCountsOverridesByTeam}
+          setStepStatus={setStepStatus}
+          step1LeaveSetupOpen={step1LeaveSetupOpen}
+          setStep1LeaveSetupOpen={setStep1LeaveSetupOpen}
+          staff={staff}
+          staffOverrides={staffOverrides}
+          specialPrograms={specialPrograms}
+          sptAllocations={sptAllocations}
+          currentWeekday={currentWeekday}
+          handleSaveStep1LeaveSetup={handleSaveStep1LeaveSetup}
+          editingStaffId={editingStaffId}
+          therapistAllocations={therapistAllocations}
+          pcaAllocationsForUi={pcaAllocationsForUi}
+          editDialogOpen={editDialogOpen}
+          setEditDialogOpen={setEditDialogOpen}
+          handleSaveStaffEdit={handleSaveStaffEdit}
+          tieBreakDialogOpen={tieBreakDialogOpen}
+          setTieBreakDialogOpen={setTieBreakDialogOpen}
+          tieBreakTeams={tieBreakTeams}
+          tieBreakPendingFTE={tieBreakPendingFTE}
+          copyWizardConfig={copyWizardConfig}
+          copyWizardOpen={copyWizardOpen}
+          setCopyWizardOpen={setCopyWizardOpen}
+          setCopyWizardConfig={setCopyWizardConfig}
+          handleConfirmCopy={handleConfirmCopy}
+          datesWithData={datesWithData}
+          holidays={holidays}
+          floatingPcaDialogProps={{
+            floatingPCAEntryOpen,
+            floatingPCAConfigV1Open,
+            floatingPCAConfigV2Open,
+            prefetchFloatingPCAConfigDialogV1,
+            prefetchFloatingPCAConfigDialogV2,
+            openStep3V1Dialog,
+            openStep3V2Dialog,
+            handleFloatingPCAConfigCancel,
+            handleFloatingPCAConfigSave,
+            visibleTeams,
+            selectedDate,
+            pendingPCAFTEForStep3Dialog,
+            pcaPreferences,
+            floatingPCAsForStep3,
+            existingAllocationsForStep3Dialog,
+            specialPrograms,
+            bufferStaff,
+            staffOverrides,
+            step3BootstrapSummary,
+            step3ProjectionV2,
+            step2Result,
+            reservedSpecialProgramPcaFteForStep3,
+            staff,
+          }}
+          showSpecialProgramOverrideDialog={showSpecialProgramOverrideDialog}
+          setShowSpecialProgramOverrideDialog={setShowSpecialProgramOverrideDialog}
+          inactiveStaff={inactiveStaff}
+          sptBaseFteByStaffId={sptBaseFteByStaffId}
+          selectedDate={selectedDate}
+          showStep21InStep2Stepper={showStep21InStep2Stepper}
+          showSharedTherapistStep={showSharedTherapistStep}
+          step2DownstreamImpact={step2DownstreamImpact}
+          loadStaff={loadStaff}
+          loadSPTAllocations={loadSPTAllocations}
+          showSptFinalEditDialog={showSptFinalEditDialog}
+          setShowSptFinalEditDialog={setShowSptFinalEditDialog}
+          sptStaffForStep22={sptStaffForStep22}
+          sptWeekdayByStaffId={sptWeekdayByStaffId}
+          sptTeamsByStaffIdForStep22={sptTeamsByStaffIdForStep22}
+          currentSptAllocationByStaffIdForStep22={currentSptAllocationByStaffIdForStep22}
+          ptPerTeamByTeamForStep22={ptPerTeamByTeamForStep22}
+          showSharedTherapistEditDialog={showSharedTherapistEditDialog}
+          setShowSharedTherapistEditDialog={setShowSharedTherapistEditDialog}
+          sharedTherapistDialogData={sharedTherapistDialogData}
+          setSharedTherapistDialogData={setSharedTherapistDialogData}
+          substitutionWizardOpen={substitutionWizardOpen}
+          substitutionWizardDataForDisplay={substitutionWizardDataForDisplay}
+          setSubstitutionWizardOpen={setSubstitutionWizardOpen}
+          setSubstitutionWizardData={setSubstitutionWizardData}
+          handleSubstitutionWizardConfirm={handleSubstitutionWizardConfirm}
+          handleSubstitutionWizardCancel={handleSubstitutionWizardCancel}
+          handleSubstitutionWizardSkip={handleSubstitutionWizardSkip}
+          pcaPreferences={pcaPreferences}
+          calendarOpen={calendarOpen}
+          setCalendarOpen={setCalendarOpen}
+          queueDateTransition={queueDateTransition}
+          calendarButtonRef={calendarButtonRef}
+          calendarPopoverRef={calendarPopoverRef}
         />
         {mobilePreviewDialog}
       </ScheduleMainBoardChrome>
