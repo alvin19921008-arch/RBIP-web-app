@@ -23,8 +23,8 @@
 | R3-22 | Recalc + `useAllocationSync` + beds | Done | 2026-04-24: commit **c07c63c**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (overrides / bed / double recalc). `useScheduleAllocationRecalcAndSync.ts`. |
 | R3-23 | Step 2 dependency + buffered Step 2 toast | Done | 2026-04-24: commit **9b57bd3**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (toast + Step 3 bootstrap / badges). `useScheduleStep2DependencyAndToast.ts`. |
 | R3-24 | Substitution wizard | Done | 2026-04-24: commit **19ec57a**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (wizard cancel + confirm). `useScheduleSubstitutionWizard.ts`. |
-| R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Done | 2026-04-24: commit **bbf4792**; orchestrator gates green (smoke 13 passed, 3 skipped); reviewer **PASS** (non-blocking). Single `useScheduleAlgorithmEntry.ts` (no 25a/25b). **Manual (owner):** Step 4 (Initialize strip + Step 2 dialogs + Step 3 entry) — still `- [ ]` in phase checklist. |
-| R3-26 | DnD bridge wiring | Not started | |
+| R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Done | 2026-04-24: commit **bbf4792**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (Initialize + Step 2 dialogs + Step 3 entry). `useScheduleAlgorithmEntry.ts`. |
+| R3-26 | DnD bridge wiring | In progress | 2026-04-24: implementer dispatched. Single `performSlotTransfer` / discard source (Round 2 invariants). |
 | R3-27 | Toolbar + interaction layer | Not started | |
 | R3-28 | Grouped dialog/board props (optional) | Not started | |
 | R3-29 | Dev/perf + pure helper peel (optional) | Not started | |
@@ -166,7 +166,7 @@ Do not merge on failure unless environmental and documented.
 - [x] **Step 1:** Grep `handleInitializeAlgorithm`, `generateStep2`, `generateStep3`, `showStep2Point2`, `showStep2Point3`, resolver refs, `useScheduleController` actions.
 - [x] **Step 2:** Extract **with** the same `scheduleActions` and toast/invalidate calls; do not fork dev harness `runStep2Auto` without shared subroutines.
 - [x] **Step 3:** Global gates.
-- [ ] **Step 4:** **Manual (owner):** run **Initialize** from step strip for each major step; Step 2.1 / 2.2 / 2.3 dialogs; Step 3 entry.
+- [x] **Step 4:** **Manual (owner):** run **Initialize** from step strip for each major step; Step 2.1 / 2.2 / 2.3 dialogs; Step 3 entry. (Owner confirmed OK 2026-04-24.)
 - [x] **Step 5:** Commit: `refactor(schedule): extract algorithm entry hook (round 3)`.
 
 ---
@@ -180,11 +180,11 @@ Do not merge on failure unless environmental and documented.
 - **Create:** `useScheduleBoardDndWiring.ts` (optional)
 - **Modify:** `SchedulePageClient.tsx`
 
-- [ ] **Step 1:** Grep `useSchedulePcaSlotTransfer`, `useScheduleBoardDnd`, `handleDragStart`, `performSlotTransfer`, `gridStaffContextMenuItems` (wiring only).
-- [ ] **Step 2:** Keep **single** `performSlotTransfer` / `performSlotDiscard` source (Round 2 invariants).
-- [ ] **Step 3:** Global gates.
+- [x] **Step 1:** Grep `useSchedulePcaSlotTransfer`, `useScheduleBoardDnd`, `handleDragStart`, `performSlotTransfer`, `gridStaffContextMenuItems` (wiring only).
+- [x] **Step 2:** Keep **single** `performSlotTransfer` / `performSlotDiscard` source (Round 2 invariants).
+- [x] **Step 3:** Global gates.
 - [ ] **Step 4:** **Manual (owner):** DnD PCA, slot popover, discard, therapist drag if applicable.
-- [ ] **Step 5:** Commit: `refactor(schedule): extract dnd bridge wiring (round 3)`.
+- [x] **Step 5:** Commit: `refactor(schedule): extract dnd bridge wiring (round 3)`.
 
 ---
 

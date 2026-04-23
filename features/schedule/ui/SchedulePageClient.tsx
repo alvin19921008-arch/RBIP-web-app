@@ -53,8 +53,7 @@ import {
 import type { StaffOverrides } from '@/lib/hooks/useAllocationSync'
 import { useSchedulePageQueryState } from '@/features/schedule/ui/hooks/useSchedulePageQueryState'
 import { useStep3DialogProjection } from '@/features/schedule/ui/hooks/useStep3DialogProjection'
-import { useScheduleBoardDnd } from '@/features/schedule/ui/hooks/useScheduleBoardDnd'
-import { useSchedulePcaSlotTransfer } from '@/features/schedule/ui/hooks/useSchedulePcaSlotTransfer'
+import { useScheduleBoardDndWiring } from '@/features/schedule/ui/hooks/useScheduleBoardDndWiring'
 import { useScheduleSnapshotDiff } from '@/features/schedule/ui/hooks/useScheduleSnapshotDiff'
 import { useScheduleExportActions } from '@/features/schedule/ui/hooks/useScheduleExportActions'
 import { useScheduleCopyWorkflow } from '@/features/schedule/ui/hooks/useScheduleCopyWorkflow'
@@ -4374,105 +4373,17 @@ function SchedulePageContent() {
     })
   }
 
-  // Close the slot selection popover
-  const handleCloseSlotSelection = () => {
-    setPcaDragState(createIdlePcaDragState())
-  }
-  
-  // Reset PCA drag state completely
-  const resetPcaDragState = () => {
-    setPcaDragState(createIdlePcaDragState())
-  }
-  
-  // Start drag from the popover preview card (or perform discard if in discard mode)
-  const handleStartDragFromPopover = () => {
-    if (pcaDragState.selectedSlots.length === 0) return
-    
-    // If in discard mode, perform discard immediately (no need to drag)
-    if (pcaDragState.isDiscardMode && pcaDragState.sourceTeam && pcaDragState.staffId) {
-      // Check if this is SPT (therapist) or PCA
-      const staffMember = staff.find(s => s.id === pcaDragState.staffId)
-      if (staffMember?.rank === 'SPT') {
-        performTherapistSlotDiscard(pcaDragState.staffId, pcaDragState.sourceTeam, pcaDragState.selectedSlots)
-      } else {
-        performSlotDiscard(pcaDragState.staffId, pcaDragState.sourceTeam, pcaDragState.selectedSlots)
-      }
-      resetPcaDragState()
-      return
-    }
-    
-    setPcaDragState(prev => ({
-      ...prev,
-      isActive: true,
-      isDraggingFromPopover: true,
-      showSlotSelection: false, // Hide popover during drag
-    }))
-  }
-  
-  // Shared function to remove therapist allocation from team (for buffer therapist and SPT slot discard)
-  const removeTherapistAllocationFromTeam = (
-    staffId: string,
-    sourceTeam: Team,
-    options?: { skipUndoCheckpoint?: boolean; undoLabel?: string }
-  ) => {
-    if (!options?.skipUndoCheckpoint) {
-      captureUndoCheckpoint(options?.undoLabel ?? 'Therapist slot discard')
-    }
-    setTherapistAllocations(prev => ({
-      ...prev,
-      [sourceTeam]: prev[sourceTeam].filter(a => a.staff_id !== staffId),
-    }))
-    
-    // Clear staffOverrides for this staff (remove team assignment)
-    setStaffOverrides(prev => {
-      const updated = { ...prev }
-      if (updated[staffId]) {
-        const { team, ...rest } = updated[staffId]
-        if (Object.keys(rest).length === 0) {
-          delete updated[staffId]
-        } else {
-          updated[staffId] = rest
-        }
-      }
-      return updated
-    })
-  }
-  
-  // Perform therapist slot discard (for SPT) - works like buffer therapist removal
-  const performTherapistSlotDiscard = (staffId: string, sourceTeam: Team, slotsToDiscard: number[]) => {
-    if (slotsToDiscard.length === 0) return
-    
-    const currentAllocation = Object.values(therapistAllocations).flat()
-      .find(a => a.staff_id === staffId && a.team === sourceTeam)
-    
-    if (!currentAllocation) return
-    
-    const staffMember = staff.find(s => s.id === staffId)
-    if (!staffMember || staffMember.rank !== 'SPT') return // Only SPT has slot assignments
-    
-    // For SPT, slot discard removes the entire allocation from the team (like buffer therapist)
-    // This is different from PCA slot discard which only removes specific slots
-    captureUndoCheckpoint('Therapist slot discard')
-    removeTherapistAllocationFromTeam(staffId, sourceTeam, { skipUndoCheckpoint: true })
-  }
-
-  const { performSlotTransfer, performSlotDiscard, performPcaSlotAssignFromPool } = useSchedulePcaSlotTransfer({
-    pcaAllocations,
-    setPcaAllocations,
-    staff,
-    bufferStaff,
-    staffOverrides,
-    pcaDragState,
-    currentScheduleId,
-    queueOptimisticPcaAction,
-    captureUndoCheckpoint,
-    setPendingPCAFTEPerTeam,
-    setStaffOverrides,
-    stripExtraCoverageOverrides,
-    handleCloseSlotSelection,
-  })
-
-  const { sensors, handleDragStart, handleDragMove, handleDragEnd } = useScheduleBoardDnd({
+  const {
+    resetPcaDragState,
+    performSlotTransfer,
+    performSlotDiscard,
+    performPcaSlotAssignFromPool,
+    handleStartDragFromPopover,
+    sensors,
+    handleDragStart,
+    handleDragMove,
+    handleDragEnd,
+  } = useScheduleBoardDndWiring({
     closeStaffContextMenu,
     closeStaffPoolContextMenu,
     staff,
@@ -4481,6 +4392,7 @@ function SchedulePageContent() {
     pcaAllocationBlockRef,
     currentStep,
     therapistAllocations,
+    setTherapistAllocations,
     staffOverrides,
     setTherapistDragState,
     pcaAllocations,
@@ -4495,12 +4407,13 @@ function SchedulePageContent() {
     getSpecialProgramSlotsForTeam,
     captureUndoCheckpoint,
     setStaffOverrides,
-    performSlotTransfer,
-    performSlotDiscard,
-    performTherapistSlotDiscard,
-    resetPcaDragState,
-    removeTherapistAllocationFromTeam,
     setBufferStaff,
+    setPcaAllocations,
+    bufferStaff,
+    currentScheduleId,
+    queueOptimisticPcaAction,
+    setPendingPCAFTEPerTeam,
+    stripExtraCoverageOverrides,
   })
 
   const { gridStaffContextMenuItems, staffPoolContextMenuItems } = useScheduleAllocationContextMenus({
@@ -4592,7 +4505,7 @@ function SchedulePageContent() {
             : null
         }
         onSlotToggle={handleSlotToggle}
-        onCloseSlotSelection={handleCloseSlotSelection}
+        onCloseSlotSelection={resetPcaDragState}
         onStartDragFromSlotPopover={handleStartDragFromPopover}
       />
 
