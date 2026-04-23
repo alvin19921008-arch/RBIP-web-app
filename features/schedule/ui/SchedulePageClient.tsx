@@ -62,6 +62,7 @@ import { useStep3DialogProjection } from '@/features/schedule/ui/hooks/useStep3D
 import { useScheduleBoardDnd } from '@/features/schedule/ui/hooks/useScheduleBoardDnd'
 import { useScheduleSnapshotDiff } from '@/features/schedule/ui/hooks/useScheduleSnapshotDiff'
 import { useScheduleExportActions } from '@/features/schedule/ui/hooks/useScheduleExportActions'
+import { useScheduleCopyWorkflow } from '@/features/schedule/ui/hooks/useScheduleCopyWorkflow'
 import type { Step2ResultSurplusProjectionForStep3 } from '@/lib/features/schedule/schedulePageFingerprints'
 import { combineScheduleCalculations } from '@/lib/features/schedule/scheduleCalculationsCombine'
 import { ScheduleMainGrid } from '@/features/schedule/ui/layout/ScheduleMainGrid'
@@ -70,7 +71,6 @@ import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, Ch
 import { Tooltip } from '@/components/ui/tooltip'
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
-import { COPY_ARRIVAL_ANIMATION_MS } from '@/lib/features/schedule/copyConstants'
 import { useAccessControl } from '@/lib/access/useAccessControl'
 import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/utils/dateHelpers'
 import { getWeekday, formatDateDDMMYYYY, formatDateForInput, parseDateFromInput } from '@/lib/features/schedule/date'
@@ -333,9 +333,6 @@ function SchedulePageContent() {
 
   const calcStaleRepairAttemptedDateRef = useRef<string | null>(null)
   const avgPcaTargetRepairAttemptedDateRef = useRef<string | null>(null)
-  const highlightTimerRef = useRef<any>(null)
-  const [copyTargetDateKey, setCopyTargetDateKey] = useState<string | null>(null)
-  const [leaveSetupPulseKey, setLeaveSetupPulseKey] = useState(0)
 
   const triggerHaptic = useCallback((pattern: number | number[] = 10) => {
     const coarsePointer = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
@@ -349,30 +346,6 @@ function SchedulePageContent() {
   }, [])
 
   const [refPortalHost, setRefPortalHost] = useState<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    return () => {
-      if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!copyTargetDateKey) return
-    const loadedDateKey = scheduleState.scheduleLoadedForDate
-    const activeStep = scheduleState.currentStep
-    if (!loadedDateKey) return
-    if (loadedDateKey !== copyTargetDateKey) return
-    if (activeStep !== 'leave-fte') {
-      void scheduleActions.goToStep('leave-fte')
-    }
-    setIsDateHighlighted(true)
-    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current)
-    highlightTimerRef.current = window.setTimeout(() => {
-      setIsDateHighlighted(false)
-    }, COPY_ARRIVAL_ANIMATION_MS)
-    setLeaveSetupPulseKey((prev) => prev + 1)
-    setCopyTargetDateKey(null)
-  }, [copyTargetDateKey, scheduleState.scheduleLoadedForDate, scheduleState.currentStep, scheduleActions])
 
   const displayToolsInlineNode = (
     <div
@@ -1104,7 +1077,6 @@ function SchedulePageContent() {
     [toastApi]
   )
   const dismissActionToast = useCallback(() => toastApi.dismiss(), [toastApi])
-  const [isDateHighlighted, setIsDateHighlighted] = useState(false)
   const [lastSaveTiming, setLastSaveTiming] = useState<TimingReport | null>(null)
   const [lastCopyTiming, setLastCopyTiming] = useState<TimingReport | null>(null)
   const [lastLoadTiming, setLastLoadTiming] = useState<TimingReport | null>(null)
@@ -5207,99 +5179,6 @@ function SchedulePageContent() {
     }
   }
 
-  // Handle confirmed copy from ScheduleCopyWizard by calling the copy API
-  const handleConfirmCopy = async ({
-    fromDate,
-    toDate,
-    includeBufferStaff,
-  }: {
-    fromDate: Date
-    toDate: Date
-    includeBufferStaff: boolean
-  }): Promise<{ copiedUpToStep?: string }> => {
-    let timing: any = null
-    let serverTiming: any = null
-    let copyError: unknown = null
-
-    setCopying(true)
-    startTopLoading(0.06)
-    bumpTopLoadingTo(0.18)
-    startSoftAdvance(0.72)
-
-    try {
-      const result = await scheduleActions.copySchedule({
-        fromDate,
-        toDate,
-        mode: 'hybrid',
-        includeBufferStaff,
-        onProgress: bumpTopLoadingTo,
-        startSoftAdvance,
-        stopSoftAdvance,
-      })
-
-      timing = result.timing
-      serverTiming = (result.timing as any)?.meta?.server ?? null
-
-      // Close wizard after success (non-modal feedback will be shown via toast).
-      setCopyWizardOpen(false)
-      setCopyWizardConfig(null)
-      setCopyMenuOpen(false)
-      bumpTopLoadingTo(0.86)
-
-      const targetKey = formatDateForInput(toDate)
-      setCopyTargetDateKey(targetKey)
-      clearCachedSchedule(targetKey)
-      clearDraftSchedule(targetKey)
-      // The copy route may write back to the source schedule's baseline_snapshot
-      // (legacy upgrade / missing snapshot backfill). Clear its cache so the next
-      // navigation to the source date reads the updated row from DB instead of
-      // serving a stale pre-copy cache entry.
-      clearCachedSchedule(formatDateForInput(fromDate))
-
-      // Navigate to copied schedule date and reload schedule metadata
-      queueDateTransition(toDate, { resetLoadedForDate: true, useLocalTopBar: false })
-      bumpTopLoadingTo(0.92)
-
-      // Non-blocking refresh: optimistically mark the target date as having data,
-      // then refresh the full set in the background (no await).
-      setDatesWithData(prev => {
-        const next = new Set(prev)
-        next.add(formatDateForInput(toDate))
-        return next
-      })
-      loadDatesWithData({ force: true })
-      bumpTopLoadingTo(0.98)
-
-      showActionToast('Copied schedule to ' + formatDateDDMMYYYY(toDate) + '.', 'success')
-      if (result.rebaseWarning) {
-        showActionToast(
-          'Copied, but baseline rebase failed.',
-          'warning',
-          `Please go to Dashboard > Sync / Publish and run "Pull Global → snapshot" for today. (${result.rebaseWarning})`
-        )
-      }
-
-      return {
-        copiedUpToStep: result.copiedUpToStep,
-      }
-    } catch (e: any) {
-      copyError = e
-      timing = e?.timing ?? timing
-      serverTiming = e?.serverTiming ?? serverTiming
-      throw e
-    } finally {
-      setCopying(false)
-      setLastCopyTiming(
-        (timing as any) ||
-          createTimingCollector().finalize({
-            ok: !copyError,
-            server: serverTiming,
-          })
-      )
-      finishTopLoading()
-    }
-  }
-
   // Check if there are unsaved changes (staff overrides or bed edits)
   const workflowDirty = useMemo(() => {
     const currentCompletedSteps = ALLOCATION_STEPS
@@ -5385,6 +5264,31 @@ function SchedulePageContent() {
     },
     [beginDateTransition, startUiTransition]
   )
+
+  const { handleConfirmCopy, leaveSetupPulseKey, isDateHighlighted } = useScheduleCopyWorkflow({
+    scheduleActions,
+    scheduleLoadedForDate: scheduleState.scheduleLoadedForDate,
+    currentStep: scheduleState.currentStep,
+    setCopying,
+    startTopLoading,
+    bumpTopLoadingTo,
+    finishTopLoading,
+    startSoftAdvance,
+    stopSoftAdvance,
+    showActionToast,
+    formatDateForInput,
+    formatDateDDMMYYYY,
+    createTimingCollector,
+    setLastCopyTiming,
+    setCopyWizardOpen,
+    setCopyWizardConfig,
+    setCopyMenuOpen,
+    clearCachedSchedule,
+    clearDraftSchedule,
+    queueDateTransition,
+    setDatesWithData,
+    loadDatesWithData,
+  })
 
   const handleStepClick = useCallback(
     (stepId: string) => {
