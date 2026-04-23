@@ -24,7 +24,7 @@
 | R3-23 | Step 2 dependency + buffered Step 2 toast | Done | 2026-04-24: commit **9b57bd3**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (toast + Step 3 bootstrap / badges). `useScheduleStep2DependencyAndToast.ts`. |
 | R3-24 | Substitution wizard | Done | 2026-04-24: commit **19ec57a**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (wizard cancel + confirm). `useScheduleSubstitutionWizard.ts`. |
 | R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Done | 2026-04-24: commit **bbf4792**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (Initialize + Step 2 dialogs + Step 3 entry). `useScheduleAlgorithmEntry.ts`. |
-| R3-26 | DnD bridge wiring | In progress | 2026-04-24: implementer dispatched. Single `performSlotTransfer` / discard source (Round 2 invariants). |
+| R3-26 | DnD bridge wiring | Done | 2026-04-24: commit **c2db9fe**; orchestrator gates green (smoke 12 passed, 4 skipped); reviewer **PASS** (non-blocking). `useScheduleBoardDndWiring.ts`. **Manual (owner):** Step 4 (DnD PCA, popover, discard, therapist drag) — still `- [ ]` in phase checklist. |
 | R3-27 | Toolbar + interaction layer | Not started | |
 | R3-28 | Grouped dialog/board props (optional) | Not started | |
 | R3-29 | Dev/perf + pure helper peel (optional) | Not started | |
