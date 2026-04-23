@@ -20,8 +20,8 @@
 |-------|------|--------|-------|
 | R3-20 | Pre-baseline & order | Done | 2026-04-24: `wc -l` **8159**; gates at **ba080b2** (pre-commit); orchestrator re-ran gates green on **38d787e**; smoke 13 passed, 3 skipped. Anchors: `useAllocationSync` → `SchedulePageClient.tsx:3578`; `handleInitializeAlgorithm` → `:4139`; `beginDateTransition` → `:5066`; `flushSync` → `:1168`. R1 §7 re-read. Doc commit **38d787e** (`chore(docs): round 3 baseline`). Reviewer **PASS** (non-blocking: untracked sibling plan/handoff `.md` files may be committed separately). |
 | R3-21 | Initial date + date/URL | Done | 2026-04-24: commit **20184a7**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (URL/calendar/cold load). Hooks: `useScheduleInitialDateResolution.ts`, `useScheduleDateTransition.ts`. |
-| R3-22 | Recalc + `useAllocationSync` + beds | Done | 2026-04-24: commit **c07c63c**; orchestrator gates green; smoke 12 passed, 4 skipped; reviewer **PASS** (non-blocking). `useScheduleAllocationRecalcAndSync.ts`. **Manual (owner):** Step 4 (overrides / bed step / double recalc) — still `- [ ]` in phase checklist. |
-| R3-23 | Step 2 dependency + buffered Step 2 toast | Not started | |
+| R3-22 | Recalc + `useAllocationSync` + beds | Done | 2026-04-24: commit **c07c63c**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (overrides / bed / double recalc). `useScheduleAllocationRecalcAndSync.ts`. |
+| R3-23 | Step 2 dependency + buffered Step 2 toast | In progress | 2026-04-24: `useScheduleStep2DependencyAndToast.ts` (3 hooks); gates green; manual Step 4 pending review. |
 | R3-24 | Substitution wizard | Not started | |
 | R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Not started | May split 25a / 25b |
 | R3-26 | DnD bridge wiring | Not started | |
@@ -114,7 +114,7 @@ Do not merge on failure unless environmental and documented.
 - [x] **Step 1:** Grep `useAllocationSync`, `useMainPaneLoadAndHydrateDateEffect` / `useSchedulePaneHydrationEndEffect`, `recalculateScheduleCalculations`, `allocateBeds`, `setBedAllocations`.
 - [x] **Step 2:** Move in **one** slice or document `useEffect` order at top of new hook file. Do **not** change dependency arrays without justification.
 - [x] **Step 3:** Global gates.
-- [ ] **Step 4:** **Manual (owner):** load date, change overrides, step through bed step if applicable; watch for double network/recalc.
+- [x] **Step 4:** **Manual (owner):** load date, change overrides, step through bed step if applicable; watch for double network/recalc. (Owner confirmed OK 2026-04-24.)
 - [x] **Step 5:** Commit: `refactor(schedule): extract allocation recalc and sync (round 3)`.
 
 ---
@@ -128,11 +128,11 @@ Do not merge on failure unless environmental and documented.
 - **Create:** e.g. `useScheduleStep2DependencyAndToast.ts` (or **two** hooks if separation is clearer)
 - **Modify:** `SchedulePageClient.tsx`
 
-- [ ] **Step 1:** Grep `step2FingerprintBaselineRef`, `bufferedStep2`, `captureStep2DependencyBaseline`, `finalizeStep2DependencyChanges`, `useStep3DialogProjection` (call site only for deps).
-- [ ] **Step 2:** Keep **all** `flushSync` + finalize pairings in the same module or explicitly imported from one place.
-- [ ] **Step 3:** Global gates.
+- [x] **Step 1:** Grep `step2FingerprintBaselineRef`, `bufferedStep2`, `captureStep2DependencyBaseline`, `finalizeStep2DependencyChanges`, `useStep3DialogProjection` (call site only for deps).
+- [x] **Step 2:** Keep **all** `flushSync` + finalize pairings in the same module or explicitly imported from one place.
+- [x] **Step 3:** Global gates.
 - [ ] **Step 4:** **Manual (owner):** run Step 2, verify toast + Step 3 bootstrap / outdated badges.
-- [ ] **Step 5:** Commit: `refactor(schedule): extract step2 dependency and buffered toast (round 3)`.
+- [x] **Step 5:** Commit: `refactor(schedule): extract step2 dependency and buffered toast (round 3)`.
 
 ---
 

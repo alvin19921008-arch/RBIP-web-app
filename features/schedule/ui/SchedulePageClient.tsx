@@ -75,7 +75,6 @@ import { getNextWorkingDay, getPreviousWorkingDay, isWorkingDay } from '@/lib/ut
 import { getWeekday, formatDateDDMMYYYY, formatDateForInput, parseDateFromInput } from '@/lib/features/schedule/date'
 import { computeDrmAddOnFte, computeReservedSpecialProgramPcaFte } from '@/lib/utils/specialProgramPcaCapacity'
 import { getAllocationSpecialProgramSlotsForTeam } from '@/lib/utils/scheduleReservationRuntime'
-import { describeStep3BootstrapDelta, type Step3BootstrapSummary } from '@/lib/features/schedule/step3Bootstrap'
 import {
   closeStep3DialogSurface,
   openStep3EntrySurface,
@@ -85,10 +84,6 @@ import {
 } from '@/lib/features/schedule/step3DialogFlow'
 import { buildPageStep3RuntimeState } from '@/lib/features/schedule/pageStep3Runtime'
 import { willNeedStep21Substitution } from '@/lib/features/schedule/step2SubstitutionProjection'
-import {
-  evaluateStep2DownstreamImpact,
-  type Step2ImpactKind,
-} from '@/lib/features/schedule/step2DownstreamImpact'
 import { mergeStep2Point2StaffOverrides } from '@/lib/features/schedule/step2Point2StateMerge'
 import {
   applySharedTherapistEditsToTherapistAllocations,
@@ -115,18 +110,6 @@ import { formatWardLabel } from '@/lib/features/schedule/bedMath'
 import { getSptWeekdayConfigMap } from '@/lib/features/schedule/sptConfig'
 import { createClientComponentClient } from '@/lib/supabase/client'
 import { Step2DialogReminder } from '@/components/allocation/Step2DialogReminder'
-type Step2FinalizeContext = {
-  kind: Step2ImpactKind
-  explicitStep3Change?: boolean
-  explicitStep4Change?: boolean
-}
-
-const DEFAULT_STEP2_FINALIZE_CONTEXT: Step2FinalizeContext = {
-  kind: 'main-rerun',
-  explicitStep3Change: false,
-  explicitStep4Change: false,
-}
-
 import type { PCAData, FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
 import type { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
@@ -178,6 +161,12 @@ import {
 import { useResizeObservedHeight } from '@/lib/hooks/useResizeObservedHeight'
 import { useScheduleInitialDateResolution } from '@/features/schedule/ui/hooks/useScheduleInitialDateResolution'
 import { useScheduleDateTransition } from '@/features/schedule/ui/hooks/useScheduleDateTransition'
+import {
+  useScheduleStep2Dependency,
+  useScheduleStep2SuccessToastBuffer,
+  useScheduleBufferedStep2HandoffAfterProjection,
+  type Step2FinalizeContext,
+} from '@/features/schedule/ui/hooks/useScheduleStep2DependencyAndToast'
 import { resetStep2OverridesForAlgoEntry } from '@/lib/features/schedule/stepReset'
 import { applySptFinalEditToTherapistAllocations } from '@/lib/features/schedule/sptFinalEdit'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
@@ -533,24 +522,19 @@ function SchedulePageContent() {
   const latestStaffOverridesRef = useRef(staffOverrides)
   const latestTherapistAllocationsRef = useRef(therapistAllocations)
   const latestPcaAllocationsRef = useRef(pcaAllocations)
-  const latestStepStatusRef = useRef<Record<string, StepStatus>>(stepStatus)
-  const latestStep3DependencyFingerprintRef = useRef<string>('')
-  const latestStep4DependencyFingerprintRef = useRef<string>('')
-  const step2FingerprintBaselineRef = useRef<{ step3: string; step4: string } | null>(null)
-  const step2FinalizeContextRef = useRef<Step2FinalizeContext>(DEFAULT_STEP2_FINALIZE_CONTEXT)
-  const [step2DownstreamImpact, setStep2DownstreamImpact] = useState<{
-    step3Outdated: boolean
-    step4Outdated: boolean
-  } | null>(null)
+  const {
+    latestStep3DependencyFingerprintRef,
+    latestStep4DependencyFingerprintRef,
+    step2DownstreamImpact,
+    captureStep2DependencyBaseline,
+    finalizeStep2DependencyChanges,
+    scheduleFinalizeStep2DependencyChanges,
+  } = useScheduleStep2Dependency({ setStepStatus, stepStatus })
   const [step3FlowChoiceForTooltip, setStep3FlowChoiceForTooltip] = useState<Step3FlowChoice | null>(null)
 
   useEffect(() => {
     latestStaffOverridesRef.current = staffOverrides
   }, [staffOverrides])
-
-  useLayoutEffect(() => {
-    latestStepStatusRef.current = stepStatus
-  }, [stepStatus])
 
   useEffect(() => {
     latestTherapistAllocationsRef.current = therapistAllocations
@@ -559,37 +543,6 @@ function SchedulePageContent() {
   useEffect(() => {
     latestPcaAllocationsRef.current = pcaAllocations
   }, [pcaAllocations])
-
-  useEffect(() => {
-    setStep2DownstreamImpact((prev) => {
-      if (!prev) return prev
-      const step3StillOutdated = !!prev.step3Outdated && stepStatus['floating-pca'] === 'outdated'
-      const step4StillOutdated = !!prev.step4Outdated && stepStatus['bed-relieving'] === 'outdated'
-      if (!step3StillOutdated && !step4StillOutdated) return null
-      if (step3StillOutdated === prev.step3Outdated && step4StillOutdated === prev.step4Outdated) return prev
-      return { step3Outdated: step3StillOutdated, step4Outdated: step4StillOutdated }
-    })
-  }, [stepStatus])
-
-  const markDependentStepsOutOfDate = useCallback(
-    (args: { step3Changed: boolean; step4Changed: boolean }) => {
-      if (!args.step3Changed && !args.step4Changed) return
-      setStepStatus((prev) => {
-        let changed = false
-        const next: Record<string, StepStatus> = { ...prev }
-        if (args.step3Changed && next['floating-pca'] === 'completed') {
-          next['floating-pca'] = 'outdated'
-          changed = true
-        }
-        if (args.step4Changed && next['bed-relieving'] === 'completed') {
-          next['bed-relieving'] = 'outdated'
-          changed = true
-        }
-        return changed ? next : prev
-      })
-    },
-    [setStepStatus]
-  )
 
   const getSpecialProgramFinalizeContext = useCallback(
     (overrides?: Record<string, { specialProgramOverrides?: SpecialProgramOverrideEntry[] }> | null): Step2FinalizeContext => {
@@ -620,53 +573,6 @@ function SchedulePageContent() {
     },
     []
   )
-
-  const captureStep2DependencyBaseline = useCallback((context?: Step2FinalizeContext) => {
-    step2FinalizeContextRef.current = context ?? DEFAULT_STEP2_FINALIZE_CONTEXT
-    step2FingerprintBaselineRef.current = {
-      step3: latestStep3DependencyFingerprintRef.current,
-      step4: latestStep4DependencyFingerprintRef.current,
-    }
-  }, [])
-
-  const finalizeStep2DependencyChanges = useCallback(() => {
-    const baseline = step2FingerprintBaselineRef.current
-    step2FingerprintBaselineRef.current = null
-    const finalizeContext = step2FinalizeContextRef.current
-    step2FinalizeContextRef.current = DEFAULT_STEP2_FINALIZE_CONTEXT
-    if (!baseline) return
-    const fingerprintStep3Changed = baseline.step3 !== latestStep3DependencyFingerprintRef.current
-    const fingerprintStep4Changed = baseline.step4 !== latestStep4DependencyFingerprintRef.current
-    const { step3Changed, step4Changed } = evaluateStep2DownstreamImpact({
-      kind: finalizeContext.kind,
-      step3FingerprintChanged: fingerprintStep3Changed,
-      step4FingerprintChanged: fingerprintStep4Changed,
-      // Current Step 3 targets are still derived from live PT distribution in this page.
-      step3TargetsDependOnPtDistribution: true,
-      explicitStep3Change: !!finalizeContext.explicitStep3Change,
-      explicitStep4Change: !!finalizeContext.explicitStep4Change,
-    })
-
-    const status = latestStepStatusRef.current
-    const step3Outdated = step3Changed && status?.['floating-pca'] === 'completed'
-    const step4Outdated = step4Changed && status?.['bed-relieving'] === 'completed'
-
-    markDependentStepsOutOfDate({ step3Changed, step4Changed })
-
-    if (step3Outdated || step4Outdated) {
-      setStep2DownstreamImpact({ step3Outdated, step4Outdated })
-    }
-  }, [markDependentStepsOutOfDate])
-
-  /** Defer past React commit/layout so dependency fingerprint refs match post–Step 2 state. */
-  const scheduleFinalizeStep2DependencyChanges = useCallback(() => {
-    const run = () => finalizeStep2DependencyChanges()
-    if (typeof window !== 'undefined') {
-      window.setTimeout(run, 0)
-    } else {
-      queueMicrotask(run)
-    }
-  }, [finalizeStep2DependencyChanges])
 
   const [teamSettingsRows, setTeamSettingsRows] = useState<TeamSettingsMergeRow[]>([])
   const [activeDragStaffForOverlay, setActiveDragStaffForOverlay] = useState<Staff | null>(null)
@@ -978,37 +884,16 @@ function SchedulePageContent() {
     [scheduleActions]
   )
 
-  const bufferStep2SuccessToastRef = useRef(false)
-  const bufferedStep2SuccessToastPayloadRef = useRef<{ title: string; variant: any; description?: string } | null>(null)
-  const step3BootstrapBaselineRef = useRef<Step3BootstrapSummary | null>(null)
-  const step3BootstrapV2BaselineRef = useRef<Step3BootstrapSummary | null>(null)
-  const bufferedStep2ToastPendingRef = useRef(false)
-  const bufferedStep2ToastAwaitCalculationsRef = useRef<typeof calculations | null>(null)
-  const [bufferedStep2ToastFlushVersion, setBufferedStep2ToastFlushVersion] = useState(0)
-
-  const clearBufferedStep2Toast = useCallback(() => {
-    bufferedStep2SuccessToastPayloadRef.current = null
-    bufferedStep2ToastAwaitCalculationsRef.current = null
-    bufferedStep2ToastPendingRef.current = false
-  }, [])
-
-  const flushBufferedStep2Toast = useCallback((options?: { awaitCalculations?: boolean }) => {
-    bufferedStep2ToastAwaitCalculationsRef.current = options?.awaitCalculations ? calculations : null
-    bufferedStep2ToastPendingRef.current = true
-    setBufferedStep2ToastFlushVersion((version) => version + 1)
-  }, [calculations])
-
-  const step2ToastProxy = useCallback(
-    (title: string, variant?: any, description?: string) => {
-      const isStep2Success = title === 'Step 2 allocation completed.' && (variant ?? 'success') === 'success'
-      if (bufferStep2SuccessToastRef.current && isStep2Success) {
-        bufferedStep2SuccessToastPayloadRef.current = { title, variant: variant ?? 'success', description }
-        return
-      }
-      showActionToast(title, variant ?? 'success', description)
-    },
-    [showActionToast]
-  )
+  const step2SuccessToastBuffer = useScheduleStep2SuccessToastBuffer({ showActionToast, calculations })
+  const {
+    bufferStep2SuccessToastRef,
+    bufferedStep2SuccessToastPayloadRef,
+    bufferedStep2ToastPendingRef,
+    bufferedStep2ToastAwaitCalculationsRef,
+    clearBufferedStep2Toast,
+    flushBufferedStep2Toast,
+    step2ToastProxy,
+  } = step2SuccessToastBuffer
 
   const handleUndoManualEdit = useCallback(() => {
     if (isDisplayMode || !canUndo) return
@@ -4472,52 +4357,16 @@ function SchedulePageContent() {
     currentWeekday,
   })
 
-  const captureStep3BootstrapBaseline = useCallback(() => {
-    step3BootstrapBaselineRef.current = step3BootstrapSummary
-    step3BootstrapV2BaselineRef.current = step3BootstrapSummaryV2
-  }, [step3BootstrapSummary, step3BootstrapSummaryV2])
-
-  const startBufferedStep2ToastSession = useCallback(() => {
-    if (lastShownToastRef.current?.title === 'Step 2 allocation completed.') {
-      toastApi.dismiss()
-    }
-    captureStep3BootstrapBaseline()
-    bufferStep2SuccessToastRef.current = true
-    clearBufferedStep2Toast()
-  }, [toastApi, captureStep3BootstrapBaseline, clearBufferedStep2Toast])
-
-  useEffect(() => {
-    if (bufferedStep2ToastFlushVersion === 0) return
-    if (!bufferedStep2ToastPendingRef.current) return
-    const awaitCalculations = bufferedStep2ToastAwaitCalculationsRef.current
-    if (awaitCalculations && awaitCalculations === calculations) return
-
-    const payload = bufferedStep2SuccessToastPayloadRef.current
-    bufferedStep2SuccessToastPayloadRef.current = null
-    bufferedStep2ToastAwaitCalculationsRef.current = null
-    bufferedStep2ToastPendingRef.current = false
-    if (!payload) return
-
-    const handoffDelta = describeStep3BootstrapDelta(
-      step3BootstrapV2BaselineRef.current,
-      step3BootstrapSummaryV2
-    )
-    const description =
-      payload.description && handoffDelta
-        ? `${payload.description}\n${handoffDelta.main}\n${handoffDelta.details}`
-        : handoffDelta
-          ? `${handoffDelta.main}\n${handoffDelta.details}`
-          : payload.description
-
-    // Apply extended toast (longer dismiss, countdown bar, hover-pause) only when there is
-    // a handoff delta (e.g. avg PCA/target change). Regular completion uses standard toast style.
-    const hasHandoffDelta = !!handoffDelta
-    showActionToast(payload.title, payload.variant, description, hasHandoffDelta
-      ? { durationMs: 15000, showDurationProgress: true, pauseOnHover: true }
-      : undefined)
-    step3BootstrapBaselineRef.current = step3BootstrapSummary
-    step3BootstrapV2BaselineRef.current = step3BootstrapSummaryV2
-  }, [bufferedStep2ToastFlushVersion, calculations, showActionToast, step3BootstrapSummary, step3BootstrapSummaryV2])
+  const { captureStep3BootstrapBaseline, startBufferedStep2ToastSession } =
+    useScheduleBufferedStep2HandoffAfterProjection({
+      successToast: step2SuccessToastBuffer,
+      step3BootstrapSummary,
+      step3BootstrapSummaryV2,
+      calculations,
+      showActionToast,
+      dismissToast: dismissActionToast,
+      lastShownToastRef,
+    })
 
   const substitutionWizardDataForDisplay = useMemo(() => {
     if (!substitutionWizardData) return null
