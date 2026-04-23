@@ -25,8 +25,8 @@
 | R3-24 | Substitution wizard | Done | 2026-04-24: commit **19ec57a**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (wizard cancel + confirm). `useScheduleSubstitutionWizard.ts`. |
 | R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Done | 2026-04-24: commit **bbf4792**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (Initialize + Step 2 dialogs + Step 3 entry). `useScheduleAlgorithmEntry.ts`. |
 | R3-26 | DnD bridge wiring | Done | 2026-04-24: commit **c2db9fe**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (DnD / popover / discard / therapist drag). `useScheduleBoardDndWiring.ts`. |
-| R3-27 | Toolbar + interaction layer | Done | 2026-04-24: commit **a1793fa**; orchestrator gates green (smoke 13 passed, 3 skipped); reviewer **PASS** (non-blocking: commit subject mentions “overlays” but slice is **toolbar-only** — overlays deferred per plan). `sections/SchedulePageToolbar.tsx`. **Manual (owner):** Step 4 (Display/Split/Undo/Redo; overlay popover; pool assign) — still `- [ ]` in phase checklist. |
-| R3-28 | Grouped dialog/board props (optional) | Not started | |
+| R3-27 | Toolbar + interaction layer | Done | 2026-04-24: commit **a1793fa**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (Display/Split/Undo/Redo; overlay popover; pool assign). `sections/SchedulePageToolbar.tsx` (toolbar-only). |
+| R3-28 | Grouped dialog/board props (optional) | In progress | 2026-04-24: owner chose **execute**; typed grouped props merged (`npm run lint` 0 errors, `build` OK, `test:smoke` 13 passed). Orchestrator: set **Done** after review; owner Step 4 manual still open. |
 | R3-29 | Dev/perf + pure helper peel (optional) | Not started | |
 
 **Status values:** `Not started` · `In progress` · `Done` · `Skipped`
@@ -201,7 +201,7 @@ Do not merge on failure unless environmental and documented.
 - [x] **Step 1:** Measure JSX start (`ScheduleDndContextShell` return) to avoid orphan fragments. (`ScheduleDndContextShell` children are one sibling list: `ScheduleOverlays` through `DragOverlay`, then `ScheduleMainBoardChrome`; no orphan fragment introduced.)
 - [x] **Step 2:** **No** behavior change; preserve `aria-` and `Tooltip` content.
 - [x] **Step 3:** Global gates.
-- [ ] **Step 4:** **Manual (owner):** Display / Split / Undo / Redo; overlay slot popover; pool assign.
+- [x] **Step 4:** **Manual (owner):** Display / Split / Undo / Redo; overlay slot popover; pool assign. (Owner confirmed OK 2026-04-24.)
 - [x] **Step 5:** Commit: `refactor(schedule): extract schedule toolbar and overlays (round 3)`.
 
 ---
@@ -214,11 +214,11 @@ Do not merge on failure unless environmental and documented.
 
 - **Modify:** `SchedulePageDialogNodes.tsx`, `SchedulePageClient.tsx`, types colocated
 
-- [ ] **Step 1:** Grep `SchedulePageDialogNodes` and count props; design 3–6 groups.
-- [ ] **Step 2:** Refactor pass with **no** logic edits.
-- [ ] **Step 3:** Global gates.
+- [x] **Step 1:** Grep `SchedulePageDialogNodes` and count props; design 3–6 groups. (**~45** former top-level fields → **6** groups: `resolvers`, `step1AndStaff`, `copyWizard`, `step2Dialogs`, `step3Floating`, `calendarAndSnapshot`.)
+- [x] **Step 2:** Refactor pass with **no** logic edits.
+- [x] **Step 3:** Global gates.
 - [ ] **Step 4:** **Manual (owner):** open each dialog class once (Step 1 bulk, copy wizard, Step 2 wizards, Step 3, calendar).
-- [ ] **Step 5:** Commit: `refactor(schedule): group dialog node props (round 3)`.
+- [x] **Step 5:** Commit: `refactor(schedule): group dialog node props (round 3)`.
 
 ---
 

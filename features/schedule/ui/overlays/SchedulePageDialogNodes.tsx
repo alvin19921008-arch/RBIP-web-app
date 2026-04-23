@@ -197,7 +197,8 @@ export type ScheduleFloatingPcaDialogBundle = {
   staff: Staff[]
 }
 
-export type SchedulePageDialogNodesProps = {
+/** Round 3 R3-28: resolver refs wired with Step 2 / Step 3 dialog promises — keep grouped with consumers. */
+export type SchedulePageDialogResolversProps = {
   tieBreakResolverRef: MutableRefObject<((team: Team) => void) | null>
   specialProgramOverrideResolverRef: MutableRefObject<
     ((overrides: Record<string, { specialProgramOverrides?: SpecialProgramOverrideEntry[] }> | null) => void) | null
@@ -209,7 +210,9 @@ export type SchedulePageDialogNodesProps = {
   substitutionWizardResolverRef: MutableRefObject<
     ((selections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>>) => void) | null
   >
+}
 
+export type SchedulePageDialogStep1AndStaffProps = {
   editingBedTeam: Team | null
   setEditingBedTeam: (team: Team | null) => void
   wards: ScheduleWardRow[]
@@ -217,7 +220,6 @@ export type SchedulePageDialogNodesProps = {
   captureUndoCheckpoint: (label: string) => void
   setBedCountsOverridesByTeam: Dispatch<SetStateAction<BedCountsOverridesByTeam>>
   setStepStatus: Dispatch<SetStateAction<Record<string, StepStatus>>>
-
   step1LeaveSetupOpen: boolean
   setStep1LeaveSetupOpen: (open: boolean) => void
   staff: Staff[]
@@ -226,19 +228,15 @@ export type SchedulePageDialogNodesProps = {
   sptAllocations: SPTAllocation[]
   currentWeekday: Weekday
   handleSaveStep1LeaveSetup: (args: { edits: Step1BulkEditPayload[] }) => void | Promise<void>
-
   editingStaffId: string | null
   therapistAllocations: Record<Team, (TherapistAllocation & { staff: Staff })[]>
   pcaAllocationsForUi: Record<Team, PCAAllocation[]>
   editDialogOpen: boolean
   setEditDialogOpen: (open: boolean) => void
   handleSaveStaffEdit: (...args: any[]) => void | Promise<void>
+}
 
-  tieBreakDialogOpen: boolean
-  setTieBreakDialogOpen: (open: boolean) => void
-  tieBreakTeams: Team[]
-  tieBreakPendingFTE: number
-
+export type SchedulePageDialogCopyWizardProps = {
   copyWizardConfig: {
     sourceDate: Date
     targetDate: Date | null
@@ -262,9 +260,13 @@ export type SchedulePageDialogNodesProps = {
   }) => Promise<void | { copiedUpToStep?: string }>
   datesWithData: Set<string>
   holidays: Map<string, string>
+}
 
-  floatingPcaDialogProps: ScheduleFloatingPcaDialogBundle
-
+export type SchedulePageDialogStep2DialogsProps = {
+  tieBreakDialogOpen: boolean
+  setTieBreakDialogOpen: (open: boolean) => void
+  tieBreakTeams: Team[]
+  tieBreakPendingFTE: number
   showSpecialProgramOverrideDialog: boolean
   setShowSpecialProgramOverrideDialog: (open: boolean) => void
   inactiveStaff: Staff[]
@@ -275,7 +277,9 @@ export type SchedulePageDialogNodesProps = {
   step2DownstreamImpact: { step3Outdated: boolean; step4Outdated: boolean } | null
   loadStaff: () => Promise<void>
   loadSPTAllocations: () => Promise<void>
-
+  staff: Staff[]
+  staffOverrides: Record<string, unknown>
+  specialPrograms: SpecialProgram[] | null | undefined
   showSptFinalEditDialog: boolean
   setShowSptFinalEditDialog: (open: boolean) => void
   sptStaffForStep22: Staff[]
@@ -283,12 +287,10 @@ export type SchedulePageDialogNodesProps = {
   sptTeamsByStaffIdForStep22: Record<string, unknown>
   currentSptAllocationByStaffIdForStep22: Record<string, unknown>
   ptPerTeamByTeamForStep22: Record<Team, number>
-
   showSharedTherapistEditDialog: boolean
   setShowSharedTherapistEditDialog: (open: boolean) => void
   sharedTherapistDialogData: SharedTherapistDialogData | null
   setSharedTherapistDialogData: Dispatch<SetStateAction<SharedTherapistDialogData | null>>
-
   substitutionWizardOpen: boolean
   substitutionWizardDataForDisplay: ScheduleSubstitutionWizardDisplayData | null
   setSubstitutionWizardOpen: (open: boolean) => void
@@ -297,12 +299,26 @@ export type SchedulePageDialogNodesProps = {
   handleSubstitutionWizardCancel: () => void
   handleSubstitutionWizardSkip: () => void
   pcaPreferences: PCAPreference[] | null | undefined
+}
 
+export type SchedulePageDialogCalendarAndSnapshotProps = {
   calendarOpen: boolean
   setCalendarOpen: (open: boolean) => void
   queueDateTransition: (date: Date) => void
   calendarButtonRef: RefObject<HTMLButtonElement | null>
   calendarPopoverRef: RefObject<HTMLDivElement | null>
+  selectedDate: Date
+  datesWithData: Set<string>
+  holidays: Map<string, string>
+}
+
+export type SchedulePageDialogNodesProps = {
+  resolvers: SchedulePageDialogResolversProps
+  step1AndStaff: SchedulePageDialogStep1AndStaffProps
+  copyWizard: SchedulePageDialogCopyWizardProps
+  step2Dialogs: SchedulePageDialogStep2DialogsProps
+  step3Floating: ScheduleFloatingPcaDialogBundle
+  calendarAndSnapshot: SchedulePageDialogCalendarAndSnapshotProps
 }
 
 export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
@@ -312,16 +328,19 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
     sptFinalEditResolverRef,
     sharedTherapistEditResolverRef,
     substitutionWizardResolverRef,
-    floatingPcaDialogProps: f,
-    ...p
-  } = props
+  } = props.resolvers
+  const s1 = props.step1AndStaff
+  const cw = props.copyWizard
+  const s2 = props.step2Dialogs
+  const f = props.step3Floating
+  const cal = props.calendarAndSnapshot
 
   return (
     <ScheduleDialogsLayer
-      bedCountsDialog={p.editingBedTeam && (() => {
-        const team = p.editingBedTeam
+      bedCountsDialog={s1.editingBedTeam && (() => {
+        const team = s1.editingBedTeam
 
-        const wardRows: BedCountsWardRow[] = p.wards
+        const wardRows: BedCountsWardRow[] = s1.wards
           .filter((w) => (w.team_assignments[team] || 0) > 0)
           .map((w) => ({
             wardName: w.name,
@@ -330,13 +349,13 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
             baselineTeamBeds: w.team_assignments[team] || 0,
           }))
 
-        const initialOverrides = p.bedCountsOverridesByTeam?.[team]
+        const initialOverrides = s1.bedCountsOverridesByTeam?.[team]
 
         return (
           <BedCountsEditDialog
             open={true}
             onOpenChange={(open) => {
-              if (!open) p.setEditingBedTeam(null)
+              if (!open) s1.setEditingBedTeam(null)
             }}
             team={team}
             wardRows={wardRows}
@@ -350,8 +369,8 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
               const shs = payload.shsBedCounts ?? null
               const students = payload.studentPlacementBedCounts ?? null
 
-              p.captureUndoCheckpoint('Bed counts override')
-              p.setBedCountsOverridesByTeam((prev) => {
+              s1.captureUndoCheckpoint('Bed counts override')
+              s1.setBedCountsOverridesByTeam((prev) => {
                 const next: BedCountsOverridesByTeam = { ...prev }
                 const hasAny =
                   Object.keys(wardBedCountsPruned).length > 0 ||
@@ -370,7 +389,7 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
               })
 
               // Mark bed relieving as modified (and review as pending) since bed math changed.
-              p.setStepStatus((prev) => ({
+              s1.setStepStatus((prev) => ({
                 ...prev,
                 'bed-relieving': prev['bed-relieving'] === 'completed' ? 'modified' : prev['bed-relieving'],
                 review: 'pending',
@@ -380,25 +399,25 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
         )
       })()}
       step1LeaveSetupDialog={
-        p.step1LeaveSetupOpen ? (
+        s1.step1LeaveSetupOpen ? (
           <Step1LeaveSetupDialog
-            open={p.step1LeaveSetupOpen}
-            onOpenChange={p.setStep1LeaveSetupOpen}
-            staff={p.staff}
-            staffOverrides={p.staffOverrides as any}
-            specialPrograms={p.specialPrograms ?? []}
-            sptAllocations={p.sptAllocations}
-            weekday={p.currentWeekday}
-            onSaveDraft={p.handleSaveStep1LeaveSetup}
+            open={s1.step1LeaveSetupOpen}
+            onOpenChange={s1.setStep1LeaveSetupOpen}
+            staff={s1.staff}
+            staffOverrides={s1.staffOverrides as any}
+            specialPrograms={s1.specialPrograms ?? []}
+            sptAllocations={s1.sptAllocations}
+            weekday={s1.currentWeekday}
+            onSaveDraft={s1.handleSaveStep1LeaveSetup}
           />
         ) : null
       }
-      staffEditDialog={p.editingStaffId && (() => {
-        const staffMember = p.staff.find((s) => s.id === p.editingStaffId)
+      staffEditDialog={s1.editingStaffId && (() => {
+        const staffMember = s1.staff.find((s) => s.id === s1.editingStaffId)
         if (!staffMember) return null
 
         // Find current leave type and FTE from overrides first, then allocations
-        const override = (p.staffOverrides as any)[p.editingStaffId]
+        const override = (s1.staffOverrides as any)[s1.editingStaffId]
         let currentLeaveType: LeaveType | null = override ? override.leaveType : null
         let currentFTERemaining = override ? override.fteRemaining : 1.0
         let currentFTESubtraction = override?.fteSubtraction // Changed from const to let to allow reassignment
@@ -417,7 +436,7 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
         if (!override) {
           // Check therapist allocations first
           for (const team of TEAMS) {
-            const alloc = p.therapistAllocations[team].find((a) => a.staff_id === p.editingStaffId)
+            const alloc = s1.therapistAllocations[team].find((a) => a.staff_id === s1.editingStaffId)
             if (alloc) {
               currentLeaveType = alloc.leave_type
               currentFTERemaining = alloc.fte_therapist ?? 1.0
@@ -429,7 +448,7 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
           if (currentLeaveType === null && currentFTERemaining === 1.0) {
             // Find all PCA allocations for this staff member across all teams
             const allPcaAllocations = TEAMS.flatMap((team) =>
-              p.pcaAllocationsForUi[team].filter((a) => a.staff_id === p.editingStaffId)
+              s1.pcaAllocationsForUi[team].filter((a) => a.staff_id === s1.editingStaffId)
             )
 
             if (allPcaAllocations.length > 0) {
@@ -481,15 +500,15 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
         }
 
         if (staffMember.rank === 'SPT') {
-          const cfg = p.sptAllocations.find(
-            (a) => a.staff_id === p.editingStaffId && a.weekdays?.includes(p.currentWeekday)
+          const cfg = s1.sptAllocations.find(
+            (a) => a.staff_id === s1.editingStaffId && a.weekdays?.includes(s1.currentWeekday)
           )
           const cfgFTEraw = (cfg as any)?.fte_addon
           const cfgFTE =
             typeof cfgFTEraw === 'number' ? cfgFTEraw : cfgFTEraw != null ? parseFloat(String(cfgFTEraw)) : NaN
           sptConfiguredFTE = Number.isFinite(cfgFTE) ? Math.max(0, Math.min(cfgFTE, 1.0)) : 0
 
-          const o = (p.staffOverrides as any)[p.editingStaffId]
+          const o = (s1.staffOverrides as any)[s1.editingStaffId]
           const legacyAutoFilled =
             !!o &&
             o.leaveType == null &&
@@ -512,10 +531,10 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
 
         return (
           <StaffEditDialog
-            open={p.editDialogOpen}
-            onOpenChange={p.setEditDialogOpen}
+            open={s1.editDialogOpen}
+            onOpenChange={s1.setEditDialogOpen}
             staffName={staffMember.name}
-            staffId={p.editingStaffId}
+            staffId={s1.editingStaffId}
             staffRank={staffMember.rank}
             currentLeaveType={currentLeaveType}
             currentFTERemaining={currentFTERemaining}
@@ -526,49 +545,49 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
             currentInvalidSlots={currentInvalidSlots}
             currentAmPmSelection={currentAmPmSelection}
             currentSpecialProgramAvailable={currentSpecialProgramAvailable}
-            allStaff={p.staff}
-            specialPrograms={p.specialPrograms ?? undefined}
-            weekday={p.currentWeekday}
-            onSave={p.handleSaveStaffEdit}
+            allStaff={s1.staff}
+            specialPrograms={s1.specialPrograms ?? undefined}
+            weekday={s1.currentWeekday}
+            onSave={s1.handleSaveStaffEdit}
           />
         )
       })()}
       tieBreakDialog={
-        p.tieBreakDialogOpen ? (
+        s2.tieBreakDialogOpen ? (
           <TieBreakDialog
-            open={p.tieBreakDialogOpen}
-            teams={p.tieBreakTeams}
-            pendingFTE={p.tieBreakPendingFTE}
+            open={s2.tieBreakDialogOpen}
+            teams={s2.tieBreakTeams}
+            pendingFTE={s2.tieBreakPendingFTE}
             onSelect={(team) => {
               const resolver = tieBreakResolverRef.current
               if (resolver) {
                 resolver(team)
                 tieBreakResolverRef.current = null
               }
-              p.setTieBreakDialogOpen(false)
+              s2.setTieBreakDialogOpen(false)
             }}
           />
         ) : null
       }
       copyWizardDialog={
-        p.copyWizardConfig ? (
+        cw.copyWizardConfig ? (
           <ScheduleCopyWizard
-            open={p.copyWizardOpen}
+            open={cw.copyWizardOpen}
             onOpenChange={(open) => {
               if (!open) {
-                p.setCopyWizardOpen(false)
-                p.setCopyWizardConfig(null)
+                cw.setCopyWizardOpen(false)
+                cw.setCopyWizardConfig(null)
               } else {
-                p.setCopyWizardOpen(true)
+                cw.setCopyWizardOpen(true)
               }
             }}
-            sourceDate={p.copyWizardConfig.sourceDate}
-            initialTargetDate={p.copyWizardConfig.targetDate}
-            flowType={p.copyWizardConfig.flowType}
-            direction={p.copyWizardConfig.direction}
-            datesWithData={p.datesWithData}
-            holidays={p.holidays}
-            onConfirmCopy={p.handleConfirmCopy}
+            sourceDate={cw.copyWizardConfig.sourceDate}
+            initialTargetDate={cw.copyWizardConfig.targetDate}
+            flowType={cw.copyWizardConfig.flowType}
+            direction={cw.copyWizardConfig.direction}
+            datesWithData={cw.datesWithData}
+            holidays={cw.holidays}
+            onConfirmCopy={cw.handleConfirmCopy}
           />
         ) : null
       }
@@ -630,11 +649,11 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
         ) : null
       }
       specialProgramOverrideDialog={
-        p.showSpecialProgramOverrideDialog ? (
+        s2.showSpecialProgramOverrideDialog ? (
           <SpecialProgramOverrideDialog
-            open={p.showSpecialProgramOverrideDialog}
+            open={s2.showSpecialProgramOverrideDialog}
             onOpenChange={(open) => {
-              p.setShowSpecialProgramOverrideDialog(open)
+              s2.setShowSpecialProgramOverrideDialog(open)
               if (!open) {
                 const resolver = specialProgramOverrideResolverRef.current
                 if (resolver) {
@@ -643,21 +662,21 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
                 }
               }
             }}
-            specialPrograms={p.specialPrograms ?? []}
-            allStaff={Array.from(new Map([...p.staff, ...p.inactiveStaff].map((s) => [s.id, s])).values())}
-            sptBaseFteByStaffId={p.sptBaseFteByStaffId}
-            staffOverrides={p.staffOverrides as any}
-            weekday={getWeekday(p.selectedDate)}
-            showSubstituteStep={p.showStep21InStep2Stepper}
-            showSharedTherapistStep={p.showSharedTherapistStep}
-            downstreamImpact={p.step2DownstreamImpact}
+            specialPrograms={s2.specialPrograms ?? []}
+            allStaff={Array.from(new Map([...s2.staff, ...s2.inactiveStaff].map((s) => [s.id, s])).values())}
+            sptBaseFteByStaffId={s2.sptBaseFteByStaffId}
+            staffOverrides={s2.staffOverrides as any}
+            weekday={getWeekday(s2.selectedDate)}
+            showSubstituteStep={s2.showStep21InStep2Stepper}
+            showSharedTherapistStep={s2.showSharedTherapistStep}
+            downstreamImpact={s2.step2DownstreamImpact}
             onConfirm={(overrides) => {
               const resolver = specialProgramOverrideResolverRef.current
               if (resolver) {
                 resolver(overrides)
                 specialProgramOverrideResolverRef.current = null
               }
-              p.setShowSpecialProgramOverrideDialog(false)
+              s2.setShowSpecialProgramOverrideDialog(false)
             }}
             onSkip={() => {
               const resolver = specialProgramOverrideResolverRef.current
@@ -665,13 +684,13 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
                 resolver({})
                 specialProgramOverrideResolverRef.current = null
               }
-              p.setShowSpecialProgramOverrideDialog(false)
+              s2.setShowSpecialProgramOverrideDialog(false)
             }}
             onStaffRefresh={() => {
               return (async () => {
                 try {
-                  await p.loadStaff()
-                  await p.loadSPTAllocations()
+                  await s2.loadStaff()
+                  await s2.loadSPTAllocations()
                 } catch (e) {
                   console.error('Error refreshing staff after buffer creation:', e)
                 }
@@ -681,11 +700,11 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
         ) : null
       }
       sptFinalEditDialog={
-        p.showSptFinalEditDialog ? (
+        s2.showSptFinalEditDialog ? (
           <SptFinalEditDialog
-            open={p.showSptFinalEditDialog}
+            open={s2.showSptFinalEditDialog}
             onOpenChange={(open) => {
-              p.setShowSptFinalEditDialog(open)
+              s2.setShowSptFinalEditDialog(open)
               if (!open) {
                 const resolver = sptFinalEditResolverRef.current
                 if (resolver) {
@@ -694,25 +713,25 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
                 }
               }
             }}
-            weekday={getWeekday(p.selectedDate)}
-            sptStaff={p.sptStaffForStep22}
-            allStaff={p.staff}
-            specialPrograms={p.specialPrograms ?? undefined}
-            sptWeekdayByStaffId={p.sptWeekdayByStaffId as any}
-            sptTeamsByStaffId={p.sptTeamsByStaffIdForStep22 as any}
-            staffOverrides={p.staffOverrides as any}
-            showSubstituteStep={p.showStep21InStep2Stepper}
-            showSharedTherapistStep={p.showSharedTherapistStep}
-            downstreamImpact={p.step2DownstreamImpact}
-            currentAllocationByStaffId={p.currentSptAllocationByStaffIdForStep22 as any}
-            ptPerTeamByTeam={p.ptPerTeamByTeamForStep22}
+            weekday={getWeekday(s2.selectedDate)}
+            sptStaff={s2.sptStaffForStep22}
+            allStaff={s2.staff}
+            specialPrograms={s2.specialPrograms ?? undefined}
+            sptWeekdayByStaffId={s2.sptWeekdayByStaffId as any}
+            sptTeamsByStaffId={s2.sptTeamsByStaffIdForStep22 as any}
+            staffOverrides={s2.staffOverrides as any}
+            showSubstituteStep={s2.showStep21InStep2Stepper}
+            showSharedTherapistStep={s2.showSharedTherapistStep}
+            downstreamImpact={s2.step2DownstreamImpact}
+            currentAllocationByStaffId={s2.currentSptAllocationByStaffIdForStep22 as any}
+            ptPerTeamByTeam={s2.ptPerTeamByTeamForStep22}
             onConfirm={(updates) => {
               const resolver = sptFinalEditResolverRef.current
               if (resolver) {
                 resolver(updates as any)
                 sptFinalEditResolverRef.current = null
               }
-              p.setShowSptFinalEditDialog(false)
+              s2.setShowSptFinalEditDialog(false)
             }}
             onSkip={() => {
               const resolver = sptFinalEditResolverRef.current
@@ -720,7 +739,7 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
                 resolver({})
                 sptFinalEditResolverRef.current = null
               }
-              p.setShowSptFinalEditDialog(false)
+              s2.setShowSptFinalEditDialog(false)
             }}
             onBack={() => {
               const resolver = sptFinalEditResolverRef.current
@@ -728,40 +747,40 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
                 resolver({ __nav: 'back' } as any)
                 sptFinalEditResolverRef.current = null
               }
-              p.setShowSptFinalEditDialog(false)
+              s2.setShowSptFinalEditDialog(false)
             }}
           />
         ) : null
       }
       sharedTherapistEditDialog={
-        p.showSharedTherapistEditDialog && p.sharedTherapistDialogData ? (
+        s2.showSharedTherapistEditDialog && s2.sharedTherapistDialogData ? (
           <SharedTherapistEditDialog
-            open={p.showSharedTherapistEditDialog}
+            open={s2.showSharedTherapistEditDialog}
             onOpenChange={(open) => {
-              p.setShowSharedTherapistEditDialog(open)
+              s2.setShowSharedTherapistEditDialog(open)
               if (!open) {
                 const resolver = sharedTherapistEditResolverRef.current
                 if (resolver) {
                   resolver(null)
                   sharedTherapistEditResolverRef.current = null
                 }
-                p.setSharedTherapistDialogData(null)
+                s2.setSharedTherapistDialogData(null)
               }
             }}
-            sharedTherapists={p.sharedTherapistDialogData.sharedTherapists}
-            staffOverrides={p.sharedTherapistDialogData.staffOverrides}
-            currentAllocationByStaffId={p.sharedTherapistDialogData.currentAllocationByStaffId}
-            ptPerTeamByTeam={p.sharedTherapistDialogData.ptPerTeamByTeam}
-            showSubstituteStep={p.showStep21InStep2Stepper}
-            downstreamImpact={p.step2DownstreamImpact}
+            sharedTherapists={s2.sharedTherapistDialogData.sharedTherapists}
+            staffOverrides={s2.sharedTherapistDialogData.staffOverrides}
+            currentAllocationByStaffId={s2.sharedTherapistDialogData.currentAllocationByStaffId}
+            ptPerTeamByTeam={s2.sharedTherapistDialogData.ptPerTeamByTeam}
+            showSubstituteStep={s2.showStep21InStep2Stepper}
+            downstreamImpact={s2.step2DownstreamImpact}
             onConfirm={(updates) => {
               const resolver = sharedTherapistEditResolverRef.current
               if (resolver) {
                 resolver(updates as any)
                 sharedTherapistEditResolverRef.current = null
               }
-              p.setShowSharedTherapistEditDialog(false)
-              p.setSharedTherapistDialogData(null)
+              s2.setShowSharedTherapistEditDialog(false)
+              s2.setSharedTherapistDialogData(null)
             }}
             onSkip={() => {
               const resolver = sharedTherapistEditResolverRef.current
@@ -769,8 +788,8 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
                 resolver({})
                 sharedTherapistEditResolverRef.current = null
               }
-              p.setShowSharedTherapistEditDialog(false)
-              p.setSharedTherapistDialogData(null)
+              s2.setShowSharedTherapistEditDialog(false)
+              s2.setSharedTherapistDialogData(null)
             }}
             onBack={() => {
               const resolver = sharedTherapistEditResolverRef.current
@@ -778,40 +797,40 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
                 resolver({ __nav: 'back' } as any)
                 sharedTherapistEditResolverRef.current = null
               }
-              p.setShowSharedTherapistEditDialog(false)
-              p.setSharedTherapistDialogData(null)
+              s2.setShowSharedTherapistEditDialog(false)
+              s2.setSharedTherapistDialogData(null)
             }}
           />
         ) : null
       }
       nonFloatingSubstitutionDialog={
-        p.substitutionWizardDataForDisplay && p.substitutionWizardOpen ? (
+        s2.substitutionWizardDataForDisplay && s2.substitutionWizardOpen ? (
           <NonFloatingSubstitutionDialog
-            open={p.substitutionWizardOpen}
-            teams={p.substitutionWizardDataForDisplay.teams}
-            substitutionsByTeam={p.substitutionWizardDataForDisplay.substitutionsByTeam}
-            isWizardMode={p.substitutionWizardDataForDisplay.isWizardMode}
-            initialSelections={p.substitutionWizardDataForDisplay.initialSelections}
-            allStaff={p.staff}
-            pcaPreferences={p.pcaPreferences as any}
-            specialPrograms={p.specialPrograms ?? []}
-            weekday={getWeekday(p.selectedDate)}
+            open={s2.substitutionWizardOpen}
+            teams={s2.substitutionWizardDataForDisplay.teams}
+            substitutionsByTeam={s2.substitutionWizardDataForDisplay.substitutionsByTeam}
+            isWizardMode={s2.substitutionWizardDataForDisplay.isWizardMode}
+            initialSelections={s2.substitutionWizardDataForDisplay.initialSelections}
+            allStaff={s2.staff}
+            pcaPreferences={s2.pcaPreferences as any}
+            specialPrograms={s2.specialPrograms ?? []}
+            weekday={getWeekday(s2.selectedDate)}
             currentAllocations={[]}
-            staffOverrides={p.staffOverrides as any}
-            showSharedTherapistStep={p.showSharedTherapistStep}
-            downstreamImpact={p.step2DownstreamImpact}
-            onConfirm={p.handleSubstitutionWizardConfirm}
-            onCancel={p.handleSubstitutionWizardCancel}
-            onSkip={p.handleSubstitutionWizardSkip}
+            staffOverrides={s2.staffOverrides as any}
+            showSharedTherapistStep={s2.showSharedTherapistStep}
+            downstreamImpact={s2.step2DownstreamImpact}
+            onConfirm={s2.handleSubstitutionWizardConfirm}
+            onCancel={s2.handleSubstitutionWizardCancel}
+            onSkip={s2.handleSubstitutionWizardSkip}
             onBack={
-              p.substitutionWizardDataForDisplay.allowBackToSpecialPrograms
+              s2.substitutionWizardDataForDisplay.allowBackToSpecialPrograms
                 ? () => {
                     if (substitutionWizardResolverRef.current) {
                       ;(substitutionWizardResolverRef.current as any)({}, { back: true })
                       substitutionWizardResolverRef.current = null
                     }
-                    p.setSubstitutionWizardOpen(false)
-                    p.setSubstitutionWizardData(null)
+                    s2.setSubstitutionWizardOpen(false)
+                    s2.setSubstitutionWizardData(null)
                   }
                 : undefined
             }
@@ -819,19 +838,19 @@ export function SchedulePageDialogNodes(props: SchedulePageDialogNodesProps) {
         ) : null
       }
       calendarPopover={
-        p.calendarOpen ? (
+        cal.calendarOpen ? (
           <ScheduleCalendarPopover
-            open={p.calendarOpen}
-            selectedDate={p.selectedDate}
-            datesWithData={p.datesWithData}
-            holidays={p.holidays}
-            onClose={() => p.setCalendarOpen(false)}
+            open={cal.calendarOpen}
+            selectedDate={cal.selectedDate}
+            datesWithData={cal.datesWithData}
+            holidays={cal.holidays}
+            onClose={() => cal.setCalendarOpen(false)}
             onDateSelect={(date) => {
-              p.queueDateTransition(date)
-              p.setCalendarOpen(false)
+              cal.queueDateTransition(date)
+              cal.setCalendarOpen(false)
             }}
-            anchorRef={p.calendarButtonRef}
-            popoverRef={p.calendarPopoverRef}
+            anchorRef={cal.calendarButtonRef}
+            popoverRef={cal.calendarPopoverRef}
           />
         ) : null
       }
