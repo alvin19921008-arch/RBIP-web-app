@@ -24,8 +24,8 @@
 | R3-23 | Step 2 dependency + buffered Step 2 toast | Done | 2026-04-24: commit **9b57bd3**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (toast + Step 3 bootstrap / badges). `useScheduleStep2DependencyAndToast.ts`. |
 | R3-24 | Substitution wizard | Done | 2026-04-24: commit **19ec57a**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (wizard cancel + confirm). `useScheduleSubstitutionWizard.ts`. |
 | R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Done | 2026-04-24: commit **bbf4792**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (Initialize + Step 2 dialogs + Step 3 entry). `useScheduleAlgorithmEntry.ts`. |
-| R3-26 | DnD bridge wiring | Done | 2026-04-24: commit **c2db9fe**; orchestrator gates green (smoke 12 passed, 4 skipped); reviewer **PASS** (non-blocking). `useScheduleBoardDndWiring.ts`. **Manual (owner):** Step 4 (DnD PCA, popover, discard, therapist drag) — still `- [ ]` in phase checklist. |
-| R3-27 | Toolbar + interaction layer | Not started | |
+| R3-26 | DnD bridge wiring | Done | 2026-04-24: commit **c2db9fe**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (DnD / popover / discard / therapist drag). `useScheduleBoardDndWiring.ts`. |
+| R3-27 | Toolbar + interaction layer | In progress | 2026-04-24: **`SchedulePageToolbar`** in `sections/SchedulePageToolbar.tsx`; **toolbar-only** (overlays block ~L4355–5679 couples 80+ locals — no `SchedulePageGridInteractionOverlays` this round). Step 1: `ScheduleDndContextShell` return is a **single implicit fragment** of siblings: `ScheduleOverlays` → … → `DragOverlay` → `ScheduleMainBoardChrome` (no extra `<>...</>`); toolbar extracted as `scheduleDisplayToolsNode` before cold-load gate. Gates green post-change. |
 | R3-28 | Grouped dialog/board props (optional) | Not started | |
 | R3-29 | Dev/perf + pure helper peel (optional) | Not started | |
 
@@ -183,7 +183,7 @@ Do not merge on failure unless environmental and documented.
 - [x] **Step 1:** Grep `useSchedulePcaSlotTransfer`, `useScheduleBoardDnd`, `handleDragStart`, `performSlotTransfer`, `gridStaffContextMenuItems` (wiring only).
 - [x] **Step 2:** Keep **single** `performSlotTransfer` / `performSlotDiscard` source (Round 2 invariants).
 - [x] **Step 3:** Global gates.
-- [ ] **Step 4:** **Manual (owner):** DnD PCA, slot popover, discard, therapist drag if applicable.
+- [x] **Step 4:** **Manual (owner):** DnD PCA, slot popover, discard, therapist drag if applicable. (Owner confirmed OK 2026-04-24.)
 - [x] **Step 5:** Commit: `refactor(schedule): extract dnd bridge wiring (round 3)`.
 
 ---
@@ -198,11 +198,11 @@ Do not merge on failure unless environmental and documented.
 - **Create (optional):** `SchedulePageGridInteractionOverlays.tsx` under `overlays/`
 - **Modify:** `SchedulePageClient.tsx`
 
-- [ ] **Step 1:** Measure JSX start (`ScheduleDndContextShell` return) to avoid orphan fragments.
-- [ ] **Step 2:** **No** behavior change; preserve `aria-` and `Tooltip` content.
-- [ ] **Step 3:** Global gates.
+- [x] **Step 1:** Measure JSX start (`ScheduleDndContextShell` return) to avoid orphan fragments. (`ScheduleDndContextShell` children are one sibling list: `ScheduleOverlays` through `DragOverlay`, then `ScheduleMainBoardChrome`; no orphan fragment introduced.)
+- [x] **Step 2:** **No** behavior change; preserve `aria-` and `Tooltip` content.
+- [x] **Step 3:** Global gates.
 - [ ] **Step 4:** **Manual (owner):** Display / Split / Undo / Redo; overlay slot popover; pool assign.
-- [ ] **Step 5:** Commit: `refactor(schedule): extract schedule toolbar and overlays (round 3)`.
+- [x] **Step 5:** Commit: `refactor(schedule): extract schedule toolbar and overlays (round 3)`.
 
 ---
 

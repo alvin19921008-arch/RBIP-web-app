@@ -25,6 +25,7 @@ import { Badge } from '@/components/ui/badge'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
 import { useToast } from '@/components/ui/toast-context'
 import { ScheduleDndContextShell } from '@/features/schedule/ui/sections/ScheduleDndContextShell'
+import { SchedulePageToolbar } from '@/features/schedule/ui/sections/SchedulePageToolbar'
 import { ScheduleMainBoardChrome } from '@/features/schedule/ui/sections/ScheduleMainBoardChrome'
 import { SchedulePageHeaderRightActions } from '@/features/schedule/ui/sections/SchedulePageHeaderRightActions'
 import { SchedulePageSplitMainPaneHeader } from '@/features/schedule/ui/sections/SchedulePageSplitMainPaneHeader'
@@ -65,7 +66,7 @@ import { ScheduleBoardLeftColumn } from '@/features/schedule/ui/layout/ScheduleB
 import { ScheduleBoardRightColumn } from '@/features/schedule/ui/layout/ScheduleBoardRightColumn'
 import { ScheduleMainGrid } from '@/features/schedule/ui/layout/ScheduleMainGrid'
 import { ScheduleSplitLayout } from '@/features/schedule/ui/layout/ScheduleSplitLayout'
-import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX, Eye, EyeOff, SquareSplitHorizontal, Undo2, Redo2 } from 'lucide-react'
+import { RefreshCw, RotateCcw, X, Copy, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Trash2, Plus, PlusCircle, Highlighter, Check, GitMerge, Split, FilePenLine, UserX } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
@@ -269,137 +270,6 @@ function SchedulePageContent() {
   }, [])
 
   const [refPortalHost, setRefPortalHost] = useState<HTMLDivElement | null>(null)
-
-  const displayToolsInlineNode = (
-    <div
-      className={cn(
-        // Soft segmented control (2026-style): subtle surface, minimal borders.
-        'inline-flex items-center rounded-lg overflow-hidden',
-        'bg-muted/35',
-        'ring-1 ring-border/40 shadow-sm'
-      )}
-    >
-      <span className="hidden lg:inline-flex px-2.5 py-1.5 text-[10px] font-bold text-muted-foreground/80 select-none pointer-events-none tracking-wider uppercase">
-        Mode
-      </span>
-      <Tooltip side="bottom" content={isDisplayMode ? 'Exit display mode' : 'Enter display mode (read-only)'}>
-        <button
-          type="button"
-          onClick={toggleDisplayMode}
-          className={cn(
-            'px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5',
-            'transition-all duration-200',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            isDisplayMode
-              ? 'bg-blue-600 text-white shadow-inner'
-              : 'text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200/80 dark:hover:bg-slate-800/80',
-            'active:bg-muted/55'
-          )}
-          aria-pressed={isDisplayMode}
-        >
-          {isDisplayMode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-          <span>Display</span>
-        </button>
-      </Tooltip>
-      <Tooltip
-        side="bottom"
-        content={
-          isSplitMode
-            ? isRefHidden
-              ? 'Split screen: ON (reference retracted)'
-              : 'Split screen: ON'
-            : 'Split screen: OFF'
-        }
-      >
-        <button
-          type="button"
-          onClick={toggleSplitMode}
-          className={cn(
-            'px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5',
-            'transition-all duration-200',
-            'border-l border-border/40',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            isSplitMode
-              ? 'bg-blue-600 text-white shadow-inner'
-              : 'text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200/80 dark:hover:bg-slate-800/80',
-            'active:bg-muted/55'
-          )}
-          aria-pressed={isSplitMode}
-        >
-          <SquareSplitHorizontal className="h-4 w-4" />
-          <span>Split</span>
-        </button>
-      </Tooltip>
-      <Tooltip
-        side="bottom"
-        content={
-          isDisplayMode
-            ? 'Undo disabled in display mode'
-            : scheduleActions.canUndo
-              ? 'Undo last manual edit'
-              : 'Nothing to undo'
-        }
-      >
-        <button
-          type="button"
-          onClick={() => {
-            if (isDisplayMode || !scheduleActions.canUndo) return
-            const undone = scheduleActions.undoLastManualEdit()
-            if (undone) {
-              showActionToast('Undo', 'success', `Undid: ${undone.label}`)
-            }
-          }}
-          disabled={!scheduleActions.canUndo || isDisplayMode}
-          className={cn(
-            'px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5',
-            'transition-all duration-200 border-l border-border/40',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            scheduleActions.canUndo && !isDisplayMode
-              ? 'text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200/80 dark:hover:bg-slate-800/80 active:bg-muted/55'
-              : 'text-slate-400/30 dark:text-slate-600/30 cursor-not-allowed'
-          )}
-          aria-disabled={!scheduleActions.canUndo || isDisplayMode}
-        >
-          <Undo2 className="h-4 w-4" />
-          <span>Undo</span>
-        </button>
-      </Tooltip>
-      <Tooltip
-        side="bottom"
-        content={
-          isDisplayMode
-            ? 'Redo disabled in display mode'
-            : scheduleActions.canRedo
-              ? 'Redo last undone edit'
-              : 'Nothing to redo'
-        }
-      >
-        <button
-          type="button"
-          onClick={() => {
-            if (isDisplayMode || !scheduleActions.canRedo) return
-            const redone = scheduleActions.redoLastManualEdit()
-            if (redone) {
-              showActionToast('Redo', 'success', `Redid: ${redone.label}`)
-            }
-          }}
-          disabled={!scheduleActions.canRedo || isDisplayMode}
-          className={cn(
-            'px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5',
-            'transition-all duration-200 border-l border-border/40',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            scheduleActions.canRedo && !isDisplayMode
-              ? 'text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200/80 dark:hover:bg-slate-800/80 active:bg-muted/55'
-              : 'text-slate-400/30 dark:text-slate-600/30 cursor-not-allowed'
-          )}
-          aria-disabled={!scheduleActions.canRedo || isDisplayMode}
-        >
-          <Redo2 className="h-4 w-4" />
-          <span>Redo</span>
-        </button>
-      </Tooltip>
-    </div>
-  )
 
   const {
     selectedDate,
@@ -4439,6 +4309,32 @@ function SchedulePageContent() {
     setBufferStaffConvertConfirm,
   })
 
+  const scheduleDisplayToolsNode = isSplitMode ? null : (
+    <SchedulePageToolbar
+      isDisplayMode={isDisplayMode}
+      isSplitMode={isSplitMode}
+      isRefHidden={isRefHidden}
+      canUndo={scheduleActions.canUndo}
+      canRedo={scheduleActions.canRedo}
+      onToggleDisplayMode={toggleDisplayMode}
+      onToggleSplitMode={toggleSplitMode}
+      onUndo={() => {
+        if (isDisplayMode || !scheduleActions.canUndo) return
+        const undone = scheduleActions.undoLastManualEdit()
+        if (undone) {
+          showActionToast('Undo', 'success', `Undid: ${undone.label}`)
+        }
+      }}
+      onRedo={() => {
+        if (isDisplayMode || !scheduleActions.canRedo) return
+        const redone = scheduleActions.redoLastManualEdit()
+        if (redone) {
+          showActionToast('Redo', 'success', `Redid: ${redone.label}`)
+        }
+      }}
+    />
+  )
+
   // Avoid a transient "today → fallback date" flicker on cold load:
   // wait until our initial date resolver (URL param / last-open / fallback lookup) finishes.
   if (!initialDateResolved) {
@@ -5851,7 +5747,7 @@ function SchedulePageContent() {
           snapshotDiffLoading={snapshotDiffLoading}
           snapshotDiffError={snapshotDiffError}
           snapshotDiffResult={snapshotDiffResult}
-          displayTools={isSplitMode ? null : displayToolsInlineNode}
+          displayTools={scheduleDisplayToolsNode}
           rightActions={renderSchedulePageHeaderRightActions()}
           onClearCache={handleDeveloperCacheClear}
         />
@@ -6303,7 +6199,7 @@ function SchedulePageContent() {
           snapshotDiffLoading={snapshotDiffLoading}
           snapshotDiffError={snapshotDiffError}
           snapshotDiffResult={snapshotDiffResult}
-          displayTools={isSplitMode ? null : displayToolsInlineNode}
+          displayTools={scheduleDisplayToolsNode}
           rightActions={renderSchedulePageHeaderRightActions()}
         />
           )
