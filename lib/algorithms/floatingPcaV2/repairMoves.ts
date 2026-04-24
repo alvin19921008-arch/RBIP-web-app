@@ -2,6 +2,10 @@ import type { Team } from '@/types/staff'
 import type { PCAAllocation } from '@/types/schedule'
 import type { PCAData } from '@/lib/algorithms/pcaAllocationTypes'
 import {
+  countTeamsMaterialShort,
+  teamHasMaterialRemainingFloatingPending,
+} from '@/lib/algorithms/floatingPcaV2/duplicateRepairPolicy'
+import {
   buildRankedV2RepairAuditState,
   compareRankedV2GymAvoidanceRepairOutcomes,
   countTrueStep3FloatingSlotsByTeam,
@@ -624,6 +628,11 @@ function generateA1Candidates(context: GenerateRepairCandidatesContext): RepairC
   const { defect, allocations, teamPrefs } = context
   if (defect.kind !== 'A1') return []
 
+  const zeros = zeroPendingFTE()
+  const pendingForShortCount = context.pendingFTE ?? context.initialPendingFTE ?? zeros
+  const shortBefore = countTeamsMaterialShort(pendingForShortCount)
+  const pendingForRescueEligibility = context.pendingFTE ?? zeros
+
   const duplicateTeam = defect.team
   const anchors = context.committedStep3Anchors
   const candidates: RepairCandidate[] = []
@@ -632,6 +641,14 @@ function generateA1Candidates(context: GenerateRepairCandidatesContext): RepairC
     (a, b) => a - b
   )
   const floatingPcaIds = buildFloatingPcaIdSet(context.pcaPool)
+
+  const initialPendingForMonotone = context.initialPendingFTE
+  const baselineAllocationsForMonotone = context.baselineAllocations
+  const canApplyShortMonotonicity =
+    initialPendingForMonotone != null && baselineAllocationsForMonotone != null
+  const baselineAssignedSlots = canApplyShortMonotonicity
+    ? countAssignedSlotsByTeamSnapshot(baselineAllocationsForMonotone)
+    : null
 
   for (const slot of duplicateSlots) {
     for (const allocation of [...allocations].sort((a, b) =>
@@ -643,6 +660,7 @@ function generateA1Candidates(context: GenerateRepairCandidatesContext): RepairC
         a.localeCompare(b)
       )) {
         if (rescueTeam === duplicateTeam) continue
+        if (!teamHasMaterialRemainingFloatingPending(pendingForRescueEligibility, rescueTeam)) continue
         if (!isUsefulOpenSlotForTeam(allocations, rescueTeam, slot, teamPrefs)) continue
 
         const candidate = buildCandidate(
@@ -660,7 +678,16 @@ function generateA1Candidates(context: GenerateRepairCandidatesContext): RepairC
           ],
           anchors
         )
-        if (candidate) candidates.push(candidate)
+        if (!candidate) continue
+        if (canApplyShortMonotonicity && baselineAssignedSlots != null) {
+          const candidatePendingFTE = computePendingFromAllocationsSnapshot(
+            initialPendingForMonotone,
+            baselineAssignedSlots,
+            candidate.allocations
+          )
+          if (countTeamsMaterialShort(candidatePendingFTE) > shortBefore) continue
+        }
+        candidates.push(candidate)
       }
     }
   }
