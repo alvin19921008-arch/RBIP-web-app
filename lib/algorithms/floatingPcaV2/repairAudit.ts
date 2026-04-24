@@ -3,6 +3,7 @@ import type { PCAAllocation } from '@/types/schedule'
 import type { PCAData } from '@/lib/algorithms/pcaAllocationTypes'
 import { TEAMS, type TeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
+import { teamHasMaterialRemainingFloatingPending } from './duplicateRepairPolicy'
 
 type Slot = 1 | 2 | 3 | 4
 
@@ -654,7 +655,14 @@ function hasDuplicateVersusUsefulSlotDefect(state: AuditState, team: Team): bool
   for (const otherTeam of state.orderedTeams) {
     if (otherTeam === team) continue
     if (!teamHadMeaningfulPending(state, otherTeam)) continue
-    if (teamHasUsefulNonDuplicateSlot(state, otherTeam)) continue
+    // docs/superpowers/plans/2026-04-24-floating-pca-v2-a1-global-duplicate-repair-plan.md — NSM/DRO:
+    // clean true Step 3 row but still ≥ 0.25 pending (after quarter round) → do not skip; duplicate relief may apply.
+    if (
+      teamHasUsefulNonDuplicateSlot(state, otherTeam) &&
+      !teamHasMaterialRemainingFloatingPending(state.pendingFTE, otherTeam)
+    ) {
+      continue
+    }
     if (!canAcquireUsefulNonDuplicateSlot(state, otherTeam)) continue
     if (!canDuplicateTeamRescueOtherTeam(state, team, otherTeam, duplicatedSlots)) continue
     return true
