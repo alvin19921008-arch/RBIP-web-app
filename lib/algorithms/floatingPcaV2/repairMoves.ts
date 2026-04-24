@@ -629,9 +629,8 @@ function generateA1Candidates(context: GenerateRepairCandidatesContext): RepairC
   if (defect.kind !== 'A1') return []
 
   const zeros = zeroPendingFTE()
-  const pendingForShortCount = context.pendingFTE ?? context.initialPendingFTE ?? zeros
-  const shortBefore = countTeamsMaterialShort(pendingForShortCount)
-  const pendingForRescueEligibility = context.pendingFTE ?? zeros
+  const pendingForRepairGates = context.pendingFTE ?? context.initialPendingFTE ?? zeros
+  const shortBefore = countTeamsMaterialShort(pendingForRepairGates)
 
   const duplicateTeam = defect.team
   const anchors = context.committedStep3Anchors
@@ -660,7 +659,7 @@ function generateA1Candidates(context: GenerateRepairCandidatesContext): RepairC
         a.localeCompare(b)
       )) {
         if (rescueTeam === duplicateTeam) continue
-        if (!teamHasMaterialRemainingFloatingPending(pendingForRescueEligibility, rescueTeam)) continue
+        if (!teamHasMaterialRemainingFloatingPending(pendingForRepairGates, rescueTeam)) continue
         if (!isUsefulOpenSlotForTeam(allocations, rescueTeam, slot, teamPrefs)) continue
 
         const candidate = buildCandidate(
