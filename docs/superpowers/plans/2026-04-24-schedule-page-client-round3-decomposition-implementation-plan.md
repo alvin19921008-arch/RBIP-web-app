@@ -26,8 +26,8 @@
 | R3-25 | `handleInitializeAlgorithm` + step 2/3 run pipeline | Done | 2026-04-24: commit **bbf4792**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (Initialize + Step 2 dialogs + Step 3 entry). `useScheduleAlgorithmEntry.ts`. |
 | R3-26 | DnD bridge wiring | Done | 2026-04-24: commit **c2db9fe**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (DnD / popover / discard / therapist drag). `useScheduleBoardDndWiring.ts`. |
 | R3-27 | Toolbar + interaction layer | Done | 2026-04-24: commit **a1793fa**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (Display/Split/Undo/Redo; overlay popover; pool assign). `sections/SchedulePageToolbar.tsx` (toolbar-only). |
-| R3-28 | Grouped dialog/board props (optional) | Done | 2026-04-24: commit **74bbc11**; orchestrator gates green (smoke 13 passed, 3 skipped); reviewer **PASS** (non-blocking). Six groups: `resolvers`, `step1AndStaff`, `copyWizard`, `step2Dialogs`, `step3Floating`, `calendarAndSnapshot`. **Manual (owner):** Step 4 (open each dialog class) — still `- [ ]` in phase checklist. |
-| R3-29 | Dev/perf + pure helper peel (optional) | Not started | |
+| R3-28 | Grouped dialog/board props (optional) | Done | 2026-04-24: commit **74bbc11**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (dialog classes). Six prop groups on `SchedulePageDialogNodes`. |
+| R3-29 | Dev/perf + pure helper peel (optional) | In progress | 2026-04-24: owner chose **execute**; implementer dispatched. |
 
 **Status values:** `Not started` · `In progress` · `Done` · `Skipped`
 
@@ -217,7 +217,7 @@ Do not merge on failure unless environmental and documented.
 - [x] **Step 1:** Grep `SchedulePageDialogNodes` and count props; design 3–6 groups. (**~45** former top-level fields → **6** groups: `resolvers`, `step1AndStaff`, `copyWizard`, `step2Dialogs`, `step3Floating`, `calendarAndSnapshot`.)
 - [x] **Step 2:** Refactor pass with **no** logic edits.
 - [x] **Step 3:** Global gates.
-- [ ] **Step 4:** **Manual (owner):** open each dialog class once (Step 1 bulk, copy wizard, Step 2 wizards, Step 3, calendar).
+- [x] **Step 4:** **Manual (owner):** open each dialog class once (Step 1 bulk, copy wizard, Step 2 wizards, Step 3, calendar). (Owner confirmed OK 2026-04-24.)
 - [x] **Step 5:** Commit: `refactor(schedule): group dialog node props (round 3)`.
 
 ---
@@ -228,11 +228,11 @@ Do not merge on failure unless environmental and documented.
 
 **Files:**
 
-- **Create (optional):** `useSchedulePageDevPerf.ts`, `lib/.../detectNonFloatingSubstitutions.ts`
+- **Create (optional):** `useSchedulePageDevPerf.tsx`, `lib/.../detectNonFloatingSubstitutions.ts`
 - **Modify:** `SchedulePageClient.tsx`
 
-- [ ] **Step 1:** Grep `Profiler`, `onPerfRender`, `perfStatsRef`, `runStep2Auto` (for isolation only).
-- [ ] **Step 2:** Global gates; ensure production bundle has no new dev-only imports path errors.
+- [x] **Step 1:** Grep `Profiler`, `onPerfRender`, `perfStatsRef`, `runStep2Auto` (for isolation only). `Profiler` plumbing was local to `SchedulePageClient` (~633–696); `runStep2Auto` is only used inside the dev harness (`runStep2Auto` / `autoSelectSubstitutions` block) and is unrelated to Profiler.
+- [x] **Step 2:** Global gates; ensure production bundle has no new dev-only imports path errors.
 - [ ] **Step 3:** **Manual (owner):** one schedule load in dev; optional prod build check.
 
 ---

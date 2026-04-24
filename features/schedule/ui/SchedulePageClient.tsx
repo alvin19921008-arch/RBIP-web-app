@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, useTransition, Suspense, useMemo, Profiler, useOptimistic, type ReactNode } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useTransition, Suspense, useMemo, useOptimistic, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { DragOverlay } from '@dnd-kit/core'
 import { snapCenterToCursor } from '@dnd-kit/modifiers'
@@ -162,6 +162,7 @@ import {
 } from '@/features/schedule/ui/hooks/useScheduleStep2DependencyAndToast'
 import { useScheduleSubstitutionWizard } from '@/features/schedule/ui/hooks/useScheduleSubstitutionWizard'
 import { useScheduleAlgorithmEntry } from '@/features/schedule/ui/hooks/useScheduleAlgorithmEntry'
+import { useSchedulePageDevPerf } from '@/features/schedule/ui/hooks/useSchedulePageDevPerf'
 import { resetStep2OverridesForAlgoEntry } from '@/lib/features/schedule/stepReset'
 import { createEmptyTeamRecord, createEmptyTeamRecordFactory } from '@/lib/utils/types'
 import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
@@ -630,70 +631,7 @@ function SchedulePageContent() {
   const invokeRecalculateForMainLoad = useCallback(() => {
     recalculateScheduleCalculationsForLoadRef.current?.()
   }, [])
-  const perfStatsRef = useRef<
-    Record<
-      string,
-      {
-        commits: number
-        totalActualMs: number
-        maxActualMs: number
-        lastActualMs: number
-        lastPhase: 'mount' | 'update' | 'nested-update'
-        lastCommitAtMs: number
-      }
-    >
-  >({})
-  const lastPerfTickAtRef = useRef(0)
-  const [perfTick, setPerfTick] = useState(0)
-
-  const onPerfRender = useCallback(
-    (
-      id: string,
-      phase: 'mount' | 'update' | 'nested-update',
-      actualDuration: number,
-      _baseDuration: number,
-      _startTime: number,
-      commitTime: number
-    ) => {
-      if (userRole !== 'developer') return
-      const current = perfStatsRef.current[id] ?? {
-        commits: 0,
-        totalActualMs: 0,
-        maxActualMs: 0,
-        lastActualMs: 0,
-        lastPhase: 'mount' as const,
-        lastCommitAtMs: 0,
-      }
-      current.commits += 1
-      current.totalActualMs += actualDuration
-      current.maxActualMs = Math.max(current.maxActualMs, actualDuration)
-      current.lastActualMs = actualDuration
-      current.lastPhase = phase
-      current.lastCommitAtMs = commitTime
-      perfStatsRef.current[id] = current
-
-      const now =
-        typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now()
-      if (now - lastPerfTickAtRef.current > 750) {
-        lastPerfTickAtRef.current = now
-        setPerfTick((t) => t + 1)
-      }
-    },
-    [userRole]
-  )
-
-  const MaybeProfiler = useCallback(
-    ({ id, children }: { id: string; children: ReactNode }) => {
-      // Profiler adds overhead; keep it developer-only.
-      if (userRole !== 'developer') return <>{children}</>
-      return (
-        <Profiler id={id} onRender={onPerfRender}>
-          {children}
-        </Profiler>
-      )
-    },
-    [onPerfRender, userRole]
-  )
+  const { perfStatsRef, perfTick, MaybeProfiler } = useSchedulePageDevPerf({ userRole })
 
   const allowScheduleDevHarnessRuntime =
     userRole === 'developer' || process.env.NODE_ENV === 'development'
@@ -2675,91 +2613,6 @@ function SchedulePageContent() {
   // ============================================================================
   // STEP-WISE ALLOCATION FUNCTIONS
   // ============================================================================
-
-  /**
-   * Detect non-floating PCAs that need substitution (FTE ≠ 1.0)
-   * Returns a record of teams with their non-floating PCAs needing substitution
-   */
-  const detectNonFloatingSubstitutions = useCallback((
-    allocationsByTeam: Record<Team, (PCAAllocation & { staff: Staff })[]>
-  ): Record<Team, Array<{
-    nonFloatingPCAId: string
-    nonFloatingPCAName: string
-    fte: number
-    missingSlots: number[]
-    currentSubstitute?: { pcaId: string; pcaName: string; slots: number[] }
-  }>> => {
-    const substitutionsNeeded = createEmptyTeamRecord<Array<{
-      nonFloatingPCAId: string
-      nonFloatingPCAName: string
-      fte: number
-      missingSlots: number[]
-      currentSubstitute?: { pcaId: string; pcaName: string; slots: number[] }
-    }>>([])
-
-    // Iterate through all PCA allocations to find non-floating PCAs with FTE ≠ 1.0
-    Object.entries(allocationsByTeam).forEach(([team, allocations]) => {
-      const teamTyped = team as Team
-      allocations.forEach(alloc => {
-        const staffMember = staff.find(s => s.id === alloc.staff_id)
-        if (!staffMember || staffMember.floating) return // Only non-floating PCAs
-
-        // Get actual FTE from staffOverrides or allocation
-        const override = staffOverrides[alloc.staff_id]
-        const actualFTE = override?.fteRemaining !== undefined 
-          ? override.fteRemaining 
-          : (alloc.fte_pca || 0)
-
-        // Check if FTE ≠ 1.0 (needs substitution)
-        if (Math.abs(actualFTE - 1.0) > 0.001) {
-          // Identify missing slots (slots not in availableSlots)
-          const allSlots = [1, 2, 3, 4]
-          const availableSlots = override?.availableSlots && override.availableSlots.length > 0
-            ? override.availableSlots
-            : (actualFTE === 0 ? [] : [1, 2, 3, 4]) // If FTE = 0, no slots available
-          const missingSlots = allSlots.filter(slot => !availableSlots.includes(slot))
-
-          if (missingSlots.length > 0) {
-            // Check if algorithm already assigned a floating PCA substitution
-            // Look for floating PCAs with slots assigned to this team that match missing slots
-            let currentSubstitute: { pcaId: string; pcaName: string; slots: number[] } | undefined
-            Object.values(allocationsByTeam).flat().forEach(floatingAlloc => {
-              const floatingStaff = staff.find(s => s.id === floatingAlloc.staff_id)
-              if (!floatingStaff || !floatingStaff.floating) return
-
-              // Check if this floating PCA has slots assigned to the non-floating PCA's team
-              const assignedSlots: number[] = []
-              if (floatingAlloc.slot1 === teamTyped) assignedSlots.push(1)
-              if (floatingAlloc.slot2 === teamTyped) assignedSlots.push(2)
-              if (floatingAlloc.slot3 === teamTyped) assignedSlots.push(3)
-              if (floatingAlloc.slot4 === teamTyped) assignedSlots.push(4)
-
-              // Check if assigned slots match missing slots (or are a subset)
-              const matchingSlots = assignedSlots.filter(slot => missingSlots.includes(slot))
-              if (matchingSlots.length > 0 && !currentSubstitute) {
-                currentSubstitute = {
-                  pcaId: floatingAlloc.staff_id,
-                  pcaName: floatingStaff.name,
-                  slots: matchingSlots
-                }
-              }
-            })
-
-            substitutionsNeeded[teamTyped].push({
-              nonFloatingPCAId: alloc.staff_id,
-              nonFloatingPCAName: staffMember.name,
-              fte: actualFTE,
-              missingSlots,
-              currentSubstitute
-            })
-          }
-        }
-      })
-    })
-
-    return substitutionsNeeded
-  }, [staff, staffOverrides])
-
 
   const createEmptyTherapistAllocationsByTeam = () => ({
     FO: [],
