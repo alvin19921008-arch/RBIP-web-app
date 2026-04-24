@@ -20,6 +20,7 @@ import {
   type RankedV2OptionalPromotionOpportunity,
   type RankedV2RepairDefect,
 } from '@/lib/algorithms/floatingPcaV2/repairAudit'
+import { compareA1RepairSortKeysForScanOrder } from '@/lib/algorithms/floatingPcaV2/repairMoveSelection'
 import { TEAMS, type TeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
 import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 
@@ -1442,7 +1443,11 @@ export function generateRepairCandidates(
             ? generateF1Candidates(context)
           : []
 
-  candidates.sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+  if (context.defect.kind === 'A1') {
+    candidates.sort((a, b) => compareA1RepairSortKeysForScanOrder(a.sortKey, b.sortKey))
+  } else {
+    candidates.sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+  }
   return candidates
 }
 
