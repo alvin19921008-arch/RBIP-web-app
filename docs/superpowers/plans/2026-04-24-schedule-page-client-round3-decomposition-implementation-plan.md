@@ -27,7 +27,7 @@
 | R3-26 | DnD bridge wiring | Done | 2026-04-24: commit **c2db9fe**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (DnD / popover / discard / therapist drag). `useScheduleBoardDndWiring.ts`. |
 | R3-27 | Toolbar + interaction layer | Done | 2026-04-24: commit **a1793fa**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (Display/Split/Undo/Redo; overlay popover; pool assign). `sections/SchedulePageToolbar.tsx` (toolbar-only). |
 | R3-28 | Grouped dialog/board props (optional) | Done | 2026-04-24: commit **74bbc11**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (dialog classes). Six prop groups on `SchedulePageDialogNodes`. |
-| R3-29 | Dev/perf + pure helper peel (optional) | In progress | 2026-04-24: owner chose **execute**; implementer dispatched. |
+| R3-29 | Dev/perf + pure helper peel (optional) | Done | 2026-04-24: commit **ea8c608**; orchestrator gates green (smoke 12 passed, 4 skipped); reviewer **PASS** (non-blocking). `useSchedulePageDevPerf.tsx`, `lib/features/schedule/detectNonFloatingSubstitutions.ts` (unused export — same as pre-peel). **Manual (owner):** Step 3 dev load / prod check — still `- [ ]`. **Round 3 line count:** `wc -l` **6213** on `SchedulePageClient.tsx` (**−1946** vs R3-20 baseline **8159**). |
 
 **Status values:** `Not started` · `In progress` · `Done` · `Skipped`
 
@@ -239,11 +239,11 @@ Do not merge on failure unless environmental and documented.
 
 ## Code review / completion checklist
 
-- [ ] Each phase has **one** primary reviewer comparing diff to **Round 3 spec §6–7** and Round 1 **§7**.
-- [ ] No new `lib/**` → `features/**` imports.
-- [ ] Resolver + `flushSync` blocks reviewed atomically.
-- [ ] `performSlotTransfer` not duplicated.
-- [ ] Re-run `wc -l` on `SchedulePageClient.tsx` and record **~delta** in Progress tracker when Round 3 completes.
+- [x] Each phase has **one** primary reviewer comparing diff to **Round 3 spec §6–7** and Round 1 **§7**. (Orchestrator: Composer 2 review per production-affecting phase R3-21–R3-29; R3-20 doc baseline.)
+- [x] No new `lib/**` → `features/**` imports. (Verified through R3-29; `detectNonFloatingSubstitutions.ts` uses types-only from `useAllocationSync`.)
+- [x] Resolver + `flushSync` blocks reviewed atomically. (R3-23 / R3-25 / prior rounds.)
+- [x] `performSlotTransfer` not duplicated. (R3-26.)
+- [x] Re-run `wc -l` on `SchedulePageClient.tsx` and record **~delta** in Progress tracker when Round 3 completes. (**6213** lines; **−1946** vs R3-20 **8159** — see R3-29 tracker Notes.)
 
 ---
 
@@ -252,3 +252,4 @@ Do not merge on failure unless environmental and documented.
 | Date | Change |
 |------|--------|
 | 2026-04-24 | Initial Round 3 plan: phases R3-20–R3-29, file map, gates, reviewer checklist. |
+| 2026-04-24 | Round 3 decomposition closed (all phases executed): `SchedulePageClient.tsx` **6213** lines vs baseline **8159** (**−1946**). |
