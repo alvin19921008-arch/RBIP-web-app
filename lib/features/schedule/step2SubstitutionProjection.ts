@@ -1,6 +1,8 @@
 import { buildPcaAllocatorView, buildScheduleRuntimeProjection } from '@/lib/utils/scheduleRuntimeProjection'
 import type { Staff } from '@/types/staff'
 
+// Canonical non-floating substitution: `willNeedStep21Substitution` here (projection); runtime Step 2 uses `lib/algorithms/pcaAllocation.ts` (`allocatePCA`, `substitutionNeeds`, `onNonFloatingSubstitution`) — avoid a duplicate standalone detector.
+
 export function willNeedStep21Substitution(args: {
   selectedDate: Date
   staff: Staff[]
