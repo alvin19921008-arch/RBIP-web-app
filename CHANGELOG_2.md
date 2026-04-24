@@ -1,5 +1,7 @@
 # Changelog 2
 
+**2026-04-24:** **SchedulePageClient Round 3** — Phase **R3-30**: `SchedulePageGridInteractionOverlays` + props types; grid overlays / pool assign / context menus / `DragOverlay` peeled from `SchedulePageClient` (**91f5163**); plan `2026-04-24-schedule-page-client-round3-decomposition-implementation-plan.md`.
+
 **2026-04-23:** **SchedulePageClient Round 2** destructure (branch `refactor/schedule-ui-lib-separation`, commits through `fa07afa`): hooks (`useScheduleSnapshotDiff`, export, copy workflow, step nav, context menus, PCA slot transfer), `layout/` summary + board columns, `SchedulePageDialogNodes`; tracked in `docs/superpowers/plans/2026-04-23-schedule-page-client-round2-decomposition-implementation-plan.md`.
 
 **2026-04-22–23:** Large **schedule page UI refactor** (`refactor/schedule-ui-lib-separation`): split reference + shared pane hydration hook, URL/query hook, Step 3 projection hook, DnD hook, pure page helpers in `lib/features/schedule/`, dev-only harness lazy-load, `ScheduleMainGrid` / `ScheduleSplitLayout`, Phase 9 typing pass; orchestration + two-controller/split + props-only notes in **`docs/schedule-architecture-core.md`**; **AGENTS** / **ARCHITECTURE_ESSENTIALS** keep links minimal.

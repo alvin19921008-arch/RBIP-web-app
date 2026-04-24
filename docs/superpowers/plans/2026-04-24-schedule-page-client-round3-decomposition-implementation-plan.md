@@ -12,6 +12,8 @@
 
 **Orchestrator handoff (use this for Round 3):** [`2026-04-24-schedule-page-client-round3-orchestrator-handoff-prompt.md`](./2026-04-24-schedule-page-client-round3-orchestrator-handoff-prompt.md) — Composer 2 only; implement → gates → review → fix loop; do **not** mark `Manual (owner):` checkboxes. Older style reference: [`2026-04-23-schedule-page-client-round2-orchestrator-handoff-prompt.md`](./2026-04-23-schedule-page-client-round2-orchestrator-handoff-prompt.md).
 
+**Continuation (post R3-29):** Phase **R3-30** closes the **P1 composition / JSX gap** from the Round 3 spec (grid interaction layer deferred from R3-27). Orchestrator: resume at **R3-30**; treat it like other phases (same gates + reviewer discipline). See companion spec **§11**.
+
 ---
 
 ## Progress tracker
@@ -27,11 +29,12 @@
 | R3-26 | DnD bridge wiring | Done | 2026-04-24: commit **c2db9fe**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (DnD / popover / discard / therapist drag). `useScheduleBoardDndWiring.ts`. |
 | R3-27 | Toolbar + interaction layer | Done | 2026-04-24: commit **a1793fa**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (Display/Split/Undo/Redo; overlay popover; pool assign). `sections/SchedulePageToolbar.tsx` (toolbar-only). |
 | R3-28 | Grouped dialog/board props (optional) | Done | 2026-04-24: commit **74bbc11**; gates + reviewer **PASS**. Owner **confirmed** manual Step 4 (dialog classes). Six prop groups on `SchedulePageDialogNodes`. |
-| R3-29 | Dev/perf + pure helper peel (optional) | Done | 2026-04-24: commit **ea8c608**; gates + reviewer **PASS**. `useSchedulePageDevPerf.tsx`; duplicate `detectNonFloatingSubstitutions.ts` **removed** post-R3 (canonical: `step2SubstitutionProjection.ts` + `pcaAllocation.ts` — see comment there). **Manual (owner):** Step 3 — still `- [ ]`. **Round 3 line count:** `wc -l` **6213** (**−1946** vs R3-20 **8159**). |
+| R3-29 | Dev/perf + pure helper peel (optional) | Done | 2026-04-24: commit **ea8c608**; gates + reviewer **PASS**. `useSchedulePageDevPerf.tsx`; duplicate `detectNonFloatingSubstitutions.ts` **removed** (canonical: `step2SubstitutionProjection.ts` + `pcaAllocation.ts`). Owner **confirmed** manual Step 3 (dev load + prod sanity). **Round 3 line count at R3-29 close:** `wc -l` **6213** (**−1946** vs R3-20 **8159**). |
+| R3-30 | Grid interaction overlays (composition / JSX) | Done | 2026-04-24: commit **91f5163**; gates + reviewer **PASS with minor notes**. Owner **confirmed** manual Step 5 (overlays, pool assign, both context menus, drag overlay). `SchedulePageGridInteractionOverlays.tsx`, `schedulePageGridInteractionOverlaysProps.ts`. `wc -l` **6213 → 4990** (**−1223**; **−3169** vs R3-20 **8159**). |
 
 **Status values:** `Not started` · `In progress` · `Done` · `Skipped`
 
-**Suggested order:** R3-20 → **R3-21** → **R3-22** → R3-23 → R3-24 → R3-25 → R3-26 → R3-27 → (R3-28) → (R3-29).
+**Suggested order:** R3-20 → **R3-21** → **R3-22** → R3-23 → R3-24 → R3-25 → R3-26 → R3-27 → (R3-28) → (R3-29) → **R3-30** (continuation).
 
 **Companion spec:** [`2026-04-24-schedule-page-client-round3-decomposition-spec.md`](./2026-04-24-schedule-page-client-round3-decomposition-spec.md)
 
@@ -49,8 +52,8 @@
 | `features/schedule/ui/hooks/useScheduleAlgorithmEntry.ts` (or split) | R3-25 | `handleInitializeAlgorithm`, `generateStep2*`, `generateStep3*`, SPT / shared therapist flows **as much as** safely movable |
 | `features/schedule/ui/hooks/useScheduleBoardDndWiring.ts` (optional thin wrapper) | R3-26 | Local fns + compose `useSchedulePcaSlotTransfer` + `useScheduleBoardDnd` |
 | `features/schedule/ui/sections/SchedulePageToolbar.tsx` (or `layout/`) | R3-27 | `displayToolsInlineNode` |
-| `features/schedule/ui/overlays/SchedulePageGridInteractionOverlays.tsx` (name indicative) | R3-27 | `ScheduleOverlays` + pool assign + context menu children wiring **if** props are stable |
-| *(removed)* duplicate detector | R3-29 follow-up | Was `detectNonFloatingSubstitutions.ts`; canonical: `lib/features/schedule/step2SubstitutionProjection.ts` + `lib/algorithms/pcaAllocation.ts` (see comment in former). |
+| `features/schedule/ui/overlays/SchedulePageGridInteractionOverlays.tsx` | **R3-30** | `ScheduleOverlays` + pool-assign popovers + `StaffContextMenu` sibling wiring under `ScheduleDndContextShell` (deferred from R3-27); **props-only** — see Phase R3-30. |
+| *(removed)* duplicate detector | R3-29 | Was `detectNonFloatingSubstitutions.ts`; canonical: `lib/features/schedule/step2SubstitutionProjection.ts` + `lib/algorithms/pcaAllocation.ts` (see comment in `step2SubstitutionProjection.ts`). |
 
 **Existing hooks (typically extend or call; do not merge into one file):** see Round 3 spec **§2.1** and code-reviewer list (`useScheduleBoardDnd`, `useSchedulePcaSlotTransfer`, `useScheduleAllocationContextMenus`, `useStep3DialogProjection`, …).
 
@@ -222,28 +225,58 @@ Do not merge on failure unless environmental and documented.
 
 ---
 
-## Phase R3-29 — Dev perf + pure `detectNonFloatingSubstitutions` (optional)
+## Phase R3-29 — Dev perf + canonical substitution paths (optional)
 
-**Objective:** Move Profiler / timing-only state behind `useSchedulePageDevPerf` or `NODE_ENV` gates. If `detectNonFloatingSubstitutions` is pure, move to `lib/features/schedule/*.ts` and add unit test when runner exists.
+**Objective:** Move Profiler / timing-only state behind `useSchedulePageDevPerf` or `NODE_ENV` gates. **Do not** add a second “detector” module: Step 2 substitution projection stays in `lib/features/schedule/step2SubstitutionProjection.ts`; live allocation uses `lib/algorithms/pcaAllocation.ts`. Duplicate `detectNonFloatingSubstitutions.ts` was **removed** post-phase (see file map row).
 
 **Files:**
 
-- **Create (optional):** `useSchedulePageDevPerf.tsx`, `lib/.../detectNonFloatingSubstitutions.ts`
+- **Create:** `useSchedulePageDevPerf.tsx`
 - **Modify:** `SchedulePageClient.tsx`
 
 - [x] **Step 1:** Grep `Profiler`, `onPerfRender`, `perfStatsRef`, `runStep2Auto` (for isolation only). `Profiler` plumbing was local to `SchedulePageClient` (~633–696); `runStep2Auto` is only used inside the dev harness (`runStep2Auto` / `autoSelectSubstitutions` block) and is unrelated to Profiler.
 - [x] **Step 2:** Global gates; ensure production bundle has no new dev-only imports path errors.
-- [ ] **Step 3:** **Manual (owner):** one schedule load in dev; optional prod build check.
+- [x] **Step 3:** **Manual (owner):** one schedule load in dev; optional prod build check. (Owner confirmed OK 2026-04-24.)
+
+---
+
+## Phase R3-30 — Grid interaction overlays (composition / JSX continuation)
+
+**Objective:** Close the **P1 gap** from the Round 3 goals audit: shrink the **long JSX tail** in `SchedulePageClient.tsx` by extracting the block that R3-27 intentionally deferred — **`ScheduleOverlays`**, **pool-assign** popovers (`TeamPickerPopover` / `ConfirmPopover` / related), **both** `StaffContextMenu` trees that sit next to overlays in the DnD shell, warnings/inline chrome **only if** they are siblings of that cluster — through **`DragOverlay`** (stop **before** `ScheduleMainBoardChrome` / `ScheduleMainGrid` unless the implementer documents a safe wider slice). Goal: **§2.1** “short JSX tree” and spec **§3** row “`SchedulePageGridInteractionOverlays`” without changing product behavior.
+
+**Sub-agent / implementer instructions (Composer 2):**
+
+1. **Read first:** Round 3 spec **§11**; `sections/SchedulePageToolbar.tsx` header comment (R3-27 deferral rationale); this plan **R3-27** Notes. Re-grep `ScheduleDndContextShell` children in `SchedulePageClient.tsx` — **record** first/last line range of the slice to extract (update plan Notes if useful).
+2. **Do not merge** `useScheduleAllocationContextMenus` into the new overlay component — it stays a **separate** hook in `SchedulePageClient` (Round 3 spec **§2.1** mega-hook ban). Pass **only** the already-built `gridStaffContextMenuItems` / `staffPoolContextMenuItems` (or equivalent) as props if menus render inside the extracted tree.
+3. **Props surface:** Define **`SchedulePageGridInteractionOverlaysProps`** using **2–5 grouped objects** (e.g. `overlays`, `poolAssign`, `contextMenus`, `dragChrome`, `warnings`) — mirror R3-28 style; colocate types in the overlay file or `schedulePageGridInteractionOverlaysProps.ts` under `overlays/`. Prefer **stable** `useCallback` handlers from the parent; avoid capturing half the page in a single implicit closure — **explicit** typed props.
+4. **Behavior:** **No** logic edits to allocation rules, DnD handlers, or menu item factories — **move JSX + wire props only**. Preserve **`aria-*`** and **`Tooltip`** content (same bar as R3-27 Step 2).
+5. **Order:** Keep sibling order under `ScheduleDndContextShell` identical (implicit fragment list: overlays → menus → pool → … → `DragOverlay` → board chrome). Document at top of new file if any `useEffect` in the moved subtree depended on hook order above the `return`.
+6. **Gates:** `npm run lint && npm run build && npm run test:smoke` from repo root after the extract.
+7. **Commit:** `refactor(schedule): extract grid interaction overlays (round 3 r3-30)`
+
+**Files:**
+
+- **Create:** `features/schedule/ui/overlays/SchedulePageGridInteractionOverlays.tsx` (+ optional props types file)
+- **Modify:** `features/schedule/ui/SchedulePageClient.tsx`
+
+- [x] **Step 1:** Boundary grep + slice line range noted (`ScheduleOverlays` through `DragOverlay` or narrower per §11).
+- [x] **Step 2:** Typed grouped props interface agreed (document in file header). (**Five** groups: `overlays`, `contextMenus`, `sharedGrid`, `poolAndBuffer`, `slotsColorWarningsDrag`.)
+- [x] **Step 3:** Extract component; wire parent; **no** `useScheduleAllocationContextMenus` merge.
+- [x] **Step 4:** Global gates.
+- [x] **Step 5:** **Manual (owner):** overlays, slot popovers, pool assign, both staff context menus, drag overlay; split mode if applicable. (Owner confirmed OK 2026-04-24.)
+- [x] **Step 6:** Commit message exactly: `refactor(schedule): extract grid interaction overlays (round 3 r3-30)`
+
+**Orchestrator:** Set tracker **In progress** while looping; **Done** only after gates green + reviewer PASS + owner Step 5 if run. Re-run `wc -l` on `SchedulePageClient.tsx` and append **delta** to R3-30 Notes when Done.
 
 ---
 
 ## Code review / completion checklist
 
-- [x] Each phase has **one** primary reviewer comparing diff to **Round 3 spec §6–7** and Round 1 **§7**. (Orchestrator: Composer 2 review per production-affecting phase R3-21–R3-29; R3-20 doc baseline.)
+- [x] Each phase has **one** primary reviewer comparing diff to **Round 3 spec §6–7** and Round 1 **§7**. (Orchestrator: Composer 2 review per production-affecting phase R3-21–R3-29; R3-20 doc baseline. **R3-30:** same bar vs spec **§11** + Round 1 **§7**.)
 - [x] No new `lib/**` → `features/**` imports. (Verified through R3-29; duplicate `detectNonFloatingSubstitutions` module later removed.)
 - [x] Resolver + `flushSync` blocks reviewed atomically. (R3-23 / R3-25 / prior rounds.)
 - [x] `performSlotTransfer` not duplicated. (R3-26.)
-- [x] Re-run `wc -l` on `SchedulePageClient.tsx` and record **~delta** in Progress tracker when Round 3 completes. (**6213** lines; **−1946** vs R3-20 **8159** — see R3-29 tracker Notes.)
+- [x] Re-run `wc -l` on `SchedulePageClient.tsx` and record **~delta** in Progress tracker when Round 3 completes. Post–R3-30: **4990** lines (**−3169** vs R3-20 **8159**; **−1223** vs R3-29 close **6213** — see R3-30 tracker Notes.)
 
 ---
 
@@ -254,3 +287,5 @@ Do not merge on failure unless environmental and documented.
 | 2026-04-24 | Initial Round 3 plan: phases R3-20–R3-29, file map, gates, reviewer checklist. |
 | 2026-04-24 | Round 3 decomposition closed (all phases executed): `SchedulePageClient.tsx` **6213** lines vs baseline **8159** (**−1946**). |
 | 2026-04-24 | Removed unused `detectNonFloatingSubstitutions.ts`; pointer comment on `step2SubstitutionProjection.ts` (canonical paths). |
+| 2026-04-24 | R3-29 manual Step 3 signed off; added **Phase R3-30** (grid interaction overlays) + spec **§11** for sub-agent continuation. |
+| 2026-04-24 | **R3-30** (**91f5163**): dev, gates, reviewer **PASS with minor notes**; owner manual Step 5 signed off; tracker **Done**; Phase checkboxes complete. |
