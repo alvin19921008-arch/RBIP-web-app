@@ -26,11 +26,13 @@ describe('duplicateRepairPolicy', () => {
     assert.equal(A1_DUPLICATE_RELIEF_POLICY_VERSION, 1)
   })
 
-  it('teamHasMaterialRemainingFloatingPending: 0 and sub-0.125 (e.g. 0.1) → false; 0.25 → true; 0.24 → true (midpoint round → 0.25)', () => {
+  it('teamHasMaterialRemainingFloatingPending: 0 and clearly sub-quarter (0.1, 0.12) → false; 0.24→0.25 round and 0.25+ → true', () => {
     const t: Team = 'FO'
     let p = { ...allZeroPending(), [t]: 0 }
     assert.equal(teamHasMaterialRemainingFloatingPending(p, t), false)
     p = { ...allZeroPending(), [t]: 0.1 }
+    assert.equal(teamHasMaterialRemainingFloatingPending(p, t), false)
+    p = { ...allZeroPending(), [t]: 0.12 }
     assert.equal(teamHasMaterialRemainingFloatingPending(p, t), false)
     p = { ...allZeroPending(), [t]: 0.24 }
     assert.equal(teamHasMaterialRemainingFloatingPending(p, t), true)

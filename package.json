@@ -12,6 +12,7 @@
     "test:smoke": "playwright test --grep @smoke",
     "test:smoke:headed": "playwright test --grep @smoke --headed",
     "test:smoke:debug": "playwright test --grep @smoke --debug",
+    "test:unit-floatingPcaV2-duplicatePolicy": "npx tsx --test tests/unit/floatingPcaV2/duplicateRepairPolicy.test.ts",
     "blob:upload-help-media": "node scripts/upload-help-media.mjs"
   },
   "dependencies": {
