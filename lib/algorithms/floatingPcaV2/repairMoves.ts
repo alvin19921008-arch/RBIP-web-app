@@ -1,5 +1,5 @@
 import type { Team } from '@/types/staff'
-import type { PCAAllocation } from '@/types/schedule'
+import type { GymBlockedDuplicateReliefEntry, PCAAllocation } from '@/types/schedule'
 import type { PCAData } from '@/lib/algorithms/pcaAllocationTypes'
 import {
   countTeamsMaterialShort,
@@ -19,6 +19,7 @@ import {
   teamCanDonateBoundedly,
   type RankedV2OptionalPromotionOpportunity,
   type RankedV2RepairDefect,
+  isUsefulNonDuplicateSlotForTeam,
 } from '@/lib/algorithms/floatingPcaV2/repairAudit'
 import { compareA1RepairSortKeysForScanOrder } from '@/lib/algorithms/floatingPcaV2/repairMoveSelection'
 import { TEAMS, type TeamPreferenceInfo } from '@/lib/utils/floatingPCAHelpers'
@@ -67,6 +68,15 @@ export type GenerateRepairCandidatesContext = {
   baselineAllocations?: PCAAllocation[]
   /** Step 3.2 + 3.3 frozen anchors (preferred PCA+slot / adjacent); repair must not alter these cells. */
   committedStep3Anchors?: Step3CommittedFloatingAnchor[]
+  /**
+   * Bounded donor relief: teams that lost a `b1:donate` cell may have quarter pending rounded to 0
+   * while still under-covered on ranked/duplicate; allow them as A1 **rescue** (peel/swap) targets
+   * even when `teamHasMaterialRemainingFloatingPending` is false. Allocator passes `donorReliefQueue` only
+   * while that queue is non-empty.
+   */
+  donorReliefRescueTeams?: readonly Team[]
+  /** Allocator-owned; A1 appends when duplicate relief is not generated because the rescue would use the recipient’s gym column. */
+  gymBlockedDuplicateReliefDropsRef?: { current: GymBlockedDuplicateReliefEntry[] }
 }
 
 const VALID_SLOTS: Slot[] = [1, 2, 3, 4]
@@ -625,6 +635,24 @@ function generateB1Candidates(context: GenerateRepairCandidatesContext): RepairC
   return candidates
 }
 
+function recordGymBlockedDuplicateReliefA1(
+  ref: { current: GymBlockedDuplicateReliefEntry[] } | undefined,
+  duplicateTeam: Team,
+  recipientTeam: Team,
+  slot: Slot
+): void {
+  if (!ref) return
+  if (
+    ref.current.some(
+      (e) =>
+        e.duplicateTeam === duplicateTeam && e.recipientTeam === recipientTeam && e.slot === slot
+    )
+  ) {
+    return
+  }
+  ref.current.push({ duplicateTeam, recipientTeam, slot })
+}
+
 function generateA1Candidates(context: GenerateRepairCandidatesContext): RepairCandidate[] {
   const { defect, allocations, teamPrefs } = context
   if (defect.kind !== 'A1') return []
@@ -650,6 +678,15 @@ function generateA1Candidates(context: GenerateRepairCandidatesContext): RepairC
     ? countAssignedSlotsByTeamSnapshot(baselineAllocationsForMonotone)
     : null
 
+  const auditStateA1 = buildAuditStateForRepairCandidates(context)
+
+  const isEligibleA1Rescue = (rescueTeam: Team): boolean => {
+    if (teamHasMaterialRemainingFloatingPending(pendingForRepairGates, rescueTeam)) {
+      return true
+    }
+    return context.donorReliefRescueTeams?.includes(rescueTeam) ?? false
+  }
+
   for (const slot of duplicateSlots) {
     for (const allocation of [...allocations].sort((a, b) =>
       String(a.staff_id).localeCompare(String(b.staff_id))
@@ -660,8 +697,19 @@ function generateA1Candidates(context: GenerateRepairCandidatesContext): RepairC
         a.localeCompare(b)
       )) {
         if (rescueTeam === duplicateTeam) continue
-        if (!teamHasMaterialRemainingFloatingPending(pendingForRepairGates, rescueTeam)) continue
-        if (!isUsefulOpenSlotForTeam(allocations, rescueTeam, slot, teamPrefs)) continue
+        if (!isEligibleA1Rescue(rescueTeam)) continue
+        if (!isUsefulNonDuplicateSlotForTeam(auditStateA1, rescueTeam, slot)) {
+          const rpref = auditStateA1.teamPrefs[rescueTeam]
+          if (rpref.avoidGym && rpref.gymSlot === slot) {
+            recordGymBlockedDuplicateReliefA1(
+              context.gymBlockedDuplicateReliefDropsRef,
+              duplicateTeam,
+              rescueTeam,
+              slot
+            )
+          }
+          continue
+        }
 
         const candidate = buildCandidate(
           'A1',
@@ -702,8 +750,19 @@ function generateA1Candidates(context: GenerateRepairCandidatesContext): RepairC
       if (getSlotOwner(pDonor, slot) !== duplicateTeam) continue
       for (const rescueTeam of orderedRescueTeams) {
         if (rescueTeam === duplicateTeam) continue
-        if (!teamHasMaterialRemainingFloatingPending(pendingForRepairGates, rescueTeam)) continue
-        if (!isUsefulOpenSlotForTeam(allocations, rescueTeam, slot, teamPrefs)) continue
+        if (!isEligibleA1Rescue(rescueTeam)) continue
+        if (!isUsefulNonDuplicateSlotForTeam(auditStateA1, rescueTeam, slot)) {
+          const rpref = auditStateA1.teamPrefs[rescueTeam]
+          if (rpref.avoidGym && rpref.gymSlot === slot) {
+            recordGymBlockedDuplicateReliefA1(
+              context.gymBlockedDuplicateReliefDropsRef,
+              duplicateTeam,
+              rescueTeam,
+              slot
+            )
+          }
+          continue
+        }
 
         for (const pRecipient of sortedFloatingAllocations) {
           if (pRecipient.staff_id === pDonor.staff_id) continue

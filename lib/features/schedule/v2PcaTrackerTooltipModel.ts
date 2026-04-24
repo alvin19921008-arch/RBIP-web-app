@@ -1,3 +1,4 @@
+import { formatGymBlockedDuplicateReliefUserMessage } from '@/lib/features/schedule/gymBlockedDuplicateReliefUi'
 import { getQualifyingDuplicateFloatingAssignmentsForSlot } from '@/lib/features/schedule/duplicateFloatingSemantics'
 import {
   formatV2RepairAuditDefectLabel,
@@ -45,6 +46,8 @@ export interface V2PcaTrackerTooltipModel {
   reviewBadge: string | null
   summaryCells: V2PcaTrackerSummaryCell[]
   repairIssuePills: string[]
+  /** V2: when duplicate relief to a team would use that team’s gym column (Option B copy), one line per event. */
+  gymBlockedDuplicateReliefNotices: string[]
   rows: V2PcaTrackerRowModel[]
 }
 
@@ -387,6 +390,17 @@ export function buildV2PcaTrackerTooltipModel(args: {
     staffOverrides: args.staffOverrides,
   })
 
+  const gymEntries = args.allocationLog?.summary.gymBlockedDuplicateRelief ?? []
+  const seenGym = new Set<string>()
+  const gymBlockedDuplicateReliefNotices: string[] = []
+  for (const e of gymEntries) {
+    if (e.duplicateTeam !== args.team && e.recipientTeam !== args.team) continue
+    const k = `${e.duplicateTeam}|${e.recipientTeam}|${e.slot}`
+    if (seenGym.has(k)) continue
+    seenGym.add(k)
+    gymBlockedDuplicateReliefNotices.push(formatGymBlockedDuplicateReliefUserMessage(e))
+  }
+
   return {
     title: `Allocation Tracking - ${args.team}`,
     metaLine: buildMetaLine({
@@ -401,6 +415,7 @@ export function buildV2PcaTrackerTooltipModel(args: {
       ownershipSemantics: args.ownershipSemantics,
     }),
     repairIssuePills,
+    gymBlockedDuplicateReliefNotices,
     rows,
   }
 }

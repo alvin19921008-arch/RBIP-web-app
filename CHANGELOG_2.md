@@ -1,5 +1,7 @@
 # Changelog 2
 
+**2026-04-25:** Floating PCA V2 **bounded donor relief** after `b1:donate` (queue cap + A1 scan/tie to queued donors; `donorReliefRescueTeams` where material-pending would hide a short team) — `donorReliefPolicy` / `allocator` / `repairMoveSelection` / `repairAudit` / f137. **UX — duplicate→short edge:** if moving a duplicate floater to the would-be **recipient** would use that team’s **gym column**, A1 is skipped; `summary.gymBlockedDuplicateRelief` + `gymBlockedDuplicateReliefUi` copy in Step 3.4 and V2 tracker **Blocked repair** (amber callout).
+
 **2026-04-24:** **SchedulePageClient Round 3** — Phase **R3-30**: `SchedulePageGridInteractionOverlays` + props types; grid overlays / pool assign / context menus / `DragOverlay` peeled from `SchedulePageClient` (**91f5163**); plan `2026-04-24-schedule-page-client-round3-decomposition-implementation-plan.md`.
 
 **2026-04-23:** **SchedulePageClient Round 2** destructure (branch `refactor/schedule-ui-lib-separation`, commits through `fa07afa`): hooks (`useScheduleSnapshotDiff`, export, copy workflow, step nav, context menus, PCA slot transfer), `layout/` summary + board columns, `SchedulePageDialogNodes`; tracked in `docs/superpowers/plans/2026-04-23-schedule-page-client-round2-decomposition-implementation-plan.md`.

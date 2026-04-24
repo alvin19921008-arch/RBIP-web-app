@@ -47,6 +47,20 @@ export function V2PcaTrackerTooltip({ model }: V2PcaTrackerTooltipProps) {
         </div>
       ) : null}
 
+      {model.gymBlockedDuplicateReliefNotices.length > 0 ? (
+        <div
+          className="space-y-1 rounded-md border border-amber-500/50 bg-amber-950/60 px-2 py-1.5 ring-1 ring-amber-400/25"
+          data-tooltip-gym-blocked-repair="true"
+        >
+          <div className="text-[9px] font-semibold uppercase tracking-wide text-amber-200">Blocked repair</div>
+          {model.gymBlockedDuplicateReliefNotices.map((line, i) => (
+            <p key={i} className="text-[10px] leading-snug text-amber-50/95">
+              {line}
+            </p>
+          ))}
+        </div>
+      ) : null}
+
       <div className="space-y-1 border-t border-gray-700 pt-1" data-tooltip-flat-rows="true">
         {model.rows.map((row) => (
           <div key={row.id} className="rounded-md border border-gray-800/90 bg-gray-950/20 px-2 py-1.5">

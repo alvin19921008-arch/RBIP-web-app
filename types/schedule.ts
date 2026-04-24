@@ -274,7 +274,20 @@ export interface TeamAllocationLog {
      * V2-only: whether realized surplus grant FTE for stamping came from `Step3ProjectionV2` vs dialog bootstrap.
      */
     v2SurplusProvenanceGrantReadSource?: 'step3_projection_v2' | 'bootstrap_summary'
+    /**
+     * V2: duplicate-reduction (A1) would move a floater from [duplicateTeam] to [recipientTeam] on a duplicate
+     * slot, but that slot is the recipient’s gym session, so the repair is not used. The same event may be
+     * present on both teams’ logs for tooltips.
+     */
+    gymBlockedDuplicateRelief?: GymBlockedDuplicateReliefEntry[]
   }
+}
+
+/** V2 Step 3.4: A1 relief blocked only because the recipient’s gym-avoid column matches the duplicate slot. */
+export type GymBlockedDuplicateReliefEntry = {
+  duplicateTeam: Team
+  recipientTeam: Team
+  slot: 1 | 2 | 3 | 4
 }
 
 /**

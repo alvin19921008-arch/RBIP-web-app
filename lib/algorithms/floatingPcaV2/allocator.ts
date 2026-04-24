@@ -1,5 +1,5 @@
 import type { Team } from '@/types/staff'
-import type { PCAAllocation, SlotAssignmentLog } from '@/types/schedule'
+import type { GymBlockedDuplicateReliefEntry, PCAAllocation, SlotAssignmentLog } from '@/types/schedule'
 import type {
   ExtraAfterNeedsPolicy,
   FloatingPCAAllocationContextV2,
@@ -24,18 +24,31 @@ import { finalizeRankedSlotFloatingTracker } from '@/lib/algorithms/floatingPcaV
 import { buildEffectiveRankedPreferences } from '@/lib/algorithms/floatingPcaV2/effectivePreferences'
 import { runRankedV2DraftAllocation } from '@/lib/algorithms/floatingPcaV2/draftAllocation'
 import {
+  buildRankedV2RepairAuditState,
+  compareTeamsForDonorReliefQueue,
   detectRankedV2GymAvoidableDefects,
   detectRankedV2RepairDefects,
   type RankedV2RepairDefect,
 } from '@/lib/algorithms/floatingPcaV2/repairAudit'
 import {
+  DONOR_RELIEF_MAX_QUEUED_DONORS,
+  isB1DonateSortKey,
+  parseA1PeelRescueTeam,
+  parseB1DonateFromTeam,
+} from '@/lib/algorithms/floatingPcaV2/donorReliefPolicy'
+import {
   generateOptionalPromotionCandidates,
   generateRepairCandidates,
   runGymAvoidanceRepairLoop,
   MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS,
+  type RepairCandidate,
   type Step3CommittedFloatingAnchor,
 } from '@/lib/algorithms/floatingPcaV2/repairMoves'
-import { shouldPreferFirstRepairOnScoreTie } from '@/lib/algorithms/floatingPcaV2/repairMoveSelection'
+import {
+  compareA1RepairSortKeysForScanOrder,
+  shouldPreferFirstRepairOnScoreTie,
+  type DonorReliefTieBreakContext,
+} from '@/lib/algorithms/floatingPcaV2/repairMoveSelection'
 import {
   buildRankedSlotAllocationScore,
   compareScores,
@@ -49,6 +62,34 @@ const MAX_REPAIR_ITERATIONS = 8
 /** Part III gym-avoidance cap (=6); passed into `runGymAvoidanceRepairLoop` — Task Group C / Task C3 spec. */
 const MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS_ALLOCATOR = MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS
 const MAX_CANDIDATES_PER_DEFECT = 24
+/** When donor relief is active, A1 peels to a queued donor can be lexicographically late; avoid dropping them in `slice`. */
+const MAX_CANDIDATES_A1_DONOR_RELIEF = 48
+
+/**
+ * Re-order A1 candidates so `a1:peel` whose rescue is in [priorityDonors] sort first (queue order), then
+ * use existing A1 key ordering. Called before `slice` so donor-target peels are not cut off at 24.
+ */
+function orderA1CandidatesForDonorReliefScan(
+  candidates: RepairCandidate[],
+  priorityDonors: readonly Team[]
+): RepairCandidate[] {
+  if (candidates.length <= 1 || priorityDonors.length === 0) return candidates
+  return [...candidates].sort((a, b) => {
+    const aRes = a.sortKey.startsWith('a1:peel:') ? parseA1PeelRescueTeam(a.sortKey) : null
+    const bRes = b.sortKey.startsWith('a1:peel:') ? parseA1PeelRescueTeam(b.sortKey) : null
+    const aIdx = aRes != null ? priorityDonors.indexOf(aRes) : -1
+    const bIdx = bRes != null ? priorityDonors.indexOf(bRes) : -1
+    const aPriority = aIdx >= 0
+    const bPriority = bIdx >= 0
+    if (aPriority && bPriority && aIdx !== bIdx) return aIdx - bIdx
+    if (aPriority && !bPriority) return -1
+    if (!aPriority && bPriority) return 1
+    if (a.sortKey.startsWith('a1:') && b.sortKey.startsWith('a1:')) {
+      return compareA1RepairSortKeysForScanOrder(a.sortKey, b.sortKey)
+    }
+    return a.sortKey.localeCompare(b.sortKey)
+  })
+}
 
 const RANKED_V2_REPAIR_SCORE_COMPARE_OPTIONS = { includeAmPmSessionBalanceTieBreak: true } as const
 const RANKED_V2_PROMOTION_SCORE_COMPARE_OPTIONS = {
@@ -256,6 +297,10 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
     floatingPcaIds,
   })
 
+  let donorReliefQueue: Team[] = []
+  const gymBlockedDuplicateReliefEvents: GymBlockedDuplicateReliefEntry[] = []
+  const gymBlockedDuplicateReliefDropsRef = { current: gymBlockedDuplicateReliefEvents }
+
   const runRepairLoop = () => {
     repairAuditDefects = detectRepairDefects(pendingFTE, allocations)
     setRepairAuditDefects(repairAuditDefects)
@@ -272,6 +317,11 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
     })
 
     for (let iteration = 0; iteration < MAX_REPAIR_ITERATIONS; iteration += 1) {
+      const donorReliefTieBreakContext: DonorReliefTieBreakContext | undefined =
+        donorReliefQueue.length > 0
+          ? { active: true, priorityDonorsOrdered: donorReliefQueue }
+          : undefined
+
       let bestCandidate:
         | (ReturnType<typeof generateRepairCandidates>[number] & {
             score: ReturnType<typeof buildRankedSlotAllocationScore>
@@ -281,7 +331,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
         | null = null
 
       for (const defect of sortDefects(repairAuditDefects)) {
-        const candidates = generateRepairCandidates({
+        let rawCandidates = generateRepairCandidates({
           defect,
           allocations,
           pcaPool,
@@ -291,7 +341,24 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
           pendingFTE,
           baselineAllocations: existingAllocations,
           committedStep3Anchors,
-        }).slice(0, MAX_CANDIDATES_PER_DEFECT)
+          donorReliefRescueTeams: donorReliefQueue.length > 0 ? donorReliefQueue : undefined,
+          gymBlockedDuplicateReliefDropsRef,
+        })
+        if (
+          defect.kind === 'A1' &&
+          donorReliefTieBreakContext?.active &&
+          donorReliefTieBreakContext.priorityDonorsOrdered.length > 0
+        ) {
+          rawCandidates = orderA1CandidatesForDonorReliefScan(
+            rawCandidates,
+            donorReliefTieBreakContext.priorityDonorsOrdered
+          )
+        }
+        const cap =
+          defect.kind === 'A1' && donorReliefTieBreakContext?.active
+            ? MAX_CANDIDATES_A1_DONOR_RELIEF
+            : MAX_CANDIDATES_PER_DEFECT
+        const candidates = rawCandidates.slice(0, cap)
 
         for (const candidate of candidates) {
           const candidatePendingFTE = computePendingFromAllocations(
@@ -311,7 +378,9 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
             floatingPcaIds,
           })
 
-          if (compareScores(candidateScore, bestScore, RANKED_V2_REPAIR_SCORE_COMPARE_OPTIONS) >= 0) continue
+          if (compareScores(candidateScore, bestScore, RANKED_V2_REPAIR_SCORE_COMPARE_OPTIONS) >= 0) {
+            continue
+          }
           if (!bestCandidate) {
             bestCandidate = {
               ...candidate,
@@ -338,7 +407,11 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
           }
           if (
             candidateVsBest === 0 &&
-            shouldPreferFirstRepairOnScoreTie(candidate.sortKey, bestCandidate.sortKey)
+            shouldPreferFirstRepairOnScoreTie(
+              candidate.sortKey,
+              bestCandidate.sortKey,
+              donorReliefTieBreakContext
+            )
           ) {
             bestCandidate = {
               ...candidate,
@@ -369,6 +442,36 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
             ? 'ranked-promotion'
             : getRepairReason(bestCandidate.reason as RankedV2RepairDefect['kind'])
         )
+      }
+
+      const acceptedSortKey = bestCandidate.sortKey
+      if (acceptedSortKey.startsWith('a1:peel:')) {
+        const rescueTeam = parseA1PeelRescueTeam(acceptedSortKey)
+        if (rescueTeam && donorReliefQueue.includes(rescueTeam)) {
+          donorReliefQueue = donorReliefQueue.filter((t) => t !== rescueTeam)
+        }
+      }
+      if (isB1DonateSortKey(acceptedSortKey)) {
+        const fromTeam = parseB1DonateFromTeam(acceptedSortKey)
+        if (fromTeam) {
+          const merged = new Set<Team>([...donorReliefQueue, fromTeam])
+          const auditForQueue = buildRankedV2RepairAuditState({
+            teamOrder,
+            initialPendingFTE,
+            pendingFTE: bestCandidate.pendingFTE,
+            allocations: bestCandidate.allocations,
+            pcaPool,
+            teamPrefs,
+            baselineAllocations: existingAllocations,
+            ...(committedStep3Anchors.length > 0 ? { committedStep3Anchors } : {}),
+          })
+          donorReliefQueue = Array.from(merged).sort((x, y) =>
+            compareTeamsForDonorReliefQueue(auditForQueue, x, y)
+          )
+          if (donorReliefQueue.length > DONOR_RELIEF_MAX_QUEUED_DONORS) {
+            donorReliefQueue = donorReliefQueue.slice(0, DONOR_RELIEF_MAX_QUEUED_DONORS)
+          }
+        }
       }
     }
   }
@@ -892,6 +995,16 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
     finalTracker[defect.team].summary.repairAuditDefects = current
   }
   finalizeRankedSlotFloatingTracker(finalTracker)
+
+  for (const e of gymBlockedDuplicateReliefEvents) {
+    for (const t of [e.duplicateTeam, e.recipientTeam] as const) {
+      const prev = finalTracker[t].summary.gymBlockedDuplicateRelief ?? []
+      if (prev.some((x) => x.duplicateTeam === e.duplicateTeam && x.recipientTeam === e.recipientTeam && x.slot === e.slot)) {
+        continue
+      }
+      finalTracker[t].summary.gymBlockedDuplicateRelief = [...prev, e]
+    }
+  }
 
   return {
     allocations,

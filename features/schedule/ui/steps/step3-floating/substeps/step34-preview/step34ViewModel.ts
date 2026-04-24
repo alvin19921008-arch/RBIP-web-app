@@ -1,4 +1,5 @@
 import type { FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
+import { formatGymBlockedDuplicateReliefUserMessage } from '@/lib/features/schedule/gymBlockedDuplicateReliefUi'
 import { getQualifyingDuplicateFloatingAssignmentsForSlot } from '@/lib/features/schedule/duplicateFloatingSemantics'
 import {
   V2_GYM_UI_AVOIDANCE_REPAIR_APPLIED,
@@ -94,6 +95,7 @@ function buildDuplicateFloatingReasonLines(args: {
 }): string[] {
   const { team, teamLog, staffOverrides } = args
   const lines: string[] = []
+  const gymBlocks = teamLog.summary.gymBlockedDuplicateRelief ?? []
   for (const slot of [1, 2, 3, 4] as const) {
     const logsForSlot = teamLog.assignments.filter((a) => a.slot === slot)
     const qualifying = getQualifyingDuplicateFloatingAssignmentsForSlot({
@@ -107,6 +109,11 @@ function buildDuplicateFloatingReasonLines(args: {
     lines.push(
       `${timeRange} — ${qualifying.length} floating PCAs, only after other usable slots were tried.`
     )
+    for (const e of gymBlocks) {
+      if (e.duplicateTeam === team && e.slot === slot) {
+        lines.push(formatGymBlockedDuplicateReliefUserMessage(e))
+      }
+    }
   }
   return lines
 }
@@ -294,6 +301,12 @@ function buildReasons(args: {
 
   for (const line of duplicateFloatingReasonTexts) {
     reasons.push({ text: line })
+  }
+
+  for (const e of teamLog.summary.gymBlockedDuplicateRelief ?? []) {
+    if (e.recipientTeam === team && e.duplicateTeam !== team) {
+      reasons.push({ text: formatGymBlockedDuplicateReliefUserMessage(e) })
+    }
   }
 
   if (avoidGym) {

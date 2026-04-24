@@ -182,6 +182,61 @@ function collectTrueStep3RankedSlotsForTeam(
   return covered
 }
 
+type DonorReliefDeprivationTuple = {
+  missingRanked: number
+  bestRankPreferenceOrder: number
+  materialPending: number
+}
+
+function donorReliefDeprivationTuple(
+  state: RankedV2RepairAuditState,
+  team: Team
+): DonorReliefDeprivationTuple {
+  const pref = state.teamPrefs[team]
+  const rankedSet = new Set(
+    pref.rankedSlots.filter((s): s is Slot => isValidSlot(s) && !(pref.avoidGym && pref.gymSlot === s))
+  )
+  const covered = collectTrueStep3RankedSlotsForTeam(state, team, rankedSet)
+  const missingRanked = Math.max(0, rankedSet.size - covered.size)
+  let bestRankPreferenceOrder: number
+  if (covered.size === 0) {
+    bestRankPreferenceOrder = rankedSet.size > 0 ? rankedSet.size + 1 : 0
+  } else {
+    let minIdx = Infinity
+    for (const slot of covered) {
+      const idx = pref.rankedSlots.indexOf(slot)
+      if (idx >= 0 && idx < minIdx) minIdx = idx
+    }
+    bestRankPreferenceOrder = minIdx === Infinity ? rankedSet.size + 1 : minIdx
+  }
+  const materialPending = roundToNearestQuarterWithMidpoint(state.pendingFTE[team] ?? 0)
+  return { missingRanked, bestRankPreferenceOrder, materialPending }
+}
+
+/**
+ * Priority order for the bounded donor-relief queue (after `b1:donate`): **worse-off donors first**.
+ * Uses the same ranked / true Step-3 audit basis as `donationWouldBreakDonorRankCoverage` / `teamCanDonateBoundedly`.
+ *
+ * 1. More **missing** ranked true Step-3 coverage (among `rankedSlots`, gym excluded when avoided).
+ * 2. **Worse best retained rank** (larger index into `rankedSlots` among covered slots) when missing ties.
+ * 3. Higher **material** floating pending (`roundToNearestQuarterWithMidpoint`, same as duplicate relief policy).
+ * 4. `localeCompare` on team id (deterministic tie).
+ */
+export function compareTeamsForDonorReliefQueue(
+  state: RankedV2RepairAuditState,
+  a: Team,
+  b: Team
+): number {
+  const da = donorReliefDeprivationTuple(state, a)
+  const db = donorReliefDeprivationTuple(state, b)
+  if (da.missingRanked !== db.missingRanked) return db.missingRanked - da.missingRanked
+  if (da.bestRankPreferenceOrder !== db.bestRankPreferenceOrder) {
+    return db.bestRankPreferenceOrder - da.bestRankPreferenceOrder
+  }
+  if (da.materialPending !== db.materialPending) return db.materialPending - da.materialPending
+  return a.localeCompare(b)
+}
+
 function cloneAuditStateSkeleton(source: RankedV2RepairAuditState): RankedV2RepairAuditState {
   return {
     ...source,
@@ -826,7 +881,12 @@ function canAcquireFairnessFloorCoverage(state: AuditState, team: Team): boolean
   return false
 }
 
-function isUsefulNonDuplicateSlotForTeam(state: AuditState, team: Team, slot: Slot): boolean {
+/** Exposed for `generateA1Candidates` so peel feasibility matches A1 defect detection (true Step 3 slot counts, not all baseline ownership). */
+export function isUsefulNonDuplicateSlotForTeam(
+  state: RankedV2RepairAuditState,
+  team: Team,
+  slot: Slot
+): boolean {
   const pref = state.teamPrefs[team]
   if (pref.avoidGym && pref.gymSlot === slot) return false
   if ((state.trueStep3SlotCountsByTeam[team].get(slot) ?? 0) > 0) return false
