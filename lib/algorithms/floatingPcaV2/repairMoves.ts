@@ -664,7 +664,7 @@ function generateA1Candidates(context: GenerateRepairCandidatesContext): RepairC
 
         const candidate = buildCandidate(
           'A1',
-          `a1:${allocation.staff_id}:${slot}:${duplicateTeam}->${rescueTeam}`,
+          `a1:peel:${allocation.staff_id}:${slot}:${duplicateTeam}->${rescueTeam}`,
           allocations,
           context.pcaPool,
           [
@@ -687,6 +687,63 @@ function generateA1Candidates(context: GenerateRepairCandidatesContext): RepairC
           if (countTeamsMaterialShort(candidatePendingFTE) > shortBefore) continue
         }
         candidates.push(candidate)
+      }
+    }
+  }
+
+  const sortedFloatingAllocations = [...allocations]
+    .filter((row) => floatingPcaIds.has(row.staff_id))
+    .sort((a, b) => String(a.staff_id).localeCompare(String(b.staff_id)))
+  const orderedRescueTeams = (Object.keys(teamPrefs) as Team[]).sort((a, b) => a.localeCompare(b))
+
+  for (const slot of duplicateSlots) {
+    for (const pDonor of sortedFloatingAllocations) {
+      if (getSlotOwner(pDonor, slot) !== duplicateTeam) continue
+      for (const rescueTeam of orderedRescueTeams) {
+        if (rescueTeam === duplicateTeam) continue
+        if (!teamHasMaterialRemainingFloatingPending(pendingForRepairGates, rescueTeam)) continue
+        if (!isUsefulOpenSlotForTeam(allocations, rescueTeam, slot, teamPrefs)) continue
+
+        for (const pRecipient of sortedFloatingAllocations) {
+          if (pRecipient.staff_id === pDonor.staff_id) continue
+          for (const slotOther of VALID_SLOTS) {
+            if (getSlotOwner(pRecipient, slotOther) !== rescueTeam) continue
+            if (!isUsefulReplacementSlotForTeam(duplicateTeam, slotOther, teamPrefs)) continue
+
+            const sortKey = `a1:swap:${pDonor.staff_id}:${slot}:${pRecipient.staff_id}:${slotOther}:${duplicateTeam}->${rescueTeam}`
+            const swapCandidate = buildCandidate(
+              'A1',
+              sortKey,
+              allocations,
+              context.pcaPool,
+              [
+                {
+                  pcaId: pDonor.staff_id,
+                  slot,
+                  fromTeam: duplicateTeam,
+                  toTeam: rescueTeam,
+                },
+                {
+                  pcaId: pRecipient.staff_id,
+                  slot: slotOther,
+                  fromTeam: rescueTeam,
+                  toTeam: duplicateTeam,
+                },
+              ],
+              anchors
+            )
+            if (!swapCandidate) continue
+            if (canApplyShortMonotonicity && baselineAssignedSlots != null) {
+              const candidatePendingFTE = computePendingFromAllocationsSnapshot(
+                initialPendingForMonotone,
+                baselineAssignedSlots,
+                swapCandidate.allocations
+              )
+              if (countTeamsMaterialShort(candidatePendingFTE) > shortBefore) continue
+            }
+            candidates.push(swapCandidate)
+          }
+        }
       }
     }
   }

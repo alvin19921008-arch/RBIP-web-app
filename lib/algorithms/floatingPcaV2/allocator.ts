@@ -35,6 +35,7 @@ import {
   MAX_GYM_AVOIDANCE_REPAIR_ITERATIONS,
   type Step3CommittedFloatingAnchor,
 } from '@/lib/algorithms/floatingPcaV2/repairMoves'
+import { shouldPreferFirstRepairOnScoreTie } from '@/lib/algorithms/floatingPcaV2/repairMoveSelection'
 import {
   buildRankedSlotAllocationScore,
   compareScores,
@@ -335,7 +336,10 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
             }
             continue
           }
-          if (candidateVsBest === 0 && candidate.sortKey.localeCompare(bestCandidate.sortKey) < 0) {
+          if (
+            candidateVsBest === 0 &&
+            shouldPreferFirstRepairOnScoreTie(candidate.sortKey, bestCandidate.sortKey)
+          ) {
             bestCandidate = {
               ...candidate,
               score: candidateScore,
