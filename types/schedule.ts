@@ -280,6 +280,11 @@ export interface TeamAllocationLog {
      * present on both teams’ logs for tooltips.
      */
     gymBlockedDuplicateRelief?: GymBlockedDuplicateReliefEntry[]
+    /**
+     * V2: accepted B1 `b1:donate` moves from this team; each row is one donation (toTeam / slot / repair reason).
+     * Shown on the donor’s Step 3.4 “Why” and V2 tracker only.
+     */
+    b1DonationOutcomes?: B1DonationProvenanceEntry[]
   }
 }
 
@@ -288,6 +293,13 @@ export type GymBlockedDuplicateReliefEntry = {
   duplicateTeam: Team
   recipientTeam: Team
   slot: 1 | 2 | 3 | 4
+}
+
+/** V2: one `b1:donate` acceptance from this (donor) team’s repair pass. */
+export type B1DonationProvenanceEntry = {
+  toTeam: Team
+  slot: 1 | 2 | 3 | 4
+  repairIntent: NonNullable<SlotAssignmentLog['repairReason']>
 }
 
 /**

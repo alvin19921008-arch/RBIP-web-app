@@ -2342,8 +2342,15 @@ export function FloatingPCAConfigDialogV2({
           <div className="mt-4 border-t border-blue-200/70 pt-4 dark:border-blue-800/50">
             <div className="text-sm font-semibold text-blue-900 dark:text-blue-100">Why this happened</div>
             <ul className="mt-2 list-outside list-disc space-y-2 pl-5 text-sm text-muted-foreground marker:text-muted-foreground">
-              {selectedStep34Detail.reasons.map((reason) => (
-                <li key={reason.text} className="pl-1">
+              {selectedStep34Detail.reasons.map((reason, reasonIndex) => (
+                <li
+                  key={`${reasonIndex}-${reason.text}`}
+                  className={cn(
+                    'pl-1',
+                    reason.indentSubpoint &&
+                      'ml-1 list-none border-l-2 border-muted-foreground/30 py-0.5 pl-3 [list-style:none]'
+                  )}
+                >
                   {reason.tone === 'extra-after-needs' ? (
                     <span className="block border-l-2 border-violet-500/55 bg-violet-50/40 py-1.5 pl-3 pr-1 text-muted-foreground dark:border-violet-400/45 dark:bg-violet-950/20">
                       {reason.text}

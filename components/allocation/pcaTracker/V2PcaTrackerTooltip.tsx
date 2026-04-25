@@ -61,6 +61,20 @@ export function V2PcaTrackerTooltip({ model }: V2PcaTrackerTooltipProps) {
         </div>
       ) : null}
 
+      {model.b1DonationProvenanceNotices.length > 0 ? (
+        <div
+          className="space-y-1 rounded-md border border-sky-500/50 bg-sky-950/55 px-2 py-1.5 ring-1 ring-sky-400/20"
+          data-tooltip-b1-donation="true"
+        >
+          <div className="text-[9px] font-semibold uppercase tracking-wide text-sky-200">Repair: donation</div>
+          {model.b1DonationProvenanceNotices.map((line, i) => (
+            <p key={i} className="text-[10px] leading-snug text-sky-50/95">
+              {line}
+            </p>
+          ))}
+        </div>
+      ) : null}
+
       <div className="space-y-1 border-t border-gray-700 pt-1" data-tooltip-flat-rows="true">
         {model.rows.map((row) => (
           <div key={row.id} className="rounded-md border border-gray-800/90 bg-gray-950/20 px-2 py-1.5">

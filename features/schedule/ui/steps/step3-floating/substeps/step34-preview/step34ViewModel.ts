@@ -1,4 +1,5 @@
 import type { FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
+import { formatB1DonationStep34Line } from '@/lib/features/schedule/b1DonationProvenanceUi'
 import { formatGymBlockedDuplicateReliefUserMessage } from '@/lib/features/schedule/gymBlockedDuplicateReliefUi'
 import { getQualifyingDuplicateFloatingAssignmentsForSlot } from '@/lib/features/schedule/duplicateFloatingSemantics'
 import {
@@ -34,6 +35,11 @@ export interface Step34ReasonLine {
   tone?: Step34ReasonTone
   /** With `tone: 'extra-after-needs'`, row count for violet emphasis in the dialog. */
   extraAfterNeedsCount?: number
+  /**
+   * When true, render as an indented sub-point (e.g. gym-blocked duplicate under the parent duplicate
+   * line, or under the “pending not cleared” line for the recipient).
+   */
+  indentSubpoint?: boolean
 }
 
 export interface Step34TeamDetailViewModel {
@@ -92,9 +98,9 @@ function buildDuplicateFloatingReasonLines(args: {
   rankedSlots: number[]
   gymSlot: number | null
   staffOverrides?: Record<string, any>
-}): string[] {
+}): Step34ReasonLine[] {
   const { team, teamLog, staffOverrides } = args
-  const lines: string[] = []
+  const lines: Step34ReasonLine[] = []
   const gymBlocks = teamLog.summary.gymBlockedDuplicateRelief ?? []
   for (const slot of [1, 2, 3, 4] as const) {
     const logsForSlot = teamLog.assignments.filter((a) => a.slot === slot)
@@ -106,12 +112,12 @@ function buildDuplicateFloatingReasonLines(args: {
     })
     if (qualifying.length < 2) continue
     const timeRange = getTimeRange(slot)
-    lines.push(
-      `${timeRange} — ${qualifying.length} floating PCAs, only after other usable slots were tried.`
-    )
+    lines.push({
+      text: `${timeRange} — ${qualifying.length} floating PCAs, only after other usable slots were tried.`,
+    })
     for (const e of gymBlocks) {
       if (e.duplicateTeam === team && e.slot === slot) {
-        lines.push(formatGymBlockedDuplicateReliefUserMessage(e))
+        lines.push({ text: formatGymBlockedDuplicateReliefUserMessage(e), indentSubpoint: true })
       }
     }
   }
@@ -287,7 +293,7 @@ function buildReasons(args: {
     })
   }
 
-  const duplicateFloatingReasonTexts = buildDuplicateFloatingReasonLines({
+  const duplicateFloatingReasonLines = buildDuplicateFloatingReasonLines({
     team,
     teamLog,
     rankedSlots,
@@ -295,18 +301,16 @@ function buildReasons(args: {
     staffOverrides,
   })
 
-  if (teamLog.summary.usedUnrankedSlot && duplicateFloatingReasonTexts.length === 0) {
+  if (teamLog.summary.usedUnrankedSlot && duplicateFloatingReasonLines.length === 0) {
     reasons.push({ text: 'An unranked slot was used.' })
   }
 
-  for (const line of duplicateFloatingReasonTexts) {
-    reasons.push({ text: line })
+  for (const line of duplicateFloatingReasonLines) {
+    reasons.push(line)
   }
 
-  for (const e of teamLog.summary.gymBlockedDuplicateRelief ?? []) {
-    if (e.recipientTeam === team && e.duplicateTeam !== team) {
-      reasons.push({ text: formatGymBlockedDuplicateReliefUserMessage(e) })
-    }
+  for (const d of teamLog.summary.b1DonationOutcomes ?? []) {
+    reasons.push({ text: formatB1DonationStep34Line(d) })
   }
 
   if (avoidGym) {
@@ -342,6 +346,11 @@ function buildReasons(args: {
 
   if (!teamLog.summary.pendingMet) {
     reasons.push({ text: 'Pending floating not fully cleared — no eligible floating PCA left.' })
+    for (const e of teamLog.summary.gymBlockedDuplicateRelief ?? []) {
+      if (e.recipientTeam === team && e.duplicateTeam !== team) {
+        reasons.push({ text: formatGymBlockedDuplicateReliefUserMessage(e), indentSubpoint: true })
+      }
+    }
   }
 
   return dedupeReasonLines(reasons)

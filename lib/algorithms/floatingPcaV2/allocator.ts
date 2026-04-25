@@ -1,5 +1,10 @@
 import type { Team } from '@/types/staff'
-import type { GymBlockedDuplicateReliefEntry, PCAAllocation, SlotAssignmentLog } from '@/types/schedule'
+import type {
+  B1DonationProvenanceEntry,
+  GymBlockedDuplicateReliefEntry,
+  PCAAllocation,
+  SlotAssignmentLog,
+} from '@/types/schedule'
 import type {
   ExtraAfterNeedsPolicy,
   FloatingPCAAllocationContextV2,
@@ -35,6 +40,7 @@ import {
   isB1DonateSortKey,
   parseA1PeelRescueTeam,
   parseB1DonateFromTeam,
+  parseB1DonateMetadata,
 } from '@/lib/algorithms/floatingPcaV2/donorReliefPolicy'
 import {
   generateOptionalPromotionCandidates,
@@ -300,6 +306,7 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
   let donorReliefQueue: Team[] = []
   const gymBlockedDuplicateReliefEvents: GymBlockedDuplicateReliefEntry[] = []
   const gymBlockedDuplicateReliefDropsRef = { current: gymBlockedDuplicateReliefEvents }
+  const b1DonationProvenanceEvents: Array<B1DonationProvenanceEntry & { fromTeam: Team }> = []
 
   const runRepairLoop = () => {
     repairAuditDefects = detectRepairDefects(pendingFTE, allocations)
@@ -452,6 +459,19 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
         }
       }
       if (isB1DonateSortKey(acceptedSortKey)) {
+        const meta = parseB1DonateMetadata(acceptedSortKey)
+        if (meta) {
+          const rr = getRepairReason(bestCandidate.reason as RankedV2RepairDefect['kind'])
+          const dedupKey = `${meta.fromTeam}|${meta.toTeam}|${meta.slot}|${rr}`
+          if (!b1DonationProvenanceEvents.some((e) => `${e.fromTeam}|${e.toTeam}|${e.slot}|${e.repairIntent}` === dedupKey)) {
+            b1DonationProvenanceEvents.push({
+              fromTeam: meta.fromTeam,
+              toTeam: meta.toTeam,
+              slot: meta.slot,
+              repairIntent: rr as B1DonationProvenanceEntry['repairIntent'],
+            })
+          }
+        }
         const fromTeam = parseB1DonateFromTeam(acceptedSortKey)
         if (fromTeam) {
           const merged = new Set<Team>([...donorReliefQueue, fromTeam])
@@ -1004,6 +1024,15 @@ export async function allocateFloatingPCA_v2RankedSlotImpl(
       }
       finalTracker[t].summary.gymBlockedDuplicateRelief = [...prev, e]
     }
+  }
+
+  for (const d of b1DonationProvenanceEvents) {
+    const prev = finalTracker[d.fromTeam].summary.b1DonationOutcomes ?? []
+    if (prev.some((p) => p.toTeam === d.toTeam && p.slot === d.slot && p.repairIntent === d.repairIntent)) {
+      continue
+    }
+    const { fromTeam, ...outcome } = d
+    finalTracker[fromTeam].summary.b1DonationOutcomes = [...prev, outcome]
   }
 
   return {

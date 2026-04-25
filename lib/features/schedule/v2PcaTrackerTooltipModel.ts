@@ -1,3 +1,4 @@
+import { formatB1DonationTrackerLine } from '@/lib/features/schedule/b1DonationProvenanceUi'
 import { formatGymBlockedDuplicateReliefUserMessage } from '@/lib/features/schedule/gymBlockedDuplicateReliefUi'
 import { getQualifyingDuplicateFloatingAssignmentsForSlot } from '@/lib/features/schedule/duplicateFloatingSemantics'
 import {
@@ -48,6 +49,8 @@ export interface V2PcaTrackerTooltipModel {
   repairIssuePills: string[]
   /** V2: when duplicate relief to a team would use that team’s gym column (Option B copy), one line per event. */
   gymBlockedDuplicateReliefNotices: string[]
+  /** V2: B1 `b1:donate` from this team; compact one line per donation. */
+  b1DonationProvenanceNotices: string[]
   rows: V2PcaTrackerRowModel[]
 }
 
@@ -401,6 +404,10 @@ export function buildV2PcaTrackerTooltipModel(args: {
     gymBlockedDuplicateReliefNotices.push(formatGymBlockedDuplicateReliefUserMessage(e))
   }
 
+  const b1DonationProvenanceNotices = (args.allocationLog?.summary.b1DonationOutcomes ?? []).map((d) =>
+    formatB1DonationTrackerLine(d)
+  )
+
   return {
     title: `Allocation Tracking - ${args.team}`,
     metaLine: buildMetaLine({
@@ -416,6 +423,7 @@ export function buildV2PcaTrackerTooltipModel(args: {
     }),
     repairIssuePills,
     gymBlockedDuplicateReliefNotices,
+    b1DonationProvenanceNotices,
     rows,
   }
 }
