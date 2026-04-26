@@ -971,7 +971,7 @@ export function useScheduleController(params: {
     }
 
     scheduleId = scheduleData.id
-    const scheduleUpdatedAt =
+    let scheduleUpdatedAt =
       typeof (scheduleData as any)?.updated_at === 'string' ? ((scheduleData as any).updated_at as string) : null
     if (shouldApplyToState) {
       setCurrentScheduleId(scheduleId)
@@ -1078,7 +1078,15 @@ export function useScheduleController(params: {
                 .from('daily_schedules')
                 .update({ baseline_snapshot: envelope as any })
                 .eq('id', scheduleId)
+                .select('updated_at')
+                .single()
               if (updateResult.error) throw updateResult.error
+              if (typeof (updateResult.data as any)?.updated_at === 'string') {
+                scheduleUpdatedAt = (updateResult.data as any).updated_at
+                if (shouldApplyToState) {
+                  setCurrentScheduleUpdatedAt(scheduleUpdatedAt)
+                }
+              }
 
               rawBaselineSnapshotStored = envelope as any
               validatedBaselineSnapshotData = snapshot
