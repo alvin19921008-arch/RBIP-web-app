@@ -301,6 +301,7 @@ function SchedulePageContent() {
     pendingPCAFTEPerTeam,
     persistedWorkflowState,
     baselineSnapshot,
+    lastSnapshotAutoSyncStatus,
     snapshotHealthReport,
     step2Result,
     pcaAllocationErrors,
@@ -573,6 +574,7 @@ function SchedulePageContent() {
   const [devLeaveSimOpen, setDevLeaveSimOpen] = useState(false)
   const toastApi = useToast()
   const lastShownToastRef = useRef<{ id: number; title: string } | null>(null)
+  const lastSnapshotAutoSyncToastKeyRef = useRef<string | null>(null)
   const showActionToast = useCallback(
     (
       title: string,
@@ -599,6 +601,20 @@ function SchedulePageContent() {
     },
     [toastApi]
   )
+  useEffect(() => {
+    if (userRole !== 'developer' && userRole !== 'admin') return
+    if (!lastSnapshotAutoSyncStatus || lastSnapshotAutoSyncStatus.kind !== 'synced') return
+
+    const key = `${lastSnapshotAutoSyncStatus.dateKey}|${lastSnapshotAutoSyncStatus.toGlobalVersion ?? 'unknown'}`
+    if (lastSnapshotAutoSyncToastKeyRef.current === key) return
+    lastSnapshotAutoSyncToastKeyRef.current = key
+
+    showActionToast(
+      'Schedule setup updated',
+      'success',
+      'This clean current/future schedule is now using the latest published setup.'
+    )
+  }, [lastSnapshotAutoSyncStatus, showActionToast, userRole])
   const updateActionToast = useCallback(
     (id: number, patch: any, options?: { durationMs?: number; persistUntilDismissed?: boolean }) => {
       toastApi.update(id, patch, options)
