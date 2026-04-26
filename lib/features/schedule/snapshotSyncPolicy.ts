@@ -43,3 +43,14 @@ export function classifySnapshotSyncDisposition(args: {
   if (args.dirtyReasons.length > 0) return 'dirty-review-required'
   return 'auto-sync-clean-current-or-future'
 }
+
+export function shouldFetchSnapshotSemanticDiff(args: {
+  scheduleDateKey: string
+  todayKey: string
+  dirtyReasons: readonly SnapshotDirtyReason[]
+  maybeHasVersionDrift: boolean
+}): boolean {
+  if (args.scheduleDateKey < args.todayKey) return false
+  if (args.dirtyReasons.length > 0) return args.maybeHasVersionDrift
+  return true
+}

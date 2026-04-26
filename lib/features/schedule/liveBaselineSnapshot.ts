@@ -34,8 +34,9 @@ export async function fetchLiveTeamSettingsSnapshot(supabase: any): Promise<{
 export async function fetchLiveBaselineSnapshotEnvelope(args: {
   supabase: any
   source: 'save' | 'migration' | 'copy'
+  strict?: boolean
 }): Promise<{ snapshot: BaselineSnapshot; envelope: BaselineSnapshotEnvelope }> {
-  const { supabase, source } = args
+  const { supabase, source, strict = false } = args
 
   const [
     globalHeadAtCreation,
@@ -56,6 +57,17 @@ export async function fetchLiveBaselineSnapshotEnvelope(args: {
     supabase.from('wards').select('id,name,total_beds,team_assignments,team_assignment_portions'),
     supabase.from('pca_preferences').select('id,team,preferred_pca_ids,preferred_slots,avoid_gym_schedule,gym_schedule,floor_pca_selection'),
   ])
+
+  if (strict) {
+    const firstCoreReadError =
+      (liveStaffRes as any)?.error ||
+      (liveSpecialProgramsRes as any)?.error ||
+      (liveSpecialProgramConfigsRes as any)?.error ||
+      (liveSptRes as any)?.error ||
+      (liveWardsRes as any)?.error ||
+      (livePcaPrefRes as any)?.error
+    if (firstCoreReadError) throw firstCoreReadError
+  }
 
   const liveSpecialPrograms = buildSpecialProgramsFromRows({
     programRows: (liveSpecialProgramsRes?.data || []) as any[],

@@ -48,6 +48,7 @@ import { fetchSnapshotDiffLiveInputs } from '@/lib/features/schedule/snapshotDif
 import {
   classifySnapshotSyncDisposition,
   collectSnapshotDirtyReasons,
+  shouldFetchSnapshotSemanticDiff,
   type SnapshotDirtyReason,
 } from '@/lib/features/schedule/snapshotSyncPolicy'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
@@ -1052,7 +1053,14 @@ export function useScheduleController(params: {
           const liveHead = await fetchGlobalHeadAtCreation(supabase)
           const maybeHasVersionDrift = snapshotHeadDiffers((storedEnvelope as any)?.globalHeadAtCreation, liveHead)
 
-          if (maybeHasVersionDrift) {
+          const shouldRunSemanticDiff = shouldFetchSnapshotSemanticDiff({
+            scheduleDateKey: dateStr,
+            todayKey,
+            dirtyReasons,
+            maybeHasVersionDrift,
+          })
+
+          if (shouldRunSemanticDiff) {
             const liveInputs = await fetchSnapshotDiffLiveInputs({
               supabase,
               includeTeamSettings: true,
@@ -1073,7 +1081,11 @@ export function useScheduleController(params: {
             })
 
             if (disposition === 'auto-sync-clean-current-or-future') {
-              const { envelope, snapshot } = await fetchLiveBaselineSnapshotEnvelope({ supabase, source: 'save' })
+              const { envelope, snapshot } = await fetchLiveBaselineSnapshotEnvelope({
+                supabase,
+                source: 'save',
+                strict: true,
+              })
               const updateQuery = supabase
                 .from('daily_schedules')
                 .update({ baseline_snapshot: envelope as any })
