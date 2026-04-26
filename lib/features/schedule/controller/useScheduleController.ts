@@ -1072,10 +1072,11 @@ export function useScheduleController(params: {
 
             if (disposition === 'auto-sync-clean-current-or-future') {
               const { envelope, snapshot } = await fetchLiveBaselineSnapshotEnvelope({ supabase, source: 'save' })
-              await supabase
+              const updateResult = await supabase
                 .from('daily_schedules')
                 .update({ baseline_snapshot: envelope as any })
                 .eq('id', scheduleId)
+              if (updateResult.error) throw updateResult.error
 
               rawBaselineSnapshotStored = envelope as any
               validatedBaselineSnapshotData = snapshot
