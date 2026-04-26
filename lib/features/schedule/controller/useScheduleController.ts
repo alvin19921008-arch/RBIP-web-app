@@ -166,9 +166,9 @@ function snapshotHeadDiffers(snapshotHead: any, liveHead: any): boolean {
   if (snapCat && typeof snapCat === 'object' && liveCat && typeof liveCat === 'object') {
     for (const [key, liveValue] of Object.entries(liveCat)) {
       const snapValue = (snapCat as Record<string, unknown>)[key]
+      if (typeof liveValue === 'number' && typeof snapValue !== 'number') return true
       if (typeof liveValue === 'number' && typeof snapValue === 'number' && liveValue !== snapValue) return true
     }
-    return false
   }
   if (snapshotHead?.global_version != null && liveHead?.global_version != null) {
     return Number(snapshotHead.global_version) !== Number(liveHead.global_version)
@@ -1074,29 +1074,39 @@ export function useScheduleController(params: {
 
             if (disposition === 'auto-sync-clean-current-or-future') {
               const { envelope, snapshot } = await fetchLiveBaselineSnapshotEnvelope({ supabase, source: 'save' })
-              const updateResult = await supabase
+              const updateQuery = supabase
                 .from('daily_schedules')
                 .update({ baseline_snapshot: envelope as any })
                 .eq('id', scheduleId)
-                .select('updated_at')
-                .single()
-              if (updateResult.error) throw updateResult.error
-              if (typeof (updateResult.data as any)?.updated_at === 'string') {
-                scheduleUpdatedAt = (updateResult.data as any).updated_at
-                if (shouldApplyToState) {
-                  setCurrentScheduleUpdatedAt(scheduleUpdatedAt)
-                }
-              }
 
-              rawBaselineSnapshotStored = envelope as any
-              validatedBaselineSnapshotData = snapshot
-              if (shouldApplyToState) {
-                setLastSnapshotAutoSyncStatus({
-                  kind: 'synced',
-                  dateKey: dateStr,
-                  fromGlobalVersion: Number((storedEnvelope as any)?.globalHeadAtCreation?.global_version ?? null) || null,
-                  toGlobalVersion: Number((envelope as any)?.globalHeadAtCreation?.global_version ?? null) || null,
-                })
+              const updateResult = await (scheduleUpdatedAt
+                ? updateQuery.eq('updated_at', scheduleUpdatedAt)
+                : updateQuery)
+                .select('updated_at')
+                .maybeSingle()
+              if (updateResult.error) throw updateResult.error
+              if (!updateResult.data) {
+                if (shouldApplyToState) {
+                  setLastSnapshotAutoSyncStatus(null)
+                }
+              } else {
+                if (typeof (updateResult.data as any)?.updated_at === 'string') {
+                  scheduleUpdatedAt = (updateResult.data as any).updated_at
+                  if (shouldApplyToState) {
+                    setCurrentScheduleUpdatedAt(scheduleUpdatedAt)
+                  }
+                }
+
+                rawBaselineSnapshotStored = envelope as any
+                validatedBaselineSnapshotData = snapshot
+                if (shouldApplyToState) {
+                  setLastSnapshotAutoSyncStatus({
+                    kind: 'synced',
+                    dateKey: dateStr,
+                    fromGlobalVersion: Number((storedEnvelope as any)?.globalHeadAtCreation?.global_version ?? null) || null,
+                    toGlobalVersion: Number((envelope as any)?.globalHeadAtCreation?.global_version ?? null) || null,
+                  })
+                }
               }
             } else if (disposition === 'dirty-review-required') {
               if (shouldApplyToState) {
