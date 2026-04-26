@@ -4394,6 +4394,7 @@ function SchedulePageContent() {
           snapshotDiffLoading={snapshotDiffLoading}
           snapshotDiffError={snapshotDiffError}
           snapshotDiffResult={snapshotDiffResult}
+          canAccessDashboardSyncPublish={access.can('dashboard.category.sync-publish')}
           displayTools={scheduleDisplayToolsNode}
           rightActions={renderSchedulePageHeaderRightActions()}
           onClearCache={handleDeveloperCacheClear}
@@ -4846,6 +4847,7 @@ function SchedulePageContent() {
           snapshotDiffLoading={snapshotDiffLoading}
           snapshotDiffError={snapshotDiffError}
           snapshotDiffResult={snapshotDiffResult}
+          canAccessDashboardSyncPublish={access.can('dashboard.category.sync-publish')}
           displayTools={scheduleDisplayToolsNode}
           rightActions={renderSchedulePageHeaderRightActions()}
         />

@@ -82,6 +82,7 @@ export function ScheduleHeaderBar(props: {
   snapshotDiffLoading: boolean
   snapshotDiffError: string | null
   snapshotDiffResult: SnapshotDiffResult | null
+  canAccessDashboardSyncPublish: boolean
 
   // Display tools (view/split)
   displayTools?: ReactNode
@@ -243,17 +244,18 @@ export function ScheduleHeaderBar(props: {
                         )}
                       </div>
 
-                      {/* Go to Sync / Publish — pull dashboard config to this date */}
-                      <div className="pt-3 mt-3 border-t border-border">
-                        <p className="text-[11px] text-muted-foreground mb-2">Pull dashboard config to this date.</p>
-                        <Link
-                          href="/dashboard?category=sync-publish"
-                          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/60 px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-muted hover:border-amber-500/40 dark:hover:border-amber-400/35 transition-colors"
-                        >
-                          <ArrowLeftRight className="h-3.5 w-3.5" />
-                          Go to Sync / Publish
-                        </Link>
-                      </div>
+                      {props.canAccessDashboardSyncPublish ? (
+                        <div className="pt-3 mt-3 border-t border-border">
+                          <p className="text-[11px] text-muted-foreground mb-2">Pull dashboard config to this date.</p>
+                          <Link
+                            href="/dashboard?category=sync-publish"
+                            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/60 px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-muted hover:border-amber-500/40 dark:hover:border-amber-400/35 transition-colors"
+                          >
+                            <ArrowLeftRight className="h-3.5 w-3.5" />
+                            Go to Sync / Publish
+                          </Link>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 </PopoverContent>
