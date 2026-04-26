@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useReducer, useRef, type SetStateAction } from 'react'
+import { useMemo, useReducer, useRef, useState, type SetStateAction } from 'react'
 import type { Team, LeaveType, Staff } from '@/types/staff'
 import type { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation'
 import type { Weekday } from '@/types/staff'
@@ -44,6 +44,12 @@ import { saveScheduleFallbackAtomically } from '@/lib/features/schedule/saveFall
 import { getStoredCalculationsFromBaselineSnapshot, resolveBaselineSnapshotForCache } from '@/lib/features/schedule/snapshotCacheProjection'
 import { projectLoadStepGating } from '@/lib/features/schedule/workflowLoadProjection'
 import { fetchLiveBaselineSnapshotEnvelope } from '@/lib/features/schedule/liveBaselineSnapshot'
+import { fetchSnapshotDiffLiveInputs } from '@/lib/features/schedule/snapshotDiffLiveInputs'
+import {
+  classifySnapshotSyncDisposition,
+  collectSnapshotDirtyReasons,
+  type SnapshotDirtyReason,
+} from '@/lib/features/schedule/snapshotSyncPolicy'
 import { buildBaselineSnapshotEnvelope, unwrapBaselineSnapshotStored } from '@/lib/utils/snapshotEnvelope'
 import { extractReferencedStaffIds, validateAndRepairBaselineSnapshot } from '@/lib/utils/snapshotValidation'
 import { minifySpecialProgramsForSnapshot } from '@/lib/utils/snapshotMinify'
@@ -96,6 +102,7 @@ import {
   scheduleDomainReducer,
 } from './scheduleDomainState'
 import type { ScheduleDomainState, Step2ResultSurplusProjection, UndoEntry } from './scheduleDomainState'
+import type { SnapshotDiffResult } from '@/lib/features/schedule/snapshotDiff'
 
 export type {
   BedCountsOverridesByTeam,
@@ -139,6 +146,56 @@ function jsonDeepEqual(a: unknown, b: unknown): boolean {
 let cachedLoadScheduleRpcAvailable: boolean | null = null
 let cachedSaveScheduleRpcAvailable: boolean | null = null
 
+type SnapshotAutoSyncStatus =
+  | {
+      kind: 'synced'
+      dateKey: string
+      fromGlobalVersion: number | null
+      toGlobalVersion: number | null
+    }
+  | {
+      kind: 'blocked'
+      dateKey: string
+      reasons: SnapshotDirtyReason[]
+    }
+  | null
+
+function snapshotHeadDiffers(snapshotHead: any, liveHead: any): boolean {
+  const snapCat = snapshotHead?.category_versions
+  const liveCat = liveHead?.category_versions
+  if (snapCat && typeof snapCat === 'object' && liveCat && typeof liveCat === 'object') {
+    for (const [key, liveValue] of Object.entries(liveCat)) {
+      const snapValue = (snapCat as Record<string, unknown>)[key]
+      if (typeof liveValue === 'number' && typeof snapValue === 'number' && liveValue !== snapValue) return true
+    }
+    return false
+  }
+  if (snapshotHead?.global_version != null && liveHead?.global_version != null) {
+    return Number(snapshotHead.global_version) !== Number(liveHead.global_version)
+  }
+  return false
+}
+
+function hasAnySnapshotDiffForController(diff: SnapshotDiffResult | null | undefined): boolean {
+  if (!diff) return false
+  return (
+    (diff.staff.added.length ?? 0) > 0 ||
+    (diff.staff.removed.length ?? 0) > 0 ||
+    (diff.staff.changed.length ?? 0) > 0 ||
+    (diff.teamSettings.changed.length ?? 0) > 0 ||
+    (diff.wards.added.length ?? 0) > 0 ||
+    (diff.wards.removed.length ?? 0) > 0 ||
+    (diff.wards.changed.length ?? 0) > 0 ||
+    (diff.pcaPreferences.changed.length ?? 0) > 0 ||
+    (diff.specialPrograms.added.length ?? 0) > 0 ||
+    (diff.specialPrograms.removed.length ?? 0) > 0 ||
+    (diff.specialPrograms.changed.length ?? 0) > 0 ||
+    (diff.sptAllocations.added.length ?? 0) > 0 ||
+    (diff.sptAllocations.removed.length ?? 0) > 0 ||
+    (diff.sptAllocations.changed.length ?? 0) > 0
+  )
+}
+
 export function useScheduleController(params: {
   defaultDate: Date
   supabase: any
@@ -167,6 +224,7 @@ export function useScheduleController(params: {
   // Guards against overlapping/stale date loads applying state out of order.
   // The currently-requested date (from loadAndHydrateDate) is the only one allowed to mutate state.
   const activeHydrationDateStrRef = useRef<string | null>(null)
+  const [lastSnapshotAutoSyncStatus, setLastSnapshotAutoSyncStatus] = useState<SnapshotAutoSyncStatus>(null)
 
   const makeSetter = <K extends keyof ScheduleDomainState>(key: K) => {
     const existing = setterCacheRef.current[key]
@@ -743,6 +801,7 @@ export function useScheduleController(params: {
         }
       }
       if (shouldApplyToState) {
+        setLastSnapshotAutoSyncStatus(null)
         setCurrentScheduleId(cached.scheduleId)
         setCurrentScheduleUpdatedAt((cached as any).scheduleUpdatedAt ?? null)
         if (cached.baselineSnapshot) {
@@ -918,7 +977,7 @@ export function useScheduleController(params: {
     }
 
     // Extract baseline snapshot and workflow state if present
-    const rawBaselineSnapshotStored = (scheduleData as any).baseline_snapshot as BaselineSnapshotStored | null | undefined
+    let rawBaselineSnapshotStored = (scheduleData as any).baseline_snapshot as BaselineSnapshotStored | null | undefined
     const hasBaselineSnapshot = !!rawBaselineSnapshotStored
     let validatedBaselineSnapshotData: BaselineSnapshot | null = null
     const rawWorkflowState = (scheduleData as any).workflow_state as WorkflowState | null | undefined
@@ -977,6 +1036,73 @@ export function useScheduleController(params: {
     // Baseline snapshot: validate/repair and apply AFTER we know which staff ids are referenced.
     if (hasBaselineSnapshot) {
       try {
+        try {
+          const todayKey = formatDateForInput(new Date())
+          const dirtyReasons = collectSnapshotDirtyReasons({
+            staffOverrides: overrides,
+            hasTherapistAllocations: therapistAllocs.length > 0,
+            hasPCAAllocations: pcaAllocs.length > 0,
+            hasBedAllocations: bedAllocs.length > 0,
+            workflowCompletedSteps: effectiveWorkflowState?.completedSteps ?? [],
+          })
+
+          const { envelope: storedEnvelope } = unwrapBaselineSnapshotStored(rawBaselineSnapshotStored as any)
+          const liveHead = await fetchGlobalHeadAtCreation(supabase)
+          const maybeHasVersionDrift = snapshotHeadDiffers((storedEnvelope as any)?.globalHeadAtCreation, liveHead)
+
+          if (maybeHasVersionDrift) {
+            const liveInputs = await fetchSnapshotDiffLiveInputs({
+              supabase,
+              includeTeamSettings: true,
+              cacheKey: `schedule-load-auto-sync:${dateStr}:${scheduleId}`,
+              ttlMs: 0,
+            })
+            const { diffBaselineSnapshot } = await import('@/lib/features/schedule/snapshotDiff')
+            const diff = diffBaselineSnapshot({
+              snapshot: storedEnvelope.data as any,
+              live: liveInputs,
+            })
+            const hasDrift = hasAnySnapshotDiffForController(diff)
+            const disposition = classifySnapshotSyncDisposition({
+              scheduleDateKey: dateStr,
+              todayKey,
+              hasDrift,
+              dirtyReasons,
+            })
+
+            if (disposition === 'auto-sync-clean-current-or-future') {
+              const { envelope, snapshot } = await fetchLiveBaselineSnapshotEnvelope({ supabase, source: 'save' })
+              await supabase
+                .from('daily_schedules')
+                .update({ baseline_snapshot: envelope as any })
+                .eq('id', scheduleId)
+
+              rawBaselineSnapshotStored = envelope as any
+              validatedBaselineSnapshotData = snapshot
+              if (shouldApplyToState) {
+                setLastSnapshotAutoSyncStatus({
+                  kind: 'synced',
+                  dateKey: dateStr,
+                  fromGlobalVersion: Number((storedEnvelope as any)?.globalHeadAtCreation?.global_version ?? null) || null,
+                  toGlobalVersion: Number((envelope as any)?.globalHeadAtCreation?.global_version ?? null) || null,
+                })
+              }
+            } else if (disposition === 'dirty-review-required') {
+              if (shouldApplyToState) {
+                setLastSnapshotAutoSyncStatus({ kind: 'blocked', dateKey: dateStr, reasons: dirtyReasons })
+              }
+            } else if (shouldApplyToState) {
+              setLastSnapshotAutoSyncStatus(null)
+            }
+          } else if (shouldApplyToState) {
+            setLastSnapshotAutoSyncStatus(null)
+          }
+        } catch {
+          if (shouldApplyToState) {
+            setLastSnapshotAutoSyncStatus(null)
+          }
+        }
+
         const referencedStaffIds = extractReferencedStaffIds({
           therapistAllocs,
           pcaAllocs,
@@ -1024,6 +1150,7 @@ export function useScheduleController(params: {
       }
     } else {
       if (shouldApplyToState) {
+        setLastSnapshotAutoSyncStatus(null)
         setSnapshotHealthReport(null)
       }
     }
@@ -1191,7 +1318,10 @@ export function useScheduleController(params: {
     } as any
   }
 
-  const state = domainState
+  const state = {
+    ...domainState,
+    lastSnapshotAutoSyncStatus,
+  }
   const staffByIdMemo = useMemo(() => buildStaffByIdMap(staff || []), [staff])
 
   // Use saved allocations directly from database without regenerating.
