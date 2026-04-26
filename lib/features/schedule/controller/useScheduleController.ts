@@ -753,9 +753,11 @@ export function useScheduleController(params: {
     const shouldApplyToState = !prefetchOnly && activeHydrationDateStrRef.current === dateStr
 
     // Check cache first (for fast navigation)
+    const todayKey = formatDateForInput(new Date())
     const cached = getCachedSchedule(cacheKey)
+    const canUseCachedSchedule = dateStr < todayKey
 
-    if (cached) {
+    if (cached && canUseCachedSchedule) {
       innerTimer.stage('cacheHit')
       // Repair legacy/polluted cache entries:
       // Cached allocations must be the canonical DB rows (one per allocation id). If duplicates exist and we
