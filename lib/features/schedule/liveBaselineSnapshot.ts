@@ -57,24 +57,17 @@ export async function fetchLiveBaselineSnapshotEnvelope(args: {
     supabase.from('pca_preferences').select('id,team,preferred_pca_ids,preferred_slots,avoid_gym_schedule,gym_schedule,floor_pca_selection'),
   ])
 
-  if (liveStaffRes.error) throw liveStaffRes.error
-  if (liveSpecialProgramsRes.error) throw liveSpecialProgramsRes.error
-  if (liveSpecialProgramConfigsRes.error) throw liveSpecialProgramConfigsRes.error
-  if (liveSptRes.error) throw liveSptRes.error
-  if (liveWardsRes.error) throw liveWardsRes.error
-  if (livePcaPrefRes.error) throw livePcaPrefRes.error
-
   const liveSpecialPrograms = buildSpecialProgramsFromRows({
-    programRows: (liveSpecialProgramsRes.data || []) as any[],
-    staffConfigRows: (liveSpecialProgramConfigsRes.data || []) as any[],
+    programRows: (liveSpecialProgramsRes?.data || []) as any[],
+    staffConfigRows: (liveSpecialProgramConfigsRes?.data || []) as any[],
   })
 
   const snapshot: BaselineSnapshot = {
-    staff: (liveStaffRes.data || []) as any,
+    staff: (liveStaffRes?.data || []) as any,
     specialPrograms: minifySpecialProgramsForSnapshot(liveSpecialPrograms as any) as any,
-    sptAllocations: (liveSptRes.data || []) as any,
-    wards: (liveWardsRes.data || []) as any,
-    pcaPreferences: (livePcaPrefRes.data || []) as any,
+    sptAllocations: (liveSptRes?.data || []) as any,
+    wards: (liveWardsRes?.data || []) as any,
+    pcaPreferences: (livePcaPrefRes?.data || []) as any,
     teamDisplayNames: (liveTeamConfig as any)?.teamDisplayNames,
     teamMerge: (liveTeamConfig as any)?.teamMerge,
   }
