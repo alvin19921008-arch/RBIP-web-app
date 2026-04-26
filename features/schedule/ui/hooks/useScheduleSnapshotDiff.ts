@@ -32,6 +32,7 @@ export function useScheduleSnapshotDiff(params: {
   gridLoading: boolean
   userRole: 'developer' | 'admin' | 'user'
   showActionToast: ScheduleSnapshotDiffShowActionToast
+  dismissActionToast: () => void
 }) {
   const {
     supabase,
@@ -42,6 +43,7 @@ export function useScheduleSnapshotDiff(params: {
     gridLoading,
     userRole,
     showActionToast,
+    dismissActionToast,
   } = params
 
   const snapshotDiffButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -134,6 +136,7 @@ export function useScheduleSnapshotDiff(params: {
                 size: 'sm',
                 variant: 'outline',
                 onClick: () => {
+                  dismissActionToast()
                   setSavedSetupPopoverOpen(true)
                   setSnapshotDiffExpanded(true)
                 },
@@ -237,6 +240,7 @@ export function useScheduleSnapshotDiff(params: {
     baselineSnapshot,
     supabase,
     showActionToast,
+    dismissActionToast,
     computeSnapshotDiffFromDbSnapshot,
     hasAnySnapshotDiff,
   ])

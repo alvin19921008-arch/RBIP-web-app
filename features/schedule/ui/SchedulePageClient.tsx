@@ -3711,6 +3711,7 @@ function SchedulePageContent() {
     gridLoading,
     userRole,
     showActionToast,
+    dismissActionToast,
   })
 
   // Code-split dialog prefetch: keep initial bundle smaller, but hide first-open latency.
