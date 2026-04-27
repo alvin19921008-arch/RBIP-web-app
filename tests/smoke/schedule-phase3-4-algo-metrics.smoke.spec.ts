@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 
 import {
   chooseFloatingPcaV2RankedFromEntryDialog,
@@ -69,10 +69,51 @@ async function runLeaveSimAction(page: Page, actionName: RegExp): Promise<void> 
   await waitForScheduleReady(page)
 }
 
+async function dismissNotificationToasts(page: Page) {
+  const dismissButtons = page.locator('button[aria-label="Dismiss notification"]')
+
+  for (let pass = 0; pass < 3; pass += 1) {
+    const count = await dismissButtons.count()
+    if (count === 0) return
+
+    for (let index = 0; index < count; index += 1) {
+      const dismissButton = dismissButtons.nth(index)
+      if (!(await dismissButton.isVisible().catch(() => false))) continue
+      await dismissButton.click({ timeout: 1000, force: true }).catch(() => undefined)
+    }
+
+    if ((await dismissButtons.count()) === 0) return
+    await page.waitForTimeout(100)
+  }
+
+  await expect
+    .poll(async () => dismissButtons.count(), { timeout: 2000 })
+    .toBe(0)
+    .catch(() => undefined)
+}
+
+function isPointerInterceptError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return /intercepts pointer events|not receiving pointer events/i.test(error.message)
+}
+
+async function clickWithOverlayRetry(page: Page, target: Locator) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await dismissNotificationToasts(page)
+    try {
+      await target.click({ timeout: 5000 })
+      return
+    } catch (error) {
+      if (attempt === 3 || !isPointerInterceptError(error)) throw error
+      await page.waitForTimeout(150)
+    }
+  }
+}
+
 async function saveScheduleChanges(page: Page) {
   const saveScheduleButton = page.getByRole('button', { name: 'Save Schedule' }).first()
   await expect(saveScheduleButton).toBeVisible()
-  await saveScheduleButton.click()
+  await clickWithOverlayRetry(page, saveScheduleButton)
 
   await expect
     .poll(
@@ -83,6 +124,53 @@ async function saveScheduleChanges(page: Page) {
       { timeout: 15000 }
     )
     .toBe('saved')
+}
+
+async function openFloatingPcaAllocationDialog(page: Page) {
+  const floatingStepButton = mainStepIndicator(page).getByRole('button', { name: /Floating PCA/i }).first()
+  const startStep3Button = page
+    .getByRole('button', { name: /^(Re-run Algorithm|Initialize Algorithm)$/ })
+    .first()
+  const dialogHeading = page.getByRole('heading', { name: 'Floating PCA allocation' })
+
+  await expect(floatingStepButton).toBeVisible()
+  await expect(floatingStepButton).toBeEnabled({ timeout: 30000 })
+
+  await expect
+    .poll(
+      async () => {
+        await dismissNotificationToasts(page)
+        if (await dialogHeading.isVisible().catch(() => false)) return 'open'
+
+        try {
+          await clickWithOverlayRetry(page, floatingStepButton)
+        } catch (error) {
+          if (
+            isPointerInterceptError(error) &&
+            (await dialogHeading.isVisible().catch(() => false))
+          ) {
+            return 'open'
+          }
+          throw error
+        }
+
+        if (await dialogHeading.isVisible().catch(() => false)) return 'open'
+
+        if (!(await startStep3Button.isVisible().catch(() => false))) {
+          return 'warming-up'
+        }
+
+        await clickWithOverlayRetry(page, startStep3Button)
+        try {
+          await expect(dialogHeading).toBeVisible({ timeout: 5000 })
+          return 'open'
+        } catch {
+          return 'retry'
+        }
+      },
+      { timeout: 30000 }
+    )
+    .toBe('open')
 }
 
 test.describe('Schedule Phase 3.4 algorithm smoke', () => {
@@ -107,19 +195,7 @@ test.describe('Schedule Phase 3.4 algorithm smoke', () => {
 
     await page.reload({ waitUntil: 'domcontentloaded' })
     await waitForScheduleReady(page)
-
-    const floatingStepButton = mainStepIndicator(page).getByRole('button', { name: /Floating PCA/i }).first()
-    await expect(floatingStepButton).toBeVisible()
-    await expect(floatingStepButton).toBeEnabled({ timeout: 30000 })
-    await floatingStepButton.click()
-
-    const startStep3Button = page
-      .getByRole('button', { name: /^(Re-run Algorithm|Initialize Algorithm)$/ })
-      .first()
-    await expect(startStep3Button).toBeVisible()
-    await startStep3Button.click()
-
-    await expect(page.getByRole('heading', { name: 'Floating PCA allocation' })).toBeVisible()
+    await openFloatingPcaAllocationDialog(page)
     await chooseFloatingPcaV2RankedFromEntryDialog(page)
     await expectFloatingPcaV2ConfigDialogFromStep31(page)
     await expect(page.getByText('Step 2 must be completed before Step 3.')).toHaveCount(0)

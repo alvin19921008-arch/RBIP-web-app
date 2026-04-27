@@ -19,7 +19,6 @@ import type {
 } from '@/types/schedule'
 import { TeamColumn } from '@/components/allocation/TeamColumn'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { useNavigationLoading } from '@/components/ui/navigation-loading'
 import { useToast } from '@/components/ui/toast-context'
 import { ScheduleDndContextShell } from '@/features/schedule/ui/sections/ScheduleDndContextShell'
@@ -28,6 +27,7 @@ import { ScheduleMainBoardChrome } from '@/features/schedule/ui/sections/Schedul
 import { SchedulePageHeaderRightActions } from '@/features/schedule/ui/sections/SchedulePageHeaderRightActions'
 import { SchedulePageSplitMainPaneHeader } from '@/features/schedule/ui/sections/SchedulePageSplitMainPaneHeader'
 import { ScheduleWorkflowStepShell } from '@/features/schedule/ui/sections/ScheduleWorkflowStepShell'
+import { ScheduleDevHarnessBridge } from '@/features/schedule/ui/dev/ScheduleDevHarnessBridge'
 import dynamic from 'next/dynamic'
 import { SchedulePageGridInteractionOverlays } from '@/features/schedule/ui/overlays/SchedulePageGridInteractionOverlays'
 import { ScheduleHeaderBar } from '@/features/schedule/ui/layout/ScheduleHeaderBar'
@@ -45,6 +45,7 @@ import {
   useScheduleAllocationRecalcAndSync,
   useSchedulePaneHydrationEndForRecalcCluster,
 } from '@/features/schedule/ui/hooks/useScheduleAllocationRecalcAndSync'
+import { useScheduleDisplayProjections } from '@/features/schedule/ui/hooks/useScheduleDisplayProjections'
 import type { StaffOverrides } from '@/lib/hooks/useAllocationSync'
 import { useSchedulePageQueryState } from '@/features/schedule/ui/hooks/useSchedulePageQueryState'
 import { useStep3DialogProjection } from '@/features/schedule/ui/hooks/useStep3DialogProjection'
@@ -54,8 +55,11 @@ import { useScheduleExportActions } from '@/features/schedule/ui/hooks/useSchedu
 import { useScheduleCopyWorkflow } from '@/features/schedule/ui/hooks/useScheduleCopyWorkflow'
 import { useScheduleStepChromeNavigation } from '@/features/schedule/ui/hooks/useScheduleStepChromeNavigation'
 import { useScheduleAllocationContextMenus } from '@/features/schedule/ui/hooks/useScheduleAllocationContextMenus'
+import { useScheduleGridInteractionState } from '@/features/schedule/ui/hooks/useScheduleGridInteractionState'
+import { useScheduleTopLoadingBar } from '@/features/schedule/ui/hooks/useScheduleTopLoadingBar'
+import { useScheduleCalendarData } from '@/features/schedule/ui/hooks/useScheduleCalendarData'
+import { useScheduleStepClearActions } from '@/features/schedule/ui/hooks/useScheduleStepClearActions'
 import type { Step2ResultSurplusProjectionForStep3 } from '@/lib/features/schedule/schedulePageFingerprints'
-import { combineScheduleCalculations } from '@/lib/features/schedule/scheduleCalculationsCombine'
 import { ScheduleBoardLeftColumn } from '@/features/schedule/ui/layout/ScheduleBoardLeftColumn'
 import { ScheduleBoardRightColumn } from '@/features/schedule/ui/layout/ScheduleBoardRightColumn'
 import { ScheduleMainGrid } from '@/features/schedule/ui/layout/ScheduleMainGrid'
@@ -79,12 +83,8 @@ import {
 import { buildPageStep3RuntimeState } from '@/lib/features/schedule/pageStep3Runtime'
 import { willNeedStep21Substitution } from '@/lib/features/schedule/step2SubstitutionProjection'
 import {
-  mergeExtraCoverageIntoStaffOverridesForDisplay,
   stripExtraCoverageOverrides,
 } from '@/lib/features/schedule/extraCoverageVisibility'
-import { deriveExtraCoverageByStaffId } from '@/lib/features/schedule/extraCoverageRuntime'
-import { buildDisplayPcaAllocationsByTeam } from '@/lib/features/schedule/pcaDisplayProjection'
-import { projectBedRelievingNotesForDisplay } from '@/lib/features/schedule/bedRelievingDisplayProjection'
 import {
   buildStaffByIdMap,
   groupTherapistAllocationsByTeam,
@@ -99,18 +99,11 @@ import { createClientComponentClient } from '@/lib/supabase/client'
 import { Step2DialogReminder } from '@/components/allocation/Step2DialogReminder'
 import type { PCAData, FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
 import type { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation'
-import { roundToNearestQuarterWithMidpoint } from '@/lib/utils/rounding'
 import type { SlotAssignment } from '@/lib/utils/reservationLogic'
 const ScheduleBlocks1To6 = dynamic(
   () => import('@/features/schedule/ui/panes/ScheduleBlocks1To6').then(m => m.ScheduleBlocks1To6),
   { ssr: false }
 )
-const ScheduleDevLeaveSimBridgeDynamic = dynamic(
-  () =>
-    import('@/features/schedule/ui/dev/ScheduleDevLeaveSimBridge').then((m) => m.ScheduleDevLeaveSimBridge),
-  { ssr: false }
-)
-
 const prefetchScheduleCopyWizard = () => import('@/components/allocation/ScheduleCopyWizard')
 const prefetchStaffEditDialog = () => import('@/components/allocation/StaffEditDialog')
 const prefetchFloatingPCAEntryDialog = () =>
@@ -161,7 +154,6 @@ import { hasMeaningfulStep1Overrides } from '@/lib/utils/staffOverridesMeaningfu
 import { isOnDutyLeaveType } from '@/lib/utils/leaveType'
 import {
   getAllSubstitutionSlots,
-  hasAnySubstitution,
 } from '@/lib/utils/substitutionFor'
 import { ALLOCATION_STEPS, TEAMS, WEEKDAYS, WEEKDAY_NAMES } from '@/lib/features/schedule/constants'
 import { useScheduleController } from '@/lib/features/schedule/controller/useScheduleController'
@@ -175,13 +167,11 @@ import {
   applyPcaOptimisticAction,
   createActivePcaDragState,
   createActiveTherapistDragState,
-  createIdlePcaDragState,
   createIdleTherapistDragState,
   type PcaOptimisticAction,
-  type PcaDragState,
   type TherapistDragState,
 } from '@/lib/features/schedule/dnd/dragState'
-import type { ScheduleWardRow } from '@/lib/features/schedule/controller/scheduleControllerTypes'
+import type { ScheduleWardRow, StaffOverrideState } from '@/lib/features/schedule/controller/scheduleControllerTypes'
 import type { WardForScheduleBedMath } from '@/lib/features/schedule/bedMath'
 import {
   fetchSptAllocationsWithFallback,
@@ -201,11 +191,6 @@ import {
   resolveTeamMergeConfig,
   type TeamSettingsMergeRow,
 } from '@/lib/utils/teamMerge'
-
-/** Per main team: summed SHS + student placement deductions from contributor teams (display/export). */
-type BedCountsShsStudentMergedByTeam = Partial<
-  Record<Team, { shsBedCounts: number; studentPlacementBedCounts: number }>
->
 
 function SchedulePageContent() {
   const supabase = createClientComponentClient()
@@ -667,10 +652,15 @@ function SchedulePageContent() {
     () => null as Partial<Record<Team, number>> | null,
     []
   )
-  const [topLoadingVisible, setTopLoadingVisible] = useState(false)
-  const [topLoadingProgress, setTopLoadingProgress] = useState(0)
-  const loadingBarIntervalRef = useRef<number | null>(null)
-  const loadingBarHideTimeoutRef = useRef<number | null>(null)
+  const {
+    topLoadingVisible,
+    topLoadingProgress,
+    startTopLoading,
+    bumpTopLoadingTo,
+    startSoftAdvance,
+    stopSoftAdvance,
+    finishTopLoading,
+  } = useScheduleTopLoadingBar()
   const [copying, setCopying] = useState(false)
   const {
     isLikelyMobileDevice,
@@ -804,15 +794,10 @@ function SchedulePageContent() {
     [currentScheduleId, selectedDate, supabase]
   )
   const [calendarOpen, setCalendarOpen] = useState(false)
-  const [datesWithData, setDatesWithData] = useState<Set<string>>(new Set())
-  const [datesWithDataLoading, setDatesWithDataLoading] = useState(false)
-  const datesWithDataLoadedAtRef = useRef<number | null>(null)
-  const datesWithDataInFlightRef = useRef<Promise<void> | null>(null)
   // Adjacent-day schedule prefetch (warm `scheduleCache` without creating schedules)
   const adjacentSchedulePrefetchBaseKeyRef = useRef<string | null>(null)
   const adjacentSchedulePrefetchInFlightRef = useRef<Promise<void> | null>(null)
   const adjacentSchedulePrefetchedDatesRef = useRef<Set<string>>(new Set())
-  const [holidays, setHolidays] = useState<Map<string, string>>(new Map())
   const calendarButtonRef = useRef<HTMLButtonElement>(null)
   const calendarPopoverRef = useRef<HTMLDivElement>(null)
   // Copy wizard state
@@ -824,6 +809,21 @@ function SchedulePageContent() {
     direction: 'to' | 'from'
   } | null>(null)
   const [copyWizardOpen, setCopyWizardOpen] = useState(false)
+  const {
+    datesWithData,
+    setDatesWithData,
+    datesWithDataLoading,
+    datesWithDataLoadedAtRef,
+    holidays,
+    loadDatesWithData,
+  } = useScheduleCalendarData({
+    supabase,
+    calendarOpen,
+    copyWizardOpen,
+    copyMenuOpen,
+    selectedDate,
+    scheduleLoadedForDate,
+  })
   // Step-wise allocation workflow domain state moved into useScheduleController().
   // Track which steps have been initialized (domain; moved into useScheduleController()).
   
@@ -940,297 +940,32 @@ function SchedulePageContent() {
     show: false,
     position: null,
   })
-  
-  // Warning popover for leave arrangement edit after step 1
-  const [leaveEditWarningPopover, setLeaveEditWarningPopover] = useState<{
-    show: boolean
-    position: { x: number; y: number } | null
-  }>({
-    show: false,
-    position: null,
-  })
+  const performSlotTransferFromPopoverRef = useRef<((targetTeam: Team) => void) | null>(null)
+  const onPopoverDragDropToTeam = useCallback((targetTeam: Team) => {
+    performSlotTransferFromPopoverRef.current?.(targetTeam)
+  }, [])
 
-  // Contextual menus (schedule grid + staff pool)
-  const [staffContextMenu, setStaffContextMenu] = useState<{
-    show: boolean
-    position: { x: number; y: number } | null
-    anchor: { x: number; y: number } | null
-    staffId: string | null
-    team: Team | null
-    kind: 'therapist' | 'pca' | null
-  }>({
-    show: false,
-    position: null,
-    anchor: null,
-    staffId: null,
-    team: null,
-    kind: null,
-  })
-
-  const [staffPoolContextMenu, setStaffPoolContextMenu] = useState<{
-    show: boolean
-    position: { x: number; y: number } | null
-    anchor: { x: number; y: number } | null
-    staffId: string | null
-  }>({
-    show: false,
-    position: null,
-    anchor: null,
-    staffId: null,
-  })
-
-  // Staff Pool: Assign slot (floating PCA) popover flow (team -> slots)
-  const [pcaPoolAssignAction, setPcaPoolAssignAction] = useState<{
-    show: boolean
-    phase: 'team' | 'slots'
-    position: { x: number; y: number } | null
-    staffId: string | null
-    staffName: string | null
-    targetTeam: Team | null
-    availableSlots: number[]
-    selectedSlots: number[]
-  }>({
-    show: false,
-    phase: 'team',
-    position: null,
-    staffId: null,
-    staffName: null,
-    targetTeam: null,
-    availableSlots: [],
-    selectedSlots: [],
-  })
-
-  // Staff Pool: Assign slot (SPT) flow (team picker only; assigns remaining weekday FTE)
-  const [sptPoolAssignAction, setSptPoolAssignAction] = useState<{
-    show: boolean
-    position: { x: number; y: number } | null
-    staffId: string | null
-    staffName: string | null
-    targetTeam: Team | null
-    remainingFte: number
-  }>({
-    show: false,
-    position: null,
-    staffId: null,
-    staffName: null,
-    targetTeam: null,
-    remainingFte: 0,
-  })
-
-  // Staff Pool: Buffer staff edit + convert confirmation
-  const [bufferStaffEditDialog, setBufferStaffEditDialog] = useState<{
-    open: boolean
-    staff: Staff | null
-    initialAvailableSlots: number[] | null
-  }>({
-    open: false,
-    staff: null,
-    initialAvailableSlots: null,
-  })
-
-  const [bufferStaffConvertConfirm, setBufferStaffConvertConfirm] = useState<{
-    show: boolean
-    position: { x: number; y: number } | null
-    staffId: string | null
-    staffName: string | null
-  }>({
-    show: false,
-    position: null,
-    staffId: null,
-    staffName: null,
-  })
-
-  const [pcaContextAction, setPcaContextAction] = useState<{
-    show: boolean
-    mode: 'move' | 'discard'
-    phase: 'team' | 'slots'
-    position: { x: number; y: number } | null
-    staffId: string | null
-    staffName: string | null
-    sourceTeam: Team | null
-    targetTeam: Team | null
-    availableSlots: number[]
-    selectedSlots: number[]
-  }>({
-    show: false,
-    mode: 'move',
-    phase: 'team',
-    position: null,
-    staffId: null,
-    staffName: null,
-    sourceTeam: null,
-    targetTeam: null,
-    availableSlots: [],
-    selectedSlots: [],
-  })
-
-  const [therapistContextAction, setTherapistContextAction] = useState<{
-    show: boolean
-    mode: 'move' | 'discard' | 'split' | 'merge'
-    phase: 'team' | 'splitFte' | 'mergeSelect' | 'confirmDiscard'
-    position: { x: number; y: number } | null
-    staffId: string | null
-    staffName: string | null
-    sourceTeam: Team | null
-    targetTeam: Team | null
-    movedFteQuarter: number | null
-    splitMovedHalfDayChoice?: 'AUTO' | 'AM' | 'PM' | 'UNSPECIFIED'
-    splitStayHalfDayChoice?: 'AUTO' | 'AM' | 'PM' | 'UNSPECIFIED'
-    splitInputMode?: 'moved' | 'stay'
-    mergeInputMode?: 'intoSource' | 'intoSelected'
-    mergeTeams: Team[]
-  }>({
-    show: false,
-    mode: 'move',
-    phase: 'team',
-    position: null,
-    staffId: null,
-    staffName: null,
-    sourceTeam: null,
-    targetTeam: null,
-    movedFteQuarter: null,
-    splitMovedHalfDayChoice: 'AUTO',
-    splitStayHalfDayChoice: 'AUTO',
-    splitInputMode: 'moved',
-    mergeInputMode: 'intoSource',
-    mergeTeams: [],
-  })
-
-  const [colorContextAction, setColorContextAction] = useState<{
-    show: boolean
-    position: { x: number; y: number } | null
-    staffId: string | null
-    team: Team | null
-    selectedClassName: string | null
-  }>({
-    show: false,
-    position: null,
-    staffId: null,
-    team: null,
-    selectedClassName: null,
-  })
-
-  // Global click-outside close for contextual popovers (non-modal)
-  useEffect(() => {
-    const anyOpen =
-      pcaContextAction.show ||
-      therapistContextAction.show ||
-      colorContextAction.show ||
-      pcaPoolAssignAction.show ||
-      sptPoolAssignAction.show ||
-      bufferStaffConvertConfirm.show
-    if (!anyOpen) return
-
-    const onDown = () => {
-      if (pcaContextAction.show) {
-        setPcaContextAction({
-          show: false,
-          mode: 'move',
-          phase: 'team',
-          position: null,
-          staffId: null,
-          staffName: null,
-          sourceTeam: null,
-          targetTeam: null,
-          availableSlots: [],
-          selectedSlots: [],
-        })
-      }
-      if (therapistContextAction.show) {
-        setTherapistContextAction({
-          show: false,
-          mode: 'move',
-          phase: 'team',
-          position: null,
-          staffId: null,
-          staffName: null,
-          sourceTeam: null,
-          targetTeam: null,
-          movedFteQuarter: null,
-          splitMovedHalfDayChoice: 'AUTO',
-          splitStayHalfDayChoice: 'AUTO',
-          splitInputMode: 'moved',
-          mergeInputMode: 'intoSource',
-          mergeTeams: [],
-        })
-      }
-      if (colorContextAction.show) {
-        setColorContextAction({
-          show: false,
-          position: null,
-          staffId: null,
-          team: null,
-          selectedClassName: null,
-        })
-      }
-      if (pcaPoolAssignAction.show) {
-        setPcaPoolAssignAction({
-          show: false,
-          phase: 'team',
-          position: null,
-          staffId: null,
-          staffName: null,
-          targetTeam: null,
-          availableSlots: [],
-          selectedSlots: [],
-        })
-      }
-      if (sptPoolAssignAction.show) {
-        setSptPoolAssignAction({
-          show: false,
-          position: null,
-          staffId: null,
-          staffName: null,
-          targetTeam: null,
-          remainingFte: 0,
-        })
-      }
-      if (bufferStaffConvertConfirm.show) {
-        setBufferStaffConvertConfirm({
-          show: false,
-          position: null,
-          staffId: null,
-          staffName: null,
-        })
-      }
-    }
-
-    window.addEventListener('mousedown', onDown)
-    return () => window.removeEventListener('mousedown', onDown)
-  }, [
-    pcaContextAction.show,
-    therapistContextAction.show,
-    colorContextAction.show,
-    pcaPoolAssignAction.show,
-    sptPoolAssignAction.show,
-    bufferStaffConvertConfirm.show,
-  ])
-
-  // Warning popover for bed relieving edit outside Step 4
-  const [bedRelievingEditWarningPopover, setBedRelievingEditWarningPopover] = useState<{
-    show: boolean
-    position: { x: number; y: number } | null
-  }>({
-    show: false,
-    position: null,
-  })
-
-  // Tooltip-like: dismiss on any outside click / Escape (no timer).
-  useEffect(() => {
-    if (!bedRelievingEditWarningPopover.show) return
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setBedRelievingEditWarningPopover({ show: false, position: null })
-    }
-    const onPointerDown = () => {
-      setBedRelievingEditWarningPopover({ show: false, position: null })
-    }
-    window.addEventListener('keydown', onKeyDown)
-    window.addEventListener('pointerdown', onPointerDown, true)
-    return () => {
-      window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('pointerdown', onPointerDown, true)
-    }
-  }, [bedRelievingEditWarningPopover.show])
+  const {
+    staffContextMenu,
+    setStaffContextMenu,
+    closeStaffContextMenu,
+    staffPoolContextMenu,
+    setStaffPoolContextMenu,
+    closeStaffPoolContextMenu,
+    setPcaPoolAssignAction,
+    setSptPoolAssignAction,
+    setBufferStaffEditDialog,
+    setBufferStaffConvertConfirm,
+    setPcaContextAction,
+    setTherapistContextAction,
+    setColorContextAction,
+    setLeaveEditWarningPopover,
+    setBedRelievingEditWarningPopover,
+    pcaDragState,
+    setPcaDragState,
+    popoverDragHoverTeam,
+    buildOverlayGroups,
+  } = useScheduleGridInteractionState({ onPopoverDragDropToTeam })
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1269,120 +1004,6 @@ function SchedulePageContent() {
     handleUndoManualEdit,
     handleRedoManualEdit,
   ])
-  
-  // PCA Drag-and-Drop state for slot transfer
-  const [pcaDragState, setPcaDragState] = useState<PcaDragState>(createIdlePcaDragState())
-  
-  // Ref to track mouse position for popover drag
-  const mousePositionRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
-  // Force re-render when mouse moves during popover drag
-  const [, forceUpdate] = useState({})
-  
-  // Track which team is being hovered during popover drag (for visual feedback)
-  const [popoverDragHoverTeam, setPopoverDragHoverTeam] = useState<Team | null>(null)
-  
-  // Helper to find team from element at point
-  const findTeamAtPoint = (x: number, y: number): Team | null => {
-    const elementsAtPoint = document.elementsFromPoint(x, y)
-    for (const el of elementsAtPoint) {
-      let current: Element | null = el
-      while (current) {
-        const pcaTeam = current.getAttribute('data-pca-team')
-        if (pcaTeam) {
-          return pcaTeam as Team
-        }
-        current = current.parentElement
-      }
-    }
-    return null
-  }
-  
-  // Prevent hover effects during popover drag by adding a class to body and injecting CSS
-  useEffect(() => {
-    if (pcaDragState.isDraggingFromPopover) {
-      document.body.classList.add('popover-drag-active')
-      
-      // Inject CSS to prevent hover/selection effects
-      const styleId = 'popover-drag-active-styles'
-      if (!document.getElementById(styleId)) {
-        const style = document.createElement('style')
-        style.id = styleId
-        style.textContent = `
-          body.popover-drag-active {
-            user-select: none !important;
-            -webkit-user-select: none !important;
-          }
-          body.popover-drag-active * {
-            user-select: none !important;
-            -webkit-user-select: none !important;
-          }
-        `
-        document.head.appendChild(style)
-      }
-      
-      return () => {
-        document.body.classList.remove('popover-drag-active')
-        const style = document.getElementById(styleId)
-        if (style) {
-          style.remove()
-        }
-      }
-    }
-  }, [pcaDragState.isDraggingFromPopover])
-  
-  // Track mouse movement and handle drop when dragging from popover
-  useEffect(() => {
-    if (!pcaDragState.isDraggingFromPopover) {
-      // Clear hover state when not dragging from popover
-      if (popoverDragHoverTeam) setPopoverDragHoverTeam(null)
-      return
-    }
-    
-    const handleMouseMove = (e: MouseEvent) => {
-      mousePositionRef.current = { x: e.clientX, y: e.clientY }
-      
-      // Track which team we're hovering over for visual feedback
-      const hoveredTeamRaw = findTeamAtPoint(e.clientX, e.clientY)
-      // Only highlight valid drop targets (exclude source team)
-      const hoveredTeam = hoveredTeamRaw && hoveredTeamRaw !== pcaDragState.sourceTeam ? hoveredTeamRaw : null
-      if (hoveredTeam !== popoverDragHoverTeam) {
-        setPopoverDragHoverTeam(hoveredTeam)
-      }
-      
-      forceUpdate({}) // Force re-render to update overlay position
-    }
-    
-    const handleMouseUp = (e: MouseEvent) => {
-      e.preventDefault() // Prevent default
-      // Clear hover state
-      setPopoverDragHoverTeam(null)
-      
-      // Find target team
-      const targetTeam = findTeamAtPoint(e.clientX, e.clientY)
-      
-      if (targetTeam && targetTeam !== pcaDragState.sourceTeam && pcaDragState.selectedSlots.length > 0) {
-        // Successfully dropped on a different team - perform transfer
-        performSlotTransfer(targetTeam)
-      } else {
-        // Failed drop - show popover again
-        setPcaDragState(prev => ({
-          ...prev,
-          isActive: false,
-          isDraggingFromPopover: false,
-          showSlotSelection: true,
-        }))
-      }
-    }
-    
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp, { passive: false })
-    
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [pcaDragState.isDraggingFromPopover, pcaDragState.sourceTeam, pcaDragState.selectedSlots, popoverDragHoverTeam])
-  
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -1661,140 +1282,6 @@ function SchedulePageContent() {
   }, [staff, specialPrograms, sptAllocations, wards, pcaPreferences, scheduleLoadedForDate, hasSavedAllocations])
   // NOTE: staffOverrides intentionally removed from dependencies - step-wise workflow controls regeneration
 
-  // Load dates that have schedule data
-  const loadDatesWithData = async (opts?: { force?: boolean }): Promise<void> => {
-    try {
-      // Dot semantics (aligned with History page):
-      // show dot only if the schedule has any saved allocation rows (therapist/PCA/bed).
-      const now = Date.now()
-      const lastLoadedAt = datesWithDataLoadedAtRef.current
-      if (!opts?.force && lastLoadedAt && now - lastLoadedAt < 60_000) return
-      if (datesWithDataInFlightRef.current) return await datesWithDataInFlightRef.current
-
-      const inFlight = (async () => {
-        setDatesWithDataLoading(true)
-
-        const { data: scheduleData, error: scheduleError } = await supabase
-          .from('daily_schedules')
-          .select('id,date')
-          .order('date', { ascending: false })
-
-        if (scheduleError) {
-          console.error('Error loading schedule dates:', scheduleError)
-          return
-        }
-
-        const schedules = scheduleData ?? []
-        const scheduleIds = schedules.map((s) => s.id).filter(Boolean)
-
-        // If there are no schedules at all, clear dots.
-        if (scheduleIds.length === 0) {
-          setDatesWithData(new Set())
-          datesWithDataLoadedAtRef.current = Date.now()
-          return
-        }
-
-        // Chunk to avoid excessively long query strings for `.in(...)`.
-        const chunkSize = 500
-        const chunks: string[][] = []
-        for (let i = 0; i < scheduleIds.length; i += chunkSize) {
-          chunks.push(scheduleIds.slice(i, i + chunkSize))
-        }
-
-        const hasTherapist = new Set<string>()
-        const hasPca = new Set<string>()
-        const hasBed = new Set<string>()
-
-        for (const ids of chunks) {
-          const [therapistRes, pcaRes, bedRes] = await Promise.all([
-            supabase.from('schedule_therapist_allocations').select('schedule_id').in('schedule_id', ids),
-            supabase.from('schedule_pca_allocations').select('schedule_id').in('schedule_id', ids),
-            supabase.from('schedule_bed_allocations').select('schedule_id').in('schedule_id', ids),
-          ])
-          ;(therapistRes.data || []).forEach((r) => {
-            if (r?.schedule_id) hasTherapist.add(r.schedule_id)
-          })
-          ;(pcaRes.data || []).forEach((r) => {
-            if (r?.schedule_id) hasPca.add(r.schedule_id)
-          })
-          ;(bedRes.data || []).forEach((r) => {
-            if (r?.schedule_id) hasBed.add(r.schedule_id)
-          })
-        }
-
-        const dotDates = schedules
-          .filter(s => hasTherapist.has(s.id) || hasPca.has(s.id) || hasBed.has(s.id))
-          .map(s => s.date)
-
-        const dateSet = new Set<string>(dotDates)
-        setDatesWithData(dateSet)
-        datesWithDataLoadedAtRef.current = Date.now()
-      })()
-
-      datesWithDataInFlightRef.current = inFlight
-      await inFlight
-    } catch (error) {
-      console.error('Error loading dates with data:', error)
-    } finally {
-      datesWithDataInFlightRef.current = null
-      setDatesWithDataLoading(false)
-    }
-  }
-
-  // Load holidays when calendar or copy wizard opens (reuses same CalendarGrid UI)
-  useEffect(() => {
-    if (!(calendarOpen || copyWizardOpen || copyMenuOpen)) return
-    loadDatesWithData()
-
-    let cancelled = false
-    void (async () => {
-      const { getHongKongHolidays } = await import('@/lib/utils/hongKongHolidays')
-      if (cancelled) return
-      // Generate holidays for selected year and next year
-      const baseYear = selectedDate.getFullYear()
-      const holidaysMap = new Map<string, string>()
-      const yearHolidays = getHongKongHolidays(baseYear)
-      const nextYearHolidays = getHongKongHolidays(baseYear + 1)
-      yearHolidays.forEach((value, key) => holidaysMap.set(key, value))
-      nextYearHolidays.forEach((value, key) => holidaysMap.set(key, value))
-      if (cancelled) return
-      setHolidays(holidaysMap)
-    })().catch(() => {})
-
-    return () => {
-      cancelled = true
-    }
-  }, [calendarOpen, copyWizardOpen, copyMenuOpen, selectedDate])
-
-  // Background prefetch: after the main schedule finishes loading (cold-start critical path),
-  // fetch calendar dots in idle time so the Copy menu doesn't flicker disabled->enabled.
-  useEffect(() => {
-    if (!scheduleLoadedForDate) return
-    const now = Date.now()
-    const lastLoadedAt = datesWithDataLoadedAtRef.current
-    if (lastLoadedAt && now - lastLoadedAt < 60_000) return
-
-    let cancelled = false
-    const run = () => {
-      if (cancelled) return
-      loadDatesWithData().catch(() => {})
-    }
-
-    if (typeof window.requestIdleCallback === 'function') {
-      const id = window.requestIdleCallback(run, { timeout: 1200 })
-      return () => {
-        cancelled = true
-        if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(id)
-      }
-    }
-
-    const t = window.setTimeout(run, 250)
-    return () => {
-      cancelled = true
-      window.clearTimeout(t)
-    }
-  }, [scheduleLoadedForDate])
-
   // Background prefetch: warm cache for previous/next working day schedules (only if meaningful),
   // while avoiding accidental creation of new schedule rows.
   useEffect(() => {
@@ -1904,62 +1391,6 @@ function SchedulePageContent() {
       window.clearTimeout(t)
     }
   }, [scheduleLoadedForDate, selectedDate, supabase, loadScheduleForDate, toDateKey])
-
-  // -----------------------------------------------------------------------------
-  // Thin top loading bar (stage-driven, shown for everyone during Save/Copy)
-  // -----------------------------------------------------------------------------
-  const startTopLoading = (initialProgress: number = 0.05) => {
-    if (loadingBarHideTimeoutRef.current) {
-      window.clearTimeout(loadingBarHideTimeoutRef.current)
-      loadingBarHideTimeoutRef.current = null
-    }
-    if (loadingBarIntervalRef.current) {
-      window.clearInterval(loadingBarIntervalRef.current)
-      loadingBarIntervalRef.current = null
-    }
-    setTopLoadingVisible(true)
-    setTopLoadingProgress(Math.max(0, Math.min(1, initialProgress)))
-  }
-
-  const bumpTopLoadingTo = (target: number) => {
-    setTopLoadingProgress(prev => Math.max(prev, Math.max(0, Math.min(1, target))))
-  }
-
-  const startSoftAdvance = (cap: number = 0.9) => {
-    if (loadingBarIntervalRef.current) return
-    loadingBarIntervalRef.current = window.setInterval(() => {
-      setTopLoadingProgress(prev => {
-        const max = Math.max(prev, Math.min(0.98, cap))
-        if (prev >= max) return prev
-        const step = Math.min(0.015 + Math.random() * 0.02, max - prev)
-        return prev + step
-      })
-    }, 180)
-  }
-
-  const stopSoftAdvance = () => {
-    if (loadingBarIntervalRef.current) {
-      window.clearInterval(loadingBarIntervalRef.current)
-      loadingBarIntervalRef.current = null
-    }
-  }
-
-  const finishTopLoading = () => {
-    stopSoftAdvance()
-    bumpTopLoadingTo(1)
-    loadingBarHideTimeoutRef.current = window.setTimeout(() => {
-      setTopLoadingVisible(false)
-      setTopLoadingProgress(0)
-      loadingBarHideTimeoutRef.current = null
-    }, 350)
-  }
-
-  useEffect(() => {
-    return () => {
-      if (loadingBarIntervalRef.current) window.clearInterval(loadingBarIntervalRef.current)
-      if (loadingBarHideTimeoutRef.current) window.clearTimeout(loadingBarHideTimeoutRef.current)
-    }
-  }, [])
 
   const { queueDateTransition } = useScheduleDateTransition({
     urlDateKey,
@@ -2097,17 +1528,6 @@ function SchedulePageContent() {
     setEditDialogOpen(true)
   }
 
-  const closeStaffContextMenu = useCallback(() => {
-    setStaffContextMenu({
-      show: false,
-      position: null,
-      anchor: null,
-      staffId: null,
-      team: null,
-      kind: null,
-    })
-  }, [])
-
   const openStaffContextMenu = useCallback((
     staffId: string,
     team: Team,
@@ -2164,15 +1584,6 @@ function SchedulePageContent() {
     })
   }, [])
 
-  const closeStaffPoolContextMenu = useCallback(() => {
-    setStaffPoolContextMenu({
-      show: false,
-      position: null,
-      anchor: null,
-      staffId: null,
-    })
-  }, [])
-
   const openStaffPoolContextMenu = useCallback((staffId: string, clickEvent?: React.MouseEvent) => {
     if (!clickEvent) {
       const sx = typeof window !== 'undefined' ? window.scrollX : 0
@@ -2225,45 +1636,6 @@ function SchedulePageContent() {
     })
   }, [])
 
-  const closePcaPoolAssignAction = () => {
-    setPcaPoolAssignAction({
-      show: false,
-      phase: 'team',
-      position: null,
-      staffId: null,
-      staffName: null,
-      targetTeam: null,
-      availableSlots: [],
-      selectedSlots: [],
-    })
-  }
-
-  const closeSptPoolAssignAction = () => {
-    setSptPoolAssignAction({
-      show: false,
-      position: null,
-      staffId: null,
-      staffName: null,
-      targetTeam: null,
-      remainingFte: 0,
-    })
-  }
-
-  const closePcaContextAction = () => {
-    setPcaContextAction({
-      show: false,
-      mode: 'move',
-      phase: 'team',
-      position: null,
-      staffId: null,
-      staffName: null,
-      sourceTeam: null,
-      targetTeam: null,
-      availableSlots: [],
-      selectedSlots: [],
-    })
-  }
-
   const startPcaContextAction = (options: {
     staffId: string
     sourceTeam: Team
@@ -2303,25 +1675,6 @@ function SchedulePageContent() {
       targetTeam: null,
       availableSlots: assignedSlots,
       selectedSlots: assignedSlots.length === 1 ? assignedSlots : [],
-    })
-  }
-
-  const closeTherapistContextAction = () => {
-    setTherapistContextAction({
-      show: false,
-      mode: 'move',
-      phase: 'team',
-      position: null,
-      staffId: null,
-      staffName: null,
-      sourceTeam: null,
-      targetTeam: null,
-      movedFteQuarter: null,
-      splitMovedHalfDayChoice: 'AUTO',
-      splitStayHalfDayChoice: 'AUTO',
-      splitInputMode: 'moved',
-      mergeInputMode: 'intoSource',
-      mergeTeams: [],
     })
   }
 
@@ -2453,16 +1806,6 @@ function SchedulePageContent() {
   }, [wardsByTeam, recalculationTeams])
 
   const totalBedsAllTeams = useMemo(() => wards.reduce((sum, ward) => sum + ward.total_beds, 0), [wards])
-
-  const closeColorContextAction = () => {
-    setColorContextAction({
-      show: false,
-      position: null,
-      staffId: null,
-      team: null,
-      selectedClassName: null,
-    })
-  }
 
   const { recalculateScheduleCalculations } = useScheduleAllocationRecalcAndSync({
     recalculateScheduleCalculationsForLoadRef,
@@ -2643,87 +1986,6 @@ function SchedulePageContent() {
     scheduleActions.applyBaselineViewAllocations(overrides as any)
   }
 
-  const STEP_ORDER: ScheduleStepId[] = ['leave-fte', 'therapist-pca', 'floating-pca', 'bed-relieving', 'review']
-  const hasLaterStepData = (target: ScheduleStepId) => {
-    const idx = STEP_ORDER.indexOf(target)
-    if (idx < 0) return false
-    const later = STEP_ORDER.slice(idx + 1, STEP_ORDER.indexOf('review'))
-    return later.some(stepId => stepStatus[stepId] !== 'pending')
-  }
-
-  const showClearForCurrentStep = useMemo(() => {
-    const hasStep1Overrides = Object.keys(staffOverrides ?? {}).length > 0
-
-    const hasNonBaselineTherapistAllocs = TEAMS.some(team =>
-      (therapistAllocations[team] || []).some(a => typeof a.id === 'string' && !a.id.startsWith('baseline-therapist:'))
-    )
-    const hasNonBaselinePcaAllocs = TEAMS.some(team =>
-      (pcaAllocations[team] || []).some(a => typeof a.id === 'string' && !a.id.startsWith('baseline-pca:'))
-    )
-
-    // Step 2 is considered to have data if algorithm allocations exist or step-specific override keys exist.
-    const hasStep2OverrideKeys = Object.values(staffOverrides ?? {}).some((o: any) => {
-      if (!o || typeof o !== 'object') return false
-      if (Array.isArray(o.specialProgramOverrides) && o.specialProgramOverrides.length > 0) return true
-      if (hasAnySubstitution(o)) return true
-      // Team transfer overrides (fixed-team therapist emergency move)
-      if (o.team != null) return true
-      return false
-    })
-    const hasStep2Data =
-      step2Result != null ||
-      initializedSteps.has('therapist-pca') ||
-      stepStatus['therapist-pca'] !== 'pending' ||
-      hasNonBaselineTherapistAllocs ||
-      hasNonBaselinePcaAllocs ||
-      hasStep2OverrideKeys
-
-    // Step 3 has data if floating allocations exist, or slotOverrides exist, or tracking state exists.
-    const hasStep3SlotOverrides = Object.values(staffOverrides ?? {}).some((o: any) => !!o?.slotOverrides)
-    const hasFloatingAllocations = TEAMS.some(team =>
-      (pcaAllocations[team] || []).some(a => {
-        const staffMember = staff.find(s => s.id === a.staff_id)
-        return !!staffMember?.floating
-      })
-    )
-    const hasStep3Data =
-      initializedSteps.has('floating-pca') ||
-      stepStatus['floating-pca'] !== 'pending' ||
-      adjustedPendingFTE != null ||
-      teamAllocationOrder != null ||
-      allocationTracker != null ||
-      hasStep3SlotOverrides ||
-      hasFloatingAllocations
-
-    const hasStep4Notes = Object.keys(bedRelievingNotesByToTeam ?? {}).length > 0
-    const hasStep4Data =
-      initializedSteps.has('bed-relieving') ||
-      stepStatus['bed-relieving'] !== 'pending' ||
-      (bedAllocations?.length ?? 0) > 0 ||
-      hasStep4Notes
-
-    const step = currentStep as ScheduleStepId
-    if (step === 'leave-fte') return hasStep1Overrides || hasStep2Data || hasStep3Data || hasStep4Data
-    if (step === 'therapist-pca') return hasStep2Data || hasStep3Data || hasStep4Data
-    if (step === 'floating-pca') return hasStep3Data || hasStep4Data
-    if (step === 'bed-relieving') return hasStep4Data
-    return false
-  }, [
-    currentStep,
-    staffOverrides,
-    staff,
-    therapistAllocations,
-    pcaAllocations,
-    bedAllocations,
-    bedRelievingNotesByToTeam,
-    step2Result,
-    initializedSteps,
-    stepStatus,
-    adjustedPendingFTE,
-    teamAllocationOrder,
-    allocationTracker,
-  ])
-
   const {
     handleNextStep,
     handlePreviousStep,
@@ -2777,118 +2039,45 @@ function SchedulePageContent() {
     scheduleActions.resetStep3ForReentry()
   }
 
-  const clearStepOnly = async (stepId: ScheduleStepId) => {
-    // UI-only: close any step dialogs to avoid dangling resolvers.
-    setShowSpecialProgramOverrideDialog(false)
-    specialProgramOverrideResolverRef.current = null
-    setShowSptFinalEditDialog(false)
-    sptFinalEditResolverRef.current = null
-    setShowSharedTherapistEditDialog(false)
-    setSharedTherapistDialogData(null)
-    sharedTherapistEditResolverRef.current = null
-    setStep21RuntimeVisible(null)
-    resetSubstitutionWizardForStepClear()
-    closeAllStep3Dialogs()
-
-    // Clear page-local Step 3 UI state
-    setAdjustedPendingFTE(null)
-    setTeamAllocationOrder(null)
-    setAllocationTracker(null)
-
-    scheduleActions.clearDomainFromStep(stepId)
-  }
-
-  const clearFromStep = async (stepId: ScheduleStepId) => {
-    // Close any step dialogs to avoid dangling resolvers.
-    setShowSpecialProgramOverrideDialog(false)
-    specialProgramOverrideResolverRef.current = null
-    setShowSptFinalEditDialog(false)
-    sptFinalEditResolverRef.current = null
-    setShowSharedTherapistEditDialog(false)
-    setSharedTherapistDialogData(null)
-    sharedTherapistEditResolverRef.current = null
-    setStep21RuntimeVisible(null)
-    resetSubstitutionWizardForStepClear()
-    closeAllStep3Dialogs()
-
-    // Clear page-local Step 3 UI state
-    setAdjustedPendingFTE(null)
-    setTeamAllocationOrder(null)
-    setAllocationTracker(null)
-
-    scheduleActions.clearDomainFromStep(stepId)
-  }
-
-  const handleClearStep = (stepIdRaw: string) => {
-    const stepId = stepIdRaw as ScheduleStepId
-    if (!['leave-fte', 'therapist-pca', 'floating-pca', 'bed-relieving'].includes(stepId)) return
-
-    if (hasLaterStepData(stepId)) {
-      const clearedLabel =
-        stepId === 'leave-fte'
-          ? 'Steps 1–4'
-          : stepId === 'therapist-pca'
-            ? 'Steps 2–4'
-            : stepId === 'floating-pca'
-              ? 'Steps 3–4'
-              : 'Step 4'
-
-      showActionToast(
-        'This will clear later steps too',
-        'warning',
-        `Later-step data exists. Confirm to clear ${clearedLabel}.`,
-        {
-          persistUntilDismissed: true,
-          dismissOnOutsideClick: true,
-          actions: (
-            <div className="flex items-center justify-end gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  dismissActionToast()
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                onClick={async (e) => {
-                  e.stopPropagation()
-                  dismissActionToast()
-                  await clearFromStep(stepId)
-                  showActionToast('Cleared', 'success', `Cleared ${clearedLabel}.`)
-                }}
-              >
-                Confirm
-              </Button>
-            </div>
-          ),
-        }
-      )
-      return
-    }
-
-    ;(async () => {
-      await clearStepOnly(stepId)
-      const label =
-        stepId === 'leave-fte'
-          ? 'Step 1 (Leave & FTE)'
-          : stepId === 'therapist-pca'
-            ? 'Step 2 (Therapist & PCA)'
-            : stepId === 'floating-pca'
-              ? 'Step 3 (Floating PCA)'
-              : 'Step 4 (Bed Relieving)'
-      showActionToast('Cleared', 'success', `Cleared ${label}.`)
-    })().catch((e) => {
-      console.error('Clear step failed:', e)
-      showActionToast('Clear failed', 'error', (e as any)?.message || 'Please try again.')
-    })
-  }
+  const { showClearForCurrentStep, handleClearStep } = useScheduleStepClearActions({
+    currentStep,
+    stepStatus,
+    initializedSteps,
+    staffOverrides,
+    therapistAllocations,
+    pcaAllocations,
+    bedAllocations,
+    bedRelievingNotesByToTeam,
+    step2Result,
+    adjustedPendingFTE,
+    teamAllocationOrder,
+    allocationTracker,
+    staff,
+    showActionToast,
+    dismissActionToast,
+    closeDialogsForStepClear: () => {
+      // UI-only: close any step dialogs to avoid dangling resolvers.
+      setShowSpecialProgramOverrideDialog(false)
+      specialProgramOverrideResolverRef.current = null
+      setShowSptFinalEditDialog(false)
+      sptFinalEditResolverRef.current = null
+      setShowSharedTherapistEditDialog(false)
+      setSharedTherapistDialogData(null)
+      sharedTherapistEditResolverRef.current = null
+      setStep21RuntimeVisible(null)
+      resetSubstitutionWizardForStepClear()
+      closeAllStep3Dialogs()
+    },
+    clearStep3UiStateForStepClear: () => {
+      // Clear page-local Step 3 UI state
+      setAdjustedPendingFTE(null)
+      setTeamAllocationOrder(null)
+      setAllocationTracker(null)
+    },
+    clearDomainFromStep: (stepId) => {
+      scheduleActions.clearDomainFromStep(stepId)
+    },
+  })
   
   /**
    * Handle save from FloatingPCAConfigDialog (Steps 3.1 + 3.2 + 3.3 + 3.4)
@@ -3379,152 +2568,40 @@ function SchedulePageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingStep2AfterInactivePromotion, staff, inactiveStaff, bufferStaff])
 
-  const therapistAllocationsForDisplay = useMemo(() => {
-    const out = createEmptyTeamRecordFactory<any[]>(() => [])
-    visibleTeams.forEach((mainTeam) => {
-      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
-      out[mainTeam] = contributors.flatMap((team) => therapistAllocations[team] || [])
-    })
-    return out
-  }, [visibleTeams, teamContributorsByMain, therapistAllocations])
-
-  const pcaDisplayAllocationsByTeam = useMemo(
-    () =>
-      buildDisplayPcaAllocationsByTeam({
-        selectedDate,
-        staff: [...staff, ...bufferStaff],
-        staffOverrides: staffOverrides as any,
-        pcaAllocationsByTeam: pcaAllocationsForUi as Record<Team, Array<PCAAllocation & { staff?: Staff }>>,
-      }),
-    [selectedDate, staff, bufferStaff, staffOverrides, pcaAllocationsForUi]
-  )
-
-  const pcaAllocationsForDisplay = useMemo(() => {
-    const out = createEmptyTeamRecordFactory<any[]>(() => [])
-    visibleTeams.forEach((mainTeam) => {
-      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
-      const mergedRows = contributors
-        .flatMap((team) => pcaDisplayAllocationsByTeam[team] || [])
-        .map((alloc: any) => {
-          const canonical = (value: unknown) =>
-            TEAMS.includes(value as Team)
-              ? getMainTeam(value as Team, effectiveTeamMergeConfig.mergedInto)
-              : value
-          return {
-            ...alloc,
-            team: canonical(alloc?.team),
-            slot1: canonical(alloc?.slot1),
-            slot2: canonical(alloc?.slot2),
-            slot3: canonical(alloc?.slot3),
-            slot4: canonical(alloc?.slot4),
-          }
-        })
-      const seen = new Set<string>()
-      out[mainTeam] = mergedRows.filter((alloc: any) => {
-        const contributesToMain =
-          alloc?.team === mainTeam ||
-          alloc?.slot1 === mainTeam ||
-          alloc?.slot2 === mainTeam ||
-          alloc?.slot3 === mainTeam ||
-          alloc?.slot4 === mainTeam
-        if (!contributesToMain) return false
-
-        const key =
-          (alloc?.id && String(alloc.id)) ||
-          `${String(alloc?.staff_id ?? '')}:${String(alloc?.team ?? '')}:${String(alloc?.slot1 ?? '')}:${String(alloc?.slot2 ?? '')}:${String(alloc?.slot3 ?? '')}:${String(alloc?.slot4 ?? '')}`
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-    })
-    return out
-  }, [visibleTeams, teamContributorsByMain, pcaDisplayAllocationsByTeam, effectiveTeamMergeConfig.mergedInto])
-
-  const calculationsForDisplay = useMemo(() => {
-    const out = createEmptyTeamRecord<ScheduleCalculations | null>(null)
-    visibleTeams.forEach((mainTeam) => {
-      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
-      out[mainTeam] = combineScheduleCalculations(contributors.map((team) => calculations[team]))
-    })
-    return out
-  }, [visibleTeams, teamContributorsByMain, calculations])
-
-  const bedCountsOverridesByTeamForDisplay = useMemo(() => {
-    const out: BedCountsShsStudentMergedByTeam = {}
-    visibleTeams.forEach((mainTeam) => {
-      const contributors = teamContributorsByMain[mainTeam] || [mainTeam]
-      let shsTotal = 0
-      let studentTotal = 0
-      let hasAny = false
-      contributors.forEach((team) => {
-        const override = bedCountsOverridesByTeam?.[team] ?? null
-        if (override && typeof override.shsBedCounts === 'number') {
-          shsTotal += override.shsBedCounts
-          hasAny = true
-        }
-        if (override && typeof override.studentPlacementBedCounts === 'number') {
-          studentTotal += override.studentPlacementBedCounts
-          hasAny = true
-        }
-      })
-      if (hasAny) {
-        out[mainTeam] = {
-          shsBedCounts: shsTotal,
-          studentPlacementBedCounts: studentTotal,
-        }
-      }
-    })
-    return out
-  }, [visibleTeams, teamContributorsByMain, bedCountsOverridesByTeam])
-
-  const bedRelievingNotesByToTeamForDisplay = useMemo(() => {
-    return projectBedRelievingNotesForDisplay({
-      bedRelievingNotesByToTeam,
-      mergedInto: effectiveTeamMergeConfig.mergedInto,
-    })
-  }, [bedRelievingNotesByToTeam, effectiveTeamMergeConfig.mergedInto])
-
-  const bedAllocationsForDisplay = useMemo(() => {
-    const mapped = (bedAllocations || []).map((allocation) => ({
-      ...allocation,
-      from_team: getMainTeam(allocation.from_team, effectiveTeamMergeConfig.mergedInto),
-      to_team: getMainTeam(allocation.to_team, effectiveTeamMergeConfig.mergedInto),
-    }))
-    return mapped.filter((allocation) => allocation.from_team !== allocation.to_team)
-  }, [bedAllocations, effectiveTeamMergeConfig.mergedInto])
-
-  const allPCAAllocationsFlat = useMemo(
-    () => visibleTeams.flatMap((team) => pcaAllocationsForDisplay[team] || []),
-    [visibleTeams, pcaAllocationsForDisplay]
-  )
-
-  // Step 3.1 "final" order (after user adjustments) for tooltip/display.
-  const step3OrderPositionByTeam = useMemo(() => {
-    const map: Record<Team, number | undefined> = { FO: undefined, SMM: undefined, SFM: undefined, CPPC: undefined, MC: undefined, GMC: undefined, NSM: undefined, DRO: undefined }
-    if (!teamAllocationOrder || teamAllocationOrder.length === 0) return map
-    teamAllocationOrder.forEach((t, idx) => {
-      map[t] = idx + 1
-    })
-    return map
-  }, [teamAllocationOrder])
-
-  // Remaining floating PCA slot capacity (FTE) after current allocations (for diagnostics/tooltips).
-  const floatingPoolRemainingFte = useMemo(() => {
-    const byId = new Map<string, number>()
-    for (const alloc of allPCAAllocationsFlat as any[]) {
-      const staffRow = (alloc as any)?.staff
-      if (!staffRow?.floating) continue
-      const id = String((alloc as any)?.staff_id ?? '')
-      if (!id) continue
-      const rem = typeof (alloc as any)?.fte_remaining === 'number' ? (alloc as any).fte_remaining : 0
-      byId.set(id, Math.max(byId.get(id) ?? 0, rem))
-    }
-    let sum = 0
-    byId.forEach((v) => {
-      sum += Math.max(0, v)
-    })
-    return sum
-  }, [allPCAAllocationsFlat])
+  const {
+    therapistAllocationsForDisplay,
+    pcaAllocationsForDisplay,
+    calculationsForDisplay,
+    bedCountsOverridesByTeamForDisplay,
+    bedRelievingNotesByToTeamForDisplay,
+    bedAllocationsForDisplay,
+    allPCAAllocationsFlat,
+    step3OrderPositionByTeam,
+    floatingPoolRemainingFte,
+    therapistOverridesByTeam,
+    staffOverridesForPcaDisplay,
+    pcaOverridesByTeam,
+    pcaBalanceSanity,
+  } = useScheduleDisplayProjections({
+    selectedDate,
+    visibleTeams,
+    teamContributorsByMain,
+    mergedInto: effectiveTeamMergeConfig.mergedInto,
+    therapistAllocations,
+    pcaAllocationsForUi,
+    bedAllocations,
+    calculations: calculations as Record<Team, ScheduleCalculations | null>,
+    staff,
+    bufferStaff,
+    staffOverrides,
+    bedCountsOverridesByTeam,
+    bedRelievingNotesByToTeam,
+    teamAllocationOrder,
+    currentStep,
+    initializedSteps,
+    displayViewForCurrentWeekday,
+    specialPrograms,
+  })
 
   const onEditTherapistByTeam = useMemo(() => {
     const next = createEmptyTeamRecordFactory<(staffId: string, e?: React.MouseEvent) => void>(() => () => {})
@@ -3541,165 +2618,6 @@ function SchedulePageContent() {
     }
     return next
   }, [openStaffContextMenu])
-
-  // Per-team override slices with caching: preserve object identity when unrelated staffOverrides entries change.
-  const overridesSliceCacheRef = useRef<{
-    therapist: Partial<Record<Team, { idsKey: string; slice: Record<string, any> }>>
-    pca: Partial<Record<Team, { idsKey: string; slice: Record<string, any> }>>
-  }>({ therapist: {}, pca: {} })
-
-  const therapistOverridesByTeam = useMemo(() => {
-    const prev = overridesSliceCacheRef.current.therapist
-    const next: Record<Team, Record<string, any>> = createEmptyTeamRecord<Record<string, any>>({})
-
-    for (const team of TEAMS) {
-      const sourceAllocations = visibleTeams.includes(team)
-        ? therapistAllocationsForDisplay[team]
-        : therapistAllocations[team]
-      const ids = Array.from(
-        new Set((sourceAllocations || []).map((a: any) => a.staff_id).filter(Boolean))
-      ).sort()
-      const idsKey = ids.join('|')
-
-      const cached = prev[team]
-      let canReuse = !!cached && cached.idsKey === idsKey
-      if (canReuse && cached) {
-        for (const id of ids) {
-          if (cached.slice[id] !== staffOverrides[id]) {
-            canReuse = false
-            break
-          }
-        }
-      }
-
-      if (canReuse && cached) {
-        next[team] = cached.slice
-      } else {
-        const slice: Record<string, any> = {}
-        for (const id of ids) {
-          if (staffOverrides[id] !== undefined) slice[id] = staffOverrides[id]
-        }
-        prev[team] = { idsKey, slice }
-        next[team] = slice
-      }
-    }
-
-    overridesSliceCacheRef.current.therapist = prev
-    return next
-  }, [visibleTeams, therapistAllocationsForDisplay, therapistAllocations, staffOverrides])
-
-  const extraCoverageByStaffIdForDisplay = useMemo(
-    () =>
-      deriveExtraCoverageByStaffId({
-        selectedDate,
-        pcaAllocationsByTeam: pcaAllocationsForUi as Record<Team, Array<PCAAllocation & { staff?: Staff }>>,
-        staff,
-        specialPrograms: (specialPrograms || []) as SpecialProgram[],
-        staffOverrides: stripExtraCoverageOverrides(staffOverrides as Record<string, any>),
-        visibleTeams,
-        teamContributorsByMain,
-        calculations,
-        mergedInto: effectiveTeamMergeConfig.mergedInto,
-      }),
-    [
-      selectedDate,
-      pcaAllocationsForUi,
-      staff,
-      specialPrograms,
-      staffOverrides,
-      visibleTeams,
-      teamContributorsByMain,
-      calculations,
-      effectiveTeamMergeConfig.mergedInto,
-    ]
-  )
-
-  const staffOverridesForPcaDisplay = useMemo(
-    () =>
-      mergeExtraCoverageIntoStaffOverridesForDisplay({
-        staffOverrides: staffOverrides as any,
-        extraCoverageByStaffId: extraCoverageByStaffIdForDisplay,
-        currentStep,
-        initializedSteps,
-      }),
-    [staffOverrides, extraCoverageByStaffIdForDisplay, currentStep, initializedSteps]
-  )
-
-  const pcaOverridesByTeam = useMemo(() => {
-    const prev = overridesSliceCacheRef.current.pca
-    const next: Record<Team, Record<string, any>> = createEmptyTeamRecord<Record<string, any>>({})
-
-    for (const team of TEAMS) {
-      const contributors = new Set<Team>(teamContributorsByMain[team] || [team])
-      const sourceAllocations = visibleTeams.includes(team)
-        ? pcaAllocationsForDisplay[team]
-        : pcaAllocationsForUi[team]
-      const ids = Array.from(
-        new Set((sourceAllocations || []).map((a: any) => a.staff_id).filter(Boolean))
-      ).sort()
-      const idsKey = ids.join('|')
-
-      const cached = prev[team]
-      let canReuse = !!cached && cached.idsKey === idsKey
-      if (canReuse && cached) {
-        for (const id of ids) {
-          if (cached.slice[id] !== staffOverridesForPcaDisplay[id]) {
-            canReuse = false
-            break
-          }
-        }
-      }
-
-      if (canReuse && cached) {
-        next[team] = cached.slice
-      } else {
-        const slice: Record<string, any> = {}
-        for (const id of ids) {
-          const rawOverride = staffOverridesForPcaDisplay[id]
-          if (rawOverride === undefined) continue
-
-          if (!visibleTeams.includes(team)) {
-            slice[id] = rawOverride
-            continue
-          }
-
-          const bySlot = (rawOverride as any)?.substitutionForBySlot
-          const mappedBySlot =
-            bySlot && typeof bySlot === 'object'
-              ? Object.fromEntries(
-                  Object.entries(bySlot).map(([slotKey, value]) => {
-                    const row = value as any
-                    if (!row || !contributors.has(row.team as Team)) return [slotKey, row]
-                    return [slotKey, { ...row, team }]
-                  })
-                )
-              : bySlot
-
-          const subFor = (rawOverride as any)?.substitutionFor
-          const mappedSubFor =
-            subFor && contributors.has(subFor.team as Team)
-              ? { ...subFor, team }
-              : subFor
-
-          slice[id] =
-            mappedBySlot !== bySlot || mappedSubFor !== subFor
-              ? { ...rawOverride, substitutionForBySlot: mappedBySlot, substitutionFor: mappedSubFor }
-              : rawOverride
-        }
-        prev[team] = { idsKey, slice }
-        next[team] = slice
-      }
-    }
-
-    overridesSliceCacheRef.current.pca = prev
-    return next
-  }, [
-    visibleTeams,
-    pcaAllocationsForDisplay,
-    pcaAllocationsForUi,
-    staffOverridesForPcaDisplay,
-    teamContributorsByMain,
-  ])
 
   // ---------------------------------------------------------------------------
   // Copy button helpers (dynamic labels and source/target resolution)
@@ -4022,84 +2940,6 @@ function SchedulePageContent() {
     })
   }
 
-  const pcaBalanceSanity = useMemo(() => {
-    const teamBalances: Array<{ team: Team; assigned: number; target: number; balance: number }> = []
-    let positiveSum = 0
-    let negativeAbsSum = 0
-
-    for (const team of visibleTeams) {
-      const allocationsForTeam = (pcaAllocationsForDisplay[team] || []) as Array<PCAAllocation & { staff: Staff }>
-      let assignedRaw = 0
-
-      allocationsForTeam.forEach((alloc) => {
-        const slotsForTeam = getSlotsForTeam(alloc, team)
-        if (slotsForTeam.length === 0) return
-
-        const override = staffOverrides?.[alloc.staff_id] as any
-        const invalidSlotFromArray =
-          Array.isArray(override?.invalidSlots) && override.invalidSlots.length > 0
-            ? override.invalidSlots[0]?.slot
-            : undefined
-        const invalidSlot =
-          typeof (alloc as any).invalid_slot === 'number'
-            ? (alloc as any).invalid_slot
-            : typeof override?.invalidSlot === 'number'
-              ? override.invalidSlot
-              : invalidSlotFromArray
-
-        const validSlotsForTeam = invalidSlot ? slotsForTeam.filter((s) => s !== invalidSlot) : slotsForTeam
-        const specialProgramSlots = getSpecialProgramSlotsForTeam(alloc, team)
-        const regularSlotsForTeam = validSlotsForTeam.filter((slot) => !specialProgramSlots.includes(slot))
-        assignedRaw += regularSlotsForTeam.length * 0.25
-      })
-
-      const assigned = roundToNearestQuarterWithMidpoint(assignedRaw)
-      const target = calculationsForDisplay[team]?.average_pca_per_team ?? 0
-      const balance = assigned - target
-      if (balance > 0) positiveSum += balance
-      if (balance < 0) negativeAbsSum += Math.abs(balance)
-
-      teamBalances.push({ team, assigned, target, balance })
-    }
-
-    const netDiff = positiveSum - negativeAbsSum
-    const perTeamText = teamBalances
-      .map((x) => `${x.team} ${x.balance >= 0 ? '+' : ''}${x.balance.toFixed(2)}`)
-      .join(' | ')
-
-    return {
-      teamBalances,
-      positiveSum,
-      negativeAbsSum,
-      netDiff,
-      perTeamText,
-    }
-  }, [visibleTeams, calculationsForDisplay, pcaAllocationsForDisplay, staffOverrides, specialPrograms, selectedDate])
-
-
-  // Handle slot toggle in the selection popover
-  const handleSlotToggle = (slot: number) => {
-    setPcaDragState(prev => {
-      const isSelected = prev.selectedSlots.includes(slot)
-      return {
-        ...prev,
-        selectedSlots: isSelected
-          ? prev.selectedSlots.filter(s => s !== slot)
-          : [...prev.selectedSlots, slot],
-      }
-    })
-  }
-
-  const handlePcaContextSlotToggle = (slot: number) => {
-    setPcaContextAction(prev => {
-      const isSelected = prev.selectedSlots.includes(slot)
-      return {
-        ...prev,
-        selectedSlots: isSelected ? prev.selectedSlots.filter(s => s !== slot) : [...prev.selectedSlots, slot],
-      }
-    })
-  }
-
   const {
     resetPcaDragState,
     performSlotTransfer,
@@ -4142,6 +2982,7 @@ function SchedulePageContent() {
     setPendingPCAFTEPerTeam,
     stripExtraCoverageOverrides,
   })
+  performSlotTransferFromPopoverRef.current = performSlotTransfer
 
   const { gridStaffContextMenuItems, staffPoolContextMenuItems } = useScheduleAllocationContextMenus({
     staffContextMenu,
@@ -4164,6 +3005,37 @@ function SchedulePageContent() {
     setSptPoolAssignAction,
     setBufferStaffEditDialog,
     setBufferStaffConvertConfirm,
+  })
+
+  const gridInteractionOverlay = buildOverlayGroups({
+    topLoadingVisible,
+    topLoadingProgress,
+    resetPcaDragState,
+    handleStartDragFromPopover,
+    performPcaSlotAssignFromPool,
+    performSlotTransfer,
+    performSlotDiscard,
+    gridStaffContextMenuItems,
+    staffPoolContextMenuItems,
+    visibleTeams,
+    staff,
+    bufferStaff,
+    setBufferStaff,
+    staffOverrides,
+    setStaffOverrides,
+    showActionToast,
+    getTherapistFteByTeam,
+    getTherapistLeaveType,
+    captureUndoCheckpoint,
+    pcaAllocations,
+    therapistAllocations,
+    specialPrograms,
+    sptWeekdayByStaffId,
+    updateBufferStaffTeamAction,
+    convertBufferStaffToInactiveAction,
+    loadStaff,
+    isLikelyMobileDevice,
+    activeDragStaffForOverlay,
   })
 
   const scheduleDisplayToolsNode = isSplitMode ? null : (
@@ -4209,120 +3081,7 @@ function SchedulePageContent() {
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
     >
-      <SchedulePageGridInteractionOverlays
-        overlays={{
-          topLoadingVisible,
-          topLoadingProgress,
-          pcaSlotSelection:
-            pcaDragState.showSlotSelection && pcaDragState.popoverPosition && pcaDragState.staffName
-              ? {
-                  staffName: pcaDragState.staffName,
-                  availableSlots: pcaDragState.availableSlots,
-                  selectedSlots: pcaDragState.selectedSlots,
-                  position: pcaDragState.popoverPosition,
-                  isDiscardMode: pcaDragState.isDiscardMode,
-                  mode:
-                    pcaDragState.isDiscardMode
-                      ? 'confirm'
-                      : !pcaDragState.isDiscardMode && pcaDragState.inferredTargetTeam
-                        ? 'hybrid'
-                        : 'drag',
-                  confirmDisabled:
-                    !!pcaDragState.isDiscardMode
-                      ? false
-                      : !pcaDragState.inferredTargetTeam ||
-                        pcaDragState.inferredTargetTeam === pcaDragState.sourceTeam,
-                  confirmHint:
-                    pcaDragState.isDiscardMode
-                      ? 'Discard selected slot(s)'
-                      : !pcaDragState.isDiscardMode && pcaDragState.inferredTargetTeam
-                        ? (
-                            <div className="flex items-center gap-1.5">
-                              <span className="truncate">Default target</span>
-                              <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
-                                {pcaDragState.inferredTargetTeam}
-                              </Badge>
-                            </div>
-                          )
-                        : undefined,
-                  onConfirm:
-                    pcaDragState.isDiscardMode
-                      ? () => {
-                          if (!pcaDragState.staffId || !pcaDragState.sourceTeam) return
-                          performSlotDiscard(pcaDragState.staffId, pcaDragState.sourceTeam, pcaDragState.selectedSlots)
-                          resetPcaDragState()
-                        }
-                      : !pcaDragState.isDiscardMode && pcaDragState.inferredTargetTeam
-                        ? () => performSlotTransfer(pcaDragState.inferredTargetTeam as Team)
-                        : undefined,
-                }
-              : null,
-          onSlotToggle: handleSlotToggle,
-          onCloseSlotSelection: resetPcaDragState,
-          onStartDragFromSlotPopover: handleStartDragFromPopover,
-        }}
-        contextMenus={{
-          staffContextMenu,
-          closeStaffContextMenu,
-          gridStaffContextMenuItems,
-          staffPoolContextMenu,
-          closeStaffPoolContextMenu,
-          staffPoolContextMenuItems,
-        }}
-        sharedGrid={{
-          visibleTeams,
-          staff,
-          bufferStaff,
-          setBufferStaff,
-          staffOverrides,
-          setStaffOverrides,
-          showActionToast,
-          getTherapistFteByTeam,
-          getTherapistLeaveType,
-          captureUndoCheckpoint,
-          pcaAllocations,
-          therapistAllocations,
-          specialPrograms,
-          sptWeekdayByStaffId,
-        }}
-        poolAndBuffer={{
-          pcaPoolAssignAction,
-          setPcaPoolAssignAction,
-          closePcaPoolAssignAction,
-          performPcaSlotAssignFromPool,
-          sptPoolAssignAction,
-          setSptPoolAssignAction,
-          closeSptPoolAssignAction,
-          updateBufferStaffTeamAction,
-          bufferStaffConvertConfirm,
-          setBufferStaffConvertConfirm,
-          convertBufferStaffToInactiveAction,
-          loadStaff,
-          bufferStaffEditDialog,
-          setBufferStaffEditDialog,
-        }}
-        slotsColorWarningsDrag={{
-          performSlotTransfer,
-          performSlotDiscard,
-          pcaContextAction,
-          setPcaContextAction,
-          closePcaContextAction,
-          handlePcaContextSlotToggle,
-          therapistContextAction,
-          setTherapistContextAction,
-          closeTherapistContextAction,
-          colorContextAction,
-          setColorContextAction,
-          closeColorContextAction,
-          leaveEditWarningPopover,
-          setLeaveEditWarningPopover,
-          bedRelievingEditWarningPopover,
-          pcaDragState,
-          mousePositionRef,
-          isLikelyMobileDevice,
-          activeDragStaffForOverlay,
-        }}
-      />
+      <SchedulePageGridInteractionOverlays {...gridInteractionOverlay.overlayGroups} />
 
       
       <ScheduleMainBoardChrome isSplitMode={isSplitMode}>
@@ -4400,225 +3159,56 @@ function SchedulePageContent() {
           onClearCache={handleDeveloperCacheClear}
         />
         )}
-        {allowScheduleDevHarnessRuntime ? (
-        <ScheduleDevLeaveSimBridgeDynamic
-            open={devLeaveSimOpen}
-            onOpenChange={setDevLeaveSimOpen}
-            userRole={userRole}
-            selectedDate={selectedDate}
-            selectedDateKey={toDateKey(selectedDate)}
-            weekday={currentWeekday}
-            staff={staff}
-            specialPrograms={specialPrograms}
-            sptAllocations={sptAllocations}
-            staffOverrides={staffOverrides as any}
-            showSharedTherapistStep={showSharedTherapistStep}
-            visibleTeams={visibleTeams}
-            pendingPCAFTEPerTeam={pendingPCAFTEPerTeam}
-            setStaffOverrides={(next) => setStaffOverrides(next as any)}
-            clearDomainFromStep={(stepId) => scheduleActions.clearDomainFromStep(stepId as any)}
-            goToStep={goToStep as any}
-            setInitializedSteps={(next) => setInitializedSteps(next as any)}
-            setStepStatus={(next) => setStepStatus(next as any)}
-            setStep2Result={(next) => setStep2Result(next as any)}
-            setHasSavedAllocations={(next) => setHasSavedAllocations(next as any)}
-            setTieBreakDecisions={(next) => setTieBreakDecisions(next as any)}
-            recalculateScheduleCalculations={recalculateScheduleCalculations}
-            runStep2={async ({ cleanedOverrides }) => {
-              setStep21RuntimeVisible(false)
-              return await scheduleActions.runStep2TherapistAndNonFloatingPCA({
-                cleanedOverrides: cleanedOverrides as any,
-                toast: showActionToast,
-                onStep21Projection: ({ showStep21 }) => {
-                  setStep21RuntimeVisible(showStep21)
-                },
-              })
-            }}
-            runStep2Auto={async ({ autoStep20, autoStep21, autoStep22, autoStep23 }) => {
-              // Step numbering:
-              // - Step 2.0: Special Program Override dialog
-              // - Step 2.1: Non-floating PCA substitution dialog
-              // - Step 2.2: SPT Final Edit dialog
-              //
-              // Harness flags:
-              // - autoStep21 => skip Step 2.0 (special programs)
-              // - autoStep20 => auto-handle Step 2.1 (substitution)
-              // - autoStep22 => skip Step 2.2 (SPT final edit)
-              // - autoStep23 => skip Step 2.3 (shared therapist edit) when applicable
-
-              // If the caller wants the real special-program override dialog, open it and await results.
-              let baseOverrides: any = { ...(staffOverrides as any) }
-
-              const weekday = getWeekday(selectedDate)
-              const activeSpecialPrograms = specialPrograms.filter((p) => (p as any)?.weekdays?.includes?.(weekday))
-
-              if (!autoStep21 && activeSpecialPrograms.length > 0) {
-                const overridesFromDialog = await new Promise<Record<string, any>>((resolve) => {
-                  const resolver = (overrides: Record<string, any>) => resolve(overrides || {})
-                  specialProgramOverrideResolverRef.current = resolver as any
-                  prefetchSpecialProgramOverrideDialog().catch(() => {})
-                  setStep21RuntimeVisible(null)
-                  setShowSpecialProgramOverrideDialog(true)
-                })
-
-                Object.entries(overridesFromDialog || {}).forEach(([staffId, override]) => {
-                  baseOverrides[staffId] = {
-                    ...(baseOverrides[staffId] ?? { leaveType: null, fteRemaining: 1.0 }),
-                    ...(override as any),
-                  }
-                })
-              }
-
-              const cleanedOverrides = resetStep2OverridesForAlgoEntry({
-                staffOverrides: baseOverrides,
-                allStaff: [...staff, ...bufferStaff],
-              })
-              setStaffOverrides(cleanedOverrides as any)
-
-              const autoSelectSubstitutions = (params: {
-                teams: Team[]
-                substitutionsByTeam: Record<Team, any[]>
-              }): Record<string, Array<{ floatingPCAId: string; slots: number[] }>> => {
-                const selections: Record<string, Array<{ floatingPCAId: string; slots: number[] }>> = {}
-                const used = new Set<string>() // `${floatingId}:${slot}`
-
-                const scoreCandidate = (c: any, missing: number[]) => {
-                  const avail: number[] = Array.isArray(c?.availableSlots) ? c.availableSlots : []
-                  const coverage = missing.filter((s) => avail.includes(s)).length
-                  const preferred = c?.isPreferred ? 1 : 0
-                  const floor = c?.isFloorPCA ? 1 : 0
-                  return { preferred, floor, coverage, name: String(c?.name ?? '') }
-                }
-
-                for (const team of params.teams) {
-                  const subs = params.substitutionsByTeam?.[team] ?? []
-                  for (const sub of subs) {
-                    const key = `${team}-${sub.nonFloatingPCAId}`
-                    const missingSlots: number[] = Array.isArray(sub?.missingSlots) ? sub.missingSlots : []
-                    const candidates: any[] = Array.isArray(sub?.availableFloatingPCAs) ? sub.availableFloatingPCAs : []
-                    if (missingSlots.length === 0 || candidates.length === 0) continue
-
-                    let remaining = [...missingSlots]
-                    const picked: Array<{ floatingPCAId: string; slots: number[] }> = []
-
-                    const sorted = [...candidates].sort((a, b) => {
-                      const sa = scoreCandidate(a, missingSlots)
-                      const sb = scoreCandidate(b, missingSlots)
-                      if (sa.preferred !== sb.preferred) return sb.preferred - sa.preferred
-                      if (sa.floor !== sb.floor) return sb.floor - sa.floor
-                      if (sa.coverage !== sb.coverage) return sb.coverage - sa.coverage
-                      return sa.name.localeCompare(sb.name)
-                    })
-
-                    for (const c of sorted) {
-                      if (remaining.length === 0) break
-                      const id = String(c?.id ?? '')
-                      if (!id) continue
-                      const avail: number[] = Array.isArray(c?.availableSlots) ? c.availableSlots : []
-                      const slots = remaining.filter((s) => avail.includes(s) && !used.has(`${id}:${s}`))
-                      if (slots.length === 0) continue
-                      slots.forEach((s) => used.add(`${id}:${s}`))
-                      picked.push({ floatingPCAId: id, slots })
-                      remaining = remaining.filter((s) => !slots.includes(s))
-                    }
-
-                    if (picked.length > 0) selections[key] = picked
-                  }
-                }
-
-                return selections
-              }
-
-              while (true) {
-                if (!autoStep20) {
-                  await generateStep2_TherapistAndNonFloatingPCA(cleanedOverrides as any)
-                } else {
-                  await runStep2WithHarnessSubstitutionAuto(cleanedOverrides as any, autoSelectSubstitutions)
-                }
-
-                // Step 2.2 (SPT Final Edit)
-                if (autoStep22) break
-                const step22 = await showStep2Point2_SptFinalEdit()
-                if (step22 === null) break
-                if ((step22 as any)?.__nav === 'back') continue
-                if (step22 && Object.keys(step22).length > 0) {
-                  applyStep2Point2_SptFinalEdits(step22 as any)
-                }
-                break
-              }
-
-              if (showSharedTherapistStep && !autoStep23) {
-                const step23 = await showStep2Point3_SharedTherapistEdit()
-                if (step23 && Object.keys(step23).length > 0) {
-                  applyStep2Point3_SharedTherapistEdits(step23 as any)
-                }
-              }
-            }}
-            runStep3={async (args) => {
-              await scheduleActions.runStep3FloatingPCA({
-                onTieBreak: args.onTieBreak as any,
-                userTeamOrder: args.userTeamOrder,
-                userAdjustedPendingFTE: args.userAdjustedPendingFTE,
-              })
-            }}
-            runStep3V2Auto={async ({ autoStep32, autoStep33, bufferPreAssignRatio }) => {
-              // Build defaults similar to the wizard (3.1/3.4), optionally auto-applying 3.0/3.2/3.3.
-              const pending0 = { ...pendingPCAFTEPerTeam }
-              const runtimeTeams = visibleTeams.length > 0 ? visibleTeams : TEAMS
-              TEAMS.forEach((team) => {
-                if (!runtimeTeams.includes(team)) pending0[team] = 0
-              })
-              const teamOrder = [...runtimeTeams].sort((a, b) => {
-                const d = (pending0[b] || 0) - (pending0[a] || 0)
-                if (d !== 0) return d
-                return runtimeTeams.indexOf(a) - runtimeTeams.indexOf(b)
-              })
-
-              const floatingPCAs = floatingPCAsForStep3
-              const baseExistingAllocations = existingAllocationsForStep3
-
-              const { executeStep3V2HarnessAuto } = await import(
-                '@/lib/features/schedule/step3Harness/runStep3V2Harness'
-              )
-              const harnessRun = await executeStep3V2HarnessAuto({
-                currentPendingFTE: pending0 as Record<Team, number>,
-                visibleTeams,
-                floatingPCAs: floatingPCAs as any,
-                existingAllocations: baseExistingAllocations as any,
-                pcaPreferences,
-                specialPrograms,
-                staffOverrides: staffOverrides as any,
-                selectedDate,
-                autoStep32,
-                autoStep33,
-                bufferPreAssignRatio,
-                bufferStaff: bufferStaff as any,
-              })
-
-              await handleFloatingPCAConfigSave(
-                harnessRun.result,
-                harnessRun.teamOrder,
-                harnessRun.step32Assignments as any,
-                harnessRun.step33Assignments as any
-              )
-            }}
-            openStep3Wizard={() => {
-              if (!step2Result) {
-                showActionToast('Step 2 must be completed before Step 3.', 'warning')
-                return
-              }
-              goToStep('floating-pca' as any)
-              setDevLeaveSimOpen(false)
-              openStep3EntryDialog()
-            }}
-            runStep4={async () => {
-              await runStep4BedRelieving({ toast: showActionToast })
-            }}
-            therapistAllocationsByTeam={therapistAllocations as any}
-            pcaAllocationsByTeam={pcaAllocations as any}
-            calculationsByTeam={calculations as any}
-          />
-        ) : null}
+        <ScheduleDevHarnessBridge
+          allowRuntime={allowScheduleDevHarnessRuntime}
+          open={devLeaveSimOpen}
+          onOpenChange={setDevLeaveSimOpen}
+          setDevLeaveSimOpen={setDevLeaveSimOpen}
+          userRole={userRole}
+          selectedDate={selectedDate}
+          selectedDateKey={toDateKey(selectedDate)}
+          weekday={currentWeekday}
+          staff={staff}
+          bufferStaff={bufferStaff}
+          specialPrograms={specialPrograms}
+          sptAllocations={sptAllocations}
+          staffOverrides={staffOverrides}
+          showSharedTherapistStep={showSharedTherapistStep}
+          visibleTeams={visibleTeams}
+          pendingPCAFTEPerTeam={pendingPCAFTEPerTeam}
+          setStaffOverrides={setStaffOverrides}
+          clearDomainFromStep={scheduleActions.clearDomainFromStep}
+          goToStep={goToStep}
+          setInitializedSteps={setInitializedSteps}
+          setStepStatus={setStepStatus}
+          setStep2Result={setStep2Result}
+          setHasSavedAllocations={setHasSavedAllocations}
+          setTieBreakDecisions={setTieBreakDecisions}
+          recalculateScheduleCalculations={recalculateScheduleCalculations}
+          runStep2TherapistAndNonFloatingPCA={scheduleActions.runStep2TherapistAndNonFloatingPCA}
+          runStep3FloatingPCA={scheduleActions.runStep3FloatingPCA}
+          setStep21RuntimeVisible={setStep21RuntimeVisible}
+          showActionToast={showActionToast}
+          specialProgramOverrideResolverRef={specialProgramOverrideResolverRef}
+          prefetchSpecialProgramOverrideDialog={prefetchSpecialProgramOverrideDialog}
+          setShowSpecialProgramOverrideDialog={setShowSpecialProgramOverrideDialog}
+          generateStep2TherapistAndNonFloatingPCA={generateStep2_TherapistAndNonFloatingPCA}
+          runStep2WithHarnessSubstitutionAuto={runStep2WithHarnessSubstitutionAuto}
+          showStep2Point2SptFinalEdit={showStep2Point2_SptFinalEdit}
+          applyStep2Point2SptFinalEdits={applyStep2Point2_SptFinalEdits}
+          showStep2Point3SharedTherapistEdit={showStep2Point3_SharedTherapistEdit}
+          applyStep2Point3SharedTherapistEdits={applyStep2Point3_SharedTherapistEdits}
+          floatingPCAsForStep3={floatingPCAsForStep3}
+          existingAllocationsForStep3={existingAllocationsForStep3}
+          pcaPreferences={pcaPreferences}
+          handleFloatingPCAConfigSave={handleFloatingPCAConfigSave}
+          step2Result={step2Result}
+          openStep3EntryDialog={openStep3EntryDialog}
+          runStep4BedRelieving={runStep4BedRelieving}
+          therapistAllocationsByTeam={therapistAllocations}
+          pcaAllocationsByTeam={pcaAllocations}
+          calculationsByTeam={calculations}
+        />
 
         {/* Step Indicator with Navigation — see ScheduleWorkflowStepShell (Phase 2b) */}
         <ScheduleWorkflowStepShell
@@ -4767,7 +3357,7 @@ function SchedulePageContent() {
                     pcaBalanceSanity,
                     bufferStaff,
                     pcaAllocations,
-                    staffOverridesForPcaDisplay,
+                    staffOverridesForPcaDisplay: staffOverridesForPcaDisplay as Record<string, StaffOverrideState>,
                     userRole,
                     allocationNotesDoc,
                     saveAllocationNotes,
