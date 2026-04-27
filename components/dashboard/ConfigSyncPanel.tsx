@@ -44,22 +44,12 @@ const CATEGORY_LABELS: Record<CategoryKey, string> = {
   pcaPreferences: 'PCA Preferences',
 }
 
-type ThresholdUnit = 'days' | 'weeks' | 'months'
-type ThresholdMode = 'off' | 'always' | 'custom'
-
 function normalizeDateKey(value: unknown): string | null {
   const raw = typeof value === 'string' ? value.trim() : String(value ?? '').trim()
   if (!raw) return null
   // Accept exact date keys and timestamp-like strings by extracting leading YYYY-MM-DD.
   const m = raw.match(/^(\d{4}-\d{2}-\d{2})/)
   return m ? m[1] : null
-}
-
-function getThresholdMode(value: number, unit: ThresholdUnit): ThresholdMode {
-  if (Number.isFinite(value) && value === 0) return 'always'
-  // We treat very large day thresholds as “off” (matches Schedule logic).
-  if (unit === 'days' && Number.isFinite(value) && value >= 3650) return 'off'
-  return 'custom'
 }
 
 function formatFriendlyDateTime(value: unknown): string {
@@ -85,13 +75,6 @@ function formatDisplayConfigId(value: unknown): string {
   const n = typeof value === 'number' ? value : Number(value ?? 0)
   if (!Number.isFinite(n) || n <= 0) return '#00000'
   return `#${String(Math.trunc(n)).padStart(5, '0')}`
-}
-
-function getThresholdFromHead(head: any): { value: number; unit: ThresholdUnit } {
-  const raw = head?.drift_notification_threshold
-  const unit: ThresholdUnit = raw?.unit === 'weeks' || raw?.unit === 'months' ? raw.unit : 'days'
-  const value = typeof raw?.value === 'number' ? raw.value : Number(raw?.value ?? 30)
-  return { value: Number.isFinite(value) && value >= 0 ? value : 30, unit }
 }
 
 function summarizeActiveGlobalMerges(rows: TeamSettingsMergeRow[]): Array<{ from: string; to: string; label?: string }> {
@@ -142,11 +125,6 @@ export function ConfigSyncPanel() {
     pcaPreferences: true,
   })
 
-  // Draft values for Custom mode (so Off/Always selections don't overwrite the user's custom draft).
-  const [customThresholdValue, setCustomThresholdValue] = useState<number>(30)
-  const [customThresholdUnit, setCustomThresholdUnit] = useState<ThresholdUnit>('days')
-  const [thresholdUiMode, setThresholdUiMode] = useState<ThresholdMode>('custom')
-
   const [pendingPublish, setPendingPublish] = useState(false)
   const [pendingPull, setPendingPull] = useState(false)
   const [backupNote, setBackupNote] = useState('')
@@ -158,13 +136,6 @@ export function ConfigSyncPanel() {
     const res = await supabase.rpc('get_config_global_head_v1')
     if (res.error) throw res.error
     setGlobalHead(res.data)
-    const { value, unit } = getThresholdFromHead(res.data)
-    const mode = getThresholdMode(value, unit)
-    setThresholdUiMode(mode)
-    if (mode === 'custom') {
-      setCustomThresholdValue(value)
-      setCustomThresholdUnit(unit)
-    }
   }
 
   const reloadBackups = async () => {
@@ -330,25 +301,6 @@ export function ConfigSyncPanel() {
 
   const selectedCategoryList = () =>
     (Object.keys(selectedCategories) as CategoryKey[]).filter((k) => selectedCategories[k])
-
-  const handleSaveThreshold = async (value: number, unit: ThresholdUnit) => {
-    try {
-      const res = await supabase.rpc('set_drift_notification_threshold_v1', { p_value: value, p_unit: unit })
-      if (res.error) throw res.error
-      setGlobalHead(res.data)
-      const { value: nextValue, unit: nextUnit } = getThresholdFromHead(res.data)
-      const mode = getThresholdMode(nextValue, nextUnit)
-      setThresholdUiMode(mode)
-      if (mode === 'custom') {
-        setCustomThresholdValue(nextValue)
-        setCustomThresholdUnit(nextUnit)
-      }
-      toast.success('Drift notification threshold updated.')
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      toast.error('Failed to update threshold.', msg)
-    }
-  }
 
   const handleCreateBackup = async () => {
     try {
@@ -607,121 +559,6 @@ export function ConfigSyncPanel() {
                 )}
               </div>
             </div>
-          </div>
-
-          <div className="rounded-md border border-border p-3 space-y-3">
-            {(() => {
-              const { value, unit } = getThresholdFromHead(globalHead)
-              const activeMode = getThresholdMode(value, unit)
-              const isActive = (m: ThresholdMode) => activeMode === m
-              const isUiSelected = (m: ThresholdMode) => thresholdUiMode === m
-              const btnBase =
-                'px-3 py-1.5 text-sm rounded-md transition-colors select-none'
-              const btnInactive = 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-              const btnOffActive = 'bg-muted text-foreground'
-              const btnAlwaysActive = 'bg-amber-100 text-amber-950'
-              const btnCustomActive = 'bg-sky-100 text-sky-950'
-
-              return (
-                <>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold">Schedule setup reminders</div>
-                      <div className="text-xs text-muted-foreground">
-                        When the published setup changes, older schedules may still use their saved setup. Choose when to show a reminder on the Schedule page.
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                      <div className="inline-flex items-center gap-1 rounded-md border bg-background p-1">
-                        <Tooltip
-                          side="bottom"
-                          className="whitespace-normal max-w-[280px]"
-                          content="Do not show reminders on the Schedule page."
-                        >
-                          <button
-                            type="button"
-                            className={[
-                              btnBase,
-                              isUiSelected('off') ? btnOffActive : btnInactive,
-                              isActive('off') ? '' : '',
-                            ].join(' ')}
-                            onClick={() => {
-                              setThresholdUiMode('off')
-                              void handleSaveThreshold(3650, 'days')
-                            }}
-                          >
-                            Off
-                          </button>
-                        </Tooltip>
-
-                        <Tooltip
-                          side="bottom"
-                          className="whitespace-normal max-w-[280px]"
-                          content="Always remind when the saved setup differs from the current published setup."
-                        >
-                          <button
-                            type="button"
-                            className={[btnBase, isUiSelected('always') ? btnAlwaysActive : btnInactive].join(' ')}
-                            onClick={() => {
-                              setThresholdUiMode('always')
-                              void handleSaveThreshold(0, 'days')
-                            }}
-                          >
-                            Always
-                          </button>
-                        </Tooltip>
-
-                        <Tooltip
-                          side="bottom"
-                          className="whitespace-normal max-w-[280px]"
-                          content="Only remind when the schedule is older than a chosen time window."
-                        >
-                          <button
-                            type="button"
-                            className={[btnBase, isUiSelected('custom') ? btnCustomActive : btnInactive].join(' ')}
-                            onClick={() => setThresholdUiMode('custom')}
-                          >
-                            Custom
-                          </button>
-                        </Tooltip>
-                      </div>
-
-                      <div className="text-[11px] text-muted-foreground">
-                        Current: {activeMode === 'off' ? 'Off' : activeMode === 'always' ? 'Always' : `Custom (${value} ${unit})`}
-                        {thresholdUiMode !== activeMode ? ' · Not saved' : ''}
-                      </div>
-                    </div>
-                  </div>
-
-                  {thresholdUiMode === 'custom' ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Label className="text-sm">Remind me when older than</Label>
-                      <Input
-                        className="w-24"
-                        type="number"
-                        min={0}
-                        max={3650}
-                        value={Number.isFinite(customThresholdValue) ? customThresholdValue : 30}
-                        onChange={(e) => setCustomThresholdValue(Number(e.target.value))}
-                      />
-                      <select
-                        value={customThresholdUnit}
-                        onChange={(e) => setCustomThresholdUnit(e.target.value as ThresholdUnit)}
-                        className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                      >
-                        <option value="days">days</option>
-                        <option value="weeks">weeks</option>
-                        <option value="months">months</option>
-                      </select>
-                      <Button size="sm" onClick={() => handleSaveThreshold(customThresholdValue, customThresholdUnit)}>
-                        Save
-                      </Button>
-                    </div>
-                  ) : null}
-                </>
-              )
-            })()}
           </div>
 
           <div className="rounded-md border border-border p-3 space-y-3">

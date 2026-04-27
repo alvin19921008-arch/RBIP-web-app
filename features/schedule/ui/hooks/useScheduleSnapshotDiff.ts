@@ -153,77 +153,12 @@ export function useScheduleSnapshotDiff(params: {
     window.setTimeout(() => {
       if (cancelled) return
       ;(async () => {
-        const headRes = await supabase.rpc('get_config_global_head_v1')
+        const diff = await computeSnapshotDiffFromDbSnapshot()
         if (cancelled) return
-        if (headRes.error || !headRes.data) return
-        const head = headRes.data as any
-
-        const rawThreshold = head?.drift_notification_threshold
-        const unit =
-          rawThreshold?.unit === 'weeks' || rawThreshold?.unit === 'months' ? rawThreshold.unit : 'days'
-        const rawValue =
-          typeof rawThreshold?.value === 'number' ? rawThreshold.value : Number(rawThreshold?.value ?? 30)
-        const value = Number.isFinite(rawValue) && rawValue >= 0 ? rawValue : 30
-
-        // Treat very large thresholds as “off”.
-        if (unit === 'days' && value >= 3650) return
-
-        const days =
-          unit === 'weeks' ? value * 7 : unit === 'months' ? value * 30 : value
-        const thresholdMs = Math.max(0, days) * 24 * 60 * 60 * 1000
-
-        const { data: schedRow, error: schedErr } = await supabase
-          .from('daily_schedules')
-          .select('baseline_snapshot')
-          .eq('id', currentScheduleId)
-          .maybeSingle()
+        if (!hasAnySnapshotDiff(diff)) return
         if (cancelled) return
-        if (schedErr) return
-
-        const stored = (schedRow as any)?.baseline_snapshot
-        const { envelope } = unwrapBaselineSnapshotStored(stored as any)
-
-        const createdAtMs = Date.parse(String((envelope as any)?.createdAt ?? ''))
-        const ageMs = Number.isFinite(createdAtMs) ? Date.now() - createdAtMs : 0
-        if (thresholdMs > 0 && ageMs < thresholdMs) return
-
-        // "Always" mode (threshold=0): use a real diff against current published configuration.
-        // Version metadata may remain unchanged (e.g., during testing or when global_version hasn't bumped),
-        // but users still expect to be warned when the saved snapshot differs from today's Global config.
-        if (thresholdMs === 0) {
-          const diff = await computeSnapshotDiffFromDbSnapshot()
-          if (cancelled) return
-          if (!hasAnySnapshotDiff(diff)) return
-
-          if (cancelled) return
-          setSnapshotDiffError(null)
-          setSnapshotDiffResult(diff || null)
-          showDriftNotice()
-          return
-        }
-
-        const snapHead = (envelope as any)?.globalHeadAtCreation as any | null | undefined
-        const snapCat = snapHead?.category_versions
-        const liveCat = head?.category_versions
-        let hasDrift = false
-        if (snapCat && typeof snapCat === 'object' && liveCat && typeof liveCat === 'object') {
-          for (const [k, v] of Object.entries(liveCat)) {
-            const sv = (snapCat as any)[k]
-            if (typeof v === 'number' && typeof sv === 'number' && v !== sv) {
-              hasDrift = true
-              break
-            }
-          }
-        } else if (snapHead?.global_version != null && head?.global_version != null) {
-          hasDrift = Number(snapHead.global_version) !== Number(head.global_version)
-        } else {
-          // If we can’t compare reliably (older snapshots), don’t spam.
-          hasDrift = false
-        }
-
-        if (!hasDrift) return
-
-        if (cancelled) return
+        setSnapshotDiffError(null)
+        setSnapshotDiffResult(diff || null)
         showDriftNotice()
       })().catch(() => {})
     }, 0)
