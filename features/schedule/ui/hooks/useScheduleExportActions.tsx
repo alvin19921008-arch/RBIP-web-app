@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { downloadBlobAsFile, renderElementToImageBlob } from '@/lib/utils/exportPng'
 
 export type ScheduleExportShowActionToast = (
   title: string,
@@ -111,6 +110,8 @@ export function useScheduleExportActions({
 
         const el = exportPngRootRef.current
         if (!el) throw new Error('Export view not ready')
+
+        const { downloadBlobAsFile, renderElementToImageBlob } = await import('@/lib/utils/exportPng')
 
         await nextPaint()
 

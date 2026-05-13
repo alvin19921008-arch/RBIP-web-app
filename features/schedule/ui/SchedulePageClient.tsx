@@ -27,7 +27,6 @@ import { ScheduleMainBoardChrome } from '@/features/schedule/ui/sections/Schedul
 import { SchedulePageHeaderRightActions } from '@/features/schedule/ui/sections/SchedulePageHeaderRightActions'
 import { SchedulePageSplitMainPaneHeader } from '@/features/schedule/ui/sections/SchedulePageSplitMainPaneHeader'
 import { ScheduleWorkflowStepShell } from '@/features/schedule/ui/sections/ScheduleWorkflowStepShell'
-import { ScheduleDevHarnessBridge } from '@/features/schedule/ui/dev/ScheduleDevHarnessBridge'
 import dynamic from 'next/dynamic'
 import { SchedulePageGridInteractionOverlays } from '@/features/schedule/ui/overlays/SchedulePageGridInteractionOverlays'
 import { ScheduleHeaderBar } from '@/features/schedule/ui/layout/ScheduleHeaderBar'
@@ -100,6 +99,15 @@ import { Step2DialogReminder } from '@/components/allocation/Step2DialogReminder
 import type { PCAData, FloatingPCAAllocationResultV2 } from '@/lib/algorithms/pcaAllocation'
 import type { SpecialProgram, SPTAllocation, PCAPreference } from '@/types/allocation'
 import type { SlotAssignment } from '@/lib/utils/reservationLogic'
+
+const ScheduleDevHarnessBridge = dynamic(
+  () =>
+    import('@/features/schedule/ui/dev/ScheduleDevHarnessBridge').then(
+      (m) => m.ScheduleDevHarnessBridge
+    ),
+  { ssr: false }
+)
+
 const ScheduleBlocks1To6 = dynamic(
   () => import('@/features/schedule/ui/panes/ScheduleBlocks1To6').then(m => m.ScheduleBlocks1To6),
   { ssr: false }
@@ -3159,56 +3167,58 @@ function SchedulePageContent() {
           onClearCache={handleDeveloperCacheClear}
         />
         )}
-        <ScheduleDevHarnessBridge
-          allowRuntime={allowScheduleDevHarnessRuntime}
-          open={devLeaveSimOpen}
-          onOpenChange={setDevLeaveSimOpen}
-          setDevLeaveSimOpen={setDevLeaveSimOpen}
-          userRole={userRole}
-          selectedDate={selectedDate}
-          selectedDateKey={toDateKey(selectedDate)}
-          weekday={currentWeekday}
-          staff={staff}
-          bufferStaff={bufferStaff}
-          specialPrograms={specialPrograms}
-          sptAllocations={sptAllocations}
-          staffOverrides={staffOverrides}
-          showSharedTherapistStep={showSharedTherapistStep}
-          visibleTeams={visibleTeams}
-          pendingPCAFTEPerTeam={pendingPCAFTEPerTeam}
-          setStaffOverrides={setStaffOverrides}
-          clearDomainFromStep={scheduleActions.clearDomainFromStep}
-          goToStep={goToStep}
-          setInitializedSteps={setInitializedSteps}
-          setStepStatus={setStepStatus}
-          setStep2Result={setStep2Result}
-          setHasSavedAllocations={setHasSavedAllocations}
-          setTieBreakDecisions={setTieBreakDecisions}
-          recalculateScheduleCalculations={recalculateScheduleCalculations}
-          runStep2TherapistAndNonFloatingPCA={scheduleActions.runStep2TherapistAndNonFloatingPCA}
-          runStep3FloatingPCA={scheduleActions.runStep3FloatingPCA}
-          setStep21RuntimeVisible={setStep21RuntimeVisible}
-          showActionToast={showActionToast}
-          specialProgramOverrideResolverRef={specialProgramOverrideResolverRef}
-          prefetchSpecialProgramOverrideDialog={prefetchSpecialProgramOverrideDialog}
-          setShowSpecialProgramOverrideDialog={setShowSpecialProgramOverrideDialog}
-          generateStep2TherapistAndNonFloatingPCA={generateStep2_TherapistAndNonFloatingPCA}
-          runStep2WithHarnessSubstitutionAuto={runStep2WithHarnessSubstitutionAuto}
-          showStep2Point2SptFinalEdit={showStep2Point2_SptFinalEdit}
-          applyStep2Point2SptFinalEdits={applyStep2Point2_SptFinalEdits}
-          showStep2Point3SharedTherapistEdit={showStep2Point3_SharedTherapistEdit}
-          applyStep2Point3SharedTherapistEdits={applyStep2Point3_SharedTherapistEdits}
-          floatingPCAsForStep3={floatingPCAsForStep3}
-          existingAllocationsForStep3={existingAllocationsForStep3}
-          pcaPreferences={pcaPreferences}
-          handleFloatingPCAConfigSave={handleFloatingPCAConfigSave}
-          step2Result={step2Result}
-          openStep3EntryDialog={openStep3EntryDialog}
-          runStep4BedRelieving={runStep4BedRelieving}
-          therapistAllocationsByTeam={therapistAllocations}
-          pcaAllocationsByTeam={pcaAllocations}
-          calculationsByTeam={calculations}
-        />
+        {allowScheduleDevHarnessRuntime && devLeaveSimOpen ? (
+          <ScheduleDevHarnessBridge
+            allowRuntime={allowScheduleDevHarnessRuntime}
+            open={devLeaveSimOpen}
+            onOpenChange={setDevLeaveSimOpen}
+            setDevLeaveSimOpen={setDevLeaveSimOpen}
+            userRole={userRole}
+            selectedDate={selectedDate}
+            selectedDateKey={toDateKey(selectedDate)}
+            weekday={currentWeekday}
+            staff={staff}
+            bufferStaff={bufferStaff}
+            specialPrograms={specialPrograms}
+            sptAllocations={sptAllocations}
+            staffOverrides={staffOverrides}
+            showSharedTherapistStep={showSharedTherapistStep}
+            visibleTeams={visibleTeams}
+            pendingPCAFTEPerTeam={pendingPCAFTEPerTeam}
+            setStaffOverrides={setStaffOverrides}
+            clearDomainFromStep={scheduleActions.clearDomainFromStep}
+            goToStep={goToStep}
+            setInitializedSteps={setInitializedSteps}
+            setStepStatus={setStepStatus}
+            setStep2Result={setStep2Result}
+            setHasSavedAllocations={setHasSavedAllocations}
+            setTieBreakDecisions={setTieBreakDecisions}
+            recalculateScheduleCalculations={recalculateScheduleCalculations}
+            runStep2TherapistAndNonFloatingPCA={scheduleActions.runStep2TherapistAndNonFloatingPCA}
+            runStep3FloatingPCA={scheduleActions.runStep3FloatingPCA}
+            setStep21RuntimeVisible={setStep21RuntimeVisible}
+            showActionToast={showActionToast}
+            specialProgramOverrideResolverRef={specialProgramOverrideResolverRef}
+            prefetchSpecialProgramOverrideDialog={prefetchSpecialProgramOverrideDialog}
+            setShowSpecialProgramOverrideDialog={setShowSpecialProgramOverrideDialog}
+            generateStep2TherapistAndNonFloatingPCA={generateStep2_TherapistAndNonFloatingPCA}
+            runStep2WithHarnessSubstitutionAuto={runStep2WithHarnessSubstitutionAuto}
+            showStep2Point2SptFinalEdit={showStep2Point2_SptFinalEdit}
+            applyStep2Point2SptFinalEdits={applyStep2Point2_SptFinalEdits}
+            showStep2Point3SharedTherapistEdit={showStep2Point3_SharedTherapistEdit}
+            applyStep2Point3SharedTherapistEdits={applyStep2Point3_SharedTherapistEdits}
+            floatingPCAsForStep3={floatingPCAsForStep3}
+            existingAllocationsForStep3={existingAllocationsForStep3}
+            pcaPreferences={pcaPreferences}
+            handleFloatingPCAConfigSave={handleFloatingPCAConfigSave}
+            step2Result={step2Result}
+            openStep3EntryDialog={openStep3EntryDialog}
+            runStep4BedRelieving={runStep4BedRelieving}
+            therapistAllocationsByTeam={therapistAllocations}
+            pcaAllocationsByTeam={pcaAllocations}
+            calculationsByTeam={calculations}
+          />
+        ) : null}
 
         {/* Step Indicator with Navigation — see ScheduleWorkflowStepShell (Phase 2b) */}
         <ScheduleWorkflowStepShell
